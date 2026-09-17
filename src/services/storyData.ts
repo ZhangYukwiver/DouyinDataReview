@@ -66,6 +66,8 @@ export interface StoryData {
   range: [string, string] | null;
   months: number[];
   hours: number[];
+  /** Reliable records per calendar day, ascending — the calendar in chapter 02 is drawn from this. */
+  days: Array<[string, number]>;
   peakHour: number | null;
   peakDay: string | null;
   timeSources: { platform_action: number; archive_action: number; unknown: number };
@@ -221,6 +223,7 @@ export function buildStoryData(model: ReportModel, input: StoryInput): StoryData
     range,
     months: model.months,
     hours: model.hours,
+    days: [...perDay].sort((a, b) => a[0].localeCompare(b[0])),
     peakHour: model.peakHour,
     peakDay,
     timeSources,
