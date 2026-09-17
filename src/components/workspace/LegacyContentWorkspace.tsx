@@ -16,6 +16,7 @@ import {
 import {
   ArrowUpRight,
   Bookmark,
+  Check,
   Download,
   Eye,
   EyeOff,
@@ -54,6 +55,8 @@ import type { AppStyle } from "../../services/appStyle";
 import Svg, { Circle } from "react-native-svg";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { RecordVideoPlayer, type RecordVideoLoader } from "./RecordVideoPlayer";
+import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
+import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { ReportDashboard } from "./ReportDashboard";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -77,6 +80,7 @@ export interface ContentWorkspaceProps {
   onChangeView: (view: WorkspaceViewKey) => void;
   onOpenRecord: (url: string) => Promise<void>;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
+  onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
   downloadStates?: Record<string, RecordDownloadState>;
@@ -138,6 +142,7 @@ export function ContentWorkspace({
   onChangeView,
   onOpenRecord,
   onDownloadRecord,
+  onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
   downloadStates = {},
@@ -367,6 +372,7 @@ export function ContentWorkspace({
             downloadStates={downloadStates}
             mobile={mobile}
             onDownloadRecord={onDownloadRecord}
+            onBatchDownloadActiveChange={onBatchDownloadActiveChange}
             onLoadVideo={onLoadVideo}
             commentsConnection={commentsConnection}
             onOpenRecord={onOpenRecord}
@@ -513,6 +519,7 @@ function RecordsGallery({
   downloadStates,
   mobile,
   onDownloadRecord,
+  onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
   onOpenRecord,
@@ -527,6 +534,7 @@ function RecordsGallery({
   downloadStates: Record<string, RecordDownloadState>;
   mobile: boolean;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
+  onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
   onOpenRecord: (url: string) => Promise<void>;
@@ -539,13 +547,55 @@ function RecordsGallery({
 }) {
   const [layout, setLayout] = useState<"grid" | "list">("grid");
   const [playingRecord, setPlayingRecord] = useState<PersonalVideoRecord | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchRecords, setBatchRecords] = useState<PersonalVideoRecord[] | null>(null);
+  useEffect(() => {
+    onBatchDownloadActiveChange?.(batchRecords !== null);
+    return () => onBatchDownloadActiveChange?.(false);
+  }, [batchRecords, onBatchDownloadActiveChange]);
+  useEffect(() => { setSelecting(false); setSelected(new Set()); }, [activeType, privacy]);
   useEffect(() => { setPlayingRecord(null); }, [activeType, privacy]);
   const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
   const label = ({ watch_history: "观看历史", liked_videos: "喜欢", favorite_videos: "收藏" })[activeType];
   const sortedRecords = useMemo(() => records, [records]);
+  const candidates = useMemo(() => uniqueDownloadVideos(records), [records]);
+  const chosen = candidates.filter((record) => selected.has(videoDownloadKey(record)!));
+  const selectionFor = (record: PersonalVideoRecord) => {
+    if (!selecting) return undefined;
+    const key = videoDownloadKey(record);
+    return {
+      checked: Boolean(key && selected.has(key)),
+      disabled: !key || (chosen.length >= MAX_BATCH_VIDEOS && !selected.has(key)),
+      toggle: () => {
+        if (!key) return;
+        setSelected((current) => {
+          const next = new Set(chosen.map((item) => videoDownloadKey(item)!));
+          if (current.has(key)) next.delete(key);
+          else if (next.size < MAX_BATCH_VIDEOS) next.add(key);
+          return next;
+        });
+      },
+    };
+  };
 
   return (
     <>
+    {selecting ? <View style={styles.batchToolbar}>
+      <Text style={styles.batchMeta}>已选 {chosen.length} / {candidates.length} 个可下载视频</Text>
+      <View style={styles.batchActions}>
+        <Pressable accessibilityRole="button" onPress={() => setSelected(new Set(candidates.slice(0, MAX_BATCH_VIDEOS).map((record) => videoDownloadKey(record)!)))} style={styles.batchButton}>
+          <Text style={styles.batchButtonText}>{candidates.length > MAX_BATCH_VIDEOS ? "选择前 50 个" : "全选"}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setSelected(new Set())} style={styles.batchButton}><Text style={styles.batchButtonText}>清空选择</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: chosen.length === 0 }} disabled={chosen.length === 0}
+          onPress={() => { if (!commentsConnection) { onOpenSettings(); return; } setPlayingRecord(null); setBatchRecords(chosen); }}
+          style={[styles.batchButton, styles.batchPrimary, chosen.length === 0 && styles.buttonDisabled]}>
+          <Download size={14} color={color.buttonText} /><Text style={styles.batchPrimaryText}>下载所选（{chosen.length}）</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.batchHint}>每批最多 50 个；重复作品自动合并，图文、直播和无有效链接的记录不可选。</Text>
+    </View> : null}
     <FlatList
       testID="record-grid"
       key={`${layout}:${columns}`}
@@ -559,6 +609,10 @@ function RecordsGallery({
             <Text style={styles.galleryTitle}>{label}</Text>
             <Text style={styles.galleryMeta}>{sourceLabel} · {status?.message ?? `${records.length} 条本地记录`}</Text>
           </View>
+          {Platform.OS === "web" && !privacy && candidates.length > 0 ? <Pressable accessibilityRole="button"
+            onPress={() => { setSelecting(!selecting); setSelected(new Set()); }} style={styles.batchButton}>
+            <Download size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{selecting ? "退出多选" : "批量下载"}</Text>
+          </Pressable> : null}
           <View accessibilityRole="tablist" style={styles.layoutSwitch}>
             <Pressable
               accessibilityLabel="网格视图"
@@ -599,6 +653,7 @@ function RecordsGallery({
       numColumns={layout === "grid" ? columns : 1}
       renderItem={({ item }) => layout === "grid"
         ? <RecordTile
+            selection={selectionFor(item)}
             downloadState={downloadStates[item.id] ?? "idle"}
             onDownloadRecord={onDownloadRecord}
             onPlayRecord={onLoadVideo && item.mediaType !== "image" && item.mediaType !== "live" ? setPlayingRecord : undefined}
@@ -607,17 +662,27 @@ function RecordsGallery({
             record={item}
             type={activeType}
           />
-        : <RecordRow onOpenRecord={onOpenRecord} privacy={privacy} record={item} type={activeType} />}
+        : <RecordRow selection={selectionFor(item)} onOpenRecord={onOpenRecord} privacy={privacy} record={item} type={activeType} />}
       showsVerticalScrollIndicator={false}
     />
     {Platform.OS === "web" && playingRecord && !privacy && onLoadVideo ? (
       <RecordVideoPlayer record={playingRecord} records={sortedRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)} />
     ) : null}
+    {batchRecords && commentsConnection ? <BatchVideoDownloadDialog records={batchRecords} connection={commentsConnection} privacy={privacy} onClose={() => setBatchRecords(null)} /> : null}
     </>
   );
 }
 
+type RecordSelection = { checked: boolean; disabled: boolean; toggle: () => void };
+
+function SelectionMark({ selection }: { selection: RecordSelection }) {
+  return <View pointerEvents="none" style={[styles.selectionMark, selection.checked && styles.selectionChecked, selection.disabled && styles.buttonDisabled]}>
+    {selection.checked ? <Check size={16} color={color.buttonText} /> : null}
+  </View>;
+}
+
 function RecordTile({
+  selection,
   downloadState,
   onDownloadRecord,
   onPlayRecord,
@@ -626,6 +691,7 @@ function RecordTile({
   privacy,
   onOpenRecord,
 }: {
+  selection?: RecordSelection;
   downloadState: RecordDownloadState;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
   onPlayRecord?: (record: PersonalVideoRecord) => void;
@@ -643,7 +709,7 @@ function RecordTile({
   const accent = type === "liked_videos" ? color.accent : type === "favorite_videos" ? color.amber : color.cyan;
   const imageAvailable = Boolean(record.coverUrl && !privacy && !imageFailed);
   const downloading = downloadState === "queued" || downloadState === "running";
-  const showActions = Platform.OS === "web" && Boolean(record.url) && !privacy && (hovered || focused);
+  const showActions = !selection && Platform.OS === "web" && Boolean(record.url) && !privacy && (hovered || focused);
   const downloadLabel = downloading
     ? "下载中"
     : downloadState === "complete"
@@ -689,14 +755,17 @@ function RecordTile({
       style={styles.tile}
     >
       <Pressable
-        accessibilityLabel={`${privacy ? "已隐藏内容" : record.title}${record.url ? "，打开抖音视频" : ""}`}
-        accessibilityRole={record.url ? "link" : undefined}
-        disabled={!record.url}
+        accessibilityLabel={selection ? `${selection.disabled && !selection.checked ? "不可选择" : "选择视频"}：${record.title}` : `${privacy ? "已隐藏内容" : record.title}${record.url ? "，打开抖音视频" : ""}`}
+        accessibilityRole={selection ? "checkbox" : record.url ? "link" : undefined}
+        accessibilityState={selection ? { checked: selection.checked, disabled: selection.disabled } : undefined}
+        aria-checked={selection?.checked}
+        disabled={selection ? selection.disabled : !record.url}
         onFocus={markFocused}
-        onPress={() => record.url && void onOpenRecord(record.url)}
+        onPress={() => selection ? selection.toggle() : record.url && void onOpenRecord(record.url)}
         style={({ pressed }) => [styles.tileMain, pressed && styles.tilePressed, record.url && webPointer]}
       >
         <View style={[styles.tileVisual, { backgroundColor: fallbackColor(record.id) }]}>
+          {selection ? <View style={styles.tileSelection}><SelectionMark selection={selection} /></View> : null}
           {imageAvailable ? (
             <ImageBackground
               accessibilityLabel={privacy ? "已隐藏的视频封面" : `${record.title}的视频封面`}
@@ -781,19 +850,22 @@ function RecordTile({
   );
 }
 
-function RecordRow({ record, type, privacy, onOpenRecord }: { record: PersonalVideoRecord; type: PersonalRecordType; privacy: boolean; onOpenRecord: (url: string) => Promise<void> }) {
+function RecordRow({ record, type, privacy, onOpenRecord, selection }: { record: PersonalVideoRecord; type: PersonalRecordType; privacy: boolean; onOpenRecord: (url: string) => Promise<void>; selection?: RecordSelection }) {
   const [imageFailed, setImageFailed] = useState(false);
   const accent = type === "liked_videos" ? color.accent : type === "favorite_videos" ? color.amber : color.cyan;
   const imageAvailable = Boolean(record.coverUrl && !privacy && !imageFailed);
   return (
     <Pressable
-      accessibilityLabel={`${privacy ? "已隐藏内容" : record.title}${record.url ? "，打开抖音视频" : ""}`}
-      accessibilityRole={record.url ? "link" : undefined}
-      disabled={!record.url}
-      onPress={() => record.url && void onOpenRecord(record.url)}
+      accessibilityLabel={selection ? `${selection.disabled && !selection.checked ? "不可选择" : "选择视频"}：${record.title}` : `${privacy ? "已隐藏内容" : record.title}${record.url ? "，打开抖音视频" : ""}`}
+      accessibilityRole={selection ? "checkbox" : record.url ? "link" : undefined}
+      accessibilityState={selection ? { checked: selection.checked, disabled: selection.disabled } : undefined}
+      aria-checked={selection?.checked}
+      disabled={selection ? selection.disabled : !record.url}
+      onPress={() => selection ? selection.toggle() : record.url && void onOpenRecord(record.url)}
       {...fx({ hover: "tint" })}
       style={({ pressed }) => [styles.recordRow, pressed && styles.recordRowPressed, record.url && webPointer]}
     >
+      {selection ? <SelectionMark selection={selection} /> : null}
       <View style={[styles.rowThumb, { backgroundColor: fallbackColor(record.id) }]}>
         {imageAvailable ? (
           <ImageBackground onError={() => setImageFailed(true)} resizeMode="cover" source={{ uri: record.coverUrl! }} style={styles.rowThumbImage} />
@@ -808,7 +880,7 @@ function RecordRow({ record, type, privacy, onOpenRecord }: { record: PersonalVi
           {record.topics?.[0] ? <Text style={[styles.rowTopic, { color: accent }]}>#{privacy ? "话题" : record.topics[0]}</Text> : null}
         </View>
       </View>
-      {record.url ? <ArrowUpRight color={color.textMuted} size={19} /> : null}
+      {record.url && !selection ? <ArrowUpRight color={color.textMuted} size={19} /> : null}
     </Pressable>
   );
 }
@@ -1195,7 +1267,15 @@ const styles = StyleSheet.create({
   galleryContent: { paddingHorizontal: 28, paddingTop: 18, paddingBottom: 42 },
   galleryContentMobile: { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 28 },
   galleryContentEmpty: { flexGrow: 1 },
-  galleryHeader: { minHeight: 60, flexDirection: "row", alignItems: "center", marginBottom: 14 },
+  galleryHeader: { minHeight: 60, flexDirection: "row", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 14 },
+  batchToolbar: { paddingHorizontal: 16, paddingVertical: 12, gap: 10, backgroundColor: color.surfaceRaised, borderBottomWidth: 1, borderBottomColor: color.border },
+  batchMeta: { color: color.text, fontSize: 13 }, batchHint: { color: color.textMuted, fontSize: 11, lineHeight: 17 },
+  batchActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  batchButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 9, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
+  batchButtonText: { color: color.textSecondary, fontSize: 12 }, batchPrimary: { backgroundColor: color.button, borderColor: color.button }, batchPrimaryText: { color: color.buttonText, fontSize: 12 },
+  tileSelection: { position: "absolute", left: 10, top: 10, zIndex: 3 },
+  selectionMark: { width: 26, height: 26, borderWidth: 1, borderColor: color.textMuted, borderRadius: 6, backgroundColor: color.surface, alignItems: "center", justifyContent: "center" },
+  selectionChecked: { backgroundColor: color.button, borderColor: color.button },
   galleryHeaderCopy: { flex: 1, minWidth: 0 },
   galleryTitle: { color: color.text, fontSize: 16, fontWeight: "600", letterSpacing: 2.5, fontFamily: font.serif },
   galleryMeta: { color: color.textMuted, fontSize: 10, marginTop: 5 },
