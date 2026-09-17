@@ -1847,7 +1847,9 @@ export class DouyinCollector {
       executablePath: this.executablePath,
       headless,
       locale: "zh-CN",
-      viewport: { width: 1280, height: 900 },
+      // Visible pages must follow the real window, including user resizing.
+      // A fixed emulated viewport can extend beyond the native content area.
+      viewport: headless ? { width: 1280, height: 900 } : null,
       acceptDownloads: false,
     };
     if (headless) launchOptions.args = ["--headless=new", "--window-size=1280,900"];
@@ -1878,7 +1880,10 @@ export class DouyinCollector {
   }
 
   async currentPage(context) {
-    const existing = context.pages().find((page) => !page.isClosed());
+    // Comet exposes its onboarding WebContents as the first page, but it is
+    // not a normal browser tab. Navigating it can fail or clip the website.
+    const existing = context.pages().find((page) => !page.isClosed()
+      && !/^(?:chrome|chrome-extension|edge|devtools):/u.test(page.url()));
     return existing ?? context.newPage();
   }
 

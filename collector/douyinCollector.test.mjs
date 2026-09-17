@@ -55,6 +55,20 @@ function fakeResponse(pathname, payload) {
   };
 }
 
+describe("collector browser page selection", () => {
+  it("opens a normal tab instead of navigating Comet's internal welcome page", async () => {
+    const collector = new DouyinCollector({ dataDirectory: "/tmp/dy-page-selection", store: {} });
+    const normalPage = { isClosed: () => false, url: () => "about:blank" };
+    const internal = { isClosed: () => false, url: () => "chrome://perplexity-onboarding/" };
+    const context = { pages: () => [internal], newPage: vi.fn(async () => normalPage) };
+    expect(await collector.currentPage(context)).toBe(normalPage);
+    expect(context.newPage).toHaveBeenCalledOnce();
+    context.pages = () => [internal, normalPage];
+    expect(await collector.currentPage(context)).toBe(normalPage);
+    expect(context.newPage).toHaveBeenCalledOnce();
+  });
+});
+
 describe("normalizeChatConversationCatalog", () => {
   it("normalizes contact nickname aliases and safe avatar candidates", () => {
     expect(normalizeChatConversationCatalog([
