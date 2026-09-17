@@ -940,12 +940,12 @@ function AppContent() {
     }
   }
 
-  async function loadRecordVideo(record: PersonalVideoRecord, signal: AbortSignal): Promise<Blob> {
+  async function loadRecordVideo(record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void): Promise<Blob> {
     if (!record.url) throw new LocalCollectorError("invalid_url", "该记录没有可用的抖音链接。");
     if (!collectorToken) {
       throw new LocalCollectorError("not_paired", "请先在“连接与采集”页面连接本地采集服务，再播放视频。");
     }
-    return loadCollectorVideo(collectorUrl, collectorToken, record.url, signal);
+    return loadCollectorVideo(collectorUrl, collectorToken, record.url, signal, onProgress);
   }
 
   function rememberDownloadJob(recordId: string, job: VideoDownloadJob) {

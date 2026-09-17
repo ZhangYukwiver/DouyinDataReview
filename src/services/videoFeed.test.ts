@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PersonalVideoRecord } from "../domain/personalRecords";
 import { closeExplore, readExplore, type ExplorePage } from "./explorer";
 import { LocalCollectorError } from "./localCollector";
-import { buildVideoFeed, createVideoCommentsSession, waitForCollector } from "./videoFeed";
+import { buildVideoFeed, createVideoCommentsSession, createVideoWheelGesture, waitForCollector } from "./videoFeed";
 
 vi.mock("./explorer", () => ({ readExplore: vi.fn(), closeExplore: vi.fn().mockResolvedValue(undefined) }));
 const connection = { baseUrl: "http://127.0.0.1:4765", token: "test-token" };
@@ -12,6 +12,19 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.useRealTimers());
 
 describe("video feed", () => {
+  it("accumulates small wheel movements and suppresses the same gesture's inertia", () => {
+    const gesture = createVideoWheelGesture();
+    expect([gesture(25, 0), gesture(25, 50), gesture(25, 100)]).toEqual([0, 0, 1]);
+    expect([gesture(70, 150), gesture(25, 250)]).toEqual([0, 0]);
+    expect(gesture(70, 500)).toBe(1);
+  });
+
+  it("unlocks continuous scrolling without requiring a pause and accepts a reversed swipe", () => {
+    const gesture = createVideoWheelGesture();
+    const switches = Array.from({ length: 21 }, (_, index) => gesture(70, index * 100));
+    expect(switches.filter(Boolean)).toEqual([1, 1, 1]);
+    expect(gesture(-70, 2100)).toBe(-1);
+  });
   it("preserves list order and skips image, live and unlinked rows", () => {
     const next = { ...record, id: "next" };
     expect(buildVideoFeed([{ ...record, id: "photo", mediaType: "image" }, record, { ...record, id: "live", mediaType: "live" }, { ...record, id: "missing", url: null }, next], record)).toEqual([record, next]);

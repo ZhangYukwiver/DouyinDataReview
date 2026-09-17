@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { pageNeedsVerification, prepareReadOnlyPage } from "./readOnlyPage.mjs";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
 const MAX_SOURCE_URL_LENGTH = 2_048;
 const MAX_TITLE_LENGTH = 90;
@@ -284,13 +286,17 @@ function bodyText(page) {
 export async function discoverDouyinVideo(context, sourceUrl, {
   pageTimeoutMs = DEFAULT_PAGE_TIMEOUT_MS,
   mediaWaitMs = DEFAULT_MEDIA_WAIT_MS,
+  signal,
 } = {}) {
+  signal?.throwIfAborted();
   const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
   if (!context || typeof context.newPage !== "function") {
     throw new VideoDownloadError("browser_unavailable", "无头浏览器当前不可用。");
   }
 
   const page = await context.newPage();
+  const abort = () => { void page.close().catch(() => undefined); };
+  signal?.addEventListener("abort", abort, { once: true });
   const candidates = [];
   const pending = new Set();
   let detailMeta = {};
@@ -326,12 +332,15 @@ export async function discoverDouyinVideo(context, sourceUrl, {
 
   page.on("response", onResponse);
   try {
+    await prepareReadOnlyPage(page);
+    signal?.throwIfAborted();
     try {
       await page.goto(normalizedSourceUrl, {
         waitUntil: "domcontentloaded",
         timeout: pageTimeoutMs,
       });
     } catch (error) {
+      signal?.throwIfAborted();
       if (error?.name === "TimeoutError") {
         throw new VideoDownloadError("page_timeout", "抖音视频页面加载超时，请稍后重试。");
       }
@@ -354,16 +363,17 @@ export async function discoverDouyinVideo(context, sourceUrl, {
         firstCandidateAt ??= Date.now();
         if (Date.now() - firstCandidateAt >= 1_500) break;
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await delay(250, undefined, { signal });
     }
     await Promise.allSettled([...pending]);
+    signal?.throwIfAborted();
 
     for (const candidate of await runtimeMediaCandidates(page)) add(candidate);
     const canonicalUrl = page.url();
     const selected = selectDouyinMediaCandidate(candidates);
     if (!selected) {
       const text = await bodyText(page);
-      if (/验证码|安全验证|完成验证|captcha/iu.test(text)) {
+      if (await pageNeedsVerification(page)) {
         throw new VideoDownloadError("verification_required", "抖音要求完成安全验证，请稍后重试或先在浏览器中验证。", { retryable: true });
       }
       if (/作品不存在|视频不见了|已删除|暂无权限|私密作品/iu.test(text)) {
@@ -385,6 +395,7 @@ export async function discoverDouyinVideo(context, sourceUrl, {
       candidates: candidates.map((candidate) => ({ ...candidate })),
     };
   } finally {
+    signal?.removeEventListener("abort", abort);
     page.off("response", onResponse);
     await page.close().catch(() => undefined);
   }
@@ -556,7 +567,8 @@ export async function downloadDouyinVideo({
   mediaWaitMs,
   timeoutMs,
 } = {}) {
-  const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs });
+  const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal });
+  signal?.throwIfAborted();
   const fileName = makeVideoFileName({
     title: parsed.title,
     videoId: parsed.videoId,

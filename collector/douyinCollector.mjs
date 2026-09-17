@@ -1023,6 +1023,10 @@ export class DouyinCollector {
   }
 
   scheduleVideoDownloadFileCleanup(job) {
+    if (job?.playback) {
+      void rm(path.join(this.dataDirectory, "downloads", `playback-${job.id}`), { recursive: true, force: true }).catch(() => undefined);
+      return;
+    }
     if (typeof job?.filePath !== "string" || !job.filePath) return;
     const downloadsDirectory = path.resolve(this.dataDirectory, "downloads");
     const resolved = path.resolve(job.filePath);
@@ -1033,6 +1037,7 @@ export class DouyinCollector {
   retireVideoDownloadJob(job) {
     if (!job || this.videoDownloadJobs.get(job.id) !== job) return false;
     this.videoDownloadJobs.delete(job.id);
+    clearTimeout(job.releaseTimer);
     this.scheduleVideoDownloadFileCleanup(job);
     return true;
   }
@@ -1085,7 +1090,7 @@ export class DouyinCollector {
     return this.publicVideoDownloadJob(job);
   }
 
-  startVideoDownload(sourceUrl) {
+  startVideoDownload(sourceUrl, { playback = false } = {}) {
     const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
     if (this.syncPromise || (this.observationPromise && !this.isChatReceiving()) || this.accountSwitchPromise) {
       throw new VideoDownloadError("collector_busy", "采集器正在执行其他任务，请稍后再试。", { retryable: true });
@@ -1094,6 +1099,7 @@ export class DouyinCollector {
     const now = new Date().toISOString();
     const job = {
       id: randomUUID(),
+      playback,
       sourceUrl: normalizedSourceUrl,
       status: "queued",
       fileName: null,
@@ -1107,11 +1113,29 @@ export class DouyinCollector {
       completedAt: null,
     };
     this.videoDownloadJobs.set(job.id, job);
+    if (playback) {
+      // Bound orphaned playback jobs even when a tab disappears before receiving its ID.
+      job.releaseTimer = setTimeout(() => this.releaseVideoPlayback(job.id), 120_000);
+      job.releaseTimer.unref?.();
+    }
     const run = this.videoDownloadQueue
       .catch(() => undefined)
       .then(() => this.runVideoDownloadJob(job));
     this.videoDownloadQueue = run.catch(() => undefined);
     return this.publicVideoDownloadJob(job);
+  }
+
+  releaseVideoPlayback(jobId) {
+    const job = this.videoDownloadJobs.get(jobId);
+    if (!job) return true;
+    if (!job.playback) return false;
+    job.released = true;
+    job.controller?.abort();
+    if (job.status !== "running") {
+      if (job.status === "queued") job.status = "failed";
+      this.retireVideoDownloadJob(job);
+    }
+    return true;
   }
 
   getVideoDownloadJob(jobId) {
@@ -1146,6 +1170,7 @@ export class DouyinCollector {
     };
     this.videoDownloadActive = operation;
     const controller = new AbortController();
+    job.controller = controller;
     let context = null;
     let ownsContext = false;
     this.videoDownloadControllers.add(controller);
@@ -1171,10 +1196,11 @@ export class DouyinCollector {
       }
       ownsContext = context !== existingContext;
       operation.statusRevisionAfterLaunch = this.statusRevision;
+      controller.signal.throwIfAborted();
       const result = await downloadDouyinVideo({
         context,
         sourceUrl: job.sourceUrl,
-        outputDirectory: path.join(this.dataDirectory, "downloads"),
+        outputDirectory: path.join(this.dataDirectory, "downloads", ...(job.playback ? [`playback-${job.id}`] : [])),
         signal: controller.signal,
         onProgress: (bytes) => this.touchVideoDownloadJob(job, { bytes }),
       });
@@ -1201,6 +1227,8 @@ export class DouyinCollector {
       });
     } finally {
       this.videoDownloadControllers.delete(controller);
+      delete job.controller;
+      if (job.released) this.retireVideoDownloadJob(job);
       if (ownsContext && context) {
         if (this.context === context) {
           this.context = null;
@@ -2581,6 +2609,10 @@ export class DouyinCollector {
 
   async close() {
     for (const job of this.videoDownloadJobs.values()) {
+      if (job.playback) {
+        this.releaseVideoPlayback(job.id);
+        continue;
+      }
       if (job.status === "queued") {
         this.touchVideoDownloadJob(job, {
           status: "failed",

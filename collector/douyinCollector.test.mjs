@@ -245,6 +245,52 @@ describe("direct browser launch options", () => {
 });
 
 describe("video download jobs", () => {
+  it("skips abandoned queued playback while preserving an explicit download", async () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.ensureBrowser = vi.fn();
+    const playback = collector.startVideoDownload("https://www.douyin.com/video/1234567890", { playback: true });
+    collector.releaseVideoPlayback(playback.id);
+    await collector.videoDownloadQueue;
+    expect(collector.ensureBrowser).not.toHaveBeenCalled();
+    expect(collector.getVideoDownloadJob(playback.id)).toBeNull();
+    const manual = { id: "manual", status: "queued", controller: new AbortController() };
+    collector.videoDownloadJobs.set(manual.id, manual);
+    expect(collector.releaseVideoPlayback(manual.id)).toBe(false);
+    expect(manual.controller.signal.aborted).toBe(false);
+    expect(manual.status).toBe("queued");
+  });
+
+  it("cancels running playback before media discovery and frees the serial queue", async () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    let release;
+    const context = { close: vi.fn(async () => {}), newPage: vi.fn() };
+    collector.ensureBrowser = vi.fn(() => new Promise((resolve) => { release = () => resolve(context); }));
+    const job = collector.startVideoDownload("https://www.douyin.com/video/1234567890", { playback: true });
+    await vi.waitFor(() => expect(collector.getVideoDownloadJob(job.id).status).toBe("running"));
+    expect(collector.releaseVideoPlayback(job.id)).toBe(true);
+    release();
+    await collector.videoDownloadQueue;
+    expect(context.newPage).not.toHaveBeenCalled();
+    expect(context.close).toHaveBeenCalled();
+    expect(collector.hasActiveVideoDownload()).toBe(false);
+    expect(collector.getVideoDownloadJob(job.id)).toBeNull();
+  });
+
+  it("removes only the released playback directory after the file has been read", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "playback-release-"));
+    try {
+      const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory, store: {} });
+      const playbackDir = path.join(dataDirectory, "downloads", "playback-owned");
+      await mkdir(playbackDir, { recursive: true });
+      await writeFile(path.join(playbackDir, "video.mp4"), "temporary");
+      const manualFile = path.join(dataDirectory, "downloads", "saved.mp4");
+      await writeFile(manualFile, "saved");
+      collector.videoDownloadJobs.set("owned", { id: "owned", playback: true, status: "complete" });
+      collector.releaseVideoPlayback("owned");
+      await vi.waitFor(async () => { await expect(access(playbackDir)).rejects.toThrow(); });
+      await expect(access(manualFile)).resolves.toBeUndefined();
+    } finally { await rm(dataDirectory, { recursive: true, force: true }); }
+  });
   it("validates the source before creating a queued job", () => {
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
     expect(() => collector.startVideoDownload("https://example.com/video/1")).toThrowError(/抖音视频链接/u);

@@ -41,6 +41,25 @@ describe("normalizeDouyinVideoUrl", () => {
 });
 
 describe("media candidate selection", () => {
+  it("closes only the playback page and stops discovery when switching during navigation", async () => {
+    const controller = new AbortController();
+    let failNavigation;
+    const page = {
+      addInitScript: vi.fn(async () => {}),
+      context: () => ({ newCDPSession: async () => ({ on() {}, send: async () => {} }) }),
+      on: vi.fn(), off: vi.fn(),
+      goto: vi.fn(() => new Promise((_resolve, reject) => { failNavigation = reject; })),
+      close: vi.fn(async () => failNavigation?.(new Error("page closed"))),
+    };
+    const pending = discoverDouyinVideo({ newPage: async () => page }, "https://www.douyin.com/video/1234567890", { signal: controller.signal });
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(page.goto).toHaveBeenCalled());
+    expect(page.addInitScript.mock.invocationCallOrder[0]).toBeLessThan(page.goto.mock.invocationCallOrder[0]);
+    controller.abort();
+    await rejected;
+    expect(page.close).toHaveBeenCalled();
+    expect(page.off).toHaveBeenCalledWith("response", expect.any(Function));
+  });
   it("extracts playable streams while ignoring cover URLs", () => {
     const candidates = collectDouyinMediaCandidates({
       aweme_detail: {
@@ -79,6 +98,8 @@ describe("media candidate selection", () => {
       },
     };
     const page = {
+      addInitScript: async () => {},
+      context: () => ({ newCDPSession: async () => ({ on() {}, send: async () => {} }) }),
       on: (_event, handler) => { responseHandler = handler; },
       off: () => undefined,
       goto: async () => {

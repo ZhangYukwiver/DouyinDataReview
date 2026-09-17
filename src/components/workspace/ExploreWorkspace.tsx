@@ -218,7 +218,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
     </Modal>
     {playing && connection ? <RecordVideoPlayer record={playing} records={(profile?.items ?? (results?.kind === "videos" ? results.items : [])) as ExploreVideo[]}
       commentsConnection={connection} onOpenRecord={onOpenRecord}
-      onLoadVideo={(item, signal) => loadCollectorVideo(connection.baseUrl, connection.token, item.url!, signal)} onClose={() => setPlaying(null)} /> : null}
+      onLoadVideo={(item, signal, onProgress) => loadCollectorVideo(connection.baseUrl, connection.token, item.url!, signal, onProgress)} onClose={() => setPlaying(null)} /> : null}
   </ScrollView>;
 }
 
