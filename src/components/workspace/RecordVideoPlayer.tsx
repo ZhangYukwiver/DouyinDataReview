@@ -3,11 +3,11 @@ import { Modal } from "react-native";
 import { ArrowUpRight, Bookmark, ChevronDown, ChevronUp, Heart, MessageCircle, Music2, Pause, Play, Volume2, VolumeX, X } from "lucide-react-native";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreComment, ExploreConnection, ExplorePage } from "../../services/explorer";
-import { buildVideoFeed, createVideoCommentsSession, waitForCollector } from "../../services/videoFeed";
+import { buildVideoFeed, createVideoCommentsSession, createVideoWheelGesture, waitForCollector } from "../../services/videoFeed";
 import { LocalCollectorError } from "../../services/localCollector";
 import "./RecordVideoPlayer.css";
 
-export type RecordVideoLoader = (record: PersonalVideoRecord, signal: AbortSignal) => Promise<Blob>;
+export type RecordVideoLoader = (record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void) => Promise<Blob>;
 const count = (value?: number | null) => value == null ? "—" : value >= 10000 ? `${(value / 10000).toFixed(1).replace(/\.0$/u, "")}万` : value.toLocaleString("zh-CN");
 const time = (value: number) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
 const date = (value?: string | null) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString("zh-CN") : "";
@@ -42,19 +42,13 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    let last = 0, delta = 0, consumed = false;
+    const gesture = createVideoWheelGesture();
     const wheel = (event: WheelEvent) => {
       if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY) ||
         (event.target as Element).closest("[data-feed-controls],[data-comments-panel]")) return;
       event.preventDefault();
-      const now = performance.now();
-      if (now - last > 180) { delta = 0; consumed = false; }
-      last = now;
-      if (consumed) return;
-      delta += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewer.clientHeight : 1);
-      if (Math.abs(delta) < 65) return;
-      consumed = true;
-      setIndex((current) => Math.max(0, Math.min(feed.length - 1, current + Math.sign(delta))));
+      const direction = gesture(event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewer.clientHeight : 1), performance.now());
+      if (direction) setIndex((current) => Math.max(0, Math.min(feed.length - 1, current + direction)));
     };
     viewer.addEventListener("wheel", wheel, { passive: false });
     return () => viewer.removeEventListener("wheel", wheel);
@@ -142,6 +136,7 @@ function Playback({ record, onLoadVideo, muted, onToggleMute, commentsOpen, onTo
   const [paused, setPaused] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [loadingMessage, setLoadingMessage] = useState("正在准备视频…");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const loaderRef = useRef(onLoadVideo);
   loaderRef.current = onLoadVideo;
@@ -149,25 +144,39 @@ function Playback({ record, onLoadVideo, muted, onToggleMute, commentsOpen, onTo
     const controller = new AbortController();
     let objectUrl: string | null = null;
     const video = videoRef.current;
+    const timeout = setTimeout(() => {
+      setError("视频准备超时，请重试或切换下一个视频。");
+      controller.abort();
+    }, 90_000);
     setSrc(null); setReadyToPlay(false); setError(null); setPaused(true); setElapsed(0); setDuration(0);
+    setLoadingMessage("正在准备视频…");
     void (async () => {
       try {
-        const blob = await waitForCollector(() => loaderRef.current(record, controller.signal), controller.signal);
+        const blob = await waitForCollector(() => loaderRef.current(record, controller.signal, (message) => {
+          if (!controller.signal.aborted) setLoadingMessage(message);
+        }), controller.signal);
         if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
+        setLoadingMessage("正在载入画面…");
         setSrc(objectUrl);
       } catch (cause) {
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "视频暂时无法播放，请稍后重试。");
-      }
+      } finally { clearTimeout(timeout); }
     })();
     return () => {
-      controller.abort(); video?.pause();
+      clearTimeout(timeout); controller.abort(); video?.pause();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [record.id, record.url, attempt]);
   useEffect(() => {
     if (src) void videoRef.current?.play().catch(() => {});
   }, [src]);
+  useEffect(() => { if (error) videoRef.current?.pause(); }, [error]);
+  useEffect(() => {
+    if (!src || readyToPlay || error) return;
+    const timeout = setTimeout(() => setError("视频画面加载超时，请重试或切换下一个视频。"), 15_000);
+    return () => clearTimeout(timeout);
+  }, [src, readyToPlay, error]);
   const toggle = () => {
     const video = videoRef.current;
     if (!src || !readyToPlay || error || !video) return;
@@ -191,7 +200,7 @@ function Playback({ record, onLoadVideo, muted, onToggleMute, commentsOpen, onTo
       {!readyToPlay || error ? <div className="rv-message" role={error ? "alert" : "status"}>
         {error ? <><p>{error}</p><button className="rv-button" onClick={() => setAttempt((value) => value + 1)}>重试播放</button>
           {record.url && onOpenRecord ? <button className="rv-text-button" onClick={() => void onOpenRecord(record.url!)}>打开抖音原视频</button> : null}</>
-          : <><span className="rv-spinner" /><p>正在准备视频…</p></>}
+          : <><span className="rv-spinner" /><p>{loadingMessage}</p><small>可随时上下滑动切换视频</small></>}
       </div> : paused ? <button className="rv-play-overlay" aria-label="开始播放" onClick={toggle}><Play color="#fff" fill="#fff" size={48} /></button> : null}
       <header className="rv-topbar">
         <button className="rv-icon-button" aria-label="关闭视频" onClick={onClose}><X color="#fff" size={24} /></button>

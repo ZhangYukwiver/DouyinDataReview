@@ -43,9 +43,11 @@ describe("video playback loading", () => {
       .mockResolvedValueOnce(jobResponse("queued"))
       .mockResolvedValueOnce(jobResponse("running"))
       .mockResolvedValueOnce(jobResponse("complete"))
-      .mockResolvedValueOnce(new Response("video bytes", { headers: { "Content-Type": "video/mp4" } }));
+      .mockResolvedValueOnce(new Response("video bytes", { headers: { "Content-Type": "video/mp4" } }))
+      .mockResolvedValueOnce(new Response('{"ok":true}'));
     vi.stubGlobal("fetch", fetchMock);
-    const pending = loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, new AbortController().signal);
+    const progress = vi.fn();
+    const pending = loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, new AbortController().signal, progress);
     await vi.advanceTimersByTimeAsync(1_600);
     const blob = await pending;
     expect(blob.type).toBe("video/mp4");
@@ -53,14 +55,18 @@ describe("video playback loading", () => {
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       `${baseUrl}/v1/downloads`, `${baseUrl}/v1/downloads/${job.id}`,
       `${baseUrl}/v1/downloads/${job.id}`, `${baseUrl}/v1/downloads/${job.id}/file`,
+      `${baseUrl}/v1/downloads/${job.id}`,
     ]);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toMatchObject({ playback: true });
+    expect(fetchMock.mock.lastCall?.[1].method).toBe("DELETE");
+    expect(progress.mock.calls.map(([message]) => message)).toEqual(["正在等待视频准备…", "正在读取视频资源…", "正在载入视频文件…"]);
     expect(fetchMock.mock.calls.every(([, init]) => init.headers.Authorization === "Bearer session-secret")).toBe(true);
   });
 
   it("stops polling immediately when the player closes", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
-    const fetchMock = vi.fn().mockResolvedValueOnce(jobResponse("queued"));
+    const fetchMock = vi.fn().mockResolvedValueOnce(jobResponse("queued")).mockResolvedValueOnce(new Response('{"ok":true}'));
     vi.stubGlobal("fetch", fetchMock);
     const pending = loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, controller.signal);
     const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
@@ -68,7 +74,8 @@ describe("video playback loading", () => {
     controller.abort();
     await rejected;
     await vi.advanceTimersByTimeAsync(2_400);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.lastCall?.[1].method).toBe("DELETE");
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -80,6 +87,34 @@ describe("video playback loading", () => {
     await expect(loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, controller.signal))
       .rejects.toMatchObject({ name: "AbortError" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("releases a late-created job after switching without polling or downloading it", async () => {
+    let resolve!: (response: Response) => void;
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; }))
+      .mockResolvedValueOnce(new Response('{"ok":true}'));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, controller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    resolve(jobResponse("running"));
+    await rejected;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.lastCall?.[1].method).toBe("DELETE");
+    expect(fetchMock.mock.lastCall?.[1].signal.aborted).toBe(false);
+  });
+
+  it("bounds preparation and releases a job that remains queued", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url, init) => Promise.resolve(init.method === "DELETE" ? new Response('{"ok":true}') : jobResponse("queued")));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, new AbortController().signal);
+    const rejected = expect(pending).rejects.toMatchObject({ code: "timeout" });
+    await vi.advanceTimersByTimeAsync(91_000);
+    await rejected;
+    expect(fetchMock.mock.lastCall?.[1].method).toBe("DELETE");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("cancels an in-flight media fetch when the player closes", async () => {
@@ -96,11 +131,12 @@ describe("video playback loading", () => {
   });
 
   it("surfaces a failed job without fetching a video file", async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jobResponse("failed", { errorCode: "media_not_found", error: "没有可播放的视频" }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(jobResponse("failed", { errorCode: "media_not_found", error: "没有可播放的视频" })).mockResolvedValueOnce(new Response('{"ok":true}'));
     vi.stubGlobal("fetch", fetchMock);
     await expect(loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, new AbortController().signal))
       .rejects.toMatchObject({ code: "media_not_found", message: "没有可播放的视频" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.lastCall?.[1].method).toBe("DELETE");
   });
 
   it("shows the collector's busy reason so the user can retry later", async () => {

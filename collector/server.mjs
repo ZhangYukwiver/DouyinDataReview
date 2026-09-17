@@ -367,15 +367,18 @@ export async function startCollectorServer({
     } else if (request.method === "POST" && url.pathname === "/v1/downloads") {
       try {
         const body = await readJsonBody(request);
-        const job = collector.startVideoDownload(body?.url);
+        const job = collector.startVideoDownload(body?.url, { playback: body?.playback === true });
         sendJson(response, 202, { job });
       } catch (error) {
-        const code = error?.code === "invalid_url" ? "invalid_url" : "download_start_failed";
+        const code = ["invalid_url", "collector_busy"].includes(error?.code) ? error.code : "download_start_failed";
         sendJson(response, code === "invalid_url" ? 400 : 409, {
           error: code,
           message: error instanceof Error ? error.message : "无法开始视频下载。",
         });
       }
+    } else if (request.method === "DELETE" && /^\/v1\/downloads\/[0-9a-f-]{20,}$/iu.test(url.pathname)) {
+      const released = collector.releaseVideoPlayback(url.pathname.split("/").at(-1));
+      sendJson(response, released ? 200 : 409, released ? { ok: true } : { error: "not_playback_job" });
     } else if (request.method === "GET" && /^\/v1\/downloads\/[^/]+(?:\/file)?$/u.test(url.pathname)) {
       const match = url.pathname.match(/^\/v1\/downloads\/([^/]+)(\/file)?$/u);
       let jobId = "";

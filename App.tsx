@@ -192,6 +192,7 @@ function AppContent() {
   const [collectorError, setCollectorError] = useState<string | null>(null);
   const [downloadStates, setDownloadStates] = useState<Record<string, RecordDownloadState>>({});
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
+  const [batchDownloadActive, setBatchDownloadActive] = useState(false);
   const [appStyle, setAppStyle] = useState<AppStyle>(loadAppStyle);
   // 内容年志入口卡的地址；非空时以应用内 iframe 盖在工作台上（见 StoryFrame）
   const [storySrc, setStorySrc] = useState<string | null>(null);
@@ -496,6 +497,10 @@ function AppContent() {
   }
 
   function triggerAutoSync() {
+    if (batchDownloadActive) return;
+    // Returning from the search browser must not close its result/verification
+    // page to launch a foreground history sync.
+    if (activeView !== "sources" && dashboardOpen && dashboardView === "explore" && !storySrc) return;
     const token = collectorToken;
     if (!token || !shouldAutoSync({
       enabled: autoSyncEnabled,
@@ -940,12 +945,12 @@ function AppContent() {
     }
   }
 
-  async function loadRecordVideo(record: PersonalVideoRecord, signal: AbortSignal): Promise<Blob> {
+  async function loadRecordVideo(record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void): Promise<Blob> {
     if (!record.url) throw new LocalCollectorError("invalid_url", "该记录没有可用的抖音链接。");
     if (!collectorToken) {
       throw new LocalCollectorError("not_paired", "请先在“连接与采集”页面连接本地采集服务，再播放视频。");
     }
-    return loadCollectorVideo(collectorUrl, collectorToken, record.url, signal);
+    return loadCollectorVideo(collectorUrl, collectorToken, record.url, signal, onProgress);
   }
 
   function rememberDownloadJob(recordId: string, job: VideoDownloadJob) {
@@ -1171,6 +1176,7 @@ function AppContent() {
           }}
           onChangeView={setDashboardView}
           onDownloadRecord={downloadRecord}
+          onBatchDownloadActiveChange={setBatchDownloadActive}
           onLoadVideo={loadRecordVideo}
           commentsConnection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null}
           onOpenRecord={openRecord}

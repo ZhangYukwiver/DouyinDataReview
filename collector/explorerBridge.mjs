@@ -12,27 +12,29 @@ export class ExplorerBridge {
     this.pending = null;
     this.ownedContext = null;
     this.explorer = new DouyinExplorer(async () => {
-      let context = collector.contextHeadless ? collector.context : null;
+      // Reuse the logged-in collector, including ready manual and chat listeners.
+      // A second non-persistent Comet instance can crash on this host.
+      let context = collector.context;
       if (!context) {
-        // Explore runs headless on the shared profile; an idle visible collector window is swapped out first.
         const before = collector.getStatus();
         context = await collector.ensureBrowser({ headless: true });
         this.ownedContext = context;
+        context.on("close", () => { if (this.ownedContext === context) this.ownedContext = null; });
         if (collector.getStatus().state === "launching_browser") collector.updateStatus({ state: before.state, message: before.message });
       }
-      // Headless pages cannot show Douyin's login dialog, so require a prior visible login.
-      if (!await collector.hasLoginSession(context, null)) throw new ExploreError("login_required", "搜索在后台无头运行，请先在手动监听中登录一次抖音。");
+      if (!await collector.hasLoginSession(context, null)) throw new ExploreError("login_required", "请先在手动监听中登录抖音，再重试搜索。");
       return context;
     });
   }
   get busy() { return this.pending !== null; }
   collectorBusy() {
     const current = this.collector;
-    return Boolean(current.syncPromise || (current.observationPromise && !current.isChatReceiving?.()) || current.accountSwitchPromise || current.hasActiveVideoDownload());
+    const receiving = current.isChatReceiving?.() || current.isManualObserving?.();
+    return Boolean(current.syncPromise || (current.observationPromise && !receiving) || current.accountSwitchPromise || current.hasActiveVideoDownload());
   }
   async run(input, operation = "read", signal) {
     if (this.busy || this.collectorBusy()) throw new ExploreError("collector_busy", "采集器正在执行任务，请停止采集或等待完成后再探索。");
-    const work = Promise.resolve().then(() => operation === "interact" ? this.explorer.interact(input) : operation === "video" ? this.video(input, signal) : this.explorer.read(input));
+    const work = Promise.resolve().then(() => operation === "interact" ? this.explorer.interact(input) : operation === "video" ? this.video(input, signal) : this.explorer.read(input, { signal }));
     this.pending = work;
     try { return await work; } finally { if (this.pending === work) this.pending = null; }
   }

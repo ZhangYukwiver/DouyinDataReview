@@ -93,6 +93,9 @@ describe("story data", () => {
     expect(data.year).toBe(2026);
     expect(buildStoryData({ ...model, year: 2030 }, { records: { watch_history: [], liked_videos: [], favorite_videos: [] }, chatMessages: [], chatConversations: [], source: "archive", updatedAt: null, warnings: [] }).year).toBe(2030);
     expect(data.peakDay).toBe("2026-03-01");
+    expect(data.days).toHaveLength(8); // one entry per active day, in date order
+    expect(data.days[0]).toEqual(["2026-01-05", 1]);
+    expect(data.days.find(([day]) => day === "2026-03-01")).toEqual(["2026-03-01", 2]);
     expect(data.peakHour).toBe(new Date("2026-01-05T09:00:00+08:00").getHours());
     expect(data.months[0]).toBe(2);
     expect(data.months[2]).toBe(4);

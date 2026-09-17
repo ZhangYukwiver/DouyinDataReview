@@ -119,5 +119,11 @@ describe("collector server runtime", () => {
     });
     expect(unknownDownload.status).toBe(404);
     await expect(unknownDownload.json()).resolves.toMatchObject({ error: "download_job_not_found" });
+
+    const releaseUrl = `${runtime.baseUrl}/v1/downloads/12345678-1234-1234-1234-123456789abc`;
+    expect((await fetch(releaseUrl, { method: "DELETE" })).status).toBe(401);
+    const release = await fetch(releaseUrl, { method: "DELETE", headers: { Authorization: `Bearer ${payload.token}` } });
+    expect(release.status).toBe(200);
+    await expect(release.json()).resolves.toEqual({ ok: true });
   });
 });

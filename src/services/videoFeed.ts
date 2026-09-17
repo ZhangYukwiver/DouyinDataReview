@@ -7,6 +7,24 @@ export function buildVideoFeed(records: PersonalVideoRecord[], initial: Personal
   return videos.some((item) => item.id === initial.id) ? videos : [initial, ...videos];
 }
 
+/** Bound the wheel lock even when trackpad momentum never becomes fully idle. */
+export function createVideoWheelGesture() {
+  let last = -Infinity, switched = -Infinity, delta = 0, consumed = false;
+  return (amount: number, now: number): number => {
+    if (now - last > 180 || (consumed && (now - switched >= 650 ||
+      (Math.sign(amount) !== Math.sign(delta) && Math.abs(amount) >= 8 && now - switched >= 220)))) {
+      delta = 0; consumed = false;
+    }
+    last = now;
+    if (consumed) return 0;
+    delta += amount;
+    if (Math.abs(delta) < 65) return 0;
+    consumed = true;
+    switched = now;
+    return Math.sign(delta);
+  };
+}
+
 /** A previous media/comment request can still be finishing in the shared collector. */
 export async function waitForCollector<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
   const deadline = Date.now() + 60_000;

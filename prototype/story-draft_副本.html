@@ -350,43 +350,101 @@
     .board-head small { color: var(--fog); letter-spacing: .04em; }
     .board-foot { display: flex; align-items: center; gap: 9px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--mist); color: var(--fog); font: 400 10px var(--mono); }
 
-    /* 01 streams */
-    .stream-row { display: grid; grid-template-columns: 120px 1fr 52px; gap: 14px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--linen); }
-    .stream-row:last-of-type { border-bottom: 0; }
-    .stream-name { color: var(--charcoal); font-size: 13px; font-weight: 500; }
-    .stream-name small { display: block; margin-top: 2px; color: var(--fog); font: 9px var(--mono); letter-spacing: .06em; }
+    /* 01 · the loom — an overview, not a dashboard: the four source streams on the left (what each one is, what every record carries),
+       the six chapters they feed on the right, and a ribbon in between for every feed */
+    #sample .chapter-inner, #time .chapter-inner { max-width: 1400px; }
+    .ch-split { display: grid; grid-template-columns: 1fr minmax(0, 520px); gap: 40px; align-items: end; }
+    .ch-split .lead { margin-top: 0; padding-bottom: 4px; }
+    .map-head { display: flex; justify-content: space-between; align-items: baseline; margin-top: 34px; padding-bottom: 12px; border-bottom: 1px solid var(--mist); color: var(--charcoal); font: 400 10px var(--mono); letter-spacing: .18em; }
+    .map-head small { color: var(--fog); letter-spacing: .04em; }
+    .map { position: relative; display: grid; grid-template-columns: minmax(320px, 400px) minmax(120px, 1fr) minmax(280px, 330px); align-items: center; margin-top: 20px; --watch: #41a1cf; --liked: #c8705f; --favorite: #c39a3a; --chat: #5f8e78; }
+    .src-col { grid-column: 1; display: grid; gap: 8px; }
+    .carry { padding-bottom: 12px; border-bottom: 1px dashed var(--mist); color: var(--ash); font: 400 10px var(--mono); letter-spacing: .04em; }
+    .src { display: grid; grid-template-columns: 42px 1fr; gap: 14px; align-items: start; padding: 8px 18px 8px 0; transition: opacity .4s ease; }
+    .src.off { opacity: .45; }
+    .k-watch { --c: var(--watch); --t: rgba(65,161,207,.16); } .k-liked { --c: var(--liked); --t: rgba(200,112,95,.14); } .k-favorite { --c: var(--favorite); --t: rgba(195,154,58,.17); } .k-chat { --c: var(--chat); --t: rgba(95,142,120,.15); }
+    .src .glyph { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: var(--t); color: var(--c); box-shadow: inset 0 0 0 1px rgba(255,255,255,.65); }
+    .src .glyph svg { width: 20px; height: 20px; }
+    .src b { display: block; color: var(--graphite); font-size: 14px; font-weight: 500; }
+    .src b small { margin-left: 8px; color: var(--fog); font: 400 9px var(--mono); letter-spacing: .16em; }
+    .src p { margin: 4px 0 0; color: var(--ash); font-size: 12px; line-height: 1.7; }
+    .flds { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+    .flds i { padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(44,44,44,.1); background: rgba(255,255,255,.45); color: var(--charcoal); font: 9px var(--mono); font-style: normal; }
+    .src .flds i { border-color: transparent; background: var(--t); }
+    .loom { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+    .loom path { fill: none; stroke: var(--c); stroke-width: 1.5; opacity: .5; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 1.3s cubic-bezier(.2,.7,.2,1) calc(var(--i) * 40ms), opacity .3s ease, stroke-width .3s ease; }
+    .loom path.watch { --c: var(--watch); } .loom path.liked { --c: var(--liked); } .loom path.favorite { --c: var(--favorite); } .loom path.chat { --c: var(--chat); }
+    .in .loom path { stroke-dashoffset: 0; }
+    .loom path.off { display: none; }
+    .loom circle { fill: var(--c, var(--fog)); stroke: var(--parchment); stroke-width: 1.5; opacity: 0; transition: opacity .5s ease .4s; }
+    .loom circle.watch { --c: var(--watch); } .loom circle.liked { --c: var(--liked); } .loom circle.favorite { --c: var(--favorite); } .loom circle.chat { --c: var(--chat); }
+    .in .loom circle { opacity: 1; }
+    .map.dim .loom path { opacity: .08; }
+    .map.dim .loom path.hl { opacity: .95; stroke-width: 2; }
+    .dst-col { grid-column: 3; display: grid; gap: 9px; }
+    .dst { display: grid; grid-template-columns: 30px 1fr; column-gap: 12px; align-items: center; padding: 9px 14px; border: 1px solid var(--mist); border-radius: 12px; background: var(--paper); color: inherit; text-decoration: none; transition: transform .25s ease, border-color .25s ease; }
+    .dst:hover { transform: translateX(3px); border-color: var(--blue); }
+    .dst .mo { grid-row: span 2; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: rgba(44,44,44,.05); color: var(--charcoal); }
+    .dst .mo svg { width: 18px; height: 18px; }
+    .dst small { color: var(--ash); font: 400 9px var(--mono); letter-spacing: .18em; }
+    .dst small b { color: var(--blue); font-weight: 400; }
+    .dst em { display: block; margin-top: 2px; color: var(--graphite); font: 400 13px var(--serif); font-style: normal; letter-spacing: -.01em; }
+    .map-foot { margin: 18px 0 0; color: var(--fog); font: 400 11px/1.8 var(--mono); }
+    .map-foot b { color: var(--ash); font-weight: 400; }
+    .time-foot .note { margin-top: 6px; }
     .track { height: 4px; border-radius: 2px; overflow: hidden; background: var(--linen); }
     .fill { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--graphite); transition: width 1.2s cubic-bezier(.2,.7,.2,1) .2s; }
     .fill.blue { background: var(--blue); }
     .in .fill { width: var(--w); }
-    .stream-count { color: var(--ink); text-align: right; font: 400 15px var(--mono); }
 
-    /* 01 · terms under each stream + how concentrated each stream is */
-    #sample .chapter-inner { max-width: 1400px; }
-    .stream-row { grid-template-rows: auto auto; row-gap: 7px; padding: 11px 0; }
-    .stream-terms { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-    .stream-terms i { padding: 2px 6px; border-radius: 4px; color: var(--charcoal); background: var(--linen); font: 10px var(--mono); font-style: normal; }
-    .stream-terms small { color: var(--fog); font: 10px var(--mono); }
-    .conc { margin-top: 12px; }
-    .conc .ml { grid-template-columns: 72px 1fr 48px; }
-    .conc-note { margin-top: 14px; }
-
-    /* 02 time */
-    .month-bars { height: 170px; display: grid; grid-template-columns: repeat(12, 1fr); gap: 9px; align-items: end; padding-bottom: 16px; border-bottom: 1px solid var(--mist); }
-    .month { display: grid; grid-template-rows: 1fr auto; gap: 9px; height: 100%; align-items: end; text-align: center; }
-    .month i { display: block; width: 68%; height: 0; margin: 0 auto; border-radius: 2px 2px 0 0; background: var(--fog); transition: height 1s cubic-bezier(.2,.7,.2,1) calc(var(--d) * 60ms); }
-    .month.peak i { background: var(--blue); }
-    .in .month i { height: var(--h); }
-    .month em { color: var(--fog); font: 8px var(--mono); font-style: normal; }
-    .hour-dots { display: grid; grid-template-columns: repeat(24, 1fr); gap: 5px; margin-top: 18px; }
-    .hour-dots i { width: 7px; height: 7px; margin: auto; border-radius: 50%; background: var(--graphite); opacity: 0; transform: scale(.3); transition: all .5s ease calc(var(--d) * 30ms); }
-    .in .hour-dots i { opacity: var(--o); transform: scale(var(--s)); }
-    .hour-dots i.hot { background: var(--blue); }
-    .hour-labels { display: flex; justify-content: space-between; margin-top: 8px; color: var(--fog); font: 8px var(--mono); }
-    .time-sources { display: grid; gap: 10px; margin-top: 22px; }
-    .ts-row { display: flex; align-items: center; gap: 10px; color: var(--ash); font-size: 12px; }
-    .ts-row code { flex: 0 0 132px; color: var(--charcoal); font: 9px var(--mono); letter-spacing: .04em; }
-    .ts-row b { margin-left: auto; color: var(--ink); font: 12px var(--mono); font-weight: 400; }
+    /* 02 · a calendar of the days that carry records (one block per month in the range) and the 24 hours as a clock face */
+    .time-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: stretch; margin-top: 38px; }
+    .cal-board { display: grid; grid-template-rows: auto 1fr auto; padding: 22px 26px 18px; }
+    .cal-legend { align-self: end; }
+    .cal { display: flex; flex-wrap: wrap; gap: 20px 26px; --cell: 22px; --gap: 4px; }
+    .cal-m { display: grid; gap: 7px; align-content: start; }
+    .cal-m h5 { margin: 0 0 2px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; color: var(--charcoal); font: 500 11px var(--sans); }
+    .cal-m h5 small { color: var(--fog); font: 400 9px var(--mono); letter-spacing: .04em; }
+    .cal-wk { display: grid; grid-template-columns: repeat(7, var(--cell)); gap: var(--gap); color: var(--fog); font: 8px var(--mono); text-align: center; }
+    .cal-d { display: grid; grid-template-columns: repeat(7, var(--cell)); grid-auto-rows: var(--cell); gap: var(--gap); }
+    .cal-d i { position: relative; border-radius: 4px; background: rgba(44,44,44,.07); opacity: 0; transform: scale(.4); transition: opacity .5s ease calc(var(--d) * 5ms), transform .5s cubic-bezier(.2,.7,.2,1) calc(var(--d) * 5ms); }
+    .in .cal-d i { opacity: 1; transform: none; }
+    .cal-d .pad { visibility: hidden; }
+    .cal-d i.out { background: transparent; box-shadow: inset 0 0 0 1px rgba(44,44,44,.07); }
+    .cal-d i.on { background: rgba(65,161,207, var(--a)); }
+    .cal-d i.peak { z-index: 1; background: var(--cerulean); box-shadow: 0 0 0 2px var(--parchment), 0 0 0 3.5px var(--cerulean); }
+    .cal-d i b { display: none; position: absolute; inset: 0; place-content: center; color: rgba(23,23,23,.62); font: 400 9px var(--mono); }
+    .cal.big .cal-d i b { display: grid; }
+    .cal-d i.peak b { color: #fff; }
+    .cal-empty { margin: 0; color: var(--ash); font-size: 13px; line-height: 1.7; }
+    .cal-legend { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--mist); color: var(--ash); font: 400 10px/1.7 var(--mono); }
+    .cal-legend .scale { flex: none; color: var(--fog); }
+    .cal-legend .scale i { display: inline-block; width: 9px; height: 9px; margin: 0 2px; border-radius: 2px; vertical-align: -1px; background: rgba(65,161,207, var(--a)); }
+    .clock-board { display: grid; align-content: start; gap: 12px; padding: 22px 24px 20px; }
+    .clock { position: relative; width: 100%; max-width: 272px; margin: 6px auto 0; }
+    .clock svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .clock .ring { fill: none; stroke: var(--mist); stroke-width: 1; }
+    .clock .night { fill: none; stroke: rgba(31,31,41,.08); stroke-width: 10; }
+    .clock .hb { stroke: var(--graphite); stroke-width: 6; stroke-linecap: round; opacity: .26; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset .9s cubic-bezier(.2,.7,.2,1) calc(var(--i) * 28ms); }
+    .in .clock .hb { stroke-dashoffset: 0; }
+    .clock .hb.hot { opacity: .58; }
+    .clock .hb.peak { stroke: var(--blue); opacity: 1; }
+    .clock text { fill: var(--fog); font: 9px var(--mono); }
+    .clock .core { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none; }
+    .clock .core strong { color: var(--ink); font: 300 40px/1 var(--serif); letter-spacing: -.03em; }
+    .clock .core small { display: block; margin-top: 8px; color: var(--ash); font: 9px var(--mono); letter-spacing: .16em; }
+    .dn { display: grid; gap: 8px; margin-top: 6px; }
+    .dn .bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(44,44,44,.09); }
+    .dn .bar i { display: block; height: 100%; width: 0; transition: width 1.2s cubic-bezier(.2,.7,.2,1) .3s; }
+    .dn .bar .day { background: var(--fog); } .dn .bar .night { background: var(--graphite); }
+    .in .dn .bar i { width: var(--w); }
+    .dn .lg { display: flex; justify-content: space-between; color: var(--ash); font: 10px var(--mono); }
+    .dn .lg b { color: var(--ink); font-weight: 400; }
+    .time-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 40px; align-items: center; margin-top: 22px; }
+    .time-sources { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+    .ts-row { display: flex; align-items: baseline; gap: 10px; color: var(--ash); font-size: 12px; }
+    .ts-row code { color: var(--charcoal); font: 9px var(--mono); letter-spacing: .04em; }
+    .ts-row b { color: var(--ink); font: 12px var(--mono); font-weight: 400; }
 
     /* 03 kept */
     .venn { position: relative; width: 320px; height: 260px; margin: 0 auto; }
@@ -684,14 +742,14 @@
     /* tier B · bento cells, content cards, share card */
     .bento-cell, .card, .share-sample { background: linear-gradient(150deg, rgba(255,255,255,.5), rgba(255,255,255,.24)); border-color: rgba(255,255,255,.74); box-shadow: 0 0 0 1px rgba(222,226,222,.5), inset 0 1px 0 rgba(255,255,255,.9), rgba(0,0,0,.05) 0 4px 12px; backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2); }
     /* tier C · small tiles, pills, notes */
-    .pm, .music-line, .caveat, .tag { background: linear-gradient(150deg, rgba(255,255,255,.34), rgba(255,255,255,.12)); border-color: rgba(255,255,255,.66); box-shadow: 0 0 0 1px rgba(222,226,222,.42), inset 0 1px 0 rgba(255,255,255,.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    .pm, .music-line, .caveat, .tag, .dst { background: linear-gradient(150deg, rgba(255,255,255,.34), rgba(255,255,255,.12)); border-color: rgba(255,255,255,.66); box-shadow: 0 0 0 1px rgba(222,226,222,.42), inset 0 1px 0 rgba(255,255,255,.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
     .caveat { border-left-color: var(--blue); }
     /* the one saturated surface stays saturated, but it is glass too */
     .bento-cell.cerulean { background: linear-gradient(150deg, rgba(0,129,192,.92), rgba(0,129,192,.72)); border-color: rgba(255,255,255,.42); box-shadow: 0 0 0 1px rgba(0,129,192,.45), inset 0 1px 0 rgba(255,255,255,.4), rgba(0,80,120,.18) 0 8px 22px; }
     /* inner hairlines and tracks read through the glass */
     .track, .ratio-track { background: rgba(44,44,44,.09); }
-    .stream-row, .key-row, .echo-row, .conv, .evidence-row { border-bottom-color: rgba(44,44,44,.08); }
-    .board-foot, .conv-list, .ratio, .month-bars, .tag-line, .recent { border-color: rgba(44,44,44,.12); }
+    .key-row, .echo-row, .conv, .evidence-row { border-bottom-color: rgba(44,44,44,.08); }
+    .board-foot, .conv-list, .ratio, .strip-head, .cal-legend, .tag-line, .recent { border-color: rgba(44,44,44,.12); }
     .card-cover b { background: rgba(255,255,255,.78); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
     .card:hover, .tag:hover { border-color: rgba(65,161,207,.8); }
 
@@ -724,6 +782,9 @@
       .rail button span { display: none; }
       .hero { padding: 0 8% 16vh; }
       .cols, .cols.rev, .signature { grid-template-columns: 1fr; gap: 36px; }
+      .ch-split, .time-foot, .time-grid, .map { grid-template-columns: 1fr; gap: 18px; }
+      .src-col, .dst-col { grid-column: auto; }
+      .loom { display: none; }
       .cards { grid-template-columns: repeat(2, 1fr); }
       .kept-grid { grid-template-columns: 1fr; gap: 28px; }
       .venn-col, .depth, .cards .card:nth-child(even) { margin-top: 0; }
@@ -833,39 +894,45 @@
 
     <section class="chapter" id="sample" data-wash="dawn">
       <div class="chapter-inner">
-        <div class="ch-head" data-reveal>
-          <div class="meta-line"><b>01</b> THE SAMPLE</div>
-          <h2>一份样本，四种笔迹。</h2>
-        </div>
-        <div class="cols">
-          <div data-reveal style="--i:1">
-            <p class="lead">观看历史、喜欢、收藏、聊天，是四种笔迹不同的记录。年志只写已经记下的事，不去推断没有被记录的生活。</p>
-            <div class="metrics">
-              <div class="metric"><strong data-slot="unique" data-count="21">0</strong><span>独立内容 · 去重后</span></div>
-              <div class="metric"><strong data-slot="days" data-count="28">0</strong><span>活跃日</span></div>
-              <div class="metric"><strong data-slot="chat-n">—</strong><span data-slot="chat-label">聊天消息 · 待采集</span></div>
-            </div>
-            <div data-slot="conc-block">
-              <p class="chips-head" style="margin-top:26px">CONCENTRATION · 覆盖一半需要多少词条</p>
-              <div class="mini-lines conc" data-slot="concentration">
-                <div class="ml"><span>看过</span><span class="track"><i class="fill blue" style="--w:38%"></i></span><b>34 个</b></div>
-                <div class="ml"><span>喜欢</span><span class="track"><i class="fill" style="--w:100%"></i></span><b>90 个</b></div>
-                <div class="ml"><span>收藏</span><span class="track"><i class="fill" style="--w:27%"></i></span><b>24 个</b></div>
-                <div class="ml"><span>聊天</span><span class="track"><i class="fill" style="--w:0%"></i></span><b>—</b></div>
-              </div>
-              <p class="note conc-note" data-slot="concentration-note">条越短越集中：只需要更少的词条，就能覆盖一半的记录。</p>
-            </div>
-            <p class="note"><b data-slot="range">这一卷记录的是 2025-01-03 到 2025-12-20 这段时间</b>，<span data-slot="source">数字来自演示快照</span>。</p>
+        <div class="ch-split" data-reveal>
+          <div class="ch-head">
+            <div class="meta-line"><b>01</b> THE SAMPLE</div>
+            <h2>一份样本，四种笔迹。</h2>
           </div>
-          <div class="board" data-reveal style="--i:2">
-            <div class="board-head"><span>FOUR STREAMS</span><small data-slot="events">34 video events</small></div>
-            <div class="stream-row" data-slot="stream-watch"><span class="stream-name">观看历史<small>WATCH</small></span><span class="track"><i class="fill blue" style="--w:100%"></i></span><b class="stream-count" data-count="20">0</b><div class="stream-terms" data-slot="terms-watch"><i>#示例话题一</i><i>#示例话题二</i><i>#示例话题三</i><small>共 2,756 个不同话题，前 12 个覆盖了 31% 的记录，覆盖一半需要 34 个。</small></div></div>
-            <div class="stream-row" data-slot="stream-liked"><span class="stream-name">喜欢<small>LIKED</small></span><span class="track"><i class="fill" style="--w:40%"></i></span><b class="stream-count" data-count="8">0</b><div class="stream-terms" data-slot="terms-liked"><i>#示例话题一</i><i>#示例话题四</i><i>#示例话题五</i><small>共 2,361 个不同话题，前 12 个覆盖了 18% 的记录，覆盖一半需要 90 个。</small></div></div>
-            <div class="stream-row" data-slot="stream-favorite"><span class="stream-name">收藏<small>FAVORITE</small></span><span class="track"><i class="fill" style="--w:30%"></i></span><b class="stream-count" data-count="6">0</b><div class="stream-terms" data-slot="terms-favorite"><i>#示例话题六</i><i>#示例话题二</i><i>#示例话题七</i><small>共 318 个不同话题，前 12 个覆盖了 33% 的记录，覆盖一半需要 24 个。</small></div></div>
-            <div class="stream-row" data-slot="stream-chat"><span class="stream-name">聊天<small>CHAT</small></span><span class="track"><i class="fill" style="--w:3%"></i></span><b class="stream-count">—</b><div class="stream-terms" data-slot="terms-chat"><small>等读取聊天后再统计。</small></div></div>
-            <div class="board-foot">▤ <span>只读取一次，不持续监听，也不上传云端。</span></div>
+          <p class="lead">观看历史、喜欢、收藏、聊天，是四种笔迹不同的记录。年志只写已经记下的事，不去推断没有被记录的生活。</p>
+        </div>
+        <div class="map-head" data-reveal style="--i:1"><span>FOUR STREAMS → SIX CHAPTERS · 四条流各自记着什么，又会走进哪几章</span><small>悬停一条流，看它走向哪几章</small></div>
+        <div class="map" id="map" data-reveal style="--i:2">
+          <div class="src-col">
+            <div class="carry">每条内容记录都带着<div class="flds"><i>标题与封面</i><i>创作者</i><i>话题标签</i><i>行为时间</i><i>时长</i><i>发布时间</i><i>点赞数</i><i>背景音乐</i><i>图文还是视频</i></div></div>
+            <div class="src k-watch" data-key="watch" data-feeds="time kept mix evidence signature">
+              <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+              <div><b>观看历史<small>WATCH</small></b><p>刷到过、停留过的内容，连看到哪里也一起记着。</p><div class="flds"><i>看到哪里</i><i>停了多久</i></div></div>
+            </div>
+            <div class="src k-liked" data-key="liked" data-feeds="time kept mix echo evidence signature">
+              <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/></svg></span>
+              <div><b>喜欢<small>LIKED</small></b><p>点过赞的内容，是你主动留下的第一个记号。</p></div>
+            </div>
+            <div class="src k-favorite" data-key="favorite" data-feeds="time kept mix evidence signature">
+              <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>
+              <div><b>收藏<small>FAVORITE</small></b><p>特意收起来、打算回头再看的那些。</p></div>
+            </div>
+            <div class="src k-chat" data-key="chat" data-feeds="echo evidence signature">
+              <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg></span>
+              <div><b>聊天<small>CHAT</small></b><p>和朋友的私信，只读一次；群聊正文不进来。</p><div class="flds"><i>发送时间</i><i>文字 / 图片 / 表情 / 分享 / 通话</i><i>分享卡的标题与封面</i><i>好友还是群</i></div></div>
+            </div>
+          </div>
+          <svg class="loom" id="loom" aria-hidden="true"></svg>
+          <div class="dst-col">
+            <a class="dst" href="#time" data-target="time"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><circle cx="9" cy="15" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1.2" fill="currentColor" stroke="none"/></svg></span><small><b>02</b> · 时间</small><em>常来的日子，常来的时辰</em></a>
+            <a class="dst" href="#kept" data-target="kept"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9.5" r="5.5"/><circle cx="15" cy="9.5" r="5.5"/><circle cx="12" cy="14.5" r="5.5"/></svg></span><small><b>03</b> · 留下</small><em>三个环的交集，和看完的深度</em></a>
+            <a class="dst" href="#mix" data-target="mix"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="9" r="4.2"/><circle cx="16.5" cy="7.5" r="2.6"/><circle cx="13.5" cy="16" r="3.2"/></svg></span><small><b>04</b> · 组成</small><em>话题、来路，与质地</em></a>
+            <a class="dst" href="#echo" data-target="echo"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h10a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H8l-3 3v-3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M17 9h2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2v3l-3-3h-4"/></svg></span><small><b>05</b> · 回声</small><em>九种消息形态，两种边界</em></a>
+            <a class="dst" href="#evidence" data-target="evidence"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 11h16M4 16h9"/></svg></span><small><b>06</b> · 证据</small><em>台账与边界</em></a>
+            <a class="dst" href="#signature" data-target="signature"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4" stroke-dasharray="2.2 2.2"/></svg></span><small><b>07</b> · 落款</small><em>一个正在成形的自己</em></a>
           </div>
         </div>
+        <p class="map-foot"><b data-slot="range">这一卷记录的是 2025-01-03 到 2025-12-20 这段时间</b>，<span data-slot="source">数字来自演示快照</span>。▤ 只读取一次，不持续监听，也不上传云端。</p>
       </div>
     </section>
 
@@ -887,43 +954,31 @@
 
     <section class="chapter" id="time" data-wash="dawn">
       <div class="chapter-inner">
-        <div class="ch-head" data-reveal>
-          <div class="meta-line"><b>02</b> WHEN YOU ARRIVED</div>
-          <h2>常来的月份，常来的时辰。</h2>
-        </div>
-        <div class="cols rev">
-          <div class="board" data-reveal style="--i:1">
-            <div class="board-head"><span>MONTHLY TRACE</span><small data-slot="months-label">2025 · 12 months</small></div>
-            <div class="month-bars">
-              <div class="month" style="--d:0"><i style="--h:22%"></i><em>1</em></div>
-              <div class="month" style="--d:1"><i style="--h:38%"></i><em>2</em></div>
-              <div class="month" style="--d:2"><i style="--h:52%"></i><em>3</em></div>
-              <div class="month" style="--d:3"><i style="--h:65%"></i><em>4</em></div>
-              <div class="month peak" style="--d:4"><i style="--h:72%"></i><em>5</em></div>
-              <div class="month" style="--d:5"><i style="--h:56%"></i><em>6</em></div>
-              <div class="month" style="--d:6"><i style="--h:42%"></i><em>7</em></div>
-              <div class="month peak" style="--d:7"><i style="--h:88%"></i><em>8</em></div>
-              <div class="month" style="--d:8"><i style="--h:60%"></i><em>9</em></div>
-              <div class="month" style="--d:9"><i style="--h:48%"></i><em>10</em></div>
-              <div class="month" style="--d:10"><i style="--h:33%"></i><em>11</em></div>
-              <div class="month" style="--d:11"><i style="--h:26%"></i><em>12</em></div>
-            </div>
-            <div class="board-head" style="margin:20px 0 0"><span>DAY / NIGHT</span><small>24h</small></div>
-            <div id="hourDots" class="hour-dots"></div>
-            <div class="hour-labels"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+        <div class="ch-split" data-reveal>
+          <div class="ch-head">
+            <div class="meta-line"><b>02</b> WHEN YOU ARRIVED</div>
+            <h2>常来的日子，常来的时辰。</h2>
           </div>
-          <div data-reveal style="--i:2">
-            <p class="lead">每条记录的行为时间都标注了来源。发布时间是内容自己的时间，不是你的行为，不会被画进这条线。</p>
-            <div class="metrics">
-              <div class="metric"><strong data-slot="peak-hour">15:00</strong><span>最常来的时刻</span></div>
-              <div class="metric"><strong data-slot="peak-day">2025-05-05</strong><span>最密集的一天</span></div>
-            </div>
-            <div class="time-sources">
-              <div class="ts-row"><code>PLATFORM</code><span>平台行为时间</span><b data-slot="ts-platform">33 条</b></div>
-              <div class="ts-row"><code>ARCHIVE</code><span>归档动作时间</span><b data-slot="ts-archive">0 条</b></div>
-              <div class="ts-row"><code>NO TIME</code><span>暂无可靠时间 · 不入轴</span><b data-slot="ts-unknown">1 条</b></div>
-            </div>
-            <p class="note">没有可靠时间的内容仍留在清单里，只是不会被硬塞进时间轴。</p>
+          <p class="lead">每条记录都标了行为时间的来源。发布时间是内容自己的时间，不算你的行为，所以不画进这本年历。</p>
+        </div>
+        <div class="time-grid">
+          <div class="board cal-board" data-reveal style="--i:1">
+            <div class="board-head"><span>CALENDAR · 有记录的日子</span><small data-slot="months-label">2025-01-03 → 2025-12-20</small></div>
+            <div class="cal" id="calendar"></div>
+            <div class="cal-legend"><span data-slot="cal-sum">从 01-03 到 12-20 的 352 天里，有 28 天留下了记录。</span><span class="scale">少 <i style="--a:.18"></i><i style="--a:.45"></i><i style="--a:.72"></i><i style="--a:1"></i> 多</span></div>
+          </div>
+          <div class="board clock-board" data-reveal style="--i:2">
+            <div class="board-head"><span>24 HOURS · 常来的时刻</span><small>ASIA/SHANGHAI</small></div>
+            <div class="clock"><svg id="clockSvg" viewBox="0 0 300 300" aria-hidden="true"></svg><div class="core"><strong data-slot="peak-hour">15:00</strong><small>最常来的时刻</small></div></div>
+            <div class="dn"><div class="bar"><i class="day" style="--w:62%"></i><i class="night" style="--w:38%"></i></div><div class="lg"><span>白天 <b data-slot="dn-day">62%</b></span><span>夜里 20:00–05:00 <b data-slot="dn-night">38%</b></span></div></div>
+          </div>
+        </div>
+        <div class="time-foot" data-reveal style="--i:3">
+          <p class="note"><b data-slot="peak-day">最密集的一天是 2025-05-05，那天留下了 9 条记录。</b> 没有可靠时间的内容仍留在清单里，只是不会硬塞进这本年历。</p>
+          <div class="time-sources">
+            <div class="ts-row"><code>PLATFORM</code><span>平台行为时间</span><b data-slot="ts-platform">33 条</b></div>
+            <div class="ts-row"><code>ARCHIVE</code><span>归档动作时间</span><b data-slot="ts-archive">0 条</b></div>
+            <div class="ts-row"><code>NO TIME</code><span>暂无可靠时间 · 不进年历</span><b data-slot="ts-unknown">1 条</b></div>
           </div>
         </div>
       </div>
@@ -1412,13 +1467,6 @@
     }, { threshold: [0.2, 0.5] });
     chapters.forEach((c) => chIo.observe(c));
 
-    /* ---------- 24h dots ---------- */
-    $("#hourDots").innerHTML = Array.from({ length: 24 }, (_, i) => {
-      const w = .25 + ((i * 17) % 70) / 100;
-      const hot = (i >= 14 && i <= 16) || i >= 21 ? " class=hot" : "";
-      return `<i${hot} style="--o:${w.toFixed(2)};--s:${(0.6 + w * .55).toFixed(2)};--d:${i}"></i>`;
-    }).join("");
-
     /* ---------- ◐ in the nav: step through the five paintings by hand ---------- */
     $("#skyBtn").addEventListener("click", () => { heroSky = (heroSky + 1) % 5; applySky(); });
 
@@ -1589,6 +1637,122 @@
     }
     drawRings($('[data-slot="g3-rings"]'), [["看过", 20], ["喜欢", 8], ["收藏", 6]]);
 
+    /* ---------- 02 · calendar: one block per month inside the recorded range, Monday first; a day's tint follows √(count / busiest day)
+       so a few very busy days do not wash out the rest. Cell size comes from the box width: ≥ 24px shows the day numbers, ≥ 18px the weekday row. ---------- */
+    const MONTH_NAMES = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
+    const pad2 = (n) => String(n).padStart(2, "0");
+    function drawCalendar(box, days, range, peakDay) {
+      if (!box) return;
+      box.textContent = "";
+      box.classList.remove("big");
+      if (!range) { box.append(el("p", "cal-empty", "这一卷里的记录没有可靠的行为时间，画不出年历。")); return; }
+      const counts = new Map(days), max = Math.max(1, ...days.map((d) => d[1]));
+      const months = [];
+      for (let y = +range[0].slice(0, 4), m = +range[0].slice(5, 7) - 1, endY = +range[1].slice(0, 4), endM = +range[1].slice(5, 7) - 1; y < endY || (y === endY && m <= endM); ) { months.push([y, m]); if (++m > 11) { m = 0; y += 1; } }
+      const cols = Math.min(months.length, 6), gapM = 26;
+      const cell = Math.max(11, Math.min(30, Math.floor((box.clientWidth - (cols - 1) * gapM) / cols / 7) - 4));
+      box.style.setProperty("--cell", `${cell}px`);
+      box.style.setProperty("--gap", `${cell < 14 ? 3 : 4}px`);
+      box.classList.toggle("big", cell >= 24);
+      let k = 0, lastYear = null;
+      months.forEach(([y, m]) => {
+        const block = el("div", "cal-m"), head = el("h5"), dim = new Date(y, m + 1, 0).getDate();
+        let total = 0;
+        for (let d = 1; d <= dim; d++) total += counts.get(`${y}-${pad2(m + 1)}-${pad2(d)}`) || 0;
+        head.append(el("span", "", `${y !== lastYear ? `${y} 年` : ""}${MONTH_NAMES[m]}`), el("small", "", total ? `${total.toLocaleString("zh-CN")} 条` : "没有记录"));
+        lastYear = y;
+        block.append(head);
+        if (cell >= 18) { const wk = el("div", "cal-wk"); "一二三四五六日".split("").forEach((ch) => wk.append(el("span", "", ch))); block.append(wk); }
+        const grid = el("div", "cal-d");
+        for (let i = (new Date(y, m, 1).getDay() + 6) % 7; i > 0; i--) grid.append(el("i", "pad"));
+        for (let d = 1; d <= dim; d++) {
+          const iso = `${y}-${pad2(m + 1)}-${pad2(d)}`, v = counts.get(iso) || 0, out = iso < range[0] || iso > range[1];
+          const c = el("i", out ? "out" : v ? "on" : "");
+          if (v) c.style.setProperty("--a", (.18 + .82 * Math.sqrt(v / max)).toFixed(2));
+          if (iso === peakDay) c.classList.add("peak");
+          c.style.setProperty("--d", k++);
+          c.title = `${iso} · ${v} 条`;
+          c.append(el("b", "", String(d)));
+          grid.append(c);
+        }
+        block.append(grid);
+        box.append(block);
+      });
+    }
+    /* 02 · clock face: 24 bars out of a base ring, length by count; the quiet night hours (20:00–05:00) get a faint inner arc */
+    function drawClock(svg, hours, peakHour) {
+      if (!svg) return;
+      const NS = "http://www.w3.org/2000/svg", max = Math.max(1, ...hours), C = 150, R0 = 74, R1 = 132;
+      const at = (h, r) => { const a = h / 24 * Math.PI * 2 - Math.PI / 2; return [C + r * Math.cos(a), C + r * Math.sin(a)]; };
+      const mk = (tag, attrs) => { const n = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v)); return n; };
+      svg.textContent = "";
+      const [nx, ny] = at(20, R0 - 16), [mx, my] = at(5, R0 - 16);
+      svg.append(mk("path", { class: "night", d: `M ${nx} ${ny} A ${R0 - 16} ${R0 - 16} 0 0 1 ${mx} ${my}` }));
+      svg.append(mk("circle", { class: "ring", cx: C, cy: C, r: R0 - 6 }));
+      hours.forEach((v, h) => {
+        const [x1, y1] = at(h, R0), [x2, y2] = at(h, R0 + (v ? Math.max(6, (R1 - R0) * v / max) : 3));
+        const line = mk("line", { x1, y1, x2, y2, pathLength: 1, class: h === peakHour ? "hb peak" : v / max >= .7 ? "hb hot" : "hb" });
+        line.style.setProperty("--i", h);
+        svg.append(line);
+      });
+      [0, 6, 12, 18].forEach((h) => { const [x, y] = at(h, R1 + 14); const t = mk("text", { x, y, "text-anchor": "middle", "dominant-baseline": "middle" }); t.textContent = pad2(h); svg.append(t); });
+    }
+    function dayNight(hours) {
+      const all = hours.reduce((s, v) => s + v, 0) || 1, night = hours.reduce((s, v, h) => s + (h >= 20 || h < 5 ? v : 0), 0);
+      $(".dn .day").style.setProperty("--w", `${Math.round((1 - night / all) * 100)}%`);
+      $(".dn .night").style.setProperty("--w", `${Math.round(night / all * 100)}%`);
+      $('[data-slot="dn-day"]').textContent = `${Math.round((1 - night / all) * 100)}%`;
+      $('[data-slot="dn-night"]').textContent = `${Math.round(night / all * 100)}%`;
+    }
+    /* ---------- 01 · the loom: one ribbon from each source stream to every chapter it feeds. Endpoints are measured from the DOM
+       (offsets inside #map, so the sheet's fit-scale does not matter), the stubs take their titles from the chapters themselves,
+       and hovering a stream or a chapter lifts just its ribbons ---------- */
+    const mapBox = $("#map"), loom = $("#loom");
+    function layoutLoom() {
+      if (!mapBox) return;
+      loom.setAttribute("viewBox", `0 0 ${mapBox.clientWidth} ${mapBox.clientHeight}`);
+      loom.textContent = "";
+      const NS = "http://www.w3.org/2000/svg", dot = (x, y, cls) => { const c = document.createElementNS(NS, "circle"); c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", 3.2); if (cls) c.setAttribute("class", cls); loom.append(c); };
+      let i = 0;
+      $$(".dst", mapBox).forEach((dst) => dot(dst.offsetLeft, dst.offsetTop + dst.offsetHeight / 2));
+      $$(".src", mapBox).forEach((src) => {
+        const x1 = src.offsetLeft + src.offsetWidth, y1 = src.offsetTop + src.offsetHeight / 2;
+        if (!src.classList.contains("off")) dot(x1, y1, src.dataset.key);
+        src.dataset.feeds.split(" ").forEach((t) => {
+          const dst = $(`.dst[data-target="${t}"]`, mapBox); if (!dst) return;
+          const x2 = dst.offsetLeft, y2 = dst.offsetTop + dst.offsetHeight / 2, mx = (x1 + x2) / 2;
+          const p = document.createElementNS(NS, "path");
+          p.setAttribute("d", `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`);
+          p.setAttribute("pathLength", 1);
+          p.setAttribute("class", `${src.dataset.key}${src.classList.contains("off") ? " off" : ""}`);
+          p.dataset.to = t;
+          p.style.setProperty("--i", i++);
+          loom.append(p);
+        });
+      });
+    }
+    if (mapBox) {
+      $$(".dst", mapBox).forEach((stub) => { const h2 = $(`#${stub.dataset.target} .ch-head h2`); if (h2) stub.querySelector("em").textContent = h2.textContent.replace(/。$/u, ""); });
+      layoutLoom();
+      new ResizeObserver(layoutLoom).observe(mapBox);
+      if (document.fonts) document.fonts.ready.then(layoutLoom);
+      const lift = (match) => { mapBox.classList.toggle("dim", !!match); $$("path", loom).forEach((p) => p.classList.toggle("hl", !!match && match(p))); };
+      mapBox.addEventListener("mouseover", (e) => { const src = e.target.closest(".src"), dst = e.target.closest(".dst"); lift(src ? (p) => p.classList.contains(src.dataset.key) : dst ? (p) => p.dataset.to === dst.dataset.target : null); });
+      mapBox.addEventListener("mouseleave", () => lift(null));
+    }
+    // demo year: 28 days with records across 2025, the busiest on 05-05 (matches the demo copy above)
+    const demoDays = (() => {
+      const per = [1, 2, 2, 3, 2, 2, 2, 4, 3, 2, 2, 2], out = new Map([["2025-05-05", 9]]);
+      per.forEach((n, m) => { for (let k = 0; k < n; k++) { const iso = `2025-${pad2(m + 1)}-${pad2(3 + (k * 7 + m * 2) % 26)}`; if (!out.has(iso)) out.set(iso, 1 + (k * 3 + m) % 6); } });
+      return [...out].sort((a, b) => a[0].localeCompare(b[0]));
+    })();
+    const demoHours = Array.from({ length: 24 }, (_, i) => (i === 15 ? 100 : Math.round(100 * (.25 + ((i * 17) % 70) / 100))));
+    var calArgs = [demoDays, ["2025-01-03", "2025-12-20"], "2025-05-05"]; // var: hydrate below reassigns it, resize redraws from it
+    drawCalendar($("#calendar"), ...calArgs);
+    addEventListener("resize", () => drawCalendar($("#calendar"), ...calArgs));
+    drawClock($("#clockSvg"), demoHours, 15);
+    dayNight(demoHours);
+
     /* ---------- 04 · roll: one sticky screen; every scrolled pixel slides the roll ROLL_SPEED pixels left.
        Each panel is set like the reference screen: one headline across the width — two tags in a line, the way "District Eindhoven"
        is two of the site's words — and a row of [standing word · cover · caption · standing word] filling the rest. The headline
@@ -1725,58 +1889,27 @@
       txt("hero-days", `${num(d.activeDays)} 个活跃日`);
       txt("hero-streams", `${streams} 条数据流`);
 
-      /* 01 sample */
+      /* 01 sample · the map carries no numbers; it only needs to know whether this snapshot has a chat stream at all */
       txt("streams-n", streams);
-      cnt("unique", d.unique);
-      cnt("days", d.activeDays);
-      if (c.chat === null) { cnt("chat-n", null); txt("chat-label", "聊天消息 · 备用文件不含聊天"); } else { cnt("chat-n", c.chat); txt("chat-label", "聊天消息 · 一次性读取"); }
       txt("range", d.range ? `这一卷记录的是 ${d.range[0]} 到 ${d.range[1]} 这段时间` : "这一卷里的记录没有可靠的行为时间");
       txt("source", `数字来自${d.source.kind === "archive" ? "导入的备用文件" : "本地采集器"}${stamp ? `，${stamp} 更新` : ""}`);
-      txt("events", `${num(c.events)} video events`);
-      const maxStream = Math.max(1, c.watch, c.liked, c.favorite, c.chat || 0);
-      [["stream-watch", c.watch], ["stream-liked", c.liked], ["stream-favorite", c.favorite], ["stream-chat", c.chat]].forEach(([name, v]) => {
-        const row = S(name); if (!row) return;
-        bar(row, v === null ? 0 : v / maxStream);
-        const b = row.querySelector(".stream-count");
-        if (v === null) { delete b.dataset.count; b.textContent = "—"; } else { b.dataset.count = v; b.textContent = "0"; }
-      });
-
-      /* 01 · 每条流最常出现的词条，以及它们有多集中 */
+      if (c.chat === null) { const src = $('.src[data-key="chat"]'); if (src) { src.classList.add("off"); src.querySelector("p").textContent = "备用文件不含聊天，这一卷里没有这条流。"; layoutLoom(); } }
       const LX = d.lexicon;
       const hide = (name) => { const box = S(name); if (box) box.style.display = "none"; };
-      if (!LX) { hide("conc-block"); $$(".stream-terms").forEach((box) => { box.style.display = "none"; }); }
-      else {
-        const noChat = c.chat === null ? "备用文件不含聊天" : "当前环境不支持分词";
-        const terms = (slot, field, tag) => {
-          const box = S(slot); if (!box) return;
-          box.textContent = "";
-          if (!field) { box.append(el("small", "", noChat)); return; }
-          if (!field.sampled) { box.append(el("small", "", tag ? "这类记录里没有话题标签。" : "还没有可以统计的词。")); return; }
-          field.top.slice(0, 3).forEach((t) => box.append(el("i", "", tag ? `#${t.name}` : t.name)));
-          box.append(el("small", "", `共 ${num(field.distinct)} 个不同${tag ? "话题" : "的词"}，前 12 个覆盖了 ${pct(field.coverage)} 的记录${field.halfAt ? `，覆盖一半需要 ${num(field.halfAt)} 个` : ""}。`));
-        };
-        terms("terms-watch", LX.watch, true);
-        terms("terms-liked", LX.liked, true);
-        terms("terms-favorite", LX.favorite, true);
-        terms("terms-chat", LX.chat, false);
-        const conc = [LX.watch, LX.liked, LX.favorite, LX.chat];
-        const halfMax = Math.max(1, ...conc.map((f) => (f && f.halfAt) || 0));
-        $$(".ml", S("concentration")).forEach((row, i) => { const f = conc[i]; bar(row, f && f.halfAt ? f.halfAt / halfMax : 0, f && f.halfAt ? `${num(f.halfAt)} 个` : "—"); });
-        const hw = LX.watch.halfAt, hl = LX.liked.halfAt;
-        txt("concentration-note", hw && hl
-          ? `覆盖一半的记录，喜欢要 ${num(hl)} 个词条，看过要 ${num(hw)} 个——${hl > hw * 1.2 ? "留下的比看过的更分散" : hw > hl * 1.2 ? "留下的比看过的更集中" : "两边差不多"}。`
-          : "记录里的话题标签还不够多，算不出集中度。");
-      }
 
-      /* 02 time */
-      txt("months-label", `${d.year} · 12 months`);
+      /* 02 time · the calendar, the clock face, day / night, and where the times come from */
+      txt("months-label", d.range ? `${d.range[0]} → ${d.range[1]}` : `${d.year} · 没有可靠的行为时间`);
       const mMax = Math.max(1, ...d.months);
       const peaks = d.months.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]).slice(0, 2).filter(([v]) => v > 0).map(([, i]) => i);
-      $$(".month-bars .month").forEach((m, i) => { const v = d.months[i] || 0; m.querySelector("i").style.setProperty("--h", `${v ? Math.max(4, Math.round(v / mMax * 100)) : 0}%`); m.classList.toggle("peak", peaks.includes(i)); });
-      const hMax = Math.max(1, ...d.hours);
-      $("#hourDots").innerHTML = d.hours.map((v, i) => { const r = v / hMax; return `<i${r >= .7 ? " class=hot" : ""} style="--o:${(v ? .25 + .75 * r : .12).toFixed(2)};--s:${(v ? .6 + .6 * r : .45).toFixed(2)};--d:${i}"></i>`; }).join("");
+      calArgs = [d.days || [], d.range, d.peakDay];
+      drawCalendar($("#calendar"), ...calArgs);
+      drawClock($("#clockSvg"), d.hours, d.peakHour);
+      dayNight(d.hours);
+      { const span = d.range ? Math.round((new Date(`${d.range[1]}T00:00:00`) - new Date(`${d.range[0]}T00:00:00`)) / 864e5) + 1 : 0;
+        txt("cal-sum", d.range ? `从 ${d.range[0].slice(5)} 到 ${d.range[1].slice(5)} 的 ${num(span)} 天里，有 ${num(d.activeDays)} 天留下了记录。` : "没有带可靠时间的记录，年历是空的。");
+        const peakN = (d.days || []).find(([day]) => day === d.peakDay);
+        txt("peak-day", d.peakDay ? `最密集的一天是 ${d.peakDay}${peakN ? `，那天留下了 ${num(peakN[1])} 条记录` : ""}。` : "还没有哪一天特别密集。"); }
       txt("peak-hour", d.peakHour === null ? "—" : `${String(d.peakHour).padStart(2, "0")}:00`);
-      txt("peak-day", d.peakDay || "—");
       txt("ts-platform", `${num(d.timeSources.platform_action)} 条`);
       txt("ts-archive", `${num(d.timeSources.archive_action)} 条`);
       txt("ts-unknown", `${num(d.timeSources.unknown)} 条`);

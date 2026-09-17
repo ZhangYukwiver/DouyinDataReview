@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { normalizeAweme, normalizeRecord } from "./normalizer.mjs";
+import { pageNeedsVerification, prepareReadOnlyPage } from "./readOnlyPage.mjs";
 
 export class ExploreError extends Error {
   constructor(code, message, status = 409) { super(message); this.code = code; this.status = status; }
@@ -8,6 +9,7 @@ export class ExploreError extends Error {
 const text = (value, limit = 500) => typeof value === "string" ? value.trim().slice(0, limit) : "";
 const number = (value) => Number.isFinite(Number(value)) && value !== null && value !== undefined ? Math.max(0, Number(value)) : null;
 const flag = (value) => value === true || value === 1 ? true : value === false || value === 0 ? false : null;
+const verificationError = () => new ExploreError("verification_required", "抖音暂未放行本次搜索，返回了安全验证要求。请在手动监听的抖音搜索页查看；如果出现验证码，请完成后重试。未出现验证码时，请稍后再试。");
 const image = (value) => normalizeRecord({ id: "image", coverUrl: value?.url_list?.[0] ?? value })?.coverUrl ?? null;
 export function normalizeExploreUser(raw) {
   if (!raw || typeof raw !== "object") return null;
@@ -47,16 +49,6 @@ export function isExploreApiUrl(url) {
     && url.pathname.startsWith("/aweme/v1/web/");
 }
 
-// Douyin answers search APIs with an empty body when the UA says HeadlessChrome; the same profile works once the marker is gone.
-export async function maskHeadlessUserAgent(page) {
-  const agent = String(await page.evaluate(() => navigator.userAgent).catch(() => "") ?? "");
-  if (!agent.includes("HeadlessChrome")) return null;
-  const userAgent = agent.replace("HeadlessChrome", "Chrome");
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send("Emulation.setUserAgentOverride", { userAgent, acceptLanguage: "zh-CN" });
-  return userAgent;
-}
-
 export function validateExploreRequest(input) {
   if (!input || !["users", "videos", "profile", "detail", "comments", "replies"].includes(input.kind)) throw new ExploreError("invalid_request", "请选择搜索用户或内容。", 400);
   const query = text(input.query, 100);
@@ -77,6 +69,12 @@ export function ingestExploreResponse(session, pathname, payload) {
     return;
   }
   if (!payload || typeof payload !== "object") return;
+  if (PRIMARY_RESPONSE[session.kind]?.test(pathname)
+    && [payload.search_nil_info?.search_nil_type, payload.search_nil_info?.search_nil_item].includes("verify_check")) {
+    session.error = verificationError();
+    session.received = false;
+    return;
+  }
   const { kind, id } = session;
   let raw, normalize;
   if (kind === "users" && (pathname.endsWith("/discover/search/") || pathname.endsWith("/search/user/"))) {
@@ -102,6 +100,8 @@ export function ingestExploreResponse(session, pathname, payload) {
   for (const item of items) if (session.items.size < 500 || session.items.has(item.id)) session.items.set(item.id, item);
   session.hasMore = flag(payload.has_more);
   session.received = true;
+  session.receivedAt = Date.now();
+  delete session.error;
   session.revision += 1;
 }
 
@@ -133,16 +133,25 @@ export class DouyinExplorer {
     return { sessionId: session.key, kind: session.kind, items: [...session.items.values()], profile: session.profile ?? null,
       video: session.video ?? null, hasMore: session.hasMore, limited: session.items.size >= 500 };
   }
-  async create(input) {
+  async create(input, operation) {
     const context = await this.getContext();
+    operation?.signal.throwIfAborted();
     if (this.sessions.size >= 6) {
       const oldest = this.sessions.values().next().value;
       this.sessions.delete(oldest.key); await oldest.page.close().catch(() => {});
     }
     const page = await context.newPage();
-    await maskHeadlessUserAgent(page).catch(() => {});
     const session = { ...input, key: randomUUID(), page, items: new Map(), hasMore: null, received: false, revision: 0 };
     this.sessions.set(session.key, session);
+    operation?.track(session);
+    operation?.signal.throwIfAborted();
+    await prepareReadOnlyPage(page);
+    operation?.signal.throwIfAborted();
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (request.resourceType() === "document" && url.hostname === "rmc.bytedance.com" && url.pathname.startsWith("/verifycenter/captcha/"))
+        session.error = verificationError();
+    });
     page.on("response", (response) => {
       void (async () => {
         const url = new URL(response.url());
@@ -163,23 +172,89 @@ export class DouyinExplorer {
     const target = input.kind === "profile" ? `/user/${input.id}` : ["detail", "comments"].includes(input.kind)
       ? `/video/${input.id}` : `/search/${encodeURIComponent(input.query)}?type=${input.kind === "users" ? "user" : "video"}`;
     session.url = `https://www.douyin.com${target}`;
-    await page.goto(session.url, { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => {});
-    // Silence the remote preview; playback remains an explicit app action.
-    await page.locator("video").evaluateAll((videos) => videos.forEach((video) => { video.muted = true; video.pause(); })).catch(() => {});
+    await this.navigate(session, operation);
     if (input.kind === "comments") {
       const toggle = page.locator('[data-e2e="video-player-comment"]');
       if (await toggle.count() === 1 && await toggle.isVisible() && !session.received) await toggle.click({ timeout: 3000 }).catch(() => {});
     }
     return session;
   }
-  async read(input) {
+  async navigate(session, operation) {
+    try { await session.page.goto(session.url, { waitUntil: "domcontentloaded", timeout: 20000 }); }
+    catch (error) {
+      operation?.signal.throwIfAborted();
+      throw new ExploreError("page_load_failed", error?.name === "TimeoutError"
+        ? "抖音页面加载超时，请稍后重试。" : "抖音页面加载失败，请检查网络后重试。", 504);
+    }
+    operation?.signal.throwIfAborted();
+  }
+  async read(input, { signal, timeoutMs = 45000 } = {}) {
+    validateExploreRequest(input);
+    const controller = new AbortController();
+    let tracked = null, detach = () => {};
+    const discard = (session) => {
+      this.sessions.delete(session.key);
+      void session.page.close().catch(() => {});
+    };
+    const cancel = () => controller.abort(new ExploreError("request_cancelled", "已取消读取。", 499));
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+    const timer = setTimeout(() => controller.abort(new ExploreError("explore_timeout", "搜索超时，已停止读取。请稍后重试。", 504)), timeoutMs);
+    const operation = { signal: controller.signal, track: (session) => {
+      if (controller.signal.aborted) { discard(session); controller.signal.throwIfAborted(); }
+      tracked = session;
+      const crash = () => controller.abort(new ExploreError("page_crashed", "抖音页面已崩溃，已释放搜索任务，请重试。"));
+      const close = () => controller.abort(new ExploreError("page_closed", "抖音页面已关闭，请重试。"));
+      session.page.on?.("crash", crash); session.page.on?.("close", close);
+      detach = () => { session.page.off?.("crash", crash); session.page.off?.("close", close); };
+    } };
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+      onAbort = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      if (controller.signal.aborted) onAbort();
+    });
+    try {
+      return await Promise.race([this.readPage(input, operation), aborted]);
+    } catch (error) {
+      if (tracked && error?.code === "verification_required") {
+        tracked.verificationPending = true;
+        tracked.received = false;
+        tracked.error = error;
+        // Keep the exact challenge page for the user; reopening only the home
+        // page does not expose the verification that blocked this search.
+        void tracked.page.bringToFront?.().catch(() => {});
+      } else if (tracked && error?.code !== "page_not_loaded") { detach(); discard(tracked); }
+      throw error;
+    } finally {
+      clearTimeout(timer); detach();
+      signal?.removeEventListener("abort", cancel);
+      controller.signal.removeEventListener("abort", onAbort);
+    }
+  }
+  async readPage(input, operation) {
+    operation.signal.throwIfAborted();
     const validated = validateExploreRequest(input);
-    if (validated.kind === "replies") return this.readReplies({ ...validated, sessionId: input.sessionId });
+    if (validated.kind === "replies") {
+      return this.readReplies({ ...validated, sessionId: input.sessionId }, operation);
+    }
     let session = input.sessionId ? this.sessions.get(input.sessionId) : null;
     if (input.sessionId && (!session || session.page.isClosed() || session.kind !== validated.kind || session.id !== validated.id || session.query !== validated.query))
       throw new ExploreError("session_expired", "此页面已过期，请重新搜索或打开。", 410);
-    const pagination = Boolean(session);
-    if (!session) session = await this.create(validated);
+    const pagination = Boolean(input.sessionId);
+    if (!session && !input.sessionId) session = [...this.sessions.values()].find(candidate => candidate.verificationPending
+      && !candidate.page.isClosed() && candidate.kind === validated.kind && candidate.id === validated.id && candidate.query === validated.query);
+    if (!session) session = await this.create(validated, operation);
+    else {
+      operation.track(session);
+      // The platform sometimes requests verification without rendering a
+      // challenge. An explicit retry should reload that same page, while an
+      // actual challenge must remain intact for the user to complete.
+      if (session.verificationPending && session.error && !await pageNeedsVerification(session.page)) {
+        delete session.error;
+        await this.navigate(session, operation);
+      }
+    }
     const before = session.revision;
     if (pagination && session.hasMore !== false && session.items.size < 500) {
       await session.page.evaluate((kind) => {
@@ -192,20 +267,31 @@ export class DouyinExplorer {
       }, session.kind);
     }
     const ready = () => session.kind === "profile" ? session.profile && session.received : session.kind === "detail" ? session.video : session.received;
-    const deadline = Date.now() + (pagination ? 8000 : 12000);
+    const deadline = Date.now() + (pagination ? 8000 : 30000);
     while (Date.now() < deadline && !session.page.isClosed()) {
+      operation.signal.throwIfAborted();
       if (session.error) throw session.error;
-      if (ready() && (!pagination || session.revision > before || session.hasMore === false || session.items.size >= 500)) return this.snapshot(session);
-      await delay(200);
+      if (await pageNeedsVerification(session.page)) throw verificationError();
+      // An empty response can precede a verification iframe; let that redirect
+      // settle before presenting it as a genuine zero-result search.
+      const settled = session.items.size > 0 || !session.receivedAt || Date.now() - session.receivedAt >= 500;
+      if (ready() && settled && (!pagination || session.revision > before || session.hasMore === false || session.items.size >= 500)) {
+        session.verificationPending = false;
+        return this.snapshot(session);
+      }
+      await delay(200, undefined, { signal: operation.signal });
     }
     if (pagination && ready()) throw new ExploreError("page_not_loaded", "没有读到新一页，请稍后再次加载。已加载的内容仍保留。");
-    throw new ExploreError("page_unavailable", "暂未读到页面数据，请确认手动监听中已登录抖音，稍后重试。");
+    if (await pageNeedsVerification(session.page))
+      throw verificationError();
+    throw new ExploreError("page_unavailable", "暂未读到抖音页面数据，请检查打开的抖音浏览器是否需要登录或验证，然后重试。");
   }
-  async readReplies({ sessionId, id, commentId }) {
+  async readReplies({ sessionId, id, commentId }, operation) {
     const session = this.sessions.get(sessionId);
     if (!session || session.page.isClosed() || session.kind !== "comments" || session.id !== id)
       throw new ExploreError("session_expired", "评论页面已过期，请刷新评论后重新展开回复。", 410);
     if (!session.items.has(commentId)) throw new ExploreError("comment_unavailable", "这条评论已不在当前页面，请刷新评论后重试。", 410);
+    operation?.track(session);
     session.replyThreads ??= new Map();
     if (!session.replyThreads.has(commentId)) session.replyThreads.set(commentId, { items: new Map(), hasMore: null, received: false, revision: 0 });
     const thread = session.replyThreads.get(commentId);
@@ -224,9 +310,10 @@ export class DouyinExplorer {
     await toggle.click({ timeout: 4000 }).catch(() => { throw new ExploreError("control_unavailable", "回复入口暂时不可用，请检查抖音登录或验证提示后重试。"); });
     const deadline = Date.now() + 8000;
     while (Date.now() < deadline && !session.page.isClosed()) {
+      operation?.signal.throwIfAborted();
       if (thread.error) throw thread.error;
       if (thread.revision > before) return snapshot();
-      await delay(200);
+      await delay(200, undefined, { signal: operation?.signal });
     }
     throw new ExploreError("page_not_loaded", "没有读到新的回复，已加载的内容仍保留，请稍后重试。");
   }

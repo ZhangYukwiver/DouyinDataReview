@@ -58,18 +58,23 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
       if (connection) void closeExplore(connection, ids).catch(() => {});
     };
   }, [connection?.baseUrl, connection?.token]);
-  const busy = Boolean(loading || sending || collectorBusy);
+  const busy = Boolean(loading || sending);
   const user = profile?.profile ?? null;
   const video = detail?.video ?? null;
   const page = detail ?? profile ?? results;
   const pendingKey = (action: string) => `${action === "follow" ? profile?.sessionId : detail?.sessionId}:${action}`;
 
   async function load(input: ExploreQuery, target: "results" | "profile" | "detail" | "comments", more = false) {
-    if (!connection || locked.current || collectorBusy) return;
+    if (!connection || locked.current) return;
     locked.current = true;
     const current = ++generation.current;
     requestRef.current?.abort();
     const controller = new AbortController(); requestRef.current = controller;
+    const timeout = setTimeout(() => {
+      if (current !== generation.current) return;
+      setError("读取超时，已停止等待，请稍后重试。");
+      controller.abort();
+    }, 50000);
     setLoading(more ? "more" : target); setError(null); setNotice(null);
     try {
       const next = await readExplore(connection, input, controller.signal);
@@ -83,8 +88,14 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "读取失败，请重试。");
     } finally {
+      clearTimeout(timeout);
       if (current === generation.current) { setLoading(null); locked.current = false; }
     }
+  }
+  function cancelLoad() {
+    generation.current += 1;
+    requestRef.current?.abort();
+    locked.current = false; setLoading(null); setNotice("已取消读取，可以重新搜索。");
   }
   function search() {
     const candidate = query.trim();
@@ -154,10 +165,10 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
       </View>
     </View>
     {!connection ? <View style={styles.empty}><Search size={34} color={color.cyan} /><Text style={styles.sectionTitle}>连接抖音，开始探索</Text><Text style={styles.emptyText}>连接本地采集器后即可搜索，无需先导入历史记录。</Text><Button label="前往连接" primary onPress={onOpenSettings} /></View> : null}
-    {collectorBusy ? <View style={styles.banner}><Text style={styles.bannerText}>采集器正在执行任务。请等待完成，或前往设置停止采集后继续探索。</Text><Button label="采集设置" onPress={onOpenSettings} /></View> : null}
+    {collectorBusy ? <View style={styles.banner}><Text style={styles.bannerText}>采集器正在处理任务。手动监听就绪后可直接搜索；同步或下载期间请等待任务完成。</Text><Button label="采集设置" onPress={onOpenSettings} /></View> : null}
     {error ? <View accessibilityRole="alert" style={styles.error}><Text style={styles.errorText}>{error}</Text><Button label="连接设置" onPress={onOpenSettings} /></View> : null}
     {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
-    {loading || sending ? <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={color.cyan} /><Text style={styles.muted}>{sending ? "正在提交并核验操作…" : "正在读取抖音页面…"}</Text></View> : null}
+    {loading || sending ? <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={color.cyan} /><Text style={styles.muted}>{sending ? "正在提交并核验操作…" : "正在读取抖音页面…"}</Text>{loading && !sending ? <Button label="取消读取" onPress={cancelLoad} /> : null}</View> : null}
     {detail || profile ? <View style={styles.breadcrumb}><Button label={detail && profile ? "返回用户作品" : "返回搜索结果"} disabled={busy} onPress={back}><ArrowLeft color={color.text} size={16} /></Button><ChevronRight size={14} color={color.textMuted} /><Text numberOfLines={1} style={[styles.muted, { flex: 1 }]}>{video ? "作品详情" : user?.name}</Text><Button label="刷新" disabled={busy} onPress={() => video ? void load({ kind: "detail", id: video.videoId! }, "detail") : user && void load({ kind: "profile", id: user.id }, "profile")} /></View> : null}
 
     {user && !detail ? <>
@@ -218,7 +229,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
     </Modal>
     {playing && connection ? <RecordVideoPlayer record={playing} records={(profile?.items ?? (results?.kind === "videos" ? results.items : [])) as ExploreVideo[]}
       commentsConnection={connection} onOpenRecord={onOpenRecord}
-      onLoadVideo={(item, signal) => loadCollectorVideo(connection.baseUrl, connection.token, item.url!, signal)} onClose={() => setPlaying(null)} /> : null}
+      onLoadVideo={(item, signal, onProgress) => loadCollectorVideo(connection.baseUrl, connection.token, item.url!, signal, onProgress)} onClose={() => setPlaying(null)} /> : null}
   </ScrollView>;
 }
 
