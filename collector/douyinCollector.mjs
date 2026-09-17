@@ -1339,6 +1339,11 @@ export class DouyinCollector {
       && this.contextHeadless === true && this.status.state === "observing";
   }
 
+  isManualObserving() {
+    return this.observation?.active === true && this.observation.mode === "records"
+      && this.contextHeadless === false && this.status.state === "observing";
+  }
+
   startObservation({ allowAccountSwitch = false, mode = "records" } = {}) {
     if (this.syncPromise || this.observationPromise || this.hasActiveVideoDownload() || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
     const runId = this.syncRunId + 1;

@@ -30,7 +30,7 @@ async function request(connection: ExploreConnection, route: string, body: unkno
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
-  const timeout = setTimeout(abort, 55000);
+  const timeout = setTimeout(abort, route === "read" ? 50000 : 55000);
   try {
     signal?.throwIfAborted();
     const response = await fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}/v1/explore/${route}`, {

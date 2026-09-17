@@ -1,9 +1,129 @@
 import { describe, expect, it, vi } from "vitest";
-import { DouyinExplorer, ingestExploreReplies, ingestExploreResponse, isExploreApiUrl, maskHeadlessUserAgent, normalizeExploreComment, normalizeExploreUser, normalizeExploreVideo, validateExploreRequest } from "./explorer.mjs";
+import { EventEmitter } from "node:events";
+import { DouyinExplorer, ingestExploreReplies, ingestExploreResponse, isExploreApiUrl, normalizeExploreComment, normalizeExploreUser, normalizeExploreVideo, validateExploreRequest } from "./explorer.mjs";
 
 const author = { sec_uid: "test-public-author", nickname: "离线测试作者", follower_count: 0, follow_status: 0 };
 const aweme = (id) => ({ aweme_id: id, desc: "离线测试作品", author, create_time: 1788912000, user_digged: 0, collect_status: 1, statistics: { digg_count: 0 } });
 function session(kind = "videos") { return { kind, id: "", items: new Map(), received: false, revision: 0, hasMore: null }; }
+
+function searchPage(navigate = async () => {}) {
+  const page = new EventEmitter();
+  let closed = false;
+  Object.assign(page, {
+    context: () => ({ newCDPSession: async () => ({ on() {}, send: async () => {} }) }), addInitScript: vi.fn(async () => {}),
+    goto: vi.fn(navigate), isClosed: () => closed,
+    close: vi.fn(async () => { closed = true; page.emit("close"); }),
+    title: async () => "抖音搜索", frames: () => [],
+    locator: () => ({ innerText: async () => "" }),
+  });
+  return page;
+}
+const pendingForever = () => new Promise(() => {});
+const searchInput = { kind: "users", query: "离线测试" };
+describe("bounded and cancellable exploration", () => {
+  it("bounds a stalled browser connection before creating a page", async () => {
+    const explorer = new DouyinExplorer(pendingForever);
+    await expect(explorer.read(searchInput, { timeoutMs: 20 })).rejects.toMatchObject({ code: "explore_timeout" });
+    expect(explorer.sessions.size).toBe(0);
+  });
+  it("times out a stalled navigation and removes its page", async () => {
+    const page = searchPage(pendingForever);
+    const explorer = new DouyinExplorer(async () => ({ newPage: async () => page }));
+    await expect(explorer.read(searchInput, { timeoutMs: 20 })).rejects.toMatchObject({ code: "explore_timeout" });
+    expect(page.close).toHaveBeenCalledOnce();
+    expect(explorer.sessions.size).toBe(0);
+    expect(page.listenerCount("crash")).toBe(0);
+  });
+  it("cancels navigation and permits a clean successful retry", async () => {
+    const controller = new AbortController();
+    const first = searchPage(() => { controller.abort(); return pendingForever(); });
+    const next = searchPage(async () => next.emit("response", {
+      url: () => `https://www.douyin.com/aweme/v1/web/discover/search/?keyword=${encodeURIComponent(searchInput.query)}`,
+      json: async () => ({ user_list: [author], has_more: 0 }),
+    }));
+    const newPage = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(next);
+    const explorer = new DouyinExplorer(async () => ({ newPage }));
+    await expect(explorer.read(searchInput, { signal: controller.signal })).rejects.toMatchObject({ code: "request_cancelled" });
+    expect(first.close).toHaveBeenCalledOnce();
+    await expect(explorer.read(searchInput)).resolves.toMatchObject({ items: [expect.objectContaining({ name: author.nickname })] });
+    expect(explorer.sessions.size).toBe(1);
+    expect(next.close).not.toHaveBeenCalled();
+    await explorer.clear();
+  });
+  it("cleans up a page that finishes creation after cancellation", async () => {
+    let resolvePage;
+    const newPage = vi.fn(() => new Promise(resolve => { resolvePage = resolve; }));
+    const explorer = new DouyinExplorer(async () => ({ newPage }));
+    const controller = new AbortController();
+    const result = explorer.read(searchInput, { signal: controller.signal });
+    await vi.waitFor(() => expect(newPage).toHaveBeenCalled());
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ code: "request_cancelled" });
+    const page = searchPage(); resolvePage(page);
+    await vi.waitFor(() => expect(page.close).toHaveBeenCalledOnce());
+    expect(page.goto).not.toHaveBeenCalled();
+    expect(explorer.sessions.size).toBe(0);
+  });
+  it("reports a crashed page immediately and removes the failed session", async () => {
+    const page = searchPage(() => { page.emit("crash"); return pendingForever(); });
+    const explorer = new DouyinExplorer(async () => ({ newPage: async () => page }));
+    await expect(explorer.read(searchInput)).rejects.toMatchObject({ code: "page_crashed" });
+    expect(explorer.sessions.size).toBe(0);
+    expect(page.close).toHaveBeenCalledOnce();
+  });
+  it("keeps the verification page and reuses it after the user completes verification", async () => {
+    const page = searchPage(); page.title = async () => "验证码中间页";
+    page.bringToFront = vi.fn(async () => {});
+    const newPage = vi.fn(async () => page);
+    const explorer = new DouyinExplorer(async () => ({ newPage }));
+    await expect(explorer.read(searchInput, { timeoutMs: 500 })).rejects.toMatchObject({ code: "verification_required" });
+    expect(page.close).not.toHaveBeenCalled();
+    expect(page.bringToFront).toHaveBeenCalledOnce();
+    expect(explorer.sessions.size).toBe(1);
+    await expect(explorer.read(searchInput)).rejects.toMatchObject({ code: "verification_required" });
+    expect(newPage).toHaveBeenCalledOnce();
+    page.title = async () => "抖音搜索";
+    const state = [...explorer.sessions.values()][0];
+    ingestExploreResponse(state, "/aweme/v1/web/discover/search/", { user_list: [author], has_more: 0 });
+    await expect(explorer.read(searchInput)).resolves.toMatchObject({ items: [expect.objectContaining({ name: author.nickname })] });
+    expect(newPage).toHaveBeenCalledOnce();
+    await explorer.clear();
+  });
+  it("does not show an empty result when the platform opens a verification frame", async () => {
+    const page = searchPage(async () => {
+      page.emit("response", { url: () => `https://www.douyin.com/aweme/v1/web/discover/search/?keyword=${encodeURIComponent(searchInput.query)}`,
+        json: async () => ({ user_list: [], has_more: 0 }) });
+      setTimeout(() => page.emit("request", { url: () => "https://rmc.bytedance.com/verifycenter/captcha/v2", resourceType: () => "document" }), 50);
+    });
+    const explorer = new DouyinExplorer(async () => ({ newPage: async () => page }));
+    await expect(explorer.read(searchInput)).rejects.toMatchObject({ code: "verification_required" });
+    expect(page.close).not.toHaveBeenCalled();
+    await explorer.clear();
+  });
+  it("retries the same page when verification was requested but no challenge appeared", async () => {
+    let calls = 0;
+    const page = searchPage(async () => page.emit("response", {
+      url: () => `https://www.douyin.com/aweme/v1/web/discover/search/?keyword=${encodeURIComponent(searchInput.query)}`,
+      json: async () => ++calls === 1
+        ? { user_list: [], status_code: 0, search_nil_info: { search_nil_type: "verify_check" } }
+        : { user_list: [author], has_more: 0 },
+    }));
+    const newPage = vi.fn(async () => page);
+    const explorer = new DouyinExplorer(async () => ({ newPage }));
+    await expect(explorer.read(searchInput)).rejects.toMatchObject({ code: "verification_required" });
+    await expect(explorer.read(searchInput)).resolves.toMatchObject({ items: [expect.objectContaining({ name: author.nickname })] });
+    expect(newPage).toHaveBeenCalledOnce();
+    expect(page.goto).toHaveBeenCalledTimes(2);
+    await explorer.clear();
+  });
+  it("reports navigation failure without retaining a dead session", async () => {
+    const page = searchPage(async () => { throw Object.assign(new Error("navigation timed out"), { name: "TimeoutError" }); });
+    const explorer = new DouyinExplorer(async () => ({ newPage: async () => page }));
+    await expect(explorer.read(searchInput)).rejects.toMatchObject({ code: "page_load_failed", status: 504 });
+    expect(page.goto).toHaveBeenCalledWith(expect.any(String), { waitUntil: "domcontentloaded", timeout: 20000 });
+    expect(explorer.sessions.size).toBe(0);
+  });
+});
 
 describe("explore data boundaries and pagination", () => {
   it("recognizes the regional Douyin response host while keeping the API scope narrow", () => {
@@ -46,6 +166,19 @@ describe("explore data boundaries and pagination", () => {
     ingestExploreResponse(changed, "/aweme/v1/web/search/user/", { user_list: [{ unexpected: true }] });
     expect(changed.error.code).toBe("schema_changed");
   });
+  it("recognizes platform verification even when HTTP and status_code report success", () => {
+    const state = session("users");
+    ingestExploreResponse(state, "/aweme/v1/web/discover/search/", {
+      status_code: 0, user_list: [], has_more: 0,
+      search_nil_info: { search_nil_type: "verify_check", search_nil_item: "verify_check", text_type: 9 },
+    });
+    expect(state.received).toBe(false);
+    expect(state.error.code).toBe("verification_required");
+    ingestExploreResponse(state, "/aweme/v1/web/discover/search/", { status_code: 0, user_list: [author], has_more: 0 });
+    expect(state.error).toBeUndefined();
+    expect(state.received).toBe(true);
+    expect(state.items.size).toBe(1);
+  });
   it("treats an empty first response as platform risk control, not a missing page", () => {
     const state = session("users");
     ingestExploreResponse(state, "/aweme/v1/web/ab/params/", null);
@@ -53,12 +186,12 @@ describe("explore data boundaries and pagination", () => {
     ingestExploreResponse(state, "/aweme/v1/web/discover/search/", null);
     expect(state.error.code).toBe("platform_error");
   });
-  it("hides the headless marker from Douyin before opening pages", async () => {
-    const send = vi.fn(async () => {});
-    const page = { evaluate: async () => "Mozilla/5.0 HeadlessChrome/152.0.0.0 Safari/537.36", context: () => ({ newCDPSession: async () => ({ send }) }) };
-    await expect(maskHeadlessUserAgent(page)).resolves.toBe("Mozilla/5.0 Chrome/152.0.0.0 Safari/537.36");
-    expect(send).toHaveBeenCalledWith("Emulation.setUserAgentOverride", expect.objectContaining({ userAgent: "Mozilla/5.0 Chrome/152.0.0.0 Safari/537.36" }));
-    await expect(maskHeadlessUserAgent({ evaluate: async () => "Mozilla/5.0 Chrome/152.0.0.0", context: () => { throw new Error("unused"); } })).resolves.toBeNull();
+  it("disables remote autoplay before navigating comment and search pages", async () => {
+    const page = { context: () => ({ newCDPSession: async () => ({ on() {}, send: async () => {} }) }), addInitScript: vi.fn(async () => {}), on: vi.fn(), goto: vi.fn(async () => {}),
+      locator: () => ({ evaluateAll: async () => {}, count: async () => 0 }) };
+    const explorer = new DouyinExplorer(async () => ({ newPage: async () => page }));
+    await explorer.create({ kind: "comments", id: "123456789" });
+    expect(page.addInitScript.mock.invocationCallOrder[0]).toBeLessThan(page.goto.mock.invocationCallOrder[0]);
   });
   it("requires a supported kind and a concrete search or identifier", () => {
     for (const input of [{ kind: "unknown" }, { kind: "users", query: " " }, { kind: "detail", id: "invalid" }, { kind: "profile", id: "x" }]) expect(() => validateExploreRequest(input)).toThrow();

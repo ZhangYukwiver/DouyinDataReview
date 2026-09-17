@@ -662,6 +662,19 @@ describe("DouyinCollector sync startup", () => {
 });
 
 describe("DouyinCollector manual observation", () => {
+  it("shares its browser only after manual observation is ready", () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.observation = { active: true, mode: "records" };
+    collector.contextHeadless = false;
+    collector.updateStatus({ state: "launching_browser" });
+    expect(collector.isManualObserving()).toBe(false);
+    collector.updateStatus({ state: "observing" });
+    expect(collector.isManualObserving()).toBe(true);
+    collector.observation.active = false;
+    expect(collector.isManualObserving()).toBe(false);
+    collector.observation = { active: true, mode: "chat" };
+    expect(collector.isManualObserving()).toBe(false);
+  });
   it("persists only responses produced while the user browses the dedicated browser", async () => {
     const page = { url: () => "https://www.douyin.com/" };
     const context = fakeContext(page);

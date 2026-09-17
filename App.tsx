@@ -496,6 +496,9 @@ function AppContent() {
   }
 
   function triggerAutoSync() {
+    // Returning from the search browser must not close its result/verification
+    // page to launch a foreground history sync.
+    if (activeView !== "sources" && dashboardOpen && dashboardView === "explore" && !storySrc) return;
     const token = collectorToken;
     if (!token || !shouldAutoSync({
       enabled: autoSyncEnabled,
