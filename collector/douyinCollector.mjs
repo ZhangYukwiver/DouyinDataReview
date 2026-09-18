@@ -26,6 +26,7 @@ import {
   normalizeChatAvatarUrl,
   normalizeChatConversation,
   normalizeChatPayload,
+  normalizeChatPresence,
 } from "./chatNormalizer.mjs";
 import {
   createEndpointProgress,
@@ -40,6 +41,7 @@ import {
   VideoDownloadError,
 } from "./videoDownloader.mjs";
 import { observeChatSockets } from "./chatRealtime.mjs";
+import { ChatSendError, sendChatText, validateChatSend } from "./chatSender.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
 const CHAT_URL = "https://www.douyin.com/chat?isPopup=1";
@@ -360,6 +362,8 @@ export async function readChatConversationCatalog(page) {
         kind: isGroup ? "group" : "friend",
         name,
         avatarUrl,
+        // The online-status endpoint keys on sec UID, not the conversation id.
+        secUid: isGroup ? null : participantSecUid,
       });
     }
     return result;
@@ -947,7 +951,15 @@ export class DouyinCollector {
     this.observation = null;
     this.observationPromise = null;
     this.accountSwitchPromise = null;
+    this.chat = null;
+    this.chatPromise = null;
+    this.chatRunId = 0;
+    this.chatSends = new Map();
+    this.chatSendPromise = null;
     this.syncRunId = 0;
+    this.syncMode = null;
+    // 边采边存的最小间隔，快照是整份重写的，不能每页都写
+    this.progressPersistIntervalMs = 1_500;
     this.snapshot = null;
     this.videoDownloadJobs = new Map();
     this.videoDownloadQueue = Promise.resolve();
@@ -964,6 +976,10 @@ export class DouyinCollector {
       updatedAt: null,
       browserOpen: false,
       code: null,
+      // page 要开可见浏览器，direct_records 走无头，前端据此决定还能做什么
+      syncMode: null,
+      // 聊天接收单独一份状态，这样它和记录读取、视频下载可以同时跑，互不覆盖对方的进度
+      chat: { state: "idle", connection: null, message: null, progress: null, code: null },
       chatConnection: null,
     };
   }
@@ -986,12 +1002,18 @@ export class DouyinCollector {
   updateStatus(patch) {
     // 错误码只跟着 error 状态走，进入其他状态时清掉，别让上一次的错误码留在新状态里
     if (patch.state && patch.state !== "error") patch = { code: null, ...patch };
-    if (patch.state && !["launching_browser", "observing"].includes(patch.state)) patch = { ...patch, chatConnection: null };
     this.status = { ...this.status, ...patch };
     this.statusRevision += 1;
     for (const listener of this.statusListeners) {
       try { listener(this.getStatus()); } catch { /* A disconnected UI must not interrupt collection. */ }
     }
+  }
+
+  // 聊天接收只写自己这份状态，顶层 chatConnection 留作旧字段的镜像
+  updateChat(patch) {
+    if (patch.state && patch.state !== "error") patch = { code: null, ...patch };
+    const chat = { ...this.status.chat, ...patch };
+    this.updateStatus({ chat, chatConnection: chat.connection });
   }
 
   getStatus() {
@@ -1092,7 +1114,7 @@ export class DouyinCollector {
 
   startVideoDownload(sourceUrl, { playback = false } = {}) {
     const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
-    if (this.syncPromise || (this.observationPromise && !this.isChatReceiving()) || this.accountSwitchPromise) {
+    if (this.visibleBrowserWorkRunning()) {
       throw new VideoDownloadError("collector_busy", "采集器正在执行其他任务，请稍后再试。", { retryable: true });
     }
     this.reserveVideoDownloadJobSlot();
@@ -1181,7 +1203,7 @@ export class DouyinCollector {
       error: null,
     });
     try {
-      if (this.syncPromise || (this.observationPromise && !this.isChatReceiving()) || this.accountSwitchPromise) {
+      if (this.visibleBrowserWorkRunning()) {
         throw new VideoDownloadError("collector_busy", "采集器正在执行其他任务，请稍后再试。", { retryable: true });
       }
       if (this.context && !this.contextHeadless) {
@@ -1230,17 +1252,22 @@ export class DouyinCollector {
       delete job.controller;
       if (job.released) this.retireVideoDownloadJob(job);
       if (ownsContext && context) {
-        if (this.context === context) {
-          this.context = null;
-          this.contextHeadless = null;
+        // 聊天接收或无界面读取可能中途加入了同一个会话，别把它们一起关掉
+        const shared = this.context === context && (this.chat?.active || this.syncMode === "direct_records");
+        if (!shared) {
+          if (this.context === context) {
+            this.context = null;
+            this.contextHeadless = null;
+          }
+          await closeContextWithin(context);
         }
-        await closeContextWithin(context);
       }
       if (this.videoDownloadActive === operation) {
         const canRestoreStatus = operation.statusRevisionAfterLaunch !== null
           && operation.statusRevisionAfterLaunch === this.statusRevision
           && !this.syncPromise
           && !this.observationPromise
+          && !this.chat?.active
           && !this.accountSwitchPromise;
         if (canRestoreStatus) this.updateStatus(operation.previousStatus);
         this.videoDownloadActive = null;
@@ -1250,6 +1277,7 @@ export class DouyinCollector {
 
   async clearRecords() {
     await this.stopObservation({ silent: true });
+    await this.stopChatObservation({ silent: true });
     this.snapshot = await this.store.clear();
     this.updateStatus({
       state: "idle",
@@ -1263,11 +1291,16 @@ export class DouyinCollector {
   }
 
   startSync({ allowAccountSwitch = false, mode = "page" } = {}) {
-    if (this.syncPromise || this.observationPromise || this.hasActiveVideoDownload() || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
+    if (this.syncPromise || this.observationPromise || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
+    // 无界面读取和聊天接收、视频下载共用一个无头会话，可以同时进行；
+    // 需要可见浏览器的完整读取仍要等它们结束
+    if (mode !== "direct_records" && (this.chatPromise || this.hasActiveVideoDownload())) return false;
     this.syncStopRequested = false;
+    this.syncMode = mode;
     const runId = this.syncRunId + 1;
     this.syncRunId = runId;
     this.updateStatus({
+      syncMode: mode,
       state: mode === "direct_records" ? "collecting" : "launching_browser",
       phase: mode === "direct_records" ? "watch_history" : null,
       progress: null,
@@ -1287,7 +1320,11 @@ export class DouyinCollector {
         });
       })
       .finally(() => {
-        if (this.syncPromise === promise) this.syncPromise = null;
+        if (this.syncPromise === promise) {
+          this.syncPromise = null;
+          this.syncMode = null;
+          this.updateStatus({ syncMode: null });
+        }
       });
     this.syncPromise = promise;
     return true;
@@ -1329,14 +1366,138 @@ export class DouyinCollector {
     return this.startSync({ mode: "direct_records" });
   }
 
+  // 聊天接收独立于记录读取和视频下载，只有要打开可见浏览器的任务才会挡住它
   startChatObservation({ allowAccountSwitch = false } = {}) {
-    // Keep the existing endpoint; a chat run now lasts until explicitly stopped.
-    return this.startObservation({ allowAccountSwitch, mode: "chat" });
+    if (this.chatPromise || this.observationPromise || this.syncMode === "page"
+      || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
+    const runId = this.chatRunId + 1;
+    this.chatRunId = runId;
+    let releaseStop;
+    const chat = {
+      active: true,
+      mode: "chat",
+      runId,
+      stop: () => releaseStop?.(),
+      stopPromise: new Promise((resolve) => {
+        releaseStop = resolve;
+      }),
+    };
+    this.chat = chat;
+    this.updateChat({ state: "launching_browser", connection: "connecting", message: "正在连接抖音实时消息" });
+    const promise = this.runChatObservation(runId, chat)
+      .catch(async (error) => {
+        if (error instanceof CollectorCancelledError || !chat.active || runId !== this.chatRunId) return;
+        this.updateChat({
+          state: "error",
+          code: error?.code ?? null,
+          connection: null,
+          message: safeMessage(error, "聊天读取启动失败，请稍后重试。"),
+        });
+        await this.releaseHeadlessContextIfIdle();
+      })
+      .finally(() => {
+        if (this.chat === chat) this.chat = null;
+        if (this.chatPromise === promise) this.chatPromise = null;
+      });
+    this.chatPromise = promise;
+    return true;
+  }
+
+  async stopChatObservation({ silent = false } = {}) {
+    const chat = this.chat;
+    const promise = this.chatPromise;
+    if (!chat || !promise) return false;
+    chat.stopping = true;
+    // Let an in-flight send settle so its result is known; bounded because
+    // callers of the stop endpoint time out after ten seconds.
+    if (this.chatSendPromise) {
+      const settled = new AbortController();
+      await Promise.race([this.chatSendPromise.catch(() => undefined), delay(8_000, undefined, { signal: settled.signal }).catch(() => undefined)]);
+      settled.abort();
+    }
+    chat.active = false;
+    this.chatRunId += 1;
+    chat.stop();
+    if (this.context && this.contextHeadless) {
+      const context = this.context;
+      const otherPages = context.pages().filter((page) => page !== chat.page && !page.isClosed?.());
+      // 记录读取、播放和探索各有自己的标签页，只有没人再用这个会话时才关掉它
+      if (chat.page?.close && (otherPages.length > 0 || this.headlessWorkRunning())) {
+        await chat.page.close().catch(() => undefined);
+      } else {
+        this.context = null;
+        this.contextHeadless = null;
+        // Closing also releases a pending navigation during cancellation.
+        await closeContextWithin(context);
+      }
+    }
+    await promise.catch(() => undefined);
+    if (!silent) {
+      this.updateChat({ state: "idle", connection: null, message: "已暂停实时接收，已保留聊天记录" });
+      this.updateStatus({
+        counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
+        updatedAt: this.snapshot.updatedAt,
+        browserOpen: Boolean(this.context),
+      });
+    }
+    return true;
+  }
+
+  // 有任务正占着可见浏览器窗口吗（完整读取、手动监听、切换账号）
+  visibleBrowserWorkRunning() {
+    return this.syncMode === "page" || Boolean(this.observationPromise) || Boolean(this.accountSwitchPromise);
+  }
+
+  // 还有别的无头任务在用这个共享会话吗
+  headlessWorkRunning() {
+    return this.syncMode === "direct_records" || this.hasActiveVideoDownload();
+  }
+
+  async releaseHeadlessContextIfIdle() {
+    if (!this.context || !this.contextHeadless) return;
+    if (this.chat?.active || this.headlessWorkRunning()) return;
+    const context = this.context;
+    this.context = null;
+    this.contextHeadless = null;
+    await closeContextWithin(context);
+    this.updateStatus({ browserOpen: false });
   }
 
   isChatReceiving() {
-    return this.observation?.active === true && this.observation.mode === "chat"
-      && this.contextHeadless === true && this.status.state === "observing";
+    return this.chat?.active === true && this.contextHeadless === true
+      && this.status.chat.state === "observing";
+  }
+
+  async sendChatMessage(input) {
+    const request = validateChatSend(input);
+    const fingerprint = `${request.conversationId}\n${request.text}`;
+    const previous = this.chatSends.get(request.requestId);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new ChatSendError("invalid_request", "请重新发送这条消息。", 400);
+      return previous.result;
+    }
+    const observation = this.chat;
+    if (!this.isChatReceiving() || observation.stopping || !observation.page || observation.page.isClosed()) throw new ChatSendError("not_receiving", "先开始接收消息，才能发送。");
+    if (!observation.historyReady) throw new ChatSendError("collector_busy", "正在整理聊天历史，整理完就能发送。");
+    if (this.status.chat.connection !== "connected") throw new ChatSendError("not_connected", "消息连接还没连上，请稍后再发。");
+    if (this.chatSendPromise) throw new ChatSendError("collector_busy", "上一条还在发送，请稍等。");
+    if (this.chatSends.size >= 1000) this.chatSends.delete(this.chatSends.keys().next().value);
+    // One send at a time, deduplicated by requestId; a dispatched message is never retried here.
+    const result = sendChatText(observation.page, request).then((outcome) => {
+      if (outcome.chatMessage) observation.acceptSent?.(outcome.chatMessage);
+      return outcome;
+    });
+    this.chatSends.set(request.requestId, { fingerprint, result });
+    this.chatSendPromise = result;
+    try {
+      return await result;
+    } catch (error) {
+      // Only failures before the click reach here, so the same request may run again.
+      this.chatSends.delete(request.requestId);
+      throw error;
+    } finally {
+      if (this.chatSendPromise === result) this.chatSendPromise = null;
+    }
   }
 
   isManualObserving() {
@@ -1344,13 +1505,16 @@ export class DouyinCollector {
       && this.contextHeadless === false && this.status.state === "observing";
   }
 
-  startObservation({ allowAccountSwitch = false, mode = "records" } = {}) {
-    if (this.syncPromise || this.observationPromise || this.hasActiveVideoDownload() || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
+  // 手动监听要打开可见浏览器，所有无头任务都得先让位
+  startObservation({ allowAccountSwitch = false } = {}) {
+    if (this.syncPromise || this.observationPromise || this.chatPromise || this.hasActiveVideoDownload()
+      || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
     const runId = this.syncRunId + 1;
     this.syncRunId = runId;
     let releaseStop;
     const observation = {
       active: true,
+      mode: "records",
       runId,
       stop: () => releaseStop?.(),
       stopPromise: new Promise((resolve) => {
@@ -1360,31 +1524,20 @@ export class DouyinCollector {
     this.observation = observation;
     this.updateStatus({
       state: "launching_browser",
-      phase: mode === "chat" ? "chat_messages" : null,
+      phase: null,
       progress: null,
-      message: mode === "chat"
-        ? "正在连接抖音实时消息"
-        : "正在打开独立抖音浏览器以监听手动浏览",
-      chatConnection: mode === "chat" ? "connecting" : null,
+      message: "正在打开独立抖音浏览器以监听手动浏览",
     });
-    observation.mode = mode;
-    const promise = (mode === "chat" ? this.runChatObservation(runId, observation) : this.runObservation(runId, observation))
-      .catch(async (error) => {
+    const promise = this.runObservation(runId, observation)
+      .catch((error) => {
         if (error instanceof CollectorCancelledError || !observation.active || runId !== this.syncRunId) return;
         this.updateStatus({
           state: "error",
           code: error?.code ?? null,
           phase: null,
           progress: null,
-          message: safeMessage(error, mode === "chat" ? "聊天读取启动失败，请稍后重试。" : "手动监听启动失败，请关闭浏览器后重试。"),
+          message: safeMessage(error, "手动监听启动失败，请关闭浏览器后重试。"),
         });
-        if (mode === "chat" && this.context && this.contextHeadless) {
-          const context = this.context;
-          this.context = null;
-          this.contextHeadless = null;
-          await closeContextWithin(context);
-          this.updateStatus({ browserOpen: false });
-        }
       })
       .finally(() => {
         if (this.observation === observation) this.observation = null;
@@ -1398,29 +1551,17 @@ export class DouyinCollector {
     const observation = this.observation;
     const promise = this.observationPromise;
     if (!observation || !promise) return false;
+    observation.stopping = true;
     observation.active = false;
     this.syncRunId += 1;
     observation.stop();
-    if (observation.mode === "chat" && this.context && this.contextHeadless) {
-      const context = this.context;
-      const otherPages = context.pages().filter((page) => page !== observation.page && !page.isClosed?.());
-      if (observation.page?.close && (otherPages.length > 0 || this.hasActiveVideoDownload())) {
-        // Playback and exploration own separate tabs in the shared context.
-        await observation.page.close().catch(() => undefined);
-      } else {
-        this.context = null;
-        this.contextHeadless = null;
-        // Closing also releases a pending navigation during cancellation.
-        await closeContextWithin(context);
-      }
-    }
     await promise.catch(() => undefined);
     if (!silent) {
       this.updateStatus({
         state: "idle",
         phase: null,
         progress: null,
-        message: observation.mode === "chat" ? "已暂停实时接收，已保留聊天记录" : "已停止手动监听，已保存已捕获的记录",
+        message: "已停止手动监听，已保存已捕获的记录",
         counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
         updatedAt: this.snapshot.updatedAt,
         browserOpen: Boolean(this.context),
@@ -1511,11 +1652,23 @@ export class DouyinCollector {
   }
 
   async runChatObservation(runId, observation) {
+    // 聊天的进度写进 status.chat，共享字段（计数、浏览器开关）才落到主状态上
+    const report = ({ state, progress, message, chatConnection, ...shared }) => {
+      const patch = {};
+      if (state !== undefined) patch.state = state;
+      if (progress !== undefined) patch.progress = progress;
+      if (message !== undefined) patch.message = message;
+      if (chatConnection !== undefined) patch.connection = chatConnection;
+      // 记录读取那条线也在写 counts，聊天只认领自己那一项，免得两边来回覆盖
+      if (shared.counts) shared.counts = { ...this.status.counts, chat_messages: shared.counts.chat_messages };
+      if (Object.keys(shared).length > 0) this.updateStatus(shared);
+      if (Object.keys(patch).length > 0) this.updateChat(patch);
+    };
     const context = await this.ensureBrowser({ headless: true });
-    this.assertSyncActive(runId);
+    this.assertChatActive(runId);
     let page = await this.currentPage(context);
     await this.waitForLogin(context, page, runId, { headless: true });
-    this.assertSyncActive(runId);
+    this.assertChatActive(runId);
     page = await this.currentPage(context);
     if (!/^https:\/\/www\.douyin\.com\/(?:chat(?:[/?#]|$)|(?:[?#].*)?$)/u.test(page.url() ?? "") && page.url() !== "about:blank") {
       page = await context.newPage();
@@ -1557,7 +1710,7 @@ export class DouyinCollector {
 
     const persistSnapshot = () => {
       persistChain = persistChain.then(async () => {
-        if (!observation.active || runId !== this.syncRunId) return;
+        if (!observation.active || runId !== this.chatRunId) return;
         const warnings = [...new Set([
           ...currentChatWarnings(this.snapshot.warnings).filter((warning) => warning !== CHAT_OBSERVATION_WARNING),
           CHAT_OBSERVATION_WARNING,
@@ -1580,10 +1733,9 @@ export class DouyinCollector {
             }),
           ),
         });
-        if (!observation.active || runId !== this.syncRunId) return;
+        if (!observation.active || runId !== this.chatRunId) return;
         const count = recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations).chat_messages;
-        this.updateStatus({
-          phase: "chat_messages",
+        report({
           progress: sweepFinished ? null : { current: conversationCurrent, total: conversationTotal },
           counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
           updatedAt: this.snapshot.updatedAt,
@@ -1594,7 +1746,7 @@ export class DouyinCollector {
     };
 
     const processPayload = async (normalized) => {
-      if (!observation.active || runId !== this.syncRunId) return;
+      if (!observation.active || runId !== this.chatRunId) return;
       if (!conversationAccumulator.currentUserId) {
         const detectedUserId = await readCurrentUserId(page);
         if (detectedUserId) conversationAccumulator.setCurrentUserId(detectedUserId);
@@ -1603,7 +1755,7 @@ export class DouyinCollector {
         lastCatalogRefresh = Date.now();
         conversationAccumulator.addConversations(await readChatConversationCatalog(page));
       }
-      if (!observation.active || runId !== this.syncRunId) return;
+      if (!observation.active || runId !== this.chatRunId) return;
       const metadataById = new Map((normalized.conversations ?? []).map((conversation) => [conversation.id, conversation]));
       const messages = normalized.messages.map((message) => {
         const conversation = metadataById.get(message.conversationId);
@@ -1658,17 +1810,17 @@ export class DouyinCollector {
     };
 
     const receiveError = (error) => {
-      if (!observation.active || runId !== this.syncRunId) return;
+      if (!observation.active || runId !== this.chatRunId) return;
       const message = safeMessage(error, "聊天响应读取失败，已继续等待后续消息。");
       if (!responseErrors.includes(message)) responseErrors.push(message);
-      this.updateStatus({ phase: "chat_messages", message });
+      report({ message });
     };
     const enqueuePayload = (readPayload) => {
-      if (!acceptingResponses || !observation.active || runId !== this.syncRunId) return;
+      if (!acceptingResponses || !observation.active || runId !== this.chatRunId) return;
       const previous = processingChains.get("chat") ?? Promise.resolve();
       let task;
       task = previous.catch(() => undefined).then(async () => {
-        if (!observation.active || runId !== this.syncRunId) return;
+        if (!observation.active || runId !== this.chatRunId) return;
         await processPayload(await readPayload());
       }).catch(receiveError).finally(() => {
         pendingResponses.delete(task);
@@ -1680,6 +1832,19 @@ export class DouyinCollector {
     const handleResponse = (response) => {
       const endpoint = matchChatEndpoint(response.url());
       if (!endpoint) return;
+      // The site polls its own online-status endpoint while the chat page is
+      // open. Reading that answer keeps presence truthful without this app
+      // ever asking for it, so nothing here changes what friends see.
+      if (endpoint.kind === "chat_presence") {
+        if (!acceptingResponses || !observation.active || runId !== this.chatRunId) return;
+        Promise.resolve()
+          .then(async () => {
+            if (!response.ok()) return;
+            conversationAccumulator.applyPresence(normalizeChatPresence(await readChatResponse(response)));
+          })
+          .catch(() => {});
+        return;
+      }
       enqueuePayload(async () => {
         if (!response.ok()) throw new ChatAdapterError("http_error", `聊天请求返回 HTTP ${response.status()}。`);
         const headers = typeof response.headers === "function" ? response.headers() : {};
@@ -1694,20 +1859,21 @@ export class DouyinCollector {
       });
     };
 
+    // Messages sent from this app: the site's own push may or may not echo them.
+    observation.acceptSent = (message) => enqueuePayload(() => ({ messages: [message], conversations: [], hasMore: null }));
     const stopSockets = observeChatSockets(context, {
       onPayload: (normalized) => enqueuePayload(() => normalized),
       onConnection: (chatConnection) => {
-        if (!observation.active || runId !== this.syncRunId) return;
-        this.updateStatus({ chatConnection });
-        if (sweepFinished) this.updateStatus({ message: receptionMessage() });
+        if (!observation.active || runId !== this.chatRunId) return;
+        report({ chatConnection });
+        if (sweepFinished) report({ message: receptionMessage() });
       },
       onError: receiveError,
     });
     context.on("response", handleResponse);
     try {
-      this.updateStatus({
+      report({
         state: "observing",
-        phase: "chat_messages",
         progress: { current: 0, total: 0 },
         message: "聊天全量读取：正在读取会话列表",
         browserOpen: true,
@@ -1716,15 +1882,14 @@ export class DouyinCollector {
       if (currentUrl.includes("/chat")) {
         await page.reload({ waitUntil: "domcontentloaded", timeout: 45_000 });
         await delay(1_500);
-        this.assertSyncActive(runId);
+        this.assertChatActive(runId);
       } else {
         await this.visit(page, CHAT_URL, runId);
       }
       const detectedUserId = await readCurrentUserId(page);
       if (detectedUserId) conversationAccumulator.setCurrentUserId(detectedUserId);
-      this.updateStatus({
+      report({
         state: "observing",
-        phase: "chat_messages",
         progress: { current: 0, total: 0 },
         message: "聊天全量读取：正在整理会话列表",
         browserOpen: true,
@@ -1733,13 +1898,12 @@ export class DouyinCollector {
       sweepPromise = (async () => {
         let catalog = [];
         for (let attempt = 0; attempt < 5 && catalog.length === 0; attempt += 1) {
-          this.assertSyncActive(runId);
+          this.assertChatActive(runId);
           catalog = await readChatConversationCatalog(page);
           if (catalog.length === 0) await delay(500);
         }
         conversationTotal = catalog.length;
-        this.updateStatus({
-          phase: "chat_messages",
+        report({
           progress: { current: 0, total: conversationTotal },
           message: conversationTotal > 0
             ? `聊天全量读取：发现 ${conversationTotal} 个会话（0/${conversationTotal}）`
@@ -1748,7 +1912,7 @@ export class DouyinCollector {
         conversationAccumulator.addConversations(catalog);
         if (catalog.length > 0) await persistSnapshot();
         for (const [index, conversation] of catalog.entries()) {
-          this.assertSyncActive(runId);
+          this.assertChatActive(runId);
           conversationCurrent = index + 1;
           if (typeof page.evaluate !== "function") break;
           const selected = await page.evaluate((conversationId) => {
@@ -1764,8 +1928,7 @@ export class DouyinCollector {
             }
           }, conversation.id).catch(() => false);
           if (!selected) continue;
-          this.updateStatus({
-            phase: "chat_messages",
+          report({
             progress: { current: conversationCurrent, total: conversationTotal },
             message: `聊天全量读取：正在读取会话（${conversationCurrent}/${conversationTotal}）`,
           });
@@ -1778,7 +1941,7 @@ export class DouyinCollector {
           // guard for a server that never advances its cursor.
           if (conversation.kind !== "friend" || typeof page.evaluate !== "function") continue;
           for (let pageCount = 0; pageCount < CHAT_FRIEND_HISTORY_PAGE_LIMIT; pageCount += 1) {
-            this.assertSyncActive(runId);
+            this.assertChatActive(runId);
             const pagination = paginationByConversation.get(conversation.id);
             if (!pagination || pagination.hasMore !== true) break;
             const beforeResponses = responseCountByConversation.get(conversation.id) ?? 0;
@@ -1790,8 +1953,7 @@ export class DouyinCollector {
               return true;
             }).catch(() => false);
             if (!moved) break;
-            this.updateStatus({
-              phase: "chat_messages",
+            report({
               progress: { current: conversationCurrent, total: conversationTotal },
               message: `聊天全量读取：会话 ${conversationCurrent}/${conversationTotal}，正在读取第 ${pageCount + 1} 页`,
             });
@@ -1808,22 +1970,22 @@ export class DouyinCollector {
         }
         if (catalog.length > 0 || capturedResponses > 0) await persistSnapshot();
       })().catch((error) => {
-        if (error instanceof CollectorCancelledError || runId !== this.syncRunId) return;
+        if (error instanceof CollectorCancelledError || runId !== this.chatRunId) return;
         // A catalog/sweep failure must not discard responses already captured.
         const message = safeMessage(error, "聊天会话扫描未完成，已保留已读取的消息。");
         if (!responseErrors.includes(message)) responseErrors.push(message);
         return persistSnapshot();
       }).finally(() => {
         sweepFinished = true;
+        observation.historyReady = true;
       });
 
       // History hydration and live pushes share one accumulator. Finishing
       // history must not remove the listeners or close the receiving browser.
       await Promise.race([observation.stopPromise, sweepPromise]);
-      if (sweepFinished && observation.active && runId === this.syncRunId) {
-        this.updateStatus({
+      if (sweepFinished && observation.active && runId === this.chatRunId) {
+        report({
           state: "observing",
-          phase: "chat_messages",
           progress: null,
           message: receptionMessage(),
           counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
@@ -1833,14 +1995,14 @@ export class DouyinCollector {
         // The website handles normal socket reconnection. A reload is only a
         // fallback for a disconnected SDK that has stopped making progress.
         reconnectTimer = setInterval(() => {
-          if (!observation.active || runId !== this.syncRunId || this.status.chatConnection === "connected" || reconnectPromise) return;
+          if (!observation.active || runId !== this.chatRunId || this.status.chatConnection === "connected" || reconnectPromise || this.chatSendPromise) return;
           reconnectPromise = (async () => {
             await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
-            if (!observation.active || runId !== this.syncRunId) return;
+            if (!observation.active || runId !== this.chatRunId) return;
             conversationAccumulator.addConversations(await readChatConversationCatalog(page));
             await persistSnapshot();
           })().catch(() => {
-            if (observation.active && runId === this.syncRunId) this.updateStatus({ chatConnection: "reconnecting", message: "消息连接暂不可用，正在重试" });
+            if (observation.active && runId === this.chatRunId) report({ chatConnection: "reconnecting", message: "消息连接暂不可用，正在重试" });
           }).finally(() => { reconnectPromise = null; });
         }, 30_000);
         await observation.stopPromise;
@@ -1859,6 +2021,10 @@ export class DouyinCollector {
     if (runId !== this.syncRunId) throw new CollectorCancelledError();
   }
 
+  assertChatActive(runId) {
+    if (runId !== this.chatRunId) throw new CollectorCancelledError();
+  }
+
   async ensureBrowser({ headless = false } = {}) {
     if (this.context && (this.contextHeadless === headless || (this.contextHeadless === null && !headless))) {
       this.contextHeadless ??= false;
@@ -1871,21 +2037,29 @@ export class DouyinCollector {
       await closeContextWithin(staleContext);
     }
 
-    this.updateStatus({
-      state: "launching_browser",
-      message: headless ? "正在启动无头抖音会话" : "正在打开独立抖音浏览器",
-      browserOpen: false,
-    });
-    const launchOptions = {
-      executablePath: this.executablePath,
-      headless,
-      locale: "zh-CN",
-      // Visible pages must follow the real window, including user resizing.
-      // A fixed emulated viewport can extend beyond the native content area.
-      viewport: headless ? { width: 1280, height: 900 } : null,
-      acceptDownloads: false,
-    };
-    if (headless) launchOptions.args = ["--headless=new", "--window-size=1280,900"];
+    // 无头会话是几个任务共用的，启动它不该覆盖主状态；调用方自己会报告进度
+    this.updateStatus(headless
+      ? { browserOpen: false }
+      : { state: "launching_browser", message: "正在打开独立抖音浏览器", browserOpen: false });
+    // 无头会话是聊天接收、无界面读取和视频下载共用的，按最严的那个来配：
+    // 屏蔽 Service Worker，并换上抓到的真实 UA——无头默认 UA 会被抖音列表接口挡掉。
+    // ponytail: 模板要跑过一次完整读取才有；没有就先用默认 UA，那时也还做不了无界面读取
+    const launchOptions = headless
+      ? directContextLaunchOptions({
+        executablePath: this.executablePath,
+        userAgent: await loadDirectHistoryTemplate(this.dataDirectory)
+          .then((template) => template.headers["user-agent"])
+          .catch(() => undefined),
+      })
+      : {
+        executablePath: this.executablePath,
+        headless: false,
+        locale: "zh-CN",
+        // Visible pages must follow the real window, including user resizing.
+        // A fixed emulated viewport can extend beyond the native content area.
+        viewport: null,
+        acceptDownloads: false,
+      };
     const context = await chromium.launchPersistentContext(this.profileDirectory, launchOptions);
     this.context = context;
     this.contextHeadless = headless;
@@ -1893,7 +2067,11 @@ export class DouyinCollector {
       if (this.context !== context) return;
       this.context = null;
       this.contextHeadless = null;
-      const chatObservation = this.observation?.mode === "chat";
+      if (this.chat?.active) {
+        this.chat.active = false;
+        this.chat.stop();
+        this.updateChat({ state: "idle", connection: null, progress: null, message: "浏览器会话已关闭，实时接收已停止" });
+      }
       if (this.observation?.active) {
         this.observation.active = false;
         this.observation.stop();
@@ -1902,9 +2080,7 @@ export class DouyinCollector {
         state: this.status.state === "observing" ? "idle" : this.status.state,
         phase: this.status.state === "observing" ? null : this.status.phase,
         progress: this.status.state === "observing" ? null : this.status.progress,
-        message: this.status.state === "observing"
-          ? (chatObservation ? "独立浏览器已关闭，实时接收已停止" : "独立浏览器已关闭，手动监听已停止")
-          : this.status.message,
+        message: this.status.state === "observing" ? "独立浏览器已关闭，手动监听已停止" : this.status.message,
         browserOpen: false,
       });
     });
@@ -2376,14 +2552,6 @@ export class DouyinCollector {
     }
   }
 
-  async openDirectContext() {
-    const template = await loadDirectHistoryTemplate(this.dataDirectory);
-    return chromium.launchPersistentContext(this.profileDirectory, directContextLaunchOptions({
-      executablePath: this.executablePath,
-      userAgent: template.headers["user-agent"],
-    }));
-  }
-
   async readDirectHistory(context, cursor = "0") {
     const page = context.pages()[0] ?? await context.newPage();
     const currentUserAgent = await page.evaluate(() => navigator.userAgent);
@@ -2402,17 +2570,19 @@ export class DouyinCollector {
 
   async runDirectRecords(runId) {
     this.assertSyncActive(runId);
-    const visibleContext = this.context;
+    const visibleContext = this.contextHeadless === true ? null : this.context;
     if (visibleContext) {
       this.context = null;
       this.contextHeadless = null;
       await closeContextWithin(visibleContext);
       this.updateStatus({ browserOpen: false });
     }
-    const context = await this.openDirectContext();
+    // 借用共用的无头会话另开标签页，聊天接收和视频下载可以一直跑着
+    const context = await this.ensureBrowser({ headless: true });
+    let page = null;
     try {
       this.assertSyncActive(runId);
-      const page = context.pages()[0] ?? await context.newPage();
+      page = await context.newPage();
       const currentUserAgent = await page.evaluate(() => navigator.userAgent);
       const accumulator = new RecordAccumulator();
       const existingRecords = structuredClone(this.snapshot.records);
@@ -2463,6 +2633,19 @@ export class DouyinCollector {
           ? `正在读取${TYPE_LABELS[type]}新增记录（第 ${pageCount} 页，接口 ${returned} 条，新增 ${newIds.get(type).size} 条，过滤 ${filtered} 条）`
           : `正在读取${TYPE_LABELS[type]}全部记录（第 ${pageCount} 页，接口 ${returned} 条，保留 ${accumulator.snapshot().records[type].length} 条，过滤 ${filtered} 条）`;
       };
+      // 每读一段就落盘，工作台边采边能看到新记录；限流是因为快照要整份重写
+      let lastProgressPersistAt = Date.now();
+      const persistProgress = async (type) => {
+        if (Date.now() - lastProgressPersistAt < this.progressPersistIntervalMs) return;
+        lastProgressPersistAt = Date.now();
+        this.assertSyncActive(runId);
+        this.snapshot = await this.store.save(previewRecords(type), this.snapshot.warnings, {
+          directSync,
+          chatMessages: this.snapshot.chatMessages,
+          chatConversations: this.snapshot.chatConversations,
+        });
+        this.updateStatus({ updatedAt: this.snapshot.updatedAt });
+      };
       const persistCompletedType = async (type, finalPhase) => {
         this.assertSyncActive(runId);
         stagedRecords[type] = previewRecords(type)[type];
@@ -2499,6 +2682,7 @@ export class DouyinCollector {
               message: progressMessage(type, pageCount),
               counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
             });
+            await persistProgress(type);
             return !result.recordIds.some((id) => knownIds.get(type).has(id));
           });
           await persistCompletedType(type, phaseIndex === phases.length - 1);
@@ -2530,8 +2714,9 @@ export class DouyinCollector {
           this.updateStatus({
             phase: type,
             message: progressMessage(type, pageCounts[type]),
-              counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
+            counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
           });
+          await persistProgress(type);
           if (result.recordIds.some((id) => knownIds.get(type).has(id))) break;
           if (result.pagination.hasMore === false) break;
           if (result.pagination.hasMore !== true || !result.pagination.cursor) {
@@ -2554,7 +2739,10 @@ export class DouyinCollector {
         updatedAt: this.snapshot.updatedAt,
       });
     } finally {
-      await closeContextWithin(context);
+      await page?.close().catch(() => undefined);
+      // 读取结束后不留常驻的无头 Chrome，除非聊天或下载还在用它
+      this.syncMode = null;
+      await this.releaseHeadlessContextIfIdle();
     }
   }
 
@@ -2568,6 +2756,7 @@ export class DouyinCollector {
       const runningSync = this.syncPromise;
       const runningObservation = this.observationPromise;
       if (runningObservation) await this.stopObservation({ silent: true });
+      if (this.chatPromise) await this.stopChatObservation({ silent: true });
       if (runningSync) await runningSync;
       const context = this.context ?? await this.ensureBrowser();
       await this.clearDedicatedAccountData(context);
@@ -2630,6 +2819,7 @@ export class DouyinCollector {
     for (const controller of this.videoDownloadControllers) controller.abort(new Error("collector_closed"));
     this.stopSync({ silent: true });
     await this.stopObservation({ silent: true });
+    await this.stopChatObservation({ silent: true });
     const context = this.context;
     this.context = null;
     this.contextHeadless = null;

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   ChatConversationAccumulator,
   ChatMessageAccumulator,
+  matchChatEndpoint,
   matchImapiEndpoint,
+  normalizeChatPresence,
   normalizeImapiResponse,
 } from "./chatNormalizer.mjs";
 
@@ -613,5 +615,60 @@ describe("ChatConversationAccumulator", () => {
     }]);
 
     expect(accumulator.snapshot()).toEqual([]);
+  });
+});
+
+describe("friend online status", () => {
+  const STATUS_URL = "https://www.douyin.com/aweme/v1/web/im/user/active/status/?device_platform=webapp";
+
+  it("recognises the site's own status endpoint without claiming other douyin URLs", () => {
+    expect(matchChatEndpoint(STATUS_URL)).toEqual({
+      kind: "chat_presence",
+      pathname: "/aweme/v1/web/im/user/active/status",
+    });
+    expect(matchChatEndpoint("https://www.douyin.com/aweme/v1/web/im/user/active/update/")).toBeNull();
+    expect(matchChatEndpoint("https://evil.example.com/aweme/v1/web/im/user/active/status/")).toBeNull();
+    expect(matchChatEndpoint("https://douyin.com.evil.example/aweme/v1/web/im/user/active/status/")).toBeNull();
+    // Douyin answers this from sharded hosts, not only www.
+    expect(matchChatEndpoint("https://www-hj.douyin.com/aweme/v1/web/im/user/active/status/")?.kind).toBe("chat_presence");
+    // The message endpoints must keep matching as before.
+    expect(matchChatEndpoint("https://imapi.douyin.com/v1/message/get_by_conversation")?.kind).toBe("chat_messages");
+  });
+
+  it("reads seconds into timestamps and drops rows without a usable one", () => {
+    const body = JSON.stringify({
+      status_code: 0,
+      data: [
+        { sec_user_id: "sec-a", last_active_time: 1_758_182_400 },
+        { sec_user_id: "sec-b", last_active_time: 0 },
+        { sec_user_id: "", last_active_time: 1_758_182_400 },
+        { last_active_time: 1_758_182_400 },
+      ],
+    });
+    expect(normalizeChatPresence(body)).toEqual([
+      { secUid: "sec-a", lastActiveAt: "2025-09-18T08:00:00.000Z" },
+    ]);
+    // Playwright hands back a Buffer when the response is not parsed as JSON.
+    expect(normalizeChatPresence(Buffer.from(body, "utf8"))).toHaveLength(1);
+  });
+
+  it("joins presence that arrived before the conversation catalog was read", () => {
+    const accumulator = new ChatConversationAccumulator();
+    accumulator.applyPresence([{ secUid: "sec-a", lastActiveAt: "2025-09-18T08:00:00.000Z" }]);
+    accumulator.addConversations([{ id: "conv-a", kind: "friend", name: "甲", secUid: "sec-a" }]);
+    expect(accumulator.snapshot()[0].lastActiveAt).toBe("2025-09-18T08:00:00.000Z");
+  });
+
+  it("attaches presence to the matching one-to-one conversation only", () => {
+    const accumulator = new ChatConversationAccumulator([
+      { id: "conv-a", kind: "friend", name: "甲", secUid: "sec-a" },
+      { id: "conv-b", kind: "friend", name: "乙", secUid: "sec-b" },
+      { id: "conv-g", kind: "group", name: "群" },
+    ]);
+    accumulator.applyPresence([{ secUid: "sec-a", lastActiveAt: "2025-09-18T08:00:00.000Z" }]);
+    const byId = new Map(accumulator.snapshot().map((conversation) => [conversation.id, conversation]));
+    expect(byId.get("conv-a").lastActiveAt).toBe("2025-09-18T08:00:00.000Z");
+    expect(byId.get("conv-b").lastActiveAt).toBeNull();
+    expect(byId.get("conv-g").lastActiveAt).toBeNull();
   });
 });

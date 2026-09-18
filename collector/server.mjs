@@ -12,6 +12,7 @@ import { chromium } from "playwright-core";
 
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
+import { ChatSendError } from "./chatSender.mjs";
 import { CollectorStore } from "./store.mjs";
 
 const DEFAULT_PORT = 4765;
@@ -212,12 +213,12 @@ async function sendVideoFile(response, filePath, fileName) {
   stream.pipe(response);
 }
 
-async function readJsonBody(request) {
+async function readJsonBody(request, limit = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new Error("body_too_large");
+    if (size > limit) throw new Error("body_too_large");
     chunks.push(chunk);
   }
   if (chunks.length === 0) return {};
@@ -439,8 +440,21 @@ export async function startCollectorServer({
     } else if (request.method === "POST" && url.pathname === "/v1/observe/stop") {
       const stopped = await collector.stopObservation();
       sendJson(response, 200, { stopped, status: collector.getStatus() });
+    } else if (request.method === "POST" && url.pathname === "/v1/chat/send") {
+      try {
+        // 16000 characters of worst-case JSON escaping fit well inside this.
+        const body = await readJsonBody(request, 128 * 1024);
+        sendJson(response, 200, await collector.sendChatMessage(body));
+      } catch (error) {
+        const known = error instanceof ChatSendError;
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        sendJson(response, known ? error.status : malformed ? 400 : 500, {
+          error: known ? error.code : malformed ? "invalid_request" : "chat_send_failed",
+          message: known ? error.message : malformed ? "发送请求无效，请重试。" : "消息没发出去，请稍后再试。",
+        });
+      }
     } else if (request.method === "POST" && url.pathname === "/v1/chat/observe/stop") {
-      const stopped = await collector.stopObservation();
+      const stopped = await collector.stopChatObservation();
       sendJson(response, 200, { stopped, status: collector.getStatus() });
     } else if (request.method === "POST" && url.pathname === "/v1/account/switch") {
       try {

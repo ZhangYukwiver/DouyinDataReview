@@ -57,7 +57,9 @@ export class ExplorerBridge {
         const session = this.explorer.sessions.get(id);
         if (session) { this.explorer.sessions.delete(id); await session.page.close().catch(() => {}); }
       }
-      if (!this.explorer.sessions.size && this.ownedContext && !this.collector.observationPromise && !this.collectorBusy()) {
+      // 聊天接收和无界面读取也可能在用这个会话，它们还在就别关
+      const shared = this.collector.observationPromise || this.collector.chatPromise || this.collector.headlessWorkRunning?.();
+      if (!this.explorer.sessions.size && this.ownedContext && !shared && !this.collectorBusy()) {
         const context = this.ownedContext; this.ownedContext = null;
         await context.close().catch(() => {});
       }

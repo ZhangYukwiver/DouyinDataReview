@@ -23,7 +23,7 @@ vi.mock("lucide-react-native", () => {
 });
 
 import type { ChatMessage } from "../../domain/chatRecords";
-import { buildChatConversationRows, MessageContent } from "./ChatWorkspace";
+import { buildChatConversationRows, chatPresence, MessageContent } from "./ChatWorkspace";
 
 function message(id: string, conversationId: string, sentAt: string, text: string | null, type: ChatMessage["type"] = "text"): ChatMessage {
   return {
@@ -147,5 +147,25 @@ describe("MessageContent", () => {
     const [emoji, ...rest] = element.props.children;
     expect(emoji).toMatchObject({ props: { accessibilityLabel: "[宕机]", source: { uri: expect.stringMatching(/^https:\/\//u) } } });
     expect(rest).toEqual(["哈哈", "[自创代码]"]);
+  });
+});
+
+describe("chatPresence", () => {
+  const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
+  const MINUTE = 60_000;
+  const HOUR = 3_600_000;
+
+  it("mirrors the wording douyin itself uses for each distance", () => {
+    // 抖音把 10 分钟内的心跳都算“在线”。
+    expect(chatPresence(at(0))).toEqual({ online: true, text: "在线" });
+    expect(chatPresence(at(9 * MINUTE))).toEqual({ online: true, text: "在线" });
+    expect(chatPresence(at(25 * MINUTE))).toEqual({ online: false, text: "15分钟内在线" });
+    expect(chatPresence(at(3 * HOUR))).toEqual({ online: false, text: "2小时内在线" });
+  });
+
+  it("says nothing when there is no timestamp or it is older than yesterday", () => {
+    expect(chatPresence(null)).toEqual({ online: false, text: "" });
+    expect(chatPresence("not a date")).toEqual({ online: false, text: "" });
+    expect(chatPresence(at(3 * 24 * HOUR))).toEqual({ online: false, text: "" });
   });
 });

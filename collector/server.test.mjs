@@ -14,6 +14,33 @@ afterEach(async () => {
 });
 
 describe("collector server runtime", () => {
+  it("keeps a chat failure out of the record-reading state and still accepts a direct read", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "chat-independent-"));
+    temporaryDirectories.push(dataDirectory);
+    const runtime = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath });
+    runtimes.push(runtime);
+    const paired = await fetch(`${runtime.baseUrl}/v1/pair`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: runtime.getPairingCode() }),
+    }).then((response) => response.json());
+    const headers = { Authorization: `Bearer ${paired.token}` };
+    const readStatus = () => fetch(`${runtime.baseUrl}/v1/status`, { headers }).then((response) => response.json());
+
+    const started = await fetch(`${runtime.baseUrl}/v1/chat/observe`, { method: "POST", headers });
+    expect(started.status).toBe(202);
+    let status = await readStatus();
+    for (let attempt = 0; attempt < 50 && status.chat.state !== "error"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      status = await readStatus();
+    }
+    // 接收起不来只写它自己那份状态，工作台其他部分不该跟着进错误态
+    expect(status.chat.state).toBe("error");
+    expect(status.state).toBe("idle");
+
+    const direct = await fetch(`${runtime.baseUrl}/v1/experimental/records-direct`, { method: "POST", headers });
+    expect(direct.status).toBe(202);
+    expect((await direct.json()).status.syncMode).toBe("direct_records");
+  });
+
   it("waits for a status revision without polling, authenticates, and releases aborted clients", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "chat-live-status-"));
     temporaryDirectories.push(dataDirectory);

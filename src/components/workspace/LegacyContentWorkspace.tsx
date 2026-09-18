@@ -76,6 +76,7 @@ export interface ContentWorkspaceProps {
   sourceLabel: string;
   updatedAt: string | null;
   busy: boolean;
+  chatBusy: boolean;
   status: CollectorStatus | null;
   onChangeView: (view: WorkspaceViewKey) => void;
   onOpenRecord: (url: string) => Promise<void>;
@@ -138,6 +139,7 @@ export function ContentWorkspace({
   sourceLabel,
   updatedAt,
   busy,
+  chatBusy,
   status,
   onChangeView,
   onOpenRecord,
@@ -345,10 +347,11 @@ export function ContentWorkspace({
 
         {activeView === "explore" ? explore : activeView === "chat" ? (
           <ChatWorkspace
-            busy={busy}
+            busy={chatBusy}
             connected={chatConnected}
             status={status}
             onToggleReception={onToggleChatReception ?? onOpenSettings}
+            sendConnection={commentsConnection}
             conversations={chatConversations}
             messages={chatMessages}
             mobile={mobile}

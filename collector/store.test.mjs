@@ -98,6 +98,8 @@ describe("CollectorStore", () => {
         "kind",
         "name",
         "avatarUrl",
+        "secUid",
+        "lastActiveAt",
         "messageCount",
         "ownMessageCount",
       ]);

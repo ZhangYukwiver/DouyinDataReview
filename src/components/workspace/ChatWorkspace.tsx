@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Image,
   type NativeScrollEvent,
@@ -16,6 +17,7 @@ import {
 import {
   ChevronLeft,
   FileText,
+  Flame,
   Image as ImageIcon,
   LockKeyhole,
   MessageCircle,
@@ -40,14 +42,20 @@ import {
   type ChatMessage,
   hasChatShareEvidence,
 } from "../../domain/chatRecords";
-import type { CollectorStatus } from "../../services/localCollector";
+import { buildSparks, shiftDay, SPARK_LIT_DAYS, sparkDayKey, type Spark, type SparkDay } from "../../domain/chatSparks";
+import { CHAT_SEND_UNCONFIRMED, sendChatMessage, type ChatSendConnection, type ChatSendOutcome } from "../../services/chatSend";
+import { type CollectorStatus, LocalCollectorError, isChatReceiving } from "../../services/localCollector";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { fx } from "./motion";
-import { splitChatEmoji } from "../../domain/chatEmoji";
+import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 const webInlineEmoji = Platform.OS === "web" ? ({ verticalAlign: "text-bottom" } as object) : null;
 const CHAT_MESSAGE_RENDER_LIMIT = 320;
+// 与抖音网页输入框的上限一致
+const CHAT_TEXT_LIMIT = 16_000;
+// 原生 textarea 按内容长高（Chromium 123+）
+const webAutoHeight = Platform.OS === "web" ? ({ fieldSizing: "content" } as object) : null;
 
 type ChatFilter = "all" | "friend" | "group";
 
@@ -60,6 +68,8 @@ export interface ChatWorkspaceProps {
   connected?: boolean;
   status?: CollectorStatus | null;
   onToggleReception?: () => void;
+  /** 有连接才能发送；消息经采集器里的抖音网页发出。 */
+  sendConnection?: ChatSendConnection | null;
   onOpenRecord: (url: string) => Promise<void>;
   onOpenSettings: () => void;
 }
@@ -74,6 +84,8 @@ export interface ChatConversationRow {
   ownMessageCount: number;
   latest: ChatMessage | null;
   latestAt: string | null;
+  /** 对方最后活跃的时刻，抖音下发；没开在线状态或没采到就是 null。 */
+  lastActiveAt: string | null;
   preview: string;
   initials: string;
   accent: string;
@@ -81,6 +93,27 @@ export interface ChatConversationRow {
 
 const avatarPalette = color.avatars;
 const MESSAGE_AUTO_SCROLL_THRESHOLD = 72;
+const HOUR_MS = 3_600_000;
+// 抖音网页自己的判定：最后活跃在 10 分钟内算“在线”，超过 7 小时就只说今天/昨天，
+// 再早什么都不说。这些数字照抄站点，换成我们自己的阈值只会和抖音对不上。
+const ACTIVE_DELAY_MS = 600_000;
+const COARSE_AFTER_MS = 25_200_000;
+
+/** 把抖音下发的“最后活跃时刻”翻成它自己那套说法。 */
+export function chatPresence(lastActiveAt: string | null | undefined): { online: boolean; text: string } {
+  const activeAt = lastActiveAt ? Date.parse(lastActiveAt) : Number.NaN;
+  if (!Number.isFinite(activeAt)) return { online: false, text: "" };
+  const elapsed = Math.max(0, Date.now() - activeAt - ACTIVE_DELAY_MS);
+  if (elapsed <= 0) return { online: true, text: "在线" };
+  if (elapsed >= COARSE_AFTER_MS) {
+    const todayStart = new Date().setHours(0, 0, 0, 0);
+    if (activeAt < todayStart - 24 * HOUR_MS) return { online: false, text: "" };
+    return { online: false, text: activeAt < todayStart ? "昨天在线" : "今天在线" };
+  }
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes <= 59) return { online: false, text: `${Math.max(1, minutes)}分钟内在线` };
+  return { online: false, text: `${Math.max(1, Math.floor(elapsed / HOUR_MS))}小时内在线` };
+}
 
 /**
  * Build the list shown by the chat UI from the collector's normalized
@@ -100,6 +133,7 @@ export function buildChatConversationRows(
     messages: ChatMessage[];
     messageCount: number;
     ownMessageCount: number;
+    lastActiveAt: string | null;
   }>();
 
   for (const conversation of conversations) {
@@ -111,6 +145,7 @@ export function buildChatConversationRows(
       messages: [],
       messageCount: Math.max(0, conversation.messageCount),
       ownMessageCount: Math.max(0, conversation.ownMessageCount),
+      lastActiveAt: conversation.lastActiveAt ?? null,
     });
   }
 
@@ -126,6 +161,7 @@ export function buildChatConversationRows(
       messages: [],
       messageCount: 0,
       ownMessageCount: 0,
+      lastActiveAt: null,
     };
     current.kind = current.kind === "friend" || message.conversationType === "friend"
       ? "friend"
@@ -157,6 +193,7 @@ export function buildChatConversationRows(
       ownMessageCount: entry.ownMessageCount,
       latest,
       latestAt: latest?.sentAt ?? null,
+      lastActiveAt: entry.lastActiveAt,
       preview: readableLatest ? chatPreview(readableLatest) : entry.kind === "group" ? `群聊 · 已采集 ${entry.messageCount} 条消息` : "暂无可显示的消息正文",
       initials: "",
       accent: avatarPalette[hashString(entry.id) % avatarPalette.length] ?? avatarPalette[0]!,
@@ -184,6 +221,7 @@ export function ChatWorkspace({
   connected = false,
   status = null,
   onToggleReception,
+  sendConnection = null,
   onOpenRecord,
   onOpenSettings,
 }: ChatWorkspaceProps) {
@@ -193,7 +231,12 @@ export function ChatWorkspace({
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileDetail, setMobileDetail] = useState(false);
+  const [sparkBoard, setSparkBoard] = useState(false);
   const searchRef = useRef<TextInput>(null);
+  const now = useMinuteClock();
+  const friendRows = useMemo(() => rows.filter((row) => row.kind !== "group"), [rows]);
+  const sparks = useMemo(() => buildSparks(friendRows, selfId, now), [friendRows, now, selfId]);
+  const sparkAlerts = sparks.filter((spark) => spark.state === "pending" && spark.days >= SPARK_LIT_DAYS).length;
 
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
@@ -232,20 +275,34 @@ export function ChatWorkspace({
 
   const selected = rows.find((row) => row.id === selectedId) ?? null;
   const selectedForDetail = query.trim() && filteredRows.length === 0 ? null : selected;
-  const showDetail = !mobile || mobileDetail;
+  const showDetail = !mobile || mobileDetail || sparkBoard;
   const totalMessages = countChatMessages(messages, conversations);
 
   const selectConversation = (row: ChatConversationRow) => {
+    setSparkBoard(false);
     setSelectedId(row.id);
     if (mobile) setMobileDetail(true);
   };
+  // 从看板跳过去时清掉筛选和搜索，否则被筛掉的会话会被上面的 effect 换成列表第一项。
+  const openFromBoard = (row: ChatConversationRow) => {
+    setFilter("all");
+    setQuery("");
+    selectConversation(row);
+  };
 
-  const receiving = status?.phase === "chat_messages" && ["launching_browser", "observing"].includes(status.state);
+  const receiving = isChatReceiving(status);
   const receptionLabel = !connected ? "未连接采集器"
     : !receiving ? "已暂停接收"
       : status?.chatConnection === "connected" ? "实时接收中"
         : status?.chatConnection === "reconnecting" ? "连接中断，正在重连" : "正在连接消息";
   const controlDisabled = connected && busy && !receiving;
+  // 发送借用正在接收的抖音网页，所以要等历史整理完、连接就绪。
+  const sendBlock = !sendConnection || !connected ? "连接采集器后才能发消息"
+    : !receiving ? "开始接收后才能发消息"
+      : status?.chat.state !== "observing" || status.chat.progress ? "聊天历史整理完就能发消息"
+        : status.chatConnection !== "connected" ? "消息连接好了才能发"
+          : privacy ? "隐私模式下不能发消息" : null;
+  const sendMessage = (conversationId: string, text: string) => sendChatMessage(sendConnection!, conversationId, text);
 
   return (
     <View style={styles.workspace} testID="chat-workspace">
@@ -253,7 +310,7 @@ export function ChatWorkspace({
         <View style={styles.receptionCopy}>
           <View style={[styles.receptionDot, { backgroundColor: receiving && status?.chatConnection === "connected" ? color.green : color.textMuted }]} />
           <Text accessibilityLiveRegion="polite" style={styles.receptionLabel}>{receptionLabel}</Text>
-          {receiving && status?.progress ? <Text style={styles.receptionProgress}>整理历史 {status.progress.current}/{status.progress.total || "…"}</Text> : null}
+          {receiving && status?.chat.progress ? <Text style={styles.receptionProgress}>整理历史 {status.chat.progress.current}/{status.chat.progress.total || "…"}</Text> : null}
         </View>
         <Pressable
           accessibilityRole="button"
@@ -277,6 +334,9 @@ export function ChatWorkspace({
           onFocusSearch={() => searchRef.current?.focus()}
           onOpenSettings={onOpenSettings}
           onSelect={selectConversation}
+          onToggleSparks={() => setSparkBoard((open) => !open)}
+          sparkAlerts={sparkAlerts}
+          sparkBoard={sparkBoard}
           query={query}
           allRows={rows}
           rows={filteredRows}
@@ -296,6 +356,9 @@ export function ChatWorkspace({
               onFocusSearch={() => searchRef.current?.focus()}
               onOpenSettings={onOpenSettings}
               onSelect={selectConversation}
+              onToggleSparks={() => setSparkBoard((open) => !open)}
+              sparkAlerts={sparkAlerts}
+              sparkBoard={sparkBoard}
               query={query}
               allRows={rows}
               rows={filteredRows}
@@ -303,10 +366,21 @@ export function ChatWorkspace({
               setQuery={setQuery}
               totalMessages={totalMessages}
               privacy={privacy}
-              selectedId={selectedId}
+              selectedId={sparkBoard ? null : selectedId}
             />
           ) : null}
-          <ChatDetailPane
+          {sparkBoard ? (
+            <SparkBoard
+              live={receiving && status?.chatConnection === "connected"}
+              mobile={mobile}
+              now={now}
+              onBack={() => setSparkBoard(false)}
+              onOpen={openFromBoard}
+              privacy={privacy}
+              rows={friendRows}
+              sparks={sparks}
+            />
+          ) : <ChatDetailPane
             key={selectedForDetail?.id ?? "none"}
             mobile={mobile}
             onBack={() => setMobileDetail(false)}
@@ -314,7 +388,9 @@ export function ChatWorkspace({
             privacy={privacy}
             row={selectedForDetail}
             selfId={selfId}
-          />
+            sendBlock={sendBlock}
+            onSend={sendMessage}
+          />}
         </>
       )}
       </View>
@@ -330,6 +406,9 @@ function ChatListPane({
   onFocusSearch,
   onOpenSettings,
   onSelect,
+  onToggleSparks,
+  sparkAlerts,
+  sparkBoard,
   query,
   allRows,
   rows,
@@ -346,6 +425,9 @@ function ChatListPane({
   onFocusSearch: () => void;
   onOpenSettings: () => void;
   onSelect: (row: ChatConversationRow) => void;
+  onToggleSparks: () => void;
+  sparkAlerts: number;
+  sparkBoard: boolean;
   query: string;
   allRows: ChatConversationRow[];
   rows: ChatConversationRow[];
@@ -368,6 +450,22 @@ function ChatListPane({
           <Text style={styles.chatTitle}>消息</Text>
           <Text style={styles.chatSubtitle}>{allRows.length ? `${formatCount(allRows.length)} 个会话 · ${formatCount(totalMessages)} 条消息` : "消息会保存在本机"}</Text>
         </View>
+        <Pressable
+          accessibilityLabel={sparkAlerts ? `火花看板，${sparkAlerts} 位好友的火花今天还没续` : "火花看板"}
+          accessibilityRole="button"
+          accessibilityState={{ selected: sparkBoard }}
+          {...fx({ hover: "raise" })}
+          onPress={onToggleSparks}
+          style={({ pressed }) => [styles.iconButton, sparkBoard && styles.iconButtonActive, pressed && styles.pressed, webPointer]}
+          testID="chat-spark-toggle"
+        >
+          <Flame color={sparkBoard || sparkAlerts ? color.amber : color.textSecondary} size={19} strokeWidth={2} />
+          {sparkAlerts ? (
+            <View style={styles.sparkBadge}>
+              <Text style={styles.sparkBadgeText}>{sparkAlerts}</Text>
+            </View>
+          ) : null}
+        </Pressable>
         <Pressable
           accessibilityLabel="聚焦搜索聊天"
           accessibilityRole="button"
@@ -456,8 +554,7 @@ function ConversationListItem({
 }) {
   const visibleName = privacy ? (row.kind === "group" ? "群聊" : "好友") : row.name;
   const visiblePreview = privacy ? "聊天内容已隐藏" : row.preview;
-  const age = row.latestAt ? Date.now() - messageTime(row.latestAt) : Number.POSITIVE_INFINITY;
-  const activeRecently = age >= 0 && age < 86_400_000;
+  const presence = chatPresence(row.lastActiveAt);
   return (
     <Pressable
       {...fx({ motion: "rise", i: index < 12 ? index + 1 : 0, hover: "tint" })}
@@ -467,7 +564,7 @@ function ConversationListItem({
       style={({ pressed }) => [styles.conversationItem, selected && styles.conversationItemSelected, pressed && styles.pressed, webPointer]}
       testID={`chat-conversation-${row.id}`}
     >
-      <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} online={activeRecently} privacy={privacy} size={48} />
+      <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} online={presence.online} privacy={privacy} size={48} />
       <View style={styles.conversationCopy}>
         <View style={styles.conversationTopLine}>
           <Text numberOfLines={1} style={styles.conversationName}>{visibleName}</Text>
@@ -510,16 +607,20 @@ function ChatDetailPane({
   mobile,
   onBack,
   onOpenRecord,
+  onSend,
   privacy,
   row,
   selfId,
+  sendBlock,
 }: {
   mobile: boolean;
   onBack: () => void;
   onOpenRecord: (url: string) => Promise<void>;
+  onSend: (conversationId: string, text: string) => Promise<ChatSendOutcome>;
   privacy: boolean;
   row: ChatConversationRow | null;
   selfId: string | null;
+  sendBlock: string | null;
 }) {
   const messageListRef = useRef<FlatList<ChatMessage>>(null);
   const stickToBottomRef = useRef(true);
@@ -552,6 +653,7 @@ function ChatDetailPane({
   }
 
   const visibleName = privacy ? (row.kind === "group" ? "群聊" : "好友") : row.name;
+  const presence = chatPresence(row.lastActiveAt);
   const visibleMessages = row.messages.length > CHAT_MESSAGE_RENDER_LIMIT
     ? row.messages.slice(-CHAT_MESSAGE_RENDER_LIMIT)
     : row.messages;
@@ -572,10 +674,13 @@ function ChatDetailPane({
             <ChevronLeft color={color.textSecondary} size={21} strokeWidth={2} />
           </Pressable>
         ) : null}
-        <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} privacy={privacy} size={38} />
+        <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} online={presence.online} privacy={privacy} size={38} />
         <View style={styles.detailHeaderCopy}>
           <Text numberOfLines={1} style={styles.detailTitle}>{visibleName}</Text>
-          <Text style={styles.detailMeta}>{row.kind === "group" ? "群聊统计摘要" : `${formatCount(row.messageCount)} 条本地消息`}</Text>
+          <Text style={styles.detailMeta}>
+            {presence.text ? `${presence.text} · ` : ""}
+            {row.kind === "group" ? "群聊统计摘要" : `${formatCount(row.messageCount)} 条本地消息`}
+          </Text>
         </View>
         <View style={styles.detailHeaderActions}>
           <View style={styles.readonlyBadge}>
@@ -618,7 +723,17 @@ function ChatDetailPane({
         />
       )}
 
-      {row.kind !== "group" ? <ReadonlyComposer /> : null}
+      {row.kind !== "group" ? (
+        <ChatComposer
+          blockedReason={sendBlock}
+          hidden={privacy}
+          onSend={(text) => onSend(row.id, text)}
+          onSent={() => {
+            stickToBottomRef.current = true;
+            scrollToBottom();
+          }}
+        />
+      ) : null}
     </View>
   );
 }
@@ -651,6 +766,215 @@ function ChatFact({ label, value }: { label: string; value: string }) {
       <Text style={styles.chatFactLabel}>{label}</Text>
     </View>
   );
+}
+
+function SparkBoard({
+  live,
+  mobile,
+  now,
+  onBack,
+  onOpen,
+  privacy,
+  rows,
+  sparks,
+}: {
+  live: boolean;
+  mobile: boolean;
+  now: Date;
+  onBack: () => void;
+  onOpen: (row: ChatConversationRow) => void;
+  privacy: boolean;
+  rows: ChatConversationRow[];
+  sparks: Spark[];
+}) {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const alive = sparks.filter((spark) => spark.state !== "broken");
+  // buildSparks 已按天数从长到短排好，lit[0] 就是最久的一簇
+  const lit = alive.filter((spark) => spark.days >= SPARK_LIT_DAYS);
+  const waiting = lit.filter((spark) => spark.state === "pending").length;
+  // 没点亮的单独一组，免得「今天还没续」的组内条数和上面的数字对不上
+  const sections = [
+    { title: "今天还没续", items: lit.filter((spark) => spark.state === "pending") },
+    { title: "今天续上了", items: lit.filter((spark) => spark.state === "done") },
+    { title: "快点亮了", items: alive.filter((spark) => spark.days < SPARK_LIT_DAYS) },
+    { title: "最近断了", items: sparks.filter((spark) => spark.state === "broken") },
+  ].filter((section) => section.items.length > 0);
+  const summary = waiting ? `离今天结束还有 ${formatTimeLeft(now)}，${waiting} 位好友的火花还没续。`
+    : lit.length ? "亮着的火花今天都续上了。"
+      : alive.length ? `还没有点亮的火花，连着聊满 ${SPARK_LIT_DAYS} 天就会亮起来。`
+        : "最近没有连着聊天的好友。";
+  let order = 0;
+
+  return (
+    <View {...fx({ motion: "fade" })} style={[styles.detailPane, mobile && styles.detailPaneMobile]} testID="chat-spark-board">
+      <View style={styles.detailHeader}>
+        {mobile ? (
+          <Pressable accessibilityLabel="返回聊天列表" accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.detailBackButton, pressed && styles.pressed, webPointer]}>
+            <ChevronLeft color={color.textSecondary} size={21} strokeWidth={2} />
+          </Pressable>
+        ) : null}
+        <View style={styles.detailHeaderCopy}>
+          <Text style={styles.detailTitle}>火花</Text>
+          <Text style={styles.detailMeta}>{summary}</Text>
+        </View>
+        {!mobile ? (
+          <Pressable accessibilityLabel="关闭火花看板" accessibilityRole="button" {...fx({ hover: "raise" })} onPress={onBack} style={({ pressed }) => [styles.iconButton, pressed && styles.pressed, webPointer]}>
+            <X color={color.textSecondary} size={17} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      {!live ? (
+        <View style={[styles.privacyNotice, styles.sparkNotice]}>
+          <Pause color={color.amber} size={14} strokeWidth={2} />
+          <Text style={[styles.privacyNoticeText, styles.sparkNoticeText]}>现在没有在接收新消息，今天的情况可能还没更新。</Text>
+        </View>
+      ) : null}
+
+      <ScrollView contentContainerStyle={styles.sparkContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.sparkFacts}>
+          <ChatFact label="亮着的火花" value={formatCount(lit.length)} />
+          <ChatFact label="今天还没续" value={formatCount(waiting)} />
+          <ChatFact label="最久的火花" value={lit[0] ? `${lit[0].days} 天` : "—"} />
+        </View>
+
+        {sections.length ? sections.map((section) => (
+          <View key={section.title} style={styles.sparkSection}>
+            <View style={styles.sparkSectionHead}>
+              <Text style={styles.sparkSectionTitle}>{section.title}</Text>
+              <Text style={styles.sparkSectionCount}>{section.items.length}</Text>
+            </View>
+            <View style={styles.sparkList}>
+              {section.items.map((spark, index) => {
+                const row = byId.get(spark.id);
+                order += 1;
+                return row ? (
+                  <SparkRow first={index === 0} i={Math.min(order, 16)} key={spark.id} mobile={mobile} now={now} onPress={() => onOpen(row)} privacy={privacy} row={row} spark={spark} />
+                ) : null;
+              })}
+            </View>
+          </View>
+        )) : (
+          <View {...fx({ motion: "rise" })} style={styles.sparkEmpty}>
+            <View style={[styles.emptyChatIcon, styles.sparkEmptyIcon]}><Flame color={color.amber} size={25} strokeWidth={1.8} /></View>
+            <Text style={styles.detailEmptyTitle}>还没有火花</Text>
+            <Text style={styles.listEmptyBody}>{rows.length ? "和好友连着几天互相发消息，这里就会开始计天数。" : "连接采集器读取聊天后，这里会显示你和好友的火花。"}</Text>
+          </View>
+        )}
+
+        <Text style={styles.sparkNote}>
+          天数按本机保存的聊天记录估算：同一天你们都发过消息才算一天，连着聊满 {SPARK_LIT_DAYS} 天会点亮火花。抖音没有公开它的算法，以抖音里显示的为准。
+          {mobile ? "" : "右边的小方格是最近两周，实心表示那天你们都发过消息，浅色表示只有一方发过。"}
+        </Text>
+      </ScrollView>
+    </View>
+  );
+}
+
+function SparkRow({
+  first,
+  i,
+  mobile,
+  now,
+  onPress,
+  privacy,
+  row,
+  spark,
+}: {
+  first: boolean;
+  i: number;
+  mobile: boolean;
+  now: Date;
+  onPress: () => void;
+  privacy: boolean;
+  row: ChatConversationRow;
+  spark: Spark;
+}) {
+  const name = privacy ? "好友" : row.name;
+  const burning = spark.state !== "broken" && spark.days >= SPARK_LIT_DAYS;
+  const status = sparkStatus(spark, now);
+  const countdown = burning && spark.state === "pending";
+  return (
+    <Pressable
+      {...fx({ motion: "rise", i, hover: "tint" })}
+      accessibilityLabel={`${name}，${spark.state === "broken" ? "之前" : ""}连着聊了 ${spark.days} 天，${status}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.sparkRow, !first && styles.sparkRowDivided, pressed && styles.pressed, webPointer]}
+      testID={`chat-spark-${row.id}`}
+    >
+      <ChatAvatar accent={row.accent} avatarUrl={row.avatarUrl} initials={row.initials} kind={row.kind} privacy={privacy} size={40} />
+      <View style={styles.sparkCopy}>
+        <Text numberOfLines={1} style={styles.sparkName}>{name}</Text>
+        <Text numberOfLines={2} style={styles.sparkStatus}>{status}</Text>
+      </View>
+      {!mobile ? <SparkStrip days={spark.recent} /> : null}
+      <View style={styles.sparkCount}>
+        <View style={styles.sparkDays}>
+          <Flame color={burning ? color.amber : color.textMuted} fill={burning ? color.amber : "none"} size={14} strokeWidth={2} />
+          <Text style={[styles.sparkDaysValue, !burning && styles.sparkDaysMuted]}>{spark.days}</Text>
+          <Text style={styles.sparkDaysUnit}>天</Text>
+        </View>
+        {countdown ? <Text style={[styles.sparkLeft, msUntilMidnight(now) < 3 * 3_600_000 && styles.sparkLeftUrgent]}>还剩 {formatTimeLeft(now)}</Text> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function SparkStrip({ days }: { days: SparkDay[] }) {
+  return (
+    <View style={styles.sparkStrip}>
+      {days.map((day, index) => (
+        <View key={index} style={[styles.sparkCell, day === "both" ? styles.sparkCellBoth : day !== "none" && styles.sparkCellHalf]} />
+      ))}
+    </View>
+  );
+}
+
+const pendingSparkStatus: Record<SparkDay, string> = {
+  theirs: "对方今天发过消息了，就等你回。",
+  mine: "你今天发过了，还在等对方回。",
+  one: "今天只有一方发过消息。",
+  none: "今天你们还没聊过。",
+  both: "今天已经续上了。",
+};
+
+function sparkStatus(spark: Spark, now: Date): string {
+  if (spark.state === "broken") return `${sparkDayLabel(spark.brokeOn, now)}没接上，之前连着聊了 ${spark.days} 天。`;
+  const needed = SPARK_LIT_DAYS - spark.days;
+  if (spark.state === "done") return needed > 0 ? `再聊 ${needed} 天就能点亮。` : "今天已经续上了。";
+  if (needed === 1) return "今天聊上就能点亮。";
+  if (needed > 1) return `从今天起连着聊 ${needed} 天就能点亮。`;
+  return pendingSparkStatus[spark.today];
+}
+
+function sparkDayLabel(key: string | null, now: Date): string {
+  if (key === sparkDayKey(shiftDay(now, -1))) return "昨天";
+  if (key === sparkDayKey(shiftDay(now, -2))) return "前天";
+  const [, month, day] = key?.split("-") ?? [];
+  return month && day ? `${Number(month)} 月 ${Number(day)} 日` : "那天";
+}
+
+// 倒计时和跨零点都靠它：每分钟换一次 now，火花状态跟着重算。
+function useMinuteClock(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
+
+function msUntilMidnight(now: Date): number {
+  return shiftDay(now, 1).setHours(0, 0, 0, 0) - now.getTime();
+}
+
+function formatTimeLeft(now: Date): string {
+  const minutes = Math.max(1, Math.ceil(msUntilMidnight(now) / 60_000));
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (!hours) return `${rest} 分钟`;
+  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
 }
 
 function ConversationDateDivider() {
@@ -794,16 +1118,128 @@ export function MessageContent({ message, onOpenRecord }: { message: ChatMessage
   return <Text style={styles.bubbleText}>{renderChatText(message.text ?? chatPreview(message))}</Text>;
 }
 
-function ReadonlyComposer() {
+function ChatComposer({
+  blockedReason,
+  hidden,
+  onSend,
+  onSent,
+}: {
+  blockedReason: string | null;
+  /** 隐私模式：不显示已经打好的字，草稿留着，关掉后还在 */
+  hidden: boolean;
+  onSend: (text: string) => Promise<ChatSendOutcome>;
+  onSent: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState<{ tone: "warn" | "error"; text: string } | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const inputRef = useRef<TextInput>(null);
+  const blocked = blockedReason !== null;
+  const canSend = !blocked && !sending && text.trim().length > 0;
+
+  const submit = async () => {
+    if (!canSend) return;
+    setSending(true);
+    setNotice(null);
+    setEmojiOpen(false);
+    try {
+      const result = await onSend(text);
+      if (result.outcome === "confirmed") {
+        setText("");
+        onSent();
+      } else {
+        // 没发出去或结果不明时留着原文，由用户决定要不要重发
+        setNotice({ tone: result.outcome === "unknown" ? "warn" : "error", text: result.message });
+      }
+    } catch (error) {
+      const unconfirmed = error instanceof LocalCollectorError && error.code === CHAT_SEND_UNCONFIRMED;
+      setNotice({ tone: unconfirmed ? "warn" : "error", text: error instanceof Error ? error.message : "消息没发出去，请稍后再试。" });
+    } finally {
+      setSending(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  // 网页端的 TextInput 就是 textarea；失焦后它仍记着光标位置（onSelectionChange 打字时不触发，靠不住）
+  const insertEmoji = (code: string) => {
+    const node = inputRef.current as unknown as HTMLTextAreaElement | null;
+    const start = node?.selectionStart ?? text.length;
+    const end = node?.selectionEnd ?? start;
+    const next = text.slice(0, start) + code + text.slice(end);
+    if (next.length > CHAT_TEXT_LIMIT) return;
+    setText(next);
+    requestAnimationFrame(() => {
+      node?.focus();
+      node?.setSelectionRange?.(start + code.length, start + code.length);
+    });
+  };
+
   return (
-    <View style={styles.composer}>
-      <View style={styles.composerTools}>
-        <Smile color={color.textMuted} size={19} strokeWidth={1.8} />
-        <ImageIcon color={color.textMuted} size={19} strokeWidth={1.8} />
-        <Mic color={color.textMuted} size={19} strokeWidth={1.8} />
+    <View style={styles.composerWrap}>
+      {notice ? (
+        <View style={[styles.composerNotice, notice.tone === "warn" && styles.composerNoticeWarn]} testID="chat-send-notice">
+          <Text accessibilityLiveRegion="polite" style={[styles.composerNoticeText, notice.tone === "warn" && styles.composerNoticeTextWarn]}>{notice.text}</Text>
+          <Pressable accessibilityLabel="关闭提示" accessibilityRole="button" hitSlop={8} onPress={() => setNotice(null)} style={webPointer}>
+            <X color={color.textMuted} size={13} />
+          </Pressable>
+        </View>
+      ) : null}
+      {emojiOpen && !blocked ? (
+        <ScrollView contentContainerStyle={styles.emojiGrid} style={styles.emojiPanel} testID="chat-emoji-panel">
+          {CHAT_EMOJI.map(([code, url]) => (
+            <Pressable accessibilityLabel={code} accessibilityRole="button" key={code} onPress={() => insertEmoji(code)} style={({ pressed }) => [styles.emojiCell, pressed && styles.pressed, webPointer]}>
+              <Image source={{ uri: url }} style={styles.emojiImage} />
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
+      <View style={styles.composer}>
+        <Pressable
+          accessibilityLabel={emojiOpen ? "收起表情" : "插入表情"}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: blocked, expanded: emojiOpen }}
+          disabled={blocked}
+          onPress={() => setEmojiOpen((open) => !open)}
+          style={({ pressed }) => [styles.composerTool, emojiOpen && styles.composerToolActive, pressed && styles.pressed, blocked && styles.composerDisabled, webPointer]}
+          testID="chat-emoji-toggle"
+        >
+          <Smile color={emojiOpen ? color.accent : color.textMuted} size={19} strokeWidth={1.8} />
+        </Pressable>
+        <TextInput
+          accessibilityLabel="消息内容"
+          editable={!blocked && !sending}
+          maxLength={CHAT_TEXT_LIMIT}
+          multiline
+          onChangeText={setText}
+          onKeyPress={(event) => {
+            // 回车发送，Shift+回车换行；输入法选词时的回车不算
+            const key = event.nativeEvent as unknown as KeyboardEvent;
+            if (key.key !== "Enter" || key.shiftKey || key.isComposing || key.keyCode === 229) return;
+            event.preventDefault();
+            void submit();
+          }}
+          placeholder={blockedReason ?? "发消息（回车发送，Shift+回车换行）"}
+          placeholderTextColor={color.textMuted}
+          ref={inputRef}
+          style={[styles.composerInput, webAutoHeight, blocked && styles.composerDisabled]}
+          testID="chat-composer-input"
+          value={hidden ? "" : text}
+        />
+        <Pressable
+          accessibilityLabel={sending ? "正在发送" : "发送"}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canSend, busy: sending }}
+          disabled={!canSend}
+          onPress={() => void submit()}
+          style={({ pressed }) => [styles.composerSend, canSend && styles.composerSendReady, pressed && styles.pressed, webPointer]}
+          testID="chat-send-button"
+        >
+          {sending
+            ? <ActivityIndicator color={color.textMuted} size="small" />
+            : <Send color={canSend ? color.canvas : color.textMuted} size={17} strokeWidth={1.8} />}
+        </Pressable>
       </View>
-      <TextInput editable={false} placeholder="仅接收消息" placeholderTextColor={color.textMuted} style={styles.composerInput} />
-      <View style={styles.composerSend}><Send color={color.textMuted} size={17} strokeWidth={1.8} /></View>
     </View>
   );
 }
@@ -828,6 +1264,7 @@ function ChatAvatar({
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => setImageFailed(false), [avatarUrl]);
   const showImage = !privacy && !imageFailed && Boolean(safeChatAvatarUrl(avatarUrl));
+  // 隐私模式下名字缩写也要藏：两个字的名字，缩写就是全名。
   return (
     <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: alpha(accent, 0.19) }]}>
       {showImage ? (
@@ -838,7 +1275,7 @@ function ChatAvatar({
           source={{ uri: safeChatAvatarUrl(avatarUrl)! }}
           style={[styles.avatarImage, { width: size, height: size, borderRadius: size / 2 }]}
         />
-      ) : kind === "group" ? <UsersRound color={accent} size={Math.round(size * 0.45)} strokeWidth={1.8} /> : <Text style={[styles.avatarText, { color: accent, fontSize: Math.max(11, Math.round(size * 0.32)) }]}>{initials}</Text>}
+      ) : kind === "group" ? <UsersRound color={accent} size={Math.round(size * 0.45)} strokeWidth={1.8} /> : <Text style={[styles.avatarText, { color: accent, fontSize: Math.max(11, Math.round(size * 0.32)) }]}>{privacy ? "友" : initials}</Text>}
       {online ? <View {...fx({ motion: "pulse" })} style={[styles.onlineDot, { width: Math.max(7, Math.round(size * 0.2)), height: Math.max(7, Math.round(size * 0.2)), borderRadius: size, borderColor: color.sidebar }]} /> : null}
     </View>
   );
@@ -1095,10 +1532,22 @@ const styles = StyleSheet.create({
   attachmentText: { color: color.textSecondary, fontSize: 11 },
   messageEmptyState: { alignItems: "center", justifyContent: "center", paddingVertical: 80 },
   messageEmptyText: { color: color.textMuted, fontSize: 11, marginTop: 10 },
-  composer: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border, backgroundColor: color.sidebar },
-  composerTools: { flexDirection: "row", alignItems: "center", gap: 12 },
-  composerInput: { flex: 1, minWidth: 0, height: 38, color: color.textMuted, fontSize: 11, paddingHorizontal: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
-  composerSend: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: radius.medium, backgroundColor: color.surfaceMuted },
+  composerWrap: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border, backgroundColor: color.sidebar },
+  composer: { minHeight: 72, flexDirection: "row", alignItems: "flex-end", gap: 10, paddingHorizontal: 18, paddingVertical: 17 },
+  composerTool: { width: 34, height: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.medium },
+  composerToolActive: { backgroundColor: color.accentSoft },
+  composerInput: { flex: 1, minWidth: 0, minHeight: 38, maxHeight: 132, color: color.text, fontSize: 12, lineHeight: 19, paddingHorizontal: 11, paddingVertical: 9, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
+  composerDisabled: { opacity: 0.55 },
+  composerSend: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.medium, backgroundColor: color.surfaceMuted },
+  composerSendReady: { backgroundColor: color.accent },
+  composerNotice: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 18, marginTop: 10, paddingHorizontal: 10, paddingVertical: 7, borderLeftWidth: 2, borderLeftColor: color.danger, backgroundColor: color.dangerSoft },
+  composerNoticeWarn: { borderLeftColor: color.amber, backgroundColor: color.amberSoft },
+  composerNoticeText: { flex: 1, color: color.danger, fontSize: 11, lineHeight: 17 },
+  composerNoticeTextWarn: { color: color.amber },
+  emojiPanel: { maxHeight: 176, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  emojiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 2, paddingHorizontal: 14, paddingVertical: 10 },
+  emojiCell: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.small },
+  emojiImage: { width: 26, height: 26 },
   groupSummaryContent: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 28 },
   groupSummaryIcon: { width: 68, height: 68, alignItems: "center", justifyContent: "center", borderRadius: 34 },
   groupSummaryTitle: { color: color.text, fontSize: 20, fontWeight: "900", marginTop: 16 },
@@ -1109,6 +1558,37 @@ const styles = StyleSheet.create({
   chatFactLabel: { color: color.textMuted, fontSize: 9, marginTop: 4 },
   groupPrivacyNote: { maxWidth: 420, flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 18, padding: 12, borderLeftWidth: 2, borderLeftColor: color.green, backgroundColor: color.greenSoft },
   groupPrivacyNoteText: { flex: 1, color: color.textSecondary, fontSize: 9, lineHeight: 15 },
+  iconButtonActive: { borderColor: alpha(color.amber, 0.5), backgroundColor: color.amberSoft },
+  sparkBadge: { position: "absolute", top: -6, right: -6, minWidth: 17, height: 17, alignItems: "center", justifyContent: "center", paddingHorizontal: 4, borderRadius: radius.pill, backgroundColor: color.danger },
+  sparkBadgeText: { color: color.white, fontSize: 9, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  sparkNotice: { backgroundColor: color.amberSoft },
+  sparkNoticeText: { color: color.amber },
+  sparkContent: { flexGrow: 1, gap: 20, paddingHorizontal: 20, paddingVertical: 18 },
+  sparkFacts: { flexDirection: "row", gap: 8 },
+  sparkSection: { gap: 8 },
+  sparkSectionHead: { flexDirection: "row", alignItems: "baseline", gap: 7 },
+  sparkSectionTitle: { color: color.text, fontSize: 12, fontWeight: "900" },
+  sparkSectionCount: { color: color.textMuted, fontSize: 10, fontVariant: ["tabular-nums"] },
+  sparkList: { overflow: "hidden", borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
+  sparkRow: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  sparkRowDivided: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.borderSoft },
+  sparkCopy: { flex: 1, minWidth: 0 },
+  sparkName: { color: color.text, fontSize: 13, fontWeight: "900" },
+  sparkStatus: { color: color.textSecondary, fontSize: 10, lineHeight: 16, marginTop: 3 },
+  sparkStrip: { flexDirection: "row", gap: 3, flexShrink: 0 },
+  sparkCell: { width: 9, height: 9, backgroundColor: color.surfaceMuted },
+  sparkCellBoth: { backgroundColor: color.amber },
+  sparkCellHalf: { backgroundColor: alpha(color.amber, 0.32) },
+  sparkCount: { width: 92, flexShrink: 0, alignItems: "flex-end" },
+  sparkDays: { flexDirection: "row", alignItems: "center", gap: 4 },
+  sparkDaysValue: { color: color.text, fontSize: 20, fontWeight: "900", fontFamily: font.serif, fontVariant: ["tabular-nums"] },
+  sparkDaysMuted: { color: color.textMuted },
+  sparkDaysUnit: { color: color.textMuted, fontSize: 10 },
+  sparkLeft: { color: color.textMuted, fontSize: 9, marginTop: 3, fontVariant: ["tabular-nums"] },
+  sparkLeftUrgent: { color: color.danger, fontWeight: "800" },
+  sparkEmpty: { alignItems: "center", paddingVertical: 56 },
+  sparkEmptyIcon: { backgroundColor: color.amberSoft },
+  sparkNote: { color: color.textMuted, fontSize: 9, lineHeight: 15 },
   detailEmptyState: { flex: 1, alignItems: "center", justifyContent: "center" },
   detailEmptyTitle: { color: color.text, fontSize: 15, fontWeight: "900", marginTop: 14 },
   detailEmptyBody: { color: color.textMuted, fontSize: 10, marginTop: 6 },
