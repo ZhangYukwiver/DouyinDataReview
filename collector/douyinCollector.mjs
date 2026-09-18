@@ -41,6 +41,7 @@ import {
   VideoDownloadError,
 } from "./videoDownloader.mjs";
 import { observeChatSockets } from "./chatRealtime.mjs";
+import { ChatSendError, sendChatText, validateChatSend } from "./chatSender.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
 const CHAT_URL = "https://www.douyin.com/chat?isPopup=1";
@@ -953,6 +954,8 @@ export class DouyinCollector {
     this.chat = null;
     this.chatPromise = null;
     this.chatRunId = 0;
+    this.chatSends = new Map();
+    this.chatSendPromise = null;
     this.syncRunId = 0;
     this.syncMode = null;
     // 边采边存的最小间隔，快照是整份重写的，不能每页都写
@@ -1405,6 +1408,13 @@ export class DouyinCollector {
     const promise = this.chatPromise;
     if (!chat || !promise) return false;
     chat.stopping = true;
+    // Let an in-flight send settle so its result is known; bounded because
+    // callers of the stop endpoint time out after ten seconds.
+    if (this.chatSendPromise) {
+      const settled = new AbortController();
+      await Promise.race([this.chatSendPromise.catch(() => undefined), delay(8_000, undefined, { signal: settled.signal }).catch(() => undefined)]);
+      settled.abort();
+    }
     chat.active = false;
     this.chatRunId += 1;
     chat.stop();
@@ -1456,6 +1466,38 @@ export class DouyinCollector {
   isChatReceiving() {
     return this.chat?.active === true && this.contextHeadless === true
       && this.status.chat.state === "observing";
+  }
+
+  async sendChatMessage(input) {
+    const request = validateChatSend(input);
+    const fingerprint = `${request.conversationId}\n${request.text}`;
+    const previous = this.chatSends.get(request.requestId);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new ChatSendError("invalid_request", "请重新发送这条消息。", 400);
+      return previous.result;
+    }
+    const observation = this.chat;
+    if (!this.isChatReceiving() || observation.stopping || !observation.page || observation.page.isClosed()) throw new ChatSendError("not_receiving", "先开始接收消息，才能发送。");
+    if (!observation.historyReady) throw new ChatSendError("collector_busy", "正在整理聊天历史，整理完就能发送。");
+    if (this.status.chat.connection !== "connected") throw new ChatSendError("not_connected", "消息连接还没连上，请稍后再发。");
+    if (this.chatSendPromise) throw new ChatSendError("collector_busy", "上一条还在发送，请稍等。");
+    if (this.chatSends.size >= 1000) this.chatSends.delete(this.chatSends.keys().next().value);
+    // One send at a time, deduplicated by requestId; a dispatched message is never retried here.
+    const result = sendChatText(observation.page, request).then((outcome) => {
+      if (outcome.chatMessage) observation.acceptSent?.(outcome.chatMessage);
+      return outcome;
+    });
+    this.chatSends.set(request.requestId, { fingerprint, result });
+    this.chatSendPromise = result;
+    try {
+      return await result;
+    } catch (error) {
+      // Only failures before the click reach here, so the same request may run again.
+      this.chatSends.delete(request.requestId);
+      throw error;
+    } finally {
+      if (this.chatSendPromise === result) this.chatSendPromise = null;
+    }
   }
 
   isManualObserving() {
@@ -1817,6 +1859,8 @@ export class DouyinCollector {
       });
     };
 
+    // Messages sent from this app: the site's own push may or may not echo them.
+    observation.acceptSent = (message) => enqueuePayload(() => ({ messages: [message], conversations: [], hasMore: null }));
     const stopSockets = observeChatSockets(context, {
       onPayload: (normalized) => enqueuePayload(() => normalized),
       onConnection: (chatConnection) => {

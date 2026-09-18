@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Image,
   type NativeScrollEvent,
@@ -40,14 +41,19 @@ import {
   type ChatMessage,
   hasChatShareEvidence,
 } from "../../domain/chatRecords";
+import { CHAT_SEND_UNCONFIRMED, sendChatMessage, type ChatSendConnection, type ChatSendOutcome } from "../../services/chatSend";
 import { type CollectorStatus, LocalCollectorError, isChatReceiving } from "../../services/localCollector";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { fx } from "./motion";
-import { splitChatEmoji } from "../../domain/chatEmoji";
+import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 const webInlineEmoji = Platform.OS === "web" ? ({ verticalAlign: "text-bottom" } as object) : null;
 const CHAT_MESSAGE_RENDER_LIMIT = 320;
+// 与抖音网页输入框的上限一致
+const CHAT_TEXT_LIMIT = 16_000;
+// 原生 textarea 按内容长高（Chromium 123+）
+const webAutoHeight = Platform.OS === "web" ? ({ fieldSizing: "content" } as object) : null;
 
 type ChatFilter = "all" | "friend" | "group";
 
@@ -60,6 +66,8 @@ export interface ChatWorkspaceProps {
   connected?: boolean;
   status?: CollectorStatus | null;
   onToggleReception?: () => void;
+  /** 有连接才能发送；消息经采集器里的抖音网页发出。 */
+  sendConnection?: ChatSendConnection | null;
   onOpenRecord: (url: string) => Promise<void>;
   onOpenSettings: () => void;
 }
@@ -211,6 +219,7 @@ export function ChatWorkspace({
   connected = false,
   status = null,
   onToggleReception,
+  sendConnection = null,
   onOpenRecord,
   onOpenSettings,
 }: ChatWorkspaceProps) {
@@ -273,6 +282,13 @@ export function ChatWorkspace({
       : status?.chatConnection === "connected" ? "实时接收中"
         : status?.chatConnection === "reconnecting" ? "连接中断，正在重连" : "正在连接消息";
   const controlDisabled = connected && busy && !receiving;
+  // 发送借用正在接收的抖音网页，所以要等历史整理完、连接就绪。
+  const sendBlock = !sendConnection || !connected ? "连接采集器后才能发消息"
+    : !receiving ? "开始接收后才能发消息"
+      : status?.chat.state !== "observing" || status.chat.progress ? "聊天历史整理完就能发消息"
+        : status.chatConnection !== "connected" ? "消息连接好了才能发"
+          : privacy ? "隐私模式下不能发消息" : null;
+  const sendMessage = (conversationId: string, text: string) => sendChatMessage(sendConnection!, conversationId, text);
 
   return (
     <View style={styles.workspace} testID="chat-workspace">
@@ -341,6 +357,8 @@ export function ChatWorkspace({
             privacy={privacy}
             row={selectedForDetail}
             selfId={selfId}
+            sendBlock={sendBlock}
+            onSend={sendMessage}
           />
         </>
       )}
@@ -536,16 +554,20 @@ function ChatDetailPane({
   mobile,
   onBack,
   onOpenRecord,
+  onSend,
   privacy,
   row,
   selfId,
+  sendBlock,
 }: {
   mobile: boolean;
   onBack: () => void;
   onOpenRecord: (url: string) => Promise<void>;
+  onSend: (conversationId: string, text: string) => Promise<ChatSendOutcome>;
   privacy: boolean;
   row: ChatConversationRow | null;
   selfId: string | null;
+  sendBlock: string | null;
 }) {
   const messageListRef = useRef<FlatList<ChatMessage>>(null);
   const stickToBottomRef = useRef(true);
@@ -648,7 +670,17 @@ function ChatDetailPane({
         />
       )}
 
-      {row.kind !== "group" ? <ReadonlyComposer /> : null}
+      {row.kind !== "group" ? (
+        <ChatComposer
+          blockedReason={sendBlock}
+          hidden={privacy}
+          onSend={(text) => onSend(row.id, text)}
+          onSent={() => {
+            stickToBottomRef.current = true;
+            scrollToBottom();
+          }}
+        />
+      ) : null}
     </View>
   );
 }
@@ -824,16 +856,128 @@ export function MessageContent({ message, onOpenRecord }: { message: ChatMessage
   return <Text style={styles.bubbleText}>{renderChatText(message.text ?? chatPreview(message))}</Text>;
 }
 
-function ReadonlyComposer() {
+function ChatComposer({
+  blockedReason,
+  hidden,
+  onSend,
+  onSent,
+}: {
+  blockedReason: string | null;
+  /** 隐私模式：不显示已经打好的字，草稿留着，关掉后还在 */
+  hidden: boolean;
+  onSend: (text: string) => Promise<ChatSendOutcome>;
+  onSent: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState<{ tone: "warn" | "error"; text: string } | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const inputRef = useRef<TextInput>(null);
+  const blocked = blockedReason !== null;
+  const canSend = !blocked && !sending && text.trim().length > 0;
+
+  const submit = async () => {
+    if (!canSend) return;
+    setSending(true);
+    setNotice(null);
+    setEmojiOpen(false);
+    try {
+      const result = await onSend(text);
+      if (result.outcome === "confirmed") {
+        setText("");
+        onSent();
+      } else {
+        // 没发出去或结果不明时留着原文，由用户决定要不要重发
+        setNotice({ tone: result.outcome === "unknown" ? "warn" : "error", text: result.message });
+      }
+    } catch (error) {
+      const unconfirmed = error instanceof LocalCollectorError && error.code === CHAT_SEND_UNCONFIRMED;
+      setNotice({ tone: unconfirmed ? "warn" : "error", text: error instanceof Error ? error.message : "消息没发出去，请稍后再试。" });
+    } finally {
+      setSending(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  // 网页端的 TextInput 就是 textarea；失焦后它仍记着光标位置（onSelectionChange 打字时不触发，靠不住）
+  const insertEmoji = (code: string) => {
+    const node = inputRef.current as unknown as HTMLTextAreaElement | null;
+    const start = node?.selectionStart ?? text.length;
+    const end = node?.selectionEnd ?? start;
+    const next = text.slice(0, start) + code + text.slice(end);
+    if (next.length > CHAT_TEXT_LIMIT) return;
+    setText(next);
+    requestAnimationFrame(() => {
+      node?.focus();
+      node?.setSelectionRange?.(start + code.length, start + code.length);
+    });
+  };
+
   return (
-    <View style={styles.composer}>
-      <View style={styles.composerTools}>
-        <Smile color={color.textMuted} size={19} strokeWidth={1.8} />
-        <ImageIcon color={color.textMuted} size={19} strokeWidth={1.8} />
-        <Mic color={color.textMuted} size={19} strokeWidth={1.8} />
+    <View style={styles.composerWrap}>
+      {notice ? (
+        <View style={[styles.composerNotice, notice.tone === "warn" && styles.composerNoticeWarn]} testID="chat-send-notice">
+          <Text accessibilityLiveRegion="polite" style={[styles.composerNoticeText, notice.tone === "warn" && styles.composerNoticeTextWarn]}>{notice.text}</Text>
+          <Pressable accessibilityLabel="关闭提示" accessibilityRole="button" hitSlop={8} onPress={() => setNotice(null)} style={webPointer}>
+            <X color={color.textMuted} size={13} />
+          </Pressable>
+        </View>
+      ) : null}
+      {emojiOpen && !blocked ? (
+        <ScrollView contentContainerStyle={styles.emojiGrid} style={styles.emojiPanel} testID="chat-emoji-panel">
+          {CHAT_EMOJI.map(([code, url]) => (
+            <Pressable accessibilityLabel={code} accessibilityRole="button" key={code} onPress={() => insertEmoji(code)} style={({ pressed }) => [styles.emojiCell, pressed && styles.pressed, webPointer]}>
+              <Image source={{ uri: url }} style={styles.emojiImage} />
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
+      <View style={styles.composer}>
+        <Pressable
+          accessibilityLabel={emojiOpen ? "收起表情" : "插入表情"}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: blocked, expanded: emojiOpen }}
+          disabled={blocked}
+          onPress={() => setEmojiOpen((open) => !open)}
+          style={({ pressed }) => [styles.composerTool, emojiOpen && styles.composerToolActive, pressed && styles.pressed, blocked && styles.composerDisabled, webPointer]}
+          testID="chat-emoji-toggle"
+        >
+          <Smile color={emojiOpen ? color.accent : color.textMuted} size={19} strokeWidth={1.8} />
+        </Pressable>
+        <TextInput
+          accessibilityLabel="消息内容"
+          editable={!blocked && !sending}
+          maxLength={CHAT_TEXT_LIMIT}
+          multiline
+          onChangeText={setText}
+          onKeyPress={(event) => {
+            // 回车发送，Shift+回车换行；输入法选词时的回车不算
+            const key = event.nativeEvent as unknown as KeyboardEvent;
+            if (key.key !== "Enter" || key.shiftKey || key.isComposing || key.keyCode === 229) return;
+            event.preventDefault();
+            void submit();
+          }}
+          placeholder={blockedReason ?? "发消息（回车发送，Shift+回车换行）"}
+          placeholderTextColor={color.textMuted}
+          ref={inputRef}
+          style={[styles.composerInput, webAutoHeight, blocked && styles.composerDisabled]}
+          testID="chat-composer-input"
+          value={hidden ? "" : text}
+        />
+        <Pressable
+          accessibilityLabel={sending ? "正在发送" : "发送"}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canSend, busy: sending }}
+          disabled={!canSend}
+          onPress={() => void submit()}
+          style={({ pressed }) => [styles.composerSend, canSend && styles.composerSendReady, pressed && styles.pressed, webPointer]}
+          testID="chat-send-button"
+        >
+          {sending
+            ? <ActivityIndicator color={color.textMuted} size="small" />
+            : <Send color={canSend ? color.canvas : color.textMuted} size={17} strokeWidth={1.8} />}
+        </Pressable>
       </View>
-      <TextInput editable={false} placeholder="仅接收消息" placeholderTextColor={color.textMuted} style={styles.composerInput} />
-      <View style={styles.composerSend}><Send color={color.textMuted} size={17} strokeWidth={1.8} /></View>
     </View>
   );
 }
@@ -1125,10 +1269,22 @@ const styles = StyleSheet.create({
   attachmentText: { color: color.textSecondary, fontSize: 11 },
   messageEmptyState: { alignItems: "center", justifyContent: "center", paddingVertical: 80 },
   messageEmptyText: { color: color.textMuted, fontSize: 11, marginTop: 10 },
-  composer: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 18, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border, backgroundColor: color.sidebar },
-  composerTools: { flexDirection: "row", alignItems: "center", gap: 12 },
-  composerInput: { flex: 1, minWidth: 0, height: 38, color: color.textMuted, fontSize: 11, paddingHorizontal: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
-  composerSend: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: radius.medium, backgroundColor: color.surfaceMuted },
+  composerWrap: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border, backgroundColor: color.sidebar },
+  composer: { minHeight: 72, flexDirection: "row", alignItems: "flex-end", gap: 10, paddingHorizontal: 18, paddingVertical: 17 },
+  composerTool: { width: 34, height: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.medium },
+  composerToolActive: { backgroundColor: color.accentSoft },
+  composerInput: { flex: 1, minWidth: 0, minHeight: 38, maxHeight: 132, color: color.text, fontSize: 12, lineHeight: 19, paddingHorizontal: 11, paddingVertical: 9, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
+  composerDisabled: { opacity: 0.55 },
+  composerSend: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: radius.medium, backgroundColor: color.surfaceMuted },
+  composerSendReady: { backgroundColor: color.accent },
+  composerNotice: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 18, marginTop: 10, paddingHorizontal: 10, paddingVertical: 7, borderLeftWidth: 2, borderLeftColor: color.danger, backgroundColor: color.dangerSoft },
+  composerNoticeWarn: { borderLeftColor: color.amber, backgroundColor: color.amberSoft },
+  composerNoticeText: { flex: 1, color: color.danger, fontSize: 11, lineHeight: 17 },
+  composerNoticeTextWarn: { color: color.amber },
+  emojiPanel: { maxHeight: 176, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  emojiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 2, paddingHorizontal: 14, paddingVertical: 10 },
+  emojiCell: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.small },
+  emojiImage: { width: 26, height: 26 },
   groupSummaryContent: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 28 },
   groupSummaryIcon: { width: 68, height: 68, alignItems: "center", justifyContent: "center", borderRadius: 34 },
   groupSummaryTitle: { color: color.text, fontSize: 20, fontWeight: "900", marginTop: 16 },

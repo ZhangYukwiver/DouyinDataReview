@@ -351,6 +351,7 @@ export function ContentWorkspace({
             connected={chatConnected}
             status={status}
             onToggleReception={onToggleChatReception ?? onOpenSettings}
+            sendConnection={commentsConnection}
             conversations={chatConversations}
             messages={chatMessages}
             mobile={mobile}
