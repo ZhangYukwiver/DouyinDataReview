@@ -17,6 +17,7 @@ import {
 import {
   ChevronLeft,
   FileText,
+  Flame,
   Image as ImageIcon,
   LockKeyhole,
   MessageCircle,
@@ -41,6 +42,7 @@ import {
   type ChatMessage,
   hasChatShareEvidence,
 } from "../../domain/chatRecords";
+import { buildSparks, shiftDay, SPARK_LIT_DAYS, sparkDayKey, type Spark, type SparkDay } from "../../domain/chatSparks";
 import { CHAT_SEND_UNCONFIRMED, sendChatMessage, type ChatSendConnection, type ChatSendOutcome } from "../../services/chatSend";
 import { type CollectorStatus, LocalCollectorError, isChatReceiving } from "../../services/localCollector";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -229,7 +231,12 @@ export function ChatWorkspace({
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileDetail, setMobileDetail] = useState(false);
+  const [sparkBoard, setSparkBoard] = useState(false);
   const searchRef = useRef<TextInput>(null);
+  const now = useMinuteClock();
+  const friendRows = useMemo(() => rows.filter((row) => row.kind !== "group"), [rows]);
+  const sparks = useMemo(() => buildSparks(friendRows, selfId, now), [friendRows, now, selfId]);
+  const sparkAlerts = sparks.filter((spark) => spark.state === "pending" && spark.days >= SPARK_LIT_DAYS).length;
 
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
@@ -268,12 +275,19 @@ export function ChatWorkspace({
 
   const selected = rows.find((row) => row.id === selectedId) ?? null;
   const selectedForDetail = query.trim() && filteredRows.length === 0 ? null : selected;
-  const showDetail = !mobile || mobileDetail;
+  const showDetail = !mobile || mobileDetail || sparkBoard;
   const totalMessages = countChatMessages(messages, conversations);
 
   const selectConversation = (row: ChatConversationRow) => {
+    setSparkBoard(false);
     setSelectedId(row.id);
     if (mobile) setMobileDetail(true);
+  };
+  // 从看板跳过去时清掉筛选和搜索，否则被筛掉的会话会被上面的 effect 换成列表第一项。
+  const openFromBoard = (row: ChatConversationRow) => {
+    setFilter("all");
+    setQuery("");
+    selectConversation(row);
   };
 
   const receiving = isChatReceiving(status);
@@ -320,6 +334,9 @@ export function ChatWorkspace({
           onFocusSearch={() => searchRef.current?.focus()}
           onOpenSettings={onOpenSettings}
           onSelect={selectConversation}
+          onToggleSparks={() => setSparkBoard((open) => !open)}
+          sparkAlerts={sparkAlerts}
+          sparkBoard={sparkBoard}
           query={query}
           allRows={rows}
           rows={filteredRows}
@@ -339,6 +356,9 @@ export function ChatWorkspace({
               onFocusSearch={() => searchRef.current?.focus()}
               onOpenSettings={onOpenSettings}
               onSelect={selectConversation}
+              onToggleSparks={() => setSparkBoard((open) => !open)}
+              sparkAlerts={sparkAlerts}
+              sparkBoard={sparkBoard}
               query={query}
               allRows={rows}
               rows={filteredRows}
@@ -346,10 +366,21 @@ export function ChatWorkspace({
               setQuery={setQuery}
               totalMessages={totalMessages}
               privacy={privacy}
-              selectedId={selectedId}
+              selectedId={sparkBoard ? null : selectedId}
             />
           ) : null}
-          <ChatDetailPane
+          {sparkBoard ? (
+            <SparkBoard
+              live={receiving && status?.chatConnection === "connected"}
+              mobile={mobile}
+              now={now}
+              onBack={() => setSparkBoard(false)}
+              onOpen={openFromBoard}
+              privacy={privacy}
+              rows={friendRows}
+              sparks={sparks}
+            />
+          ) : <ChatDetailPane
             key={selectedForDetail?.id ?? "none"}
             mobile={mobile}
             onBack={() => setMobileDetail(false)}
@@ -359,7 +390,7 @@ export function ChatWorkspace({
             selfId={selfId}
             sendBlock={sendBlock}
             onSend={sendMessage}
-          />
+          />}
         </>
       )}
       </View>
@@ -375,6 +406,9 @@ function ChatListPane({
   onFocusSearch,
   onOpenSettings,
   onSelect,
+  onToggleSparks,
+  sparkAlerts,
+  sparkBoard,
   query,
   allRows,
   rows,
@@ -391,6 +425,9 @@ function ChatListPane({
   onFocusSearch: () => void;
   onOpenSettings: () => void;
   onSelect: (row: ChatConversationRow) => void;
+  onToggleSparks: () => void;
+  sparkAlerts: number;
+  sparkBoard: boolean;
   query: string;
   allRows: ChatConversationRow[];
   rows: ChatConversationRow[];
@@ -413,6 +450,22 @@ function ChatListPane({
           <Text style={styles.chatTitle}>消息</Text>
           <Text style={styles.chatSubtitle}>{allRows.length ? `${formatCount(allRows.length)} 个会话 · ${formatCount(totalMessages)} 条消息` : "消息会保存在本机"}</Text>
         </View>
+        <Pressable
+          accessibilityLabel={sparkAlerts ? `火花看板，${sparkAlerts} 位好友的火花今天还没续` : "火花看板"}
+          accessibilityRole="button"
+          accessibilityState={{ selected: sparkBoard }}
+          {...fx({ hover: "raise" })}
+          onPress={onToggleSparks}
+          style={({ pressed }) => [styles.iconButton, sparkBoard && styles.iconButtonActive, pressed && styles.pressed, webPointer]}
+          testID="chat-spark-toggle"
+        >
+          <Flame color={sparkBoard || sparkAlerts ? color.amber : color.textSecondary} size={19} strokeWidth={2} />
+          {sparkAlerts ? (
+            <View style={styles.sparkBadge}>
+              <Text style={styles.sparkBadgeText}>{sparkAlerts}</Text>
+            </View>
+          ) : null}
+        </Pressable>
         <Pressable
           accessibilityLabel="聚焦搜索聊天"
           accessibilityRole="button"
@@ -715,6 +768,215 @@ function ChatFact({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SparkBoard({
+  live,
+  mobile,
+  now,
+  onBack,
+  onOpen,
+  privacy,
+  rows,
+  sparks,
+}: {
+  live: boolean;
+  mobile: boolean;
+  now: Date;
+  onBack: () => void;
+  onOpen: (row: ChatConversationRow) => void;
+  privacy: boolean;
+  rows: ChatConversationRow[];
+  sparks: Spark[];
+}) {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const alive = sparks.filter((spark) => spark.state !== "broken");
+  // buildSparks 已按天数从长到短排好，lit[0] 就是最久的一簇
+  const lit = alive.filter((spark) => spark.days >= SPARK_LIT_DAYS);
+  const waiting = lit.filter((spark) => spark.state === "pending").length;
+  // 没点亮的单独一组，免得「今天还没续」的组内条数和上面的数字对不上
+  const sections = [
+    { title: "今天还没续", items: lit.filter((spark) => spark.state === "pending") },
+    { title: "今天续上了", items: lit.filter((spark) => spark.state === "done") },
+    { title: "快点亮了", items: alive.filter((spark) => spark.days < SPARK_LIT_DAYS) },
+    { title: "最近断了", items: sparks.filter((spark) => spark.state === "broken") },
+  ].filter((section) => section.items.length > 0);
+  const summary = waiting ? `离今天结束还有 ${formatTimeLeft(now)}，${waiting} 位好友的火花还没续。`
+    : lit.length ? "亮着的火花今天都续上了。"
+      : alive.length ? `还没有点亮的火花，连着聊满 ${SPARK_LIT_DAYS} 天就会亮起来。`
+        : "最近没有连着聊天的好友。";
+  let order = 0;
+
+  return (
+    <View {...fx({ motion: "fade" })} style={[styles.detailPane, mobile && styles.detailPaneMobile]} testID="chat-spark-board">
+      <View style={styles.detailHeader}>
+        {mobile ? (
+          <Pressable accessibilityLabel="返回聊天列表" accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.detailBackButton, pressed && styles.pressed, webPointer]}>
+            <ChevronLeft color={color.textSecondary} size={21} strokeWidth={2} />
+          </Pressable>
+        ) : null}
+        <View style={styles.detailHeaderCopy}>
+          <Text style={styles.detailTitle}>火花</Text>
+          <Text style={styles.detailMeta}>{summary}</Text>
+        </View>
+        {!mobile ? (
+          <Pressable accessibilityLabel="关闭火花看板" accessibilityRole="button" {...fx({ hover: "raise" })} onPress={onBack} style={({ pressed }) => [styles.iconButton, pressed && styles.pressed, webPointer]}>
+            <X color={color.textSecondary} size={17} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      {!live ? (
+        <View style={[styles.privacyNotice, styles.sparkNotice]}>
+          <Pause color={color.amber} size={14} strokeWidth={2} />
+          <Text style={[styles.privacyNoticeText, styles.sparkNoticeText]}>现在没有在接收新消息，今天的情况可能还没更新。</Text>
+        </View>
+      ) : null}
+
+      <ScrollView contentContainerStyle={styles.sparkContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.sparkFacts}>
+          <ChatFact label="亮着的火花" value={formatCount(lit.length)} />
+          <ChatFact label="今天还没续" value={formatCount(waiting)} />
+          <ChatFact label="最久的火花" value={lit[0] ? `${lit[0].days} 天` : "—"} />
+        </View>
+
+        {sections.length ? sections.map((section) => (
+          <View key={section.title} style={styles.sparkSection}>
+            <View style={styles.sparkSectionHead}>
+              <Text style={styles.sparkSectionTitle}>{section.title}</Text>
+              <Text style={styles.sparkSectionCount}>{section.items.length}</Text>
+            </View>
+            <View style={styles.sparkList}>
+              {section.items.map((spark, index) => {
+                const row = byId.get(spark.id);
+                order += 1;
+                return row ? (
+                  <SparkRow first={index === 0} i={Math.min(order, 16)} key={spark.id} mobile={mobile} now={now} onPress={() => onOpen(row)} privacy={privacy} row={row} spark={spark} />
+                ) : null;
+              })}
+            </View>
+          </View>
+        )) : (
+          <View {...fx({ motion: "rise" })} style={styles.sparkEmpty}>
+            <View style={[styles.emptyChatIcon, styles.sparkEmptyIcon]}><Flame color={color.amber} size={25} strokeWidth={1.8} /></View>
+            <Text style={styles.detailEmptyTitle}>还没有火花</Text>
+            <Text style={styles.listEmptyBody}>{rows.length ? "和好友连着几天互相发消息，这里就会开始计天数。" : "连接采集器读取聊天后，这里会显示你和好友的火花。"}</Text>
+          </View>
+        )}
+
+        <Text style={styles.sparkNote}>
+          天数按本机保存的聊天记录估算：同一天你们都发过消息才算一天，连着聊满 {SPARK_LIT_DAYS} 天会点亮火花。抖音没有公开它的算法，以抖音里显示的为准。
+          {mobile ? "" : "右边的小方格是最近两周，实心表示那天你们都发过消息，浅色表示只有一方发过。"}
+        </Text>
+      </ScrollView>
+    </View>
+  );
+}
+
+function SparkRow({
+  first,
+  i,
+  mobile,
+  now,
+  onPress,
+  privacy,
+  row,
+  spark,
+}: {
+  first: boolean;
+  i: number;
+  mobile: boolean;
+  now: Date;
+  onPress: () => void;
+  privacy: boolean;
+  row: ChatConversationRow;
+  spark: Spark;
+}) {
+  const name = privacy ? "好友" : row.name;
+  const burning = spark.state !== "broken" && spark.days >= SPARK_LIT_DAYS;
+  const status = sparkStatus(spark, now);
+  const countdown = burning && spark.state === "pending";
+  return (
+    <Pressable
+      {...fx({ motion: "rise", i, hover: "tint" })}
+      accessibilityLabel={`${name}，${spark.state === "broken" ? "之前" : ""}连着聊了 ${spark.days} 天，${status}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.sparkRow, !first && styles.sparkRowDivided, pressed && styles.pressed, webPointer]}
+      testID={`chat-spark-${row.id}`}
+    >
+      <ChatAvatar accent={row.accent} avatarUrl={row.avatarUrl} initials={row.initials} kind={row.kind} privacy={privacy} size={40} />
+      <View style={styles.sparkCopy}>
+        <Text numberOfLines={1} style={styles.sparkName}>{name}</Text>
+        <Text numberOfLines={2} style={styles.sparkStatus}>{status}</Text>
+      </View>
+      {!mobile ? <SparkStrip days={spark.recent} /> : null}
+      <View style={styles.sparkCount}>
+        <View style={styles.sparkDays}>
+          <Flame color={burning ? color.amber : color.textMuted} fill={burning ? color.amber : "none"} size={14} strokeWidth={2} />
+          <Text style={[styles.sparkDaysValue, !burning && styles.sparkDaysMuted]}>{spark.days}</Text>
+          <Text style={styles.sparkDaysUnit}>天</Text>
+        </View>
+        {countdown ? <Text style={[styles.sparkLeft, msUntilMidnight(now) < 3 * 3_600_000 && styles.sparkLeftUrgent]}>还剩 {formatTimeLeft(now)}</Text> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function SparkStrip({ days }: { days: SparkDay[] }) {
+  return (
+    <View style={styles.sparkStrip}>
+      {days.map((day, index) => (
+        <View key={index} style={[styles.sparkCell, day === "both" ? styles.sparkCellBoth : day !== "none" && styles.sparkCellHalf]} />
+      ))}
+    </View>
+  );
+}
+
+const pendingSparkStatus: Record<SparkDay, string> = {
+  theirs: "对方今天发过消息了，就等你回。",
+  mine: "你今天发过了，还在等对方回。",
+  one: "今天只有一方发过消息。",
+  none: "今天你们还没聊过。",
+  both: "今天已经续上了。",
+};
+
+function sparkStatus(spark: Spark, now: Date): string {
+  if (spark.state === "broken") return `${sparkDayLabel(spark.brokeOn, now)}没接上，之前连着聊了 ${spark.days} 天。`;
+  const needed = SPARK_LIT_DAYS - spark.days;
+  if (spark.state === "done") return needed > 0 ? `再聊 ${needed} 天就能点亮。` : "今天已经续上了。";
+  if (needed === 1) return "今天聊上就能点亮。";
+  if (needed > 1) return `从今天起连着聊 ${needed} 天就能点亮。`;
+  return pendingSparkStatus[spark.today];
+}
+
+function sparkDayLabel(key: string | null, now: Date): string {
+  if (key === sparkDayKey(shiftDay(now, -1))) return "昨天";
+  if (key === sparkDayKey(shiftDay(now, -2))) return "前天";
+  const [, month, day] = key?.split("-") ?? [];
+  return month && day ? `${Number(month)} 月 ${Number(day)} 日` : "那天";
+}
+
+// 倒计时和跨零点都靠它：每分钟换一次 now，火花状态跟着重算。
+function useMinuteClock(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
+
+function msUntilMidnight(now: Date): number {
+  return shiftDay(now, 1).setHours(0, 0, 0, 0) - now.getTime();
+}
+
+function formatTimeLeft(now: Date): string {
+  const minutes = Math.max(1, Math.ceil(msUntilMidnight(now) / 60_000));
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (!hours) return `${rest} 分钟`;
+  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+}
+
 function ConversationDateDivider() {
   return <Text style={styles.dateDivider}>本地聊天快照 · 由采集时间整理</Text>;
 }
@@ -1002,6 +1264,7 @@ function ChatAvatar({
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => setImageFailed(false), [avatarUrl]);
   const showImage = !privacy && !imageFailed && Boolean(safeChatAvatarUrl(avatarUrl));
+  // 隐私模式下名字缩写也要藏：两个字的名字，缩写就是全名。
   return (
     <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: alpha(accent, 0.19) }]}>
       {showImage ? (
@@ -1012,7 +1275,7 @@ function ChatAvatar({
           source={{ uri: safeChatAvatarUrl(avatarUrl)! }}
           style={[styles.avatarImage, { width: size, height: size, borderRadius: size / 2 }]}
         />
-      ) : kind === "group" ? <UsersRound color={accent} size={Math.round(size * 0.45)} strokeWidth={1.8} /> : <Text style={[styles.avatarText, { color: accent, fontSize: Math.max(11, Math.round(size * 0.32)) }]}>{initials}</Text>}
+      ) : kind === "group" ? <UsersRound color={accent} size={Math.round(size * 0.45)} strokeWidth={1.8} /> : <Text style={[styles.avatarText, { color: accent, fontSize: Math.max(11, Math.round(size * 0.32)) }]}>{privacy ? "友" : initials}</Text>}
       {online ? <View {...fx({ motion: "pulse" })} style={[styles.onlineDot, { width: Math.max(7, Math.round(size * 0.2)), height: Math.max(7, Math.round(size * 0.2)), borderRadius: size, borderColor: color.sidebar }]} /> : null}
     </View>
   );
@@ -1295,6 +1558,37 @@ const styles = StyleSheet.create({
   chatFactLabel: { color: color.textMuted, fontSize: 9, marginTop: 4 },
   groupPrivacyNote: { maxWidth: 420, flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 18, padding: 12, borderLeftWidth: 2, borderLeftColor: color.green, backgroundColor: color.greenSoft },
   groupPrivacyNoteText: { flex: 1, color: color.textSecondary, fontSize: 9, lineHeight: 15 },
+  iconButtonActive: { borderColor: alpha(color.amber, 0.5), backgroundColor: color.amberSoft },
+  sparkBadge: { position: "absolute", top: -6, right: -6, minWidth: 17, height: 17, alignItems: "center", justifyContent: "center", paddingHorizontal: 4, borderRadius: radius.pill, backgroundColor: color.danger },
+  sparkBadgeText: { color: color.white, fontSize: 9, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  sparkNotice: { backgroundColor: color.amberSoft },
+  sparkNoticeText: { color: color.amber },
+  sparkContent: { flexGrow: 1, gap: 20, paddingHorizontal: 20, paddingVertical: 18 },
+  sparkFacts: { flexDirection: "row", gap: 8 },
+  sparkSection: { gap: 8 },
+  sparkSectionHead: { flexDirection: "row", alignItems: "baseline", gap: 7 },
+  sparkSectionTitle: { color: color.text, fontSize: 12, fontWeight: "900" },
+  sparkSectionCount: { color: color.textMuted, fontSize: 10, fontVariant: ["tabular-nums"] },
+  sparkList: { overflow: "hidden", borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
+  sparkRow: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  sparkRowDivided: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.borderSoft },
+  sparkCopy: { flex: 1, minWidth: 0 },
+  sparkName: { color: color.text, fontSize: 13, fontWeight: "900" },
+  sparkStatus: { color: color.textSecondary, fontSize: 10, lineHeight: 16, marginTop: 3 },
+  sparkStrip: { flexDirection: "row", gap: 3, flexShrink: 0 },
+  sparkCell: { width: 9, height: 9, backgroundColor: color.surfaceMuted },
+  sparkCellBoth: { backgroundColor: color.amber },
+  sparkCellHalf: { backgroundColor: alpha(color.amber, 0.32) },
+  sparkCount: { width: 92, flexShrink: 0, alignItems: "flex-end" },
+  sparkDays: { flexDirection: "row", alignItems: "center", gap: 4 },
+  sparkDaysValue: { color: color.text, fontSize: 20, fontWeight: "900", fontFamily: font.serif, fontVariant: ["tabular-nums"] },
+  sparkDaysMuted: { color: color.textMuted },
+  sparkDaysUnit: { color: color.textMuted, fontSize: 10 },
+  sparkLeft: { color: color.textMuted, fontSize: 9, marginTop: 3, fontVariant: ["tabular-nums"] },
+  sparkLeftUrgent: { color: color.danger, fontWeight: "800" },
+  sparkEmpty: { alignItems: "center", paddingVertical: 56 },
+  sparkEmptyIcon: { backgroundColor: color.amberSoft },
+  sparkNote: { color: color.textMuted, fontSize: 9, lineHeight: 15 },
   detailEmptyState: { flex: 1, alignItems: "center", justifyContent: "center" },
   detailEmptyTitle: { color: color.text, fontSize: 15, fontWeight: "900", marginTop: 14 },
   detailEmptyBody: { color: color.textMuted, fontSize: 10, marginTop: 6 },
