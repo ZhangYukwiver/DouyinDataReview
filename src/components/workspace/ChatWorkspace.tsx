@@ -40,7 +40,7 @@ import {
   type ChatMessage,
   hasChatShareEvidence,
 } from "../../domain/chatRecords";
-import type { CollectorStatus } from "../../services/localCollector";
+import { type CollectorStatus, LocalCollectorError, isChatReceiving } from "../../services/localCollector";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { fx } from "./motion";
 import { splitChatEmoji } from "../../domain/chatEmoji";
@@ -240,7 +240,7 @@ export function ChatWorkspace({
     if (mobile) setMobileDetail(true);
   };
 
-  const receiving = status?.phase === "chat_messages" && ["launching_browser", "observing"].includes(status.state);
+  const receiving = isChatReceiving(status);
   const receptionLabel = !connected ? "未连接采集器"
     : !receiving ? "已暂停接收"
       : status?.chatConnection === "connected" ? "实时接收中"
@@ -253,7 +253,7 @@ export function ChatWorkspace({
         <View style={styles.receptionCopy}>
           <View style={[styles.receptionDot, { backgroundColor: receiving && status?.chatConnection === "connected" ? color.green : color.textMuted }]} />
           <Text accessibilityLiveRegion="polite" style={styles.receptionLabel}>{receptionLabel}</Text>
-          {receiving && status?.progress ? <Text style={styles.receptionProgress}>整理历史 {status.progress.current}/{status.progress.total || "…"}</Text> : null}
+          {receiving && status?.chat.progress ? <Text style={styles.receptionProgress}>整理历史 {status.chat.progress.current}/{status.chat.progress.total || "…"}</Text> : null}
         </View>
         <Pressable
           accessibilityRole="button"

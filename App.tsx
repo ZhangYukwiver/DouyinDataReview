@@ -42,6 +42,7 @@ import {
   getCollectorVideoDownload,
   getDefaultCollectorBaseUrl,
   LocalCollectorError,
+  isChatReceiving,
   loadCollectorVideo,
   normalizeCollectorBaseUrl,
   parseLaunchPairingCode,
@@ -186,6 +187,7 @@ function AppContent() {
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus | null>(null);
   const [collectorSnapshot, setCollectorSnapshot] = useState<CollectorSnapshot | null>(null);
   const [collectorBusy, setCollectorBusy] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
@@ -399,25 +401,23 @@ function AppContent() {
         if (pollRequest.current !== requestId) return;
         revision = status.revision;
         setCollectorStatus(status);
-        if (status.state === "observing") {
-          if (status.phase === "chat_messages") {
-            chatCollectionInFlightRef.current = true;
-            chatPollRequestRef.current = requestId;
-          }
-          const nextVersion = JSON.stringify([status.updatedAt, status.counts]);
-          if (snapshotVersion !== nextVersion) {
-            if (!await refreshCollectorSnapshot(baseUrl, token, requestId)) return;
-            snapshotVersion = nextVersion;
-          }
-          if (pollRequest.current !== requestId) return;
-          setCollectorBusy(false);
+        const receiving = isChatReceiving(status);
+        if (receiving) {
+          chatCollectionInFlightRef.current = true;
+          chatPollRequestRef.current = requestId;
         }
-        if (TERMINAL_COLLECTOR_STATES.has(status.state)) {
+        // 读取是边读边存的，计数或时间一变就把新快照取回来，不用等整轮结束
+        const nextVersion = JSON.stringify([status.updatedAt, status.counts]);
+        if (snapshotVersion !== nextVersion) {
           if (!await refreshCollectorSnapshot(baseUrl, token, requestId)) return;
-          if (pollRequest.current !== requestId) return;
+          snapshotVersion = nextVersion;
+        }
+        if (pollRequest.current !== requestId) return;
+        if (status.state === "observing") setCollectorBusy(false);
+        if (TERMINAL_COLLECTOR_STATES.has(status.state)) {
           setCollectorBusy(false);
           autoSyncInFlightRef.current = false;
-          if (chatPollRequestRef.current === requestId) {
+          if (!receiving && chatPollRequestRef.current === requestId) {
             chatCollectionInFlightRef.current = false;
             chatPollRequestRef.current = null;
           }
@@ -430,8 +430,10 @@ function AppContent() {
           if (chatStartupPendingRef.current && !chatCollectionInFlightRef.current) {
             chatStartupPendingRef.current = false;
             void beginChatObservation(baseUrl, token);
+            return;
           }
-          return;
+          // 聊天还在接收就接着看着它，记录读取结束不代表没事可做了
+          if (!receiving) return;
         }
         // Older collectors do not support a revision cursor.
         if (revision === undefined) await delay(1_000);
@@ -440,8 +442,8 @@ function AppContent() {
       if (pollRequest.current !== requestId || controller.signal.aborted) return;
       if (error instanceof LocalCollectorError && ["timeout", "unreachable"].includes(error.code)) {
         setCollectorBusy(false);
-        setCollectorStatus((current) => current?.phase === "chat_messages"
-          ? { ...current, chatConnection: "reconnecting" }
+        setCollectorStatus((current) => current && isChatReceiving(current)
+          ? { ...current, chatConnection: "reconnecting", chat: { ...current.chat, connection: "reconnecting" as const } }
           : current);
         await delay(1_500);
         if (pollRequest.current === requestId) void pollCollector(baseUrl, token, requestId);
@@ -462,7 +464,7 @@ function AppContent() {
   }
 
   async function pauseChatForOperation(baseUrl: string, token: string, requestId: number) {
-    if (!chatCollectionInFlightRef.current && collectorStatus?.phase !== "chat_messages") return true;
+    if (!chatCollectionInFlightRef.current && !isChatReceiving(collectorStatus)) return true;
     chatStartupPendingRef.current = true;
     const status = await stopCollectorChatObservation(baseUrl, token);
     if (pollRequest.current !== requestId) return false;
@@ -479,7 +481,8 @@ function AppContent() {
     setStoppingSync(false);
     setCollectorError(null);
     try {
-      if (!await pauseChatForOperation(baseUrl, token, requestId)) return;
+      // 增量读取和聊天接收共用同一个无头会话，不用打断接收；完整读取要可见浏览器，才需要让位
+      if (!incremental && !await pauseChatForOperation(baseUrl, token, requestId)) return;
       const status = incremental
         ? await startDirectRecordsSync(baseUrl, token)
         : await startCollectorSync(baseUrl, token);
@@ -510,13 +513,19 @@ function AppContent() {
       inFlight: autoSyncInFlightRef.current,
       switchingAccount,
       stoppingSync,
-      state: collectorStatus?.phase === "chat_messages" && collectorStatus.state === "observing" ? "idle" : collectorStatus?.state ?? null,
+      state: collectorStatus?.state ?? null,
     })) return;
     autoSyncInFlightRef.current = true;
     void beginSync(collectorUrl, token, true);
   }
 
   autoSyncTriggerRef.current = triggerAutoSync;
+
+  // 聊天这条线自己的忙：正在起停、正在整理历史，或者可见浏览器被别的任务占着
+  const chatControlBusy = chatBusy
+    || (isChatReceiving(collectorStatus) && collectorStatus?.chat.progress !== null)
+    || collectorStatus?.state === "observing"
+    || collectorStatus?.syncMode === "page";
 
   async function endSync(baseUrl: string, token: string) {
     const requestId = pollRequest.current + 1;
@@ -573,7 +582,7 @@ function AppContent() {
     const requestId = pollRequest.current + 1;
     pollRequest.current = requestId;
     chatPollRequestRef.current = requestId;
-    setCollectorBusy(true);
+    setChatBusy(true);
     setCollectorError(null);
     try {
       const status = await startCollectorChatObservation(baseUrl, token);
@@ -598,10 +607,11 @@ function AppContent() {
         chatCollectionInFlightRef.current = false;
         chatPollRequestRef.current = null;
       }
-      setCollectorBusy(false);
       const message = collectorErrorMessage(error);
       setCollectorError(message);
       showAlert("无法开始接收消息", message);
+    } finally {
+      if (pollRequest.current === requestId) setChatBusy(false);
     }
   }
 
@@ -630,7 +640,7 @@ function AppContent() {
     chatStartupPendingRef.current = false;
     const requestId = pollRequest.current + 1;
     pollRequest.current = requestId;
-    setCollectorBusy(true);
+    setChatBusy(true);
     setCollectorError(null);
     try {
       const status = await stopCollectorChatObservation(baseUrl, token);
@@ -640,15 +650,17 @@ function AppContent() {
       if (pollRequest.current !== requestId) return;
       chatCollectionInFlightRef.current = false;
       chatPollRequestRef.current = null;
-      setCollectorBusy(false);
+      // 记录读取可能还在跑，接着盯着它；没事做的话轮询自己会退出
+      void pollCollector(baseUrl, token, requestId);
     } catch (error) {
       if (pollRequest.current !== requestId) return;
       chatCollectionInFlightRef.current = false;
       chatPollRequestRef.current = null;
-      setCollectorBusy(false);
       const message = collectorErrorMessage(error);
       setCollectorError(message);
       showAlert("无法暂停实时接收", message);
+    } finally {
+      if (pollRequest.current === requestId) setChatBusy(false);
     }
   }
 
@@ -723,12 +735,12 @@ function AppContent() {
         chatStartupTriggeredRef.current = true;
         chatStartupPendingRef.current = true;
       }
-      if (status.phase === "chat_messages" && !TERMINAL_COLLECTOR_STATES.has(status.state)) {
+      if (isChatReceiving(status)) {
         chatStartupPendingRef.current = false;
         chatCollectionInFlightRef.current = true;
         chatPollRequestRef.current = requestId;
       }
-      if (TERMINAL_COLLECTOR_STATES.has(status.state)) {
+      if (TERMINAL_COLLECTOR_STATES.has(status.state) && !isChatReceiving(status)) {
         setCollectorBusy(false);
       } else {
         void pollCollector(normalizedUrl, pairedToken, requestId);
@@ -750,7 +762,7 @@ function AppContent() {
   }
 
   function confirmFullSync() {
-    if (!collectorToken || collectorBusy || (collectorStatus?.state === "observing" && collectorStatus.phase !== "chat_messages") || syncConfirmationOpenRef.current) return;
+    if (!collectorToken || collectorBusy || collectorStatus?.state === "observing" || syncConfirmationOpenRef.current) return;
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "开始读取全部可见记录",
@@ -764,7 +776,7 @@ function AppContent() {
   }
 
   function confirmIncrementalSync() {
-    if (!collectorToken || collectorBusy || (collectorStatus?.state === "observing" && collectorStatus.phase !== "chat_messages") || syncConfirmationOpenRef.current) return;
+    if (!collectorToken || collectorBusy || collectorStatus?.state === "observing" || syncConfirmationOpenRef.current) return;
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "增量读取",
@@ -1135,9 +1147,9 @@ function AppContent() {
           onStartFullSync={confirmFullSync}
           onStopSync={() => collectorToken ? endSync(collectorUrl, collectorToken) : Promise.resolve()}
           onStopObservation={() => collectorToken
-            ? collectorStatus?.phase === "chat_messages"
-              ? endChatObservation(collectorUrl, collectorToken)
-              : endObservation(collectorUrl, collectorToken)
+            ? collectorStatus?.state === "observing"
+              ? endObservation(collectorUrl, collectorToken)
+              : endChatObservation(collectorUrl, collectorToken)
             : Promise.resolve()}
           onSwitchAccount={confirmAccountSwitch}
           autoSyncEnabled={autoSyncEnabled}
@@ -1147,7 +1159,9 @@ function AppContent() {
             setAppStyle(style);
             saveAppStyle(style);
           }}
-          observing={collectorStatus?.state === "observing" && collectorStatus?.phase !== "chat_messages"}
+          chatBusy={chatControlBusy}
+          chatCollecting={isChatReceiving(collectorStatus)}
+          observing={collectorStatus?.state === "observing"}
           pairingCode={pairingCode}
           pickingArchive={pickingArchive}
           records={workspaceRecords}
@@ -1165,12 +1179,13 @@ function AppContent() {
           busy={collectorBusy}
           chatConversations={displaySnapshot?.chatConversations ?? []}
           chatMessages={displaySnapshot?.chatMessages ?? []}
+          chatBusy={chatControlBusy}
           chatConnected={collectorToken !== null}
           onToggleChatReception={() => {
             if (!collectorToken) { openSettings(); return; }
             chatStartupTriggeredRef.current = true;
             chatStartupPendingRef.current = false;
-            void (collectorStatus?.phase === "chat_messages"
+            void (isChatReceiving(collectorStatus)
               ? endChatObservation(collectorUrl, collectorToken)
               : beginChatObservation(collectorUrl, collectorToken));
           }}

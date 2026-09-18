@@ -440,7 +440,7 @@ export async function startCollectorServer({
       const stopped = await collector.stopObservation();
       sendJson(response, 200, { stopped, status: collector.getStatus() });
     } else if (request.method === "POST" && url.pathname === "/v1/chat/observe/stop") {
-      const stopped = await collector.stopObservation();
+      const stopped = await collector.stopChatObservation();
       sendJson(response, 200, { stopped, status: collector.getStatus() });
     } else if (request.method === "POST" && url.pathname === "/v1/account/switch") {
       try {

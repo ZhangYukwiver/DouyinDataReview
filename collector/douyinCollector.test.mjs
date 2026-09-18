@@ -672,7 +672,10 @@ describe("DouyinCollector manual observation", () => {
     expect(collector.isManualObserving()).toBe(true);
     collector.observation.active = false;
     expect(collector.isManualObserving()).toBe(false);
-    collector.observation = { active: true, mode: "chat" };
+    // 聊天接收走自己那条线，不算手动监听
+    collector.observation = null;
+    collector.chat = { active: true, mode: "chat" };
+    collector.updateChat({ state: "observing" });
     expect(collector.isManualObserving()).toBe(false);
   });
   it("persists only responses produced while the user browses the dedicated browser", async () => {
@@ -719,7 +722,7 @@ describe("DouyinCollector manual observation", () => {
     collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
 
     expect(collector.startChatObservation()).toBe(true);
-    await vi.waitFor(() => expect(collector.getStatus().state).toBe("observing"));
+    await vi.waitFor(() => expect(collector.getStatus().chat.state).toBe("observing"));
     expect(collector.ensureBrowser).toHaveBeenCalledWith({ headless: true });
 
     context.emit("response", {
@@ -741,7 +744,7 @@ describe("DouyinCollector manual observation", () => {
       callDurationSeconds: 208,
     }]);
 
-    await expect(collector.stopObservation()).resolves.toBe(true);
+    await expect(collector.stopChatObservation()).resolves.toBe(true);
   });
 
   it("reloads an already-open chat page so its initial messages are not missed", async () => {
@@ -777,7 +780,7 @@ describe("DouyinCollector manual observation", () => {
     expect(page.reload).toHaveBeenCalledTimes(1);
     expect(collector.getSnapshot().chatMessages).toMatchObject([{ id: "chat-reload-1", text: "重载后捕获" }]);
 
-    await expect(collector.stopObservation()).resolves.toBe(true);
+    await expect(collector.stopChatObservation()).resolves.toBe(true);
   });
 
   it("stores friend bodies but only group aggregates", async () => {
@@ -795,7 +798,7 @@ describe("DouyinCollector manual observation", () => {
     collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
 
     expect(collector.startChatObservation()).toBe(true);
-    await vi.waitFor(() => expect(collector.getStatus().state).toBe("observing"));
+    await vi.waitFor(() => expect(collector.getStatus().chat.state).toBe("observing"));
     context.emit("response", {
       url: () => "https://imapi.douyin.com/v1/message/get_by_conversation",
       ok: () => true,
@@ -816,7 +819,7 @@ describe("DouyinCollector manual observation", () => {
       expect.objectContaining({ id: "group-1", kind: "group", name: "测试群", messageCount: 1, ownMessageCount: 1 }),
       expect.objectContaining({ id: "friend-1", kind: "friend", messageCount: 1, ownMessageCount: 1 }),
     ]));
-    await expect(collector.stopObservation()).resolves.toBe(true);
+    await expect(collector.stopChatObservation()).resolves.toBe(true);
   });
 
   it("continues receiving after history finishes, reconnects without duplicates, and stops explicitly", async () => {
@@ -845,7 +848,7 @@ describe("DouyinCollector manual observation", () => {
     const statusUpdates = vi.spyOn(collector, "updateStatus");
 
     expect(collector.startChatObservation()).toBe(true);
-    await vi.waitFor(() => expect(collector.getStatus().state).toBe("observing"));
+    await vi.waitFor(() => expect(collector.getStatus().chat.state).toBe("observing"));
     context.emit("response", {
       url: () => "https://imapi.douyin.com/v1/message/get_by_conversation",
       ok: () => true,
@@ -864,12 +867,12 @@ describe("DouyinCollector manual observation", () => {
       }),
     });
 
-    await vi.waitFor(() => expect(collector.getStatus().progress).toBeNull(), { timeout: 5_000 });
-    expect(collector.observationPromise).not.toBeNull();
-    expect(collector.getStatus()).toMatchObject({ state: "observing", phase: "chat_messages", browserOpen: true });
-    expect(statusUpdates.mock.calls.some(([patch]) => patch.progress?.current === 1 && patch.progress?.total === 1)).toBe(true);
-    expect(statusUpdates.mock.calls.some(([patch]) => /聊天全量读取.*1\/1/u.test(patch.message ?? ""))).toBe(true);
-    expect(collector.getStatus().progress).toBeNull();
+    await vi.waitFor(() => expect(collector.getStatus().chat.progress).toBeNull(), { timeout: 5_000 });
+    expect(collector.chatPromise).not.toBeNull();
+    expect(collector.getStatus()).toMatchObject({ browserOpen: true, chat: expect.objectContaining({ state: "observing" }) });
+    expect(statusUpdates.mock.calls.some(([patch]) => patch.chat?.progress?.current === 1 && patch.chat?.progress?.total === 1)).toBe(true);
+    expect(statusUpdates.mock.calls.some(([patch]) => /聊天全量读取.*1\/1/u.test(patch.chat?.message ?? ""))).toBe(true);
+    expect(collector.getStatus().chat.progress).toBeNull();
     expect(removeListener).not.toHaveBeenCalledWith("response", expect.any(Function));
     expect(context.close).not.toHaveBeenCalled();
     expect(collector.getSnapshot().chatMessages).toEqual([expect.objectContaining({ id: "chat-once-1" })]);
@@ -905,9 +908,9 @@ describe("DouyinCollector manual observation", () => {
     expect(collector.getStatus().chatConnection).toBe("connected");
     expect(collector.getSnapshot().chatMessages).toHaveLength(2);
 
-    await expect(collector.stopObservation()).resolves.toBe(true);
+    await expect(collector.stopChatObservation()).resolves.toBe(true);
     expect(collector.getStatus()).toMatchObject({ state: "idle", chatConnection: null });
-    expect(collector.observationPromise).toBeNull();
+    expect(collector.chatPromise).toBeNull();
     expect(context.close).toHaveBeenCalledTimes(1);
     expect(removeListener).toHaveBeenCalledWith("response", expect.any(Function));
     const saveCount = store.save.mock.calls.length;
@@ -928,7 +931,7 @@ describe("DouyinCollector manual observation", () => {
     collector.visit = vi.fn().mockResolvedValue(undefined);
     collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
     expect(collector.startChatObservation()).toBe(true);
-    await vi.waitFor(() => expect(collector.getStatus().state).toBe("observing"));
+    await vi.waitFor(() => expect(collector.getStatus().chat.state).toBe("observing"));
     const response = fakeResponse("/v1/message/get_by_conversation", { msgs: [
       { conv_id: "group-live", conversation_type: 2, server_id: "group-old", sender_uid: "other", type_code: 7, created_at_us: Date.parse("2026-08-08T23:59:00Z") * 1000, content_json: { text: "历史群正文" } },
       { conv_id: "group-live", conversation_type: 2, server_id: "group-new", sender_uid: "me", type_code: 7, created_at_us: Date.parse("2026-08-09T00:01:00Z") * 1000, content_json: { text: "新群正文" } },
@@ -940,7 +943,7 @@ describe("DouyinCollector manual observation", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(collector.getSnapshot().chatConversations[0]).toMatchObject({ messageCount: 101, ownMessageCount: 21 });
     expect(collector.getSnapshot().chatMessages).toEqual([]);
-    await collector.stopObservation();
+    await collector.stopChatObservation();
   });
 
   it("allows downloads during reception and pauses only the chat tab when another feature shares the browser", async () => {
@@ -950,14 +953,14 @@ describe("DouyinCollector manual observation", () => {
     collector.snapshot = emptySnapshot();
     collector.context = context;
     collector.contextHeadless = true;
-    collector.observation = { active: true, mode: "chat", page, stop: vi.fn() };
-    collector.observationPromise = Promise.resolve();
+    collector.chat = { active: true, mode: "chat", page, stop: vi.fn() };
+    collector.chatPromise = Promise.resolve();
     collector.updateStatus({ state: "observing", phase: "chat_messages", chatConnection: "connected" });
     collector.runVideoDownloadJob = vi.fn(async () => {});
     expect(collector.startVideoDownload("https://www.douyin.com/video/1234567890").status).toBe("queued");
     await collector.videoDownloadQueue;
     expect(collector.runVideoDownloadJob).toHaveBeenCalledTimes(1);
-    await collector.stopObservation();
+    await collector.stopChatObservation();
     expect(page.close).toHaveBeenCalledTimes(1);
     expect(context.close).not.toHaveBeenCalled();
     expect(otherPage.close).not.toHaveBeenCalled();
@@ -981,9 +984,9 @@ describe("DouyinCollector manual observation", () => {
 
     expect(collector.startChatObservation()).toBe(true);
     await vi.waitFor(() => expect(collector.visit).toHaveBeenCalled());
-    await expect(collector.stopObservation()).resolves.toBe(true);
+    await expect(collector.stopChatObservation()).resolves.toBe(true);
     expect(context.close).toHaveBeenCalledTimes(1);
-    expect(collector.getStatus().state).toBe("idle");
+    expect(collector.getStatus().chat.state).toBe("idle");
   });
 
   it("falls back to the browser handle when a context refuses to close", async () => {
@@ -1349,14 +1352,14 @@ describe("DouyinCollector direct records", () => {
       videoId: "favorite-old",
     }];
     const store = mockStore("2026-08-13T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36") };
-    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = initial;
     const visibleContext = { close: vi.fn(async () => undefined) };
     collector.context = visibleContext;
     collector.syncRunId = 1;
-    collector.openDirectContext = vi.fn(async () => context);
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
     collector.collectDirectList = vi.fn(async (_context, type, onPage) => {
       await onPage({ status_code: 0, aweme_list: [{ aweme_id: type === "liked_videos" ? "liked-new" : "favorite-new" }], has_more: 0 }, 1);
       return 1;
@@ -1403,12 +1406,12 @@ describe("DouyinCollector direct records", () => {
 
   it("does not save when the direct request fails", async () => {
     const store = { save: vi.fn() };
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36") };
-    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
     collector.syncRunId = 1;
-    collector.openDirectContext = vi.fn(async () => context);
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
     collector.collectDirectList = vi.fn(async () => { throw new Error("request_failed"); });
     collector.readDirectHistory = vi.fn(async () => {
       throw new Error("request_failed");
@@ -1421,12 +1424,12 @@ describe("DouyinCollector direct records", () => {
 
   it("keeps a completed watch phase when a later direct list fails", async () => {
     const store = mockStore("2026-08-13T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36") };
-    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
     collector.syncRunId = 1;
-    collector.openDirectContext = vi.fn(async () => context);
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
     collector.readDirectHistory = vi.fn(async () => ({
       status_code: 0,
       aweme_list: [{ aweme_id: "saved-watch", history_info: { view_time: 1_700_000_000 } }],
@@ -1498,12 +1501,12 @@ describe("DouyinCollector direct records", () => {
       videoId: "favorite-old",
     }];
     const store = mockStore("2026-08-14T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36") };
-    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = initial;
     collector.syncRunId = 1;
-    collector.openDirectContext = vi.fn(async () => context);
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
     collector.readDirectHistory = vi.fn(async () => ({
       status_code: 0,
       aweme_list: [
@@ -1559,12 +1562,12 @@ describe("DouyinCollector direct records", () => {
 
   it("does not save when direct pagination repeats a cursor", async () => {
     const store = { save: vi.fn() };
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36") };
-    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
     collector.syncRunId = 1;
-    collector.openDirectContext = vi.fn(async () => context);
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
     collector.collectDirectList = vi.fn(async () => 1);
     collector.readDirectHistory = vi.fn(async () => ({
       status_code: 0,
@@ -1591,12 +1594,12 @@ describe("DouyinCollector direct records", () => {
       videoId: `existing-${index}`,
     }));
     const store = mockStore("2026-08-13T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36") };
-    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = initial;
     collector.syncRunId = 1;
-    collector.openDirectContext = vi.fn(async () => context);
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
     collector.collectDirectList = vi.fn(async (_context, type, onPage) => {
       await onPage({ status_code: 0, aweme_list: [{ aweme_id: `${type}-new` }], has_more: 0 }, 1);
       return 1;
@@ -1892,5 +1895,96 @@ describe("DouyinCollector deterministic tab fallback", () => {
     expect(wait).toHaveBeenCalledTimes(2);
     expect(progress.responseProgressStalled).toBe(true);
     expect(progress.visualSurfaceMissing).toBe(false);
+  });
+});
+
+describe("DouyinCollector concurrent headless work", () => {
+  function receivingCollector() {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.snapshot = emptySnapshot();
+    collector.chat = { active: true, mode: "chat", page: {}, stop: vi.fn() };
+    collector.chatPromise = Promise.resolve();
+    collector.updateChat({ state: "observing", connection: "connected" });
+    collector.contextHeadless = true;
+    return collector;
+  }
+
+  it("reads records without interrupting reception", () => {
+    const collector = receivingCollector();
+    collector.runDirectRecords = vi.fn(() => new Promise(() => {}));
+    expect(collector.startSync({ mode: "direct_records" })).toBe(true);
+    expect(collector.isChatReceiving()).toBe(true);
+    // 记录读取写主状态，聊天写自己那份，谁也不盖谁
+    collector.updateStatus({ state: "collecting", message: "正在读取观看历史", counts: { ...collector.status.counts, watch_history: 7 } });
+    expect(collector.getStatus()).toMatchObject({
+      state: "collecting",
+      syncMode: "direct_records",
+      chat: expect.objectContaining({ state: "observing", connection: "connected" }),
+    });
+    expect(collector.getStatus().counts.watch_history).toBe(7);
+  });
+
+  it("starts reception while records are being read", () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.snapshot = emptySnapshot();
+    collector.runDirectRecords = vi.fn(() => new Promise(() => {}));
+    collector.runChatObservation = vi.fn(() => new Promise(() => {}));
+    expect(collector.startSync({ mode: "direct_records" })).toBe(true);
+    expect(collector.startChatObservation()).toBe(true);
+    expect(collector.startVideoDownload("https://www.douyin.com/video/1234567890").status).toBe("queued");
+  });
+
+  it("keeps the visible browser to itself", () => {
+    const collector = receivingCollector();
+    collector.runSync = vi.fn(() => new Promise(() => {}));
+    collector.runObservation = vi.fn(() => new Promise(() => {}));
+    expect(collector.startSync()).toBe(false);
+    expect(collector.startObservation()).toBe(false);
+  });
+
+  it("blocks reception while the visible browser is busy", () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.snapshot = emptySnapshot();
+    collector.runSync = vi.fn(() => new Promise(() => {}));
+    expect(collector.startSync()).toBe(true);
+    expect(collector.startChatObservation()).toBe(false);
+    expect(() => collector.startVideoDownload("https://www.douyin.com/video/1234567890"))
+      .toThrowError(expect.objectContaining({ code: "collector_busy" }));
+  });
+
+  it("saves each page of a direct read instead of waiting for the whole list", async () => {
+    const store = mockStore();
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
+    collector.snapshot = emptySnapshot();
+    collector.syncRunId = 1;
+    collector.progressPersistIntervalMs = 0;
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
+    collector.collectDirectList = vi.fn(async (_context, type, onPage) => {
+      await onPage({ status_code: 0, aweme_list: [{ aweme_id: `${type}-page-1` }], has_more: 0 }, 1);
+      return 1;
+    });
+    let cursor = 0;
+    collector.readDirectHistory = vi.fn(async () => {
+      cursor += 1;
+      return {
+        status_code: 0,
+        aweme_list: [{ aweme_id: `history-${cursor}` }],
+        has_more: cursor < 2 ? 1 : 0,
+        max_cursor: String(1_700_000_000_000 + cursor),
+      };
+    });
+    const saved = [];
+    store.save.mockImplementation(async (records) => {
+      saved.push(records.watch_history.length);
+      return { ...emptySnapshot(), records: structuredClone(records), updatedAt: "2026-08-09T00:10:00.000Z" };
+    });
+
+    await collector.runDirectRecords(1);
+
+    // 第一页读完就已经存过一次，不用等整份观看历史读完
+    expect(saved.slice(0, 2)).toEqual([1, 2]);
+    expect(store.save.mock.calls.length).toBeGreaterThan(3);
   });
 });

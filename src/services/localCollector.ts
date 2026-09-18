@@ -38,6 +38,18 @@ export interface CollectorStatus {
   code?: string | null;
   revision?: number;
   chatConnection?: "connecting" | "connected" | "reconnecting" | null;
+  /** page 要开可见浏览器，direct_records 走无头，接收和下载可以同时继续 */
+  syncMode: "page" | "direct_records" | null;
+  /** 聊天接收自己的一份状态，和记录读取、视频下载互不影响 */
+  chat: CollectorChatStatus;
+}
+
+export interface CollectorChatStatus {
+  state: CollectorState;
+  connection: "connecting" | "connected" | "reconnecting" | null;
+  message: string | null;
+  progress: CollectorProgress | null;
+  code?: string | null;
 }
 
 export interface CollectorSnapshot {
@@ -577,6 +589,25 @@ function parseStatus(value: unknown): CollectorStatus {
     ...(typeof value.revision === "number" && Number.isSafeInteger(value.revision) && value.revision >= 0 ? { revision: value.revision } : {}),
     chatConnection: value.chatConnection === "connecting" || value.chatConnection === "connected" || value.chatConnection === "reconnecting"
       ? value.chatConnection : null,
+    syncMode: value.syncMode === "page" || value.syncMode === "direct_records" ? value.syncMode : null,
+    chat: parseChatStatus(value.chat, validStates),
+  };
+}
+
+// 聊天接收是否在跑（连接中也算），它和记录读取、视频下载各走各的
+export function isChatReceiving(status: CollectorStatus | null | undefined): boolean {
+  return status ? ["launching_browser", "observing"].includes(status.chat.state) : false;
+}
+
+function parseChatStatus(value: unknown, validStates: CollectorState[]): CollectorChatStatus {
+  const raw = isObject(value) ? value : {};
+  const connection = raw.connection;
+  return {
+    state: validStates.find((item) => item === raw.state) ?? "idle",
+    connection: connection === "connecting" || connection === "connected" || connection === "reconnecting" ? connection : null,
+    message: typeof raw.message === "string" ? raw.message : null,
+    progress: parseCollectorProgress(raw.progress),
+    code: typeof raw.code === "string" ? raw.code : null,
   };
 }
 
