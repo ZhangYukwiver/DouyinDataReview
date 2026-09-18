@@ -74,6 +74,8 @@ export interface ChatConversationRow {
   ownMessageCount: number;
   latest: ChatMessage | null;
   latestAt: string | null;
+  /** 对方最后活跃的时刻，抖音下发；没开在线状态或没采到就是 null。 */
+  lastActiveAt: string | null;
   preview: string;
   initials: string;
   accent: string;
@@ -81,6 +83,27 @@ export interface ChatConversationRow {
 
 const avatarPalette = color.avatars;
 const MESSAGE_AUTO_SCROLL_THRESHOLD = 72;
+const HOUR_MS = 3_600_000;
+// 抖音网页自己的判定：最后活跃在 10 分钟内算“在线”，超过 7 小时就只说今天/昨天，
+// 再早什么都不说。这些数字照抄站点，换成我们自己的阈值只会和抖音对不上。
+const ACTIVE_DELAY_MS = 600_000;
+const COARSE_AFTER_MS = 25_200_000;
+
+/** 把抖音下发的“最后活跃时刻”翻成它自己那套说法。 */
+export function chatPresence(lastActiveAt: string | null | undefined): { online: boolean; text: string } {
+  const activeAt = lastActiveAt ? Date.parse(lastActiveAt) : Number.NaN;
+  if (!Number.isFinite(activeAt)) return { online: false, text: "" };
+  const elapsed = Math.max(0, Date.now() - activeAt - ACTIVE_DELAY_MS);
+  if (elapsed <= 0) return { online: true, text: "在线" };
+  if (elapsed >= COARSE_AFTER_MS) {
+    const todayStart = new Date().setHours(0, 0, 0, 0);
+    if (activeAt < todayStart - 24 * HOUR_MS) return { online: false, text: "" };
+    return { online: false, text: activeAt < todayStart ? "昨天在线" : "今天在线" };
+  }
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes <= 59) return { online: false, text: `${Math.max(1, minutes)}分钟内在线` };
+  return { online: false, text: `${Math.max(1, Math.floor(elapsed / HOUR_MS))}小时内在线` };
+}
 
 /**
  * Build the list shown by the chat UI from the collector's normalized
@@ -100,6 +123,7 @@ export function buildChatConversationRows(
     messages: ChatMessage[];
     messageCount: number;
     ownMessageCount: number;
+    lastActiveAt: string | null;
   }>();
 
   for (const conversation of conversations) {
@@ -111,6 +135,7 @@ export function buildChatConversationRows(
       messages: [],
       messageCount: Math.max(0, conversation.messageCount),
       ownMessageCount: Math.max(0, conversation.ownMessageCount),
+      lastActiveAt: conversation.lastActiveAt ?? null,
     });
   }
 
@@ -126,6 +151,7 @@ export function buildChatConversationRows(
       messages: [],
       messageCount: 0,
       ownMessageCount: 0,
+      lastActiveAt: null,
     };
     current.kind = current.kind === "friend" || message.conversationType === "friend"
       ? "friend"
@@ -157,6 +183,7 @@ export function buildChatConversationRows(
       ownMessageCount: entry.ownMessageCount,
       latest,
       latestAt: latest?.sentAt ?? null,
+      lastActiveAt: entry.lastActiveAt,
       preview: readableLatest ? chatPreview(readableLatest) : entry.kind === "group" ? `群聊 · 已采集 ${entry.messageCount} 条消息` : "暂无可显示的消息正文",
       initials: "",
       accent: avatarPalette[hashString(entry.id) % avatarPalette.length] ?? avatarPalette[0]!,
@@ -456,8 +483,7 @@ function ConversationListItem({
 }) {
   const visibleName = privacy ? (row.kind === "group" ? "群聊" : "好友") : row.name;
   const visiblePreview = privacy ? "聊天内容已隐藏" : row.preview;
-  const age = row.latestAt ? Date.now() - messageTime(row.latestAt) : Number.POSITIVE_INFINITY;
-  const activeRecently = age >= 0 && age < 86_400_000;
+  const presence = chatPresence(row.lastActiveAt);
   return (
     <Pressable
       {...fx({ motion: "rise", i: index < 12 ? index + 1 : 0, hover: "tint" })}
@@ -467,7 +493,7 @@ function ConversationListItem({
       style={({ pressed }) => [styles.conversationItem, selected && styles.conversationItemSelected, pressed && styles.pressed, webPointer]}
       testID={`chat-conversation-${row.id}`}
     >
-      <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} online={activeRecently} privacy={privacy} size={48} />
+      <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} online={presence.online} privacy={privacy} size={48} />
       <View style={styles.conversationCopy}>
         <View style={styles.conversationTopLine}>
           <Text numberOfLines={1} style={styles.conversationName}>{visibleName}</Text>
@@ -552,6 +578,7 @@ function ChatDetailPane({
   }
 
   const visibleName = privacy ? (row.kind === "group" ? "群聊" : "好友") : row.name;
+  const presence = chatPresence(row.lastActiveAt);
   const visibleMessages = row.messages.length > CHAT_MESSAGE_RENDER_LIMIT
     ? row.messages.slice(-CHAT_MESSAGE_RENDER_LIMIT)
     : row.messages;
@@ -572,10 +599,13 @@ function ChatDetailPane({
             <ChevronLeft color={color.textSecondary} size={21} strokeWidth={2} />
           </Pressable>
         ) : null}
-        <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} privacy={privacy} size={38} />
+        <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} online={presence.online} privacy={privacy} size={38} />
         <View style={styles.detailHeaderCopy}>
           <Text numberOfLines={1} style={styles.detailTitle}>{visibleName}</Text>
-          <Text style={styles.detailMeta}>{row.kind === "group" ? "群聊统计摘要" : `${formatCount(row.messageCount)} 条本地消息`}</Text>
+          <Text style={styles.detailMeta}>
+            {presence.text ? `${presence.text} · ` : ""}
+            {row.kind === "group" ? "群聊统计摘要" : `${formatCount(row.messageCount)} 条本地消息`}
+          </Text>
         </View>
         <View style={styles.detailHeaderActions}>
           <View style={styles.readonlyBadge}>

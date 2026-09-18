@@ -506,6 +506,8 @@ function parseChatConversations(value: unknown): ChatConversationSummary[] {
         item.userInfo,
         item.user_info,
       ]),
+      secUid: cleanRecordString(item.secUid, 300),
+      lastActiveAt: parseDate(item.lastActiveAt),
       messageCount,
       ownMessageCount,
     }];

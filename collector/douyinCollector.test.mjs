@@ -137,6 +137,8 @@ describe("normalizeChatConversationCatalog", () => {
           kind: "friend",
           name: "联系人甲",
           avatarUrl: "https://p3.douyinpic.com/contact.jpg",
+          // 在线状态接口按 sec UID 下发，所以单聊要把它带出来。
+          secUid: "sec-friend",
         },
         {
           id: "group-1",

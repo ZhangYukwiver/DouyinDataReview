@@ -26,6 +26,7 @@ import {
   normalizeChatAvatarUrl,
   normalizeChatConversation,
   normalizeChatPayload,
+  normalizeChatPresence,
 } from "./chatNormalizer.mjs";
 import {
   createEndpointProgress,
@@ -360,6 +361,8 @@ export async function readChatConversationCatalog(page) {
         kind: isGroup ? "group" : "friend",
         name,
         avatarUrl,
+        // The online-status endpoint keys on sec UID, not the conversation id.
+        secUid: isGroup ? null : participantSecUid,
       });
     }
     return result;
@@ -1787,6 +1790,19 @@ export class DouyinCollector {
     const handleResponse = (response) => {
       const endpoint = matchChatEndpoint(response.url());
       if (!endpoint) return;
+      // The site polls its own online-status endpoint while the chat page is
+      // open. Reading that answer keeps presence truthful without this app
+      // ever asking for it, so nothing here changes what friends see.
+      if (endpoint.kind === "chat_presence") {
+        if (!acceptingResponses || !observation.active || runId !== this.chatRunId) return;
+        Promise.resolve()
+          .then(async () => {
+            if (!response.ok()) return;
+            conversationAccumulator.applyPresence(normalizeChatPresence(await readChatResponse(response)));
+          })
+          .catch(() => {});
+        return;
+      }
       enqueuePayload(async () => {
         if (!response.ok()) throw new ChatAdapterError("http_error", `聊天请求返回 HTTP ${response.status()}。`);
         const headers = typeof response.headers === "function" ? response.headers() : {};

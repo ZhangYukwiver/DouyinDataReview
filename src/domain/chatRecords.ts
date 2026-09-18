@@ -56,6 +56,10 @@ export interface ChatConversationSummary {
   name: string | null;
   /** 联系人/群聊头像地址；旧快照可能没有该字段。 */
   avatarUrl?: string | null;
+  /** 抖音在线状态按这个 id 下发，只有单聊才有。 */
+  secUid?: string | null;
+  /** 对方最后活跃的时刻，来自抖音自己的在线状态接口；旧快照没有。 */
+  lastActiveAt?: string | null;
   messageCount: number;
   ownMessageCount: number;
 }

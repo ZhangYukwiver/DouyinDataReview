@@ -261,6 +261,8 @@ function normalizeChatConversations(value) {
           item.user_info,
         ],
       ),
+      secUid: chatString(item.secUid ?? item.sec_uid, 300),
+      lastActiveAt: chatDate(item.lastActiveAt ?? item.last_active_at),
       messageCount,
       ownMessageCount,
     });

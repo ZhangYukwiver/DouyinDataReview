@@ -408,12 +408,14 @@ function normalizeConversationObject(value) {
     coreUser?.avatarLarger,
     coreUser?.avatar_larger,
   ]);
+  const secUid = firstString(value.secUid, value.sec_uid, value.toParticipantSecUserId, value.to_participant_sec_user_id);
   const result = {
     id,
     kind,
     name,
   };
   if (avatarUrl) result.avatarUrl = avatarUrl;
+  if (secUid && kind !== "group") result.secUid = secUid;
   return result;
 }
 
@@ -1168,7 +1170,48 @@ export function normalizeImapiResponse(endpoint, payload) {
 // Internal collector names keep the chat listener independent from the
 // endpoint's historical name.
 export const ChatAdapterError = CollectorAdapterError;
-export const matchChatEndpoint = matchImapiEndpoint;
+
+const PRESENCE_PATH = "/aweme/v1/web/im/user/active/status";
+// The site answers this one from sharded hosts — www.douyin.com on some loads,
+// www-hj.douyin.com on others — so match the domain rather than one hostname.
+const PRESENCE_HOST = /^(?:[a-z0-9-]+\.)*douyin\.com$/u;
+
+export function matchChatEndpoint(value) {
+  const imapi = matchImapiEndpoint(value);
+  if (imapi) return imapi;
+  try {
+    const url = new URL(value);
+    const pathname = url.pathname.replace(/\/$/u, "");
+    if (!PRESENCE_HOST.test(url.hostname) || pathname !== PRESENCE_PATH) return null;
+    return { kind: "chat_presence", pathname };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The web client polls this endpoint by itself while the chat page is open,
+ * so the collector only has to read the answer: one row per friend carrying
+ * the second they were last active. Everything the site shows — the dot and
+ * "5 分钟前在线" — is derived from that one timestamp on the client.
+ */
+export function normalizeChatPresence(payload) {
+  // decodeText() caps at MAX_STRING, which would truncate a JSON body.
+  const raw = ArrayBuffer.isView(payload) ? Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength).toString("utf8") : payload;
+  const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+  if (!isObject(value)) throw new CollectorAdapterError("invalid_response", "在线状态响应无效。");
+  const rows = Array.isArray(value.data) ? value.data : [];
+  const presence = [];
+  for (const row of rows) {
+    if (presence.length >= MAX_CHAT_CONVERSATIONS) break;
+    if (!isObject(row)) continue;
+    const secUid = cleanString(row.sec_user_id, 300);
+    const seconds = Number(row.last_active_time);
+    if (!secUid || !Number.isFinite(seconds) || seconds <= 0) continue;
+    presence.push({ secUid, lastActiveAt: new Date(seconds * 1_000).toISOString() });
+  }
+  return presence;
+}
 
 export function normalizeChatPayload(payload, context = {}) {
   const endpoint = context.endpoint?.kind === "chat_messages"
@@ -1382,6 +1425,9 @@ export class ChatConversationAccumulator {
     this.conversations = new Map();
     this.messageIds = new Map();
     this.messageSenders = new Map();
+    // Presence answers usually arrive before the conversation catalog is read,
+    // so keep them keyed by sec UID and join whenever either side shows up.
+    this.presence = new Map();
     this.addConversations(initialConversations);
   }
 
@@ -1446,6 +1492,12 @@ export class ChatConversationAccumulator {
             value?.userInfo?.nickname,
             value?.user_info?.nickname,
           );
+      const secUid = firstString(
+        value?.secUid,
+        value?.sec_uid,
+        value?.toParticipantSecUserId,
+        value?.to_participant_sec_user_id,
+      ) ?? previous?.secUid ?? null;
       this.conversations.set(id, {
         id,
         kind: previous?.kind === "group" || kind === "group"
@@ -1455,6 +1507,8 @@ export class ChatConversationAccumulator {
           ? firstString(previous?.name, valueName)
           : firstString(valueName, previous?.name),
         avatarUrl: avatarUrl ?? previous?.avatarUrl ?? null,
+        secUid,
+        lastActiveAt: (secUid ? this.presence.get(secUid) : null) ?? previous?.lastActiveAt ?? null,
         messageCount: previous?.messageCount ?? 0,
         ownMessageCount: previous?.ownMessageCount ?? 0,
       });
@@ -1483,6 +1537,8 @@ export class ChatConversationAccumulator {
           kind,
           name: inferredName,
           avatarUrl: avatarUrl ?? null,
+          secUid: null,
+          lastActiveAt: null,
           messageCount: 0,
           ownMessageCount: 0,
         });
@@ -1508,13 +1564,27 @@ export class ChatConversationAccumulator {
     }
   }
 
+  /** Presence rows key on sec UID; only one-to-one conversations carry one. */
+  applyPresence(presence) {
+    if (!Array.isArray(presence) || presence.length === 0) return;
+    for (const row of presence) {
+      if (row?.secUid && row.lastActiveAt) this.presence.set(row.secUid, row.lastActiveAt);
+    }
+    for (const conversation of this.conversations.values()) {
+      const lastActiveAt = conversation.secUid ? this.presence.get(conversation.secUid) : null;
+      if (lastActiveAt) conversation.lastActiveAt = lastActiveAt;
+    }
+  }
+
   snapshot() {
     return [...this.conversations.values()]
-      .map(({ id, kind, name, avatarUrl, messageCount, ownMessageCount }) => ({
+      .map(({ id, kind, name, avatarUrl, secUid, lastActiveAt, messageCount, ownMessageCount }) => ({
         id,
         kind,
         name: name ?? null,
         avatarUrl: avatarUrl ?? null,
+        secUid: secUid ?? null,
+        lastActiveAt: lastActiveAt ?? null,
         messageCount,
         ownMessageCount,
       }))
