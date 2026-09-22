@@ -142,12 +142,14 @@
 
 ### 1. 下载桌面安装包（推荐）
 
-1. 打开 Release 页面（最新版）：https://github.com/ZhangYukwiver/douyin-annual-recap/releases/latest
+1. 打开 Release 页面（最新版）：https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest
 2. Windows 下载 `ContentInsights-Setup-<version>.exe`；Apple Silicon Mac 下载 `ContentInsights-<version>-arm64.dmg`
 3. 本机需要已安装 Chrome、Edge、Brave、Chromium 或 Comet 中的任意一个（Windows 自带的 Edge 即可）
 4. 启动「内容数据工作台」，点击「连接采集器」；首次连接会弹出独立浏览器，在里面登录自己的抖音账号后会自动开始读取
 
 > 安装包只含应用代码、Web 页面和已校验的签名器，不含本地记录、登录状态或浏览器配置。采集记录保存在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录，升级不会覆盖。
+
+> 桌面版会在启动后检查 GitHub Release。发现新版本时可在「连接与采集」页下载，下载完成后点击「重启并安装」；采集进行中不会自动重启。发布新版本时需要同时上传 electron-builder 生成的 `latest.yml` / `latest-mac.yml`、对应安装包和 `.blockmap` / macOS `.zip`，否则旧版本无法接收更新。
 >
 > 两个安装包都没有开发者签名。macOS 首次打开前需在终端执行一次 `xattr -cr "/Applications/内容数据工作台.app"`，否则会提示应用已损坏；Windows 可能出现 SmartScreen 提示，选择「更多信息 → 仍要运行」。
 
@@ -218,6 +220,8 @@ npm run desktop:build:mac
 **为什么还会滚动页面。** 抖音网页接口由抖音自己的页面脚本携带当前登录状态和签名发起。采集器只监听这些网页响应，不直接伪造 Cookie、`a_bogus`、`X-Bogus` 或其他私有签名。因此完整读取需要在正确列表的真实可滚动区域中滚动，触发网页加载下一批数据，直到接口明确返回末页。若页面无法继续滚动、游标不前进或响应重复，本次列表会标记为不完整，并保留已有完整数据。完整读取不会绕过验证码或安全提示；页面结构或响应格式变化时会返回明确错误，不会把无法读取误报为空列表。
 
 **无界面增量读取。** 复用专用 Profile 的登录态，使用真正的 Chrome 无头模式，不弹窗口、不出现在任务栏。观看历史逐页直接请求接口；点赞和收藏由抖音页面运行时生成当前签名并在后台自动滚动。每个分类完成后立即合并保存，后续分类失败不会撤销已完成分类。签名器来自 `mafqla/douyin-api@42987a1`，安装时逐文件校验 SHA-256 并保存在已忽略的 `.local-data/direct-signer/`；macOS 用系统沙箱禁止签名进程联网和写文件，Windows 用 Node 权限模型禁止写文件、创建子进程和 Worker。页面初始化时的单次 401/403 会继续等待同次加载中的有效响应；遇到游标异常、重复页、429 或非零平台状态时，当前分类不保存不完整结果。
+
+第一次使用或浏览器标识变化时，增量配置还没有建立，应用会自动回退一次完整读取来完成登录并捕获页面请求模板；这一次可能打开独立浏览器。配置建立后，增量读取和前台自动读取均保持无头运行；完整读取失败不会再次自动弹窗。
 
 **时间字段口径。** 观看日期优先读取响应中的逐作品 `aweme_date` 映射并兼容 `history_info.view_time`；喜欢和收藏日期统一读取 `play_progress.last_modified_time`；两者缺失时保持为空，不会用发布时间或采集时间替代。观看进度优先用 `play_progress.play_progress` 与视频时长计算，采集器不会按进度阈值丢弃可识别记录。
 

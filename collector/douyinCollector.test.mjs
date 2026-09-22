@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -599,6 +599,70 @@ describe("DouyinCollector sync startup", () => {
 });
 
 describe("DouyinCollector manual observation", () => {
+  it.each([
+    { captureWorks: true, label: "captures a sanitized history template using the browser user agent" },
+    { captureWorks: false, label: "still saves history when the template cannot be written" },
+  ])("$label", async ({ captureWorks }) => {
+    const root = await mkdtemp(path.join(tmpdir(), "douyin-manual-history-template-"));
+    const dataDirectory = captureWorks ? root : path.join(root, "missing-directory");
+    const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+    const page = {
+      url: () => "https://www.douyin.com/",
+      evaluate: vi.fn(async () => userAgent),
+    };
+    const context = fakeContext(page);
+    const store = mockStore();
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory, store });
+    collector.snapshot = emptySnapshot();
+    collector.ensureBrowser = vi.fn().mockResolvedValue(context);
+    collector.currentPage = vi.fn().mockResolvedValue(page);
+    collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
+    const requestUrl = new URL("https://www.douyin.com/aweme/v1/web/history/read/");
+    for (const [name, value] of Object.entries({
+      count: "20", max_cursor: "0", device_platform: "webapp", aid: "6383", webid: "1234567890123456789",
+      msToken: "test-private-token", verifyFp: "test-private-fingerprint", fp: "test-private-fingerprint",
+      uifid: "test-private-uifid", a_bogus: "test-private-signature",
+    })) requestUrl.searchParams.append(name, value);
+    const request = {
+      url: () => requestUrl.toString(),
+      headerValue: vi.fn(async () => null),
+    };
+
+    try {
+      expect(collector.startObservation()).toBe(true);
+      await vi.waitFor(() => expect(collector.getStatus().state).toBe("observing"));
+      context.emit("response", {
+        ...fakeResponse("/aweme/v1/web/history/read/", {
+          status_code: 0,
+          aweme_list: [{ aweme_id: "manual-history", desc: "手动浏览" }],
+          has_more: 0,
+        }),
+        request: () => request,
+      });
+      await vi.waitFor(() => expect(store.save).toHaveBeenCalledTimes(1));
+
+      expect(collector.getSnapshot().records.watch_history.map((record) => record.id))
+        .toEqual(["watch_history:manual-history"]);
+      expect(collector.snapshot.directSync.watch_history).toBe(false);
+      expect(collector.getStatus().state).toBe("observing");
+      expect(request.headerValue).toHaveBeenCalledWith("user-agent");
+      const templatePath = path.join(dataDirectory, "direct-history-template.json");
+      if (captureWorks) {
+        const raw = await readFile(templatePath, "utf8");
+        expect(raw).not.toContain("test-private-");
+        expect(JSON.parse(raw)).toMatchObject({
+          values: { aid: "6383", device_platform: "webapp" },
+          headers: { "user-agent": userAgent },
+        });
+      } else {
+        await expect(access(templatePath)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    } finally {
+      await collector.stopObservation();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("persists only responses produced while the user browses the dedicated browser", async () => {
     const page = { url: () => "https://www.douyin.com/" };
     const context = fakeContext(page);

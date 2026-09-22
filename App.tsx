@@ -64,8 +64,17 @@ import {
   describePersonalArchiveError,
   importPersonalArchive,
 } from "./src/services/importPersonalArchive";
-import { getDesktopCollectorConfig } from "./src/desktopRuntime";
+import {
+  checkDesktopUpdates,
+  downloadDesktopUpdate,
+  getDesktopCollectorConfig,
+  getDesktopUpdateState,
+  installDesktopUpdate,
+  subscribeDesktopUpdateState,
+  type DesktopUpdateState,
+} from "./src/desktopRuntime";
 import { shouldAutoSync } from "./src/services/autoSync";
+import { createSyncRecovery } from "./src/services/syncRecovery";
 import { applyAppStyle, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
@@ -100,8 +109,6 @@ interface CollectorConnectionOptions {
 }
 
 const TERMINAL_COLLECTOR_STATES = new Set(["idle", "complete", "partial", "error"]);
-// 无头直接读取报这些错时，只有跑一次页面采集（登录 + 抓模板）才能解决
-const PAGE_SYNC_REQUIRED_CODES = new Set(["login_required", "template_missing", "template_invalid", "session_incomplete"]);
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -187,6 +194,7 @@ function AppContent() {
   const [downloadStates, setDownloadStates] = useState<Record<string, RecordDownloadState>>({});
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
   const [appStyle, setAppStyle] = useState<AppStyle>(loadAppStyle);
+  const [appUpdate, setAppUpdate] = useState<DesktopUpdateState | null>(null);
   // 内容年志入口卡的地址；非空时以应用内 iframe 盖在工作台上（见 StoryFrame）
   const [storySrc, setStorySrc] = useState<string | null>(null);
   // 采集进行中，报告与内容库用这次采集开始前的快照；采集结束（busy 落下）再换成新数据
@@ -204,7 +212,8 @@ function AppContent() {
   const chatStartupTriggeredRef = useRef(false);
   const chatCollectionInFlightRef = useRef(false);
   const chatPollRequestRef = useRef<number | null>(null);
-  const loginSyncTriggeredRef = useRef(false);
+  const syncRecoveryRef = useRef(createSyncRecovery());
+  const appUpdateActionRef = useRef(false);
 
   useEffect(() => () => {
     pollRequest.current += 1;
@@ -216,6 +225,52 @@ function AppContent() {
     downloadRequestRef.current += 1;
     downloadInFlightRef.current.clear();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeDesktopUpdateState((state) => {
+      if (active) setAppUpdate(state);
+    });
+    void getDesktopUpdateState().then((state) => {
+      if (active && state) setAppUpdate(state);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  async function checkForAppUpdates() {
+    if (appUpdateActionRef.current) return;
+    appUpdateActionRef.current = true;
+    try {
+      const state = await checkDesktopUpdates();
+      if (state) setAppUpdate(state);
+    } finally {
+      appUpdateActionRef.current = false;
+    }
+  }
+
+  async function downloadAppUpdate() {
+    if (appUpdateActionRef.current) return;
+    appUpdateActionRef.current = true;
+    try {
+      const state = await downloadDesktopUpdate();
+      if (state) setAppUpdate(state);
+    } finally {
+      appUpdateActionRef.current = false;
+    }
+  }
+
+  async function installAppUpdate() {
+    if (appUpdateActionRef.current) return;
+    appUpdateActionRef.current = true;
+    try {
+      await installDesktopUpdate();
+    } finally {
+      appUpdateActionRef.current = false;
+    }
+  }
 
   // 整体风格：主题 CSS 变量挂在 <html data-style> 上，采集器页、内容库与持续报告一起换。
   // 用 layout effect 是为了在首帧绘制前就把变量表和 data-style 挂上，否则第一帧没有颜色。
@@ -392,9 +447,8 @@ function AppContent() {
             chatCollectionInFlightRef.current = false;
             chatPollRequestRef.current = null;
           }
-          // 打开后第一次连上采集器，无头读取因为还没登录或还没抓到模板而失败：自动跑一次页面采集，把登录页弹出来；每次打开只试一次
-          if (status.state === "error" && PAGE_SYNC_REQUIRED_CODES.has(status.code ?? "") && !loginSyncTriggeredRef.current) {
-            loginSyncTriggeredRef.current = true;
+          // 每次增量读取最多回退一次完整读取；完整读取失败时不重复启动。
+          if (syncRecoveryRef.current.takeFallback(status)) {
             void beginSync(baseUrl, token);
             return;
           }
@@ -422,6 +476,7 @@ function AppContent() {
   async function beginSync(baseUrl: string, token: string, incremental = false) {
     const requestId = pollRequest.current + 1;
     pollRequest.current = requestId;
+    syncRecoveryRef.current.begin(incremental);
     setCollectorBusy(true);
     setStoppingSync(false);
     setCollectorError(null);
@@ -702,7 +757,7 @@ function AppContent() {
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "增量读取",
-      "尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。每个分类完成后立即合并保存，全程不会弹出浏览器。",
+      "尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。正常运行时不会弹出浏览器；如果增量配置尚未初始化或已失效，应用会先完成一次完整读取来建立配置。",
       "读取新记录",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
@@ -1087,6 +1142,10 @@ function AppContent() {
           status={collectorStatus}
           stoppingSync={stoppingSync}
           switchingAccount={switchingAccount}
+          appUpdate={appUpdate}
+          onCheckAppUpdate={checkForAppUpdates}
+          onDownloadAppUpdate={downloadAppUpdate}
+          onInstallAppUpdate={installAppUpdate}
         />
       ) : dashboardOpen || traceMode ? (
         <LegacyContentWorkspace

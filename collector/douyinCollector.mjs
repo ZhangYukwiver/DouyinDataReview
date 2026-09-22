@@ -1374,6 +1374,10 @@ export class DouyinCollector {
     }
     await this.waitForLogin(context, page, runId);
     this.assertSyncActive(runId);
+    page = await this.currentPage(context);
+    const browserUserAgent = typeof page.evaluate === "function"
+      ? await page.evaluate(() => navigator.userAgent).catch(() => null)
+      : null;
 
     const accumulator = new RecordAccumulator(this.snapshot.records);
     const pendingResponses = new Set();
@@ -1422,6 +1426,10 @@ export class DouyinCollector {
         const payload = await readJsonWithReplay(response, page, replayUrls);
         if (!observation.active || runId !== this.syncRunId) return;
         accumulator.addResponse(endpoint, payload);
+        if (endpoint.kind === "watch_history") {
+          const request = typeof response.request === "function" ? response.request() : null;
+          await captureDirectHistoryTemplate(this.dataDirectory, request, browserUserAgent).catch(() => false);
+        }
         capturedResponses += 1;
         await persistSnapshot();
       }).catch(() => undefined).finally(() => {

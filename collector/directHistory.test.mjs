@@ -402,6 +402,56 @@ describe("hidden likes and favorites", () => {
     expect(page.close).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    { delayMs: 0, timing: "prefetched", shouldContinue: false, behavior: "ignores" },
+    { delayMs: 1_000, timing: "late", shouldContinue: false, behavior: "ignores" },
+    { delayMs: 0, timing: "required", shouldContinue: true, behavior: "propagates" },
+  ])("$behavior $timing body failures at the incremental boundary", async ({ delayMs, shouldContinue }) => {
+    vi.useFakeTimers();
+    let onResponse;
+    const response = (body) => ({
+      body,
+      finished: vi.fn(async () => null),
+      headers: vi.fn(() => ({})),
+      status: vi.fn(() => 200),
+      url: vi.fn(() => DIRECT_LIKED_ENDPOINT),
+    });
+    const bodyError = new Error("response.body: Protocol error (Network.getResponseBody): No resource with given identifier found");
+    const failedResponse = response(vi.fn(async () => { throw bodyError; }));
+    const page = {
+      close: vi.fn(async () => undefined),
+      evaluate: vi.fn(async () => undefined),
+      goto: vi.fn(async () => {
+        onResponse(response(vi.fn(async () => Buffer.from(JSON.stringify({
+          status_code: 0,
+          aweme_list: [{ aweme_id: "known-liked-video" }],
+          has_more: 1,
+          max_cursor: "1700000000000",
+        })))));
+        if (delayMs === 0) onResponse(failedResponse);
+        else setTimeout(() => onResponse(failedResponse), delayMs);
+      }),
+      on: vi.fn((event, callback) => { if (event === "response") onResponse = callback; }),
+    };
+    const onPage = vi.fn(async () => shouldContinue);
+
+    try {
+      const outcome = collectDirectRecordPages(
+        { newPage: vi.fn(async () => page) },
+        "liked_videos",
+        onPage,
+      ).then((value) => ({ value }), (error) => ({ error }));
+
+      await vi.runAllTimersAsync();
+
+      expect(onPage).toHaveBeenCalledTimes(1);
+      expect(page.close).toHaveBeenCalledTimes(1);
+      await expect(outcome).resolves.toEqual(shouldContinue ? { error: bodyError } : { value: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops when a moving likes page does not advance pagination", async () => {
     vi.useFakeTimers();
     const page = {
