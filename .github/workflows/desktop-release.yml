@@ -1,0 +1,143 @@
+name: Desktop build and release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-latest
+          - platform: macos-arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      CI: 'true'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Install Windows Electron
+        if: runner.os == 'Windows'
+        run: node node_modules/electron/install.js
+      - name: Check tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: >-
+          node --input-type=module -e
+          'import fs from "node:fs"; const { version } = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          if (process.env.GITHUB_REF_NAME !== `v${version}`) throw new Error("Tag must equal v + package.json version");'
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:web
+      - run: npm run direct:setup
+      - name: Install Apple Silicon Electron
+        if: runner.os == 'macOS'
+        env:
+          ELECTRON_INSTALL_ARCH: arm64
+        run: |
+          # electronDist uses the locally installed Electron. install.js otherwise
+          # accepts an existing x64 binary without checking its architecture.
+          node --input-type=module -e 'import fs from "node:fs"; import path from "node:path"; import { createRequire } from "node:module"; const require = createRequire(import.meta.url); const root = path.dirname(require.resolve("electron/package.json")); fs.rmSync(path.join(root, "dist"), { recursive: true, force: true });'
+          node node_modules/electron/install.js
+          test "$(lipo -archs node_modules/electron/dist/Electron.app/Contents/MacOS/Electron)" = arm64
+      - name: Package Windows installer
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win nsis --x64 --publish never
+      - name: Package Apple Silicon DMG
+        if: runner.os == 'macOS'
+        run: npx electron-builder --mac dmg --arm64 --publish never
+      - name: Verify Windows package
+        if: runner.os == 'Windows'
+        run: node scripts/verify-release-package.mjs release/win-unpacked/resources
+      - name: Verify Apple Silicon package
+        if: runner.os == 'macOS'
+        run: |
+          node scripts/verify-release-package.mjs 'release/mac-arm64/内容数据工作台.app/Contents/Resources'
+          test "$(lipo -archs 'release/mac-arm64/内容数据工作台.app/Contents/MacOS/内容数据工作台')" = arm64
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-windows-x64
+          path: release/ContentInsights-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Apple Silicon DMG
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-macos-arm64
+          path: release/ContentInsights-*-arm64.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish verified installers
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
+      - name: Check installer names and generate SHA-256 checksums
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const { version } = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          assert.equal(process.env.GITHUB_REF_NAME, `v${version}`);
+          const expected = [`ContentInsights-${version}-arm64.dmg`, `ContentInsights-Setup-${version}.exe`].sort();
+          assert.deepEqual(fs.readdirSync('release-assets').sort(), expected);
+          const sums = expected.map(name => {
+            const digest = createHash('sha256').update(fs.readFileSync(path.join('release-assets', name))).digest('hex');
+            return `${digest}  ${name}`;
+          });
+          fs.writeFileSync('release-assets/SHA256SUMS', `${sums.join('\n')}\n`);
+          NODE
+      - name: Publish both installers together
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --draft --title "$GITHUB_REF_NAME" --generate-notes
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
