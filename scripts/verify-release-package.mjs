@@ -18,6 +18,20 @@ export function assertPublicPackagePath(value) {
   assert(parts.every((part) => part !== ".." && !privateNames.test(part)), `Private data path in package: ${value}`);
 }
 
+export function assertPublicUpdateMetadata(value, packageName) {
+  const metadata = Object.fromEntries(value.trim().split(/\r?\n/u).map((line) => {
+    const match = /^([A-Za-z]+): ([A-Za-z0-9_.-]+)$/u.exec(line);
+    assert(match, "Unexpected updater metadata value");
+    return [match[1], match[2]];
+  }));
+  assert.deepEqual(Object.keys(metadata).sort(), ["owner", "provider", "repo", "updaterCacheDirName"]);
+  assert.equal(metadata.provider, "github");
+  assert.equal(metadata.updaterCacheDirName, `${packageName}-updater`);
+  if (process.env.GITHUB_REPOSITORY) {
+    assert.equal(`${metadata.owner}/${metadata.repo}`, process.env.GITHUB_REPOSITORY);
+  }
+}
+
 async function filesUnder(directory, prefix = "") {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -80,7 +94,10 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
 
   for (const relative of await filesUnder(resources)) {
     assertPublicPackagePath(relative);
-    assert(relative === "app.asar" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("direct-signer/"), `Unexpected resource: ${relative}`);
+    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("direct-signer/"), `Unexpected resource: ${relative}`);
+    if (relative === "app-update.yml") {
+      assertPublicUpdateMetadata(await readFile(path.join(resources, relative), "utf8"), sourcePackage.name);
+    }
     if (relative === "default_app.asar") {
       const electronResources = process.platform === "darwin" ? "Electron.app/Contents/Resources" : "resources";
       assert.deepEqual(await readFile(path.join(resources, relative)), await readFile(path.join(sourceDirectory, "node_modules/electron/dist", electronResources, relative)), "Unexpected Electron default archive");

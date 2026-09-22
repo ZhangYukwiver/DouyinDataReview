@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { assertPublicPackagePath } from "./verify-release-package.mjs";
+import { assertPublicPackagePath, assertPublicUpdateMetadata } from "./verify-release-package.mjs";
 
 describe("release privacy boundary", () => {
+  it("accepts generated public updater metadata and rejects credentials", () => {
+    const repository = process.env.GITHUB_REPOSITORY ?? "example/project";
+    const [owner, repo] = repository.split("/");
+    const metadata = `owner: ${owner}\nrepo: ${repo}\nprovider: github\nupdaterCacheDirName: example-app-updater\n`;
+    expect(() => assertPublicUpdateMetadata(metadata, "example-app")).not.toThrow();
+    expect(() => assertPublicUpdateMetadata(`${metadata}token: private-value\n`, "example-app")).toThrow();
+  });
+
   it.each([
     ".local-data/records.json",
     "collector/records.json",
