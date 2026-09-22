@@ -67,6 +67,7 @@ import {
 } from "./src/services/importPersonalArchive";
 import { getDesktopCollectorConfig } from "./src/desktopRuntime";
 import { shouldAutoSync } from "./src/services/autoSync";
+import { createSyncRecovery } from "./src/services/syncRecovery";
 import { applyAppStyle, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
@@ -102,8 +103,6 @@ interface CollectorConnectionOptions {
 }
 
 const TERMINAL_COLLECTOR_STATES = new Set(["idle", "complete", "partial", "error"]);
-// 无头直接读取报这些错时，只有跑一次页面采集（登录 + 抓模板）才能解决
-const PAGE_SYNC_REQUIRED_CODES = new Set(["login_required", "template_missing", "template_invalid", "session_incomplete"]);
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -214,7 +213,7 @@ function AppContent() {
   const chatStartupTriggeredRef = useRef(false);
   const chatCollectionInFlightRef = useRef(false);
   const chatPollRequestRef = useRef<number | null>(null);
-  const loginSyncTriggeredRef = useRef(false);
+  const syncRecoveryRef = useRef(createSyncRecovery());
 
   // 只记录新增探索页的位置；刷新可直接回来，原有页面的启动流程保持不变。
   useEffect(() => {
@@ -421,9 +420,8 @@ function AppContent() {
             chatCollectionInFlightRef.current = false;
             chatPollRequestRef.current = null;
           }
-          // 打开后第一次连上采集器，无头读取因为还没登录或还没抓到模板而失败：自动跑一次页面采集，把登录页弹出来；每次打开只试一次
-          if (status.state === "error" && PAGE_SYNC_REQUIRED_CODES.has(status.code ?? "") && !loginSyncTriggeredRef.current) {
-            loginSyncTriggeredRef.current = true;
+          // 每次增量读取最多回退一次完整读取；完整读取失败时不重复启动。
+          if (syncRecoveryRef.current.takeFallback(status)) {
             void beginSync(baseUrl, token);
             return;
           }
@@ -477,6 +475,7 @@ function AppContent() {
   async function beginSync(baseUrl: string, token: string, incremental = false) {
     const requestId = pollRequest.current + 1;
     pollRequest.current = requestId;
+    syncRecoveryRef.current.begin(incremental);
     setCollectorBusy(true);
     setStoppingSync(false);
     setCollectorError(null);

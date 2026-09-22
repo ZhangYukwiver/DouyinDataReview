@@ -50,12 +50,13 @@ function video(id: string, occurredAt: string, percent?: number): PersonalVideoR
   };
 }
 
+// These display-time fixtures use local wall time so the assertions hold in every runner timezone.
 describe("buildReportModel", () => {
   it("keeps counts, replay, intersections and attention grounded in records", () => {
     const records: PersonalRecordCollection = {
-      watch_history: [video("watch-1", "2026-08-20T12:00:00+08:00", 80), video("watch-2", "2026-08-21T12:00:00+08:00", 40)],
-      liked_videos: [video("liked-1", "2026-08-21T12:05:00+08:00")],
-      favorite_videos: [video("favorite-1", "2026-08-21T12:10:00+08:00")],
+      watch_history: [video("watch-1", "2026-08-20T12:00:00", 80), video("watch-2", "2026-08-21T12:00:00", 40)],
+      liked_videos: [video("liked-1", "2026-08-21T12:05:00")],
+      favorite_videos: [video("favorite-1", "2026-08-21T12:10:00")],
     };
     const chats: ChatMessage[] = [{
       id: "chat-1",
@@ -63,7 +64,7 @@ describe("buildReportModel", () => {
       conversationName: null,
       senderId: null,
       senderName: null,
-      sentAt: "2026-08-21T12:20:00+08:00",
+      sentAt: "2026-08-21T12:20:00",
       type: "text",
       text: null,
       mediaUrl: null,
@@ -142,16 +143,16 @@ describe("buildReportModel", () => {
     });
     const records: PersonalRecordCollection = {
       watch_history: [
-        watch("watch-a", "2026-08-21T12:00:00+08:00"),
-        watch("watch-b", "2026-08-21T12:02:00+08:00"),
-        watch("watch-c", "2026-08-21T12:05:00+08:00"),
-        watch("watch-d", "2026-08-21T12:06:00+08:00"),
-        watch("watch-e", "2026-08-21T12:08:00+08:00"),
+        watch("watch-a", "2026-08-21T12:00:00"),
+        watch("watch-b", "2026-08-21T12:02:00"),
+        watch("watch-c", "2026-08-21T12:05:00"),
+        watch("watch-d", "2026-08-21T12:06:00"),
+        watch("watch-e", "2026-08-21T12:08:00"),
       ],
-      liked_videos: [watch("like-a", "2026-08-21T12:01:00+08:00")],
-      favorite_videos: [watch("favorite-a", "2026-08-21T12:03:00+08:00")],
+      liked_videos: [watch("like-a", "2026-08-21T12:01:00")],
+      favorite_videos: [watch("favorite-a", "2026-08-21T12:03:00")],
     };
-    const model = buildReportModel(records, [chat("chat-a", "2026-08-21T12:04:00+08:00")], null);
+    const model = buildReportModel(records, [chat("chat-a", "2026-08-21T12:04:00")], null);
 
     expect(model.events.map((event) => ({ kind: event.kind, time: event.time }))).toEqual([
       { kind: "watch", time: "12:08" },

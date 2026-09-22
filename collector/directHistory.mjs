@@ -294,12 +294,12 @@ export async function loadDirectHistoryTemplate(dataDirectory) {
   } catch {
     throw new DirectHistoryError(
       "template_missing",
-      "尚未捕获直接读取模板，请先成功运行一次默认页面同步，再使用实验功能。",
+      "增量读取尚未初始化，请点击「完整读取」完成一次观看历史读取后再试。",
     );
   }
   const template = validatedTemplate(parsed);
   if (!template) {
-    throw new DirectHistoryError("template_invalid", "直接读取模板无效，请重新运行一次默认页面同步。");
+    throw new DirectHistoryError("template_invalid", "增量读取配置已失效，请点击「完整读取」更新后再试。");
   }
   return template;
 }
@@ -349,14 +349,14 @@ function requireSessionCookies(cookies) {
 export function buildUnsignedHistoryUrl(cookies, template) {
   const session = requireSessionCookies(cookies);
   const requestTemplate = validatedTemplate(template);
-  if (!requestTemplate) throw new DirectHistoryError("template_invalid", "直接读取模板无效，请重新运行一次默认页面同步。");
+  if (!requestTemplate) throw new DirectHistoryError("template_invalid", "增量读取配置已失效，请点击「完整读取」更新后再试。");
   const url = new URL(DIRECT_HISTORY_ENDPOINT);
   for (const name of requestTemplate.parameterOrder) {
     const cookieName = SESSION_PARAMETERS.get(name);
     const value = BUSINESS_PARAMETERS.get(name)
       ?? (cookieName ? sessionValue(cookies, cookieName) : requestTemplate.values[name]);
     if (name === "msToken" && !value) continue;
-    if (!value) throw new DirectHistoryError("template_invalid", "直接读取模板缺少请求参数，请重新运行默认页面同步。");
+    if (!value) throw new DirectHistoryError("template_invalid", "增量读取配置不完整，请点击「完整读取」更新后再试。");
     url.searchParams.append(name, value);
   }
   return { session, url };
@@ -475,7 +475,7 @@ export async function fetchDirectHistoryPage({
   }
   const template = await loadDirectHistoryTemplate(dataDirectory);
   if (validateUserAgent(currentUserAgent) !== template.headers["user-agent"]) {
-    throw new DirectHistoryError("template_mismatch", "当前浏览器与直接读取模板不一致，请重新运行一次默认页面同步。");
+    throw new DirectHistoryError("template_mismatch", "浏览器已变化，请点击「完整读取」更新增量读取配置后再试。");
   }
   const cookies = await context.cookies("https://www.douyin.com/", DIRECT_HISTORY_ENDPOINT);
   requireSessionCookies(cookies);
@@ -648,7 +648,7 @@ export async function collectDirectRecordPages(context, type, onPage) {
   };
   const processQueuedResponses = async () => {
     let processed = false;
-    while (responseQueue.length > 0) {
+    while (!terminal && responseQueue.length > 0) {
       await processResponse(await responseQueue.shift());
       processed = true;
     }
