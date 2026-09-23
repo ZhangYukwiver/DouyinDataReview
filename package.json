@@ -1,6 +1,6 @@
 {
   "name": "douyin-content-insights-mobile",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -20,13 +20,14 @@
     "prebuild:web": "npm run build:icons && npm run sync:story",
     "build:web": "expo export --platform web",
     "desktop": "npm run build:web && electron desktop/main.mjs",
-    "desktop:pack": "npm run build:web && npm run direct:setup && electron-builder --win dir",
-    "desktop:build": "npm run build:web && npm run direct:setup && electron-builder --win nsis",
+    "desktop:pack": "npm run build:web && npm run direct:setup && electron-builder --win dir --publish never",
+    "desktop:build": "npm run build:web && npm run direct:setup && electron-builder --win nsis --publish never",
     "sync:story": "node scripts/sync-story.mjs",
-    "desktop:build:mac": "npm run build:web && npm run direct:setup && electron-builder --mac"
+    "desktop:build:mac": "npm run build:web && npm run direct:setup && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.8",
+    "electron-updater": "6.8.9",
     "expo": "~57.0.11",
     "expo-document-picker": "~57.0.1",
     "expo-file-system": "~57.0.2",
@@ -60,6 +61,12 @@
     "directories": {
       "output": "release"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "ZhangYukwiver",
+      "repo": "DouyinDataReview",
+      "releaseType": "release"
+    },
     "electronDist": "node_modules/electron/dist",
     "files": [
       "desktop/**/*",
@@ -70,7 +77,7 @@
       "package.json",
       "!**/*.test.mjs",
       "!collector/fixtures/**",
-      "!node_modules/!(playwright-core)/**"
+      "!node_modules/!(playwright-core|electron-updater|builder-util-runtime|debug|ms|fs-extra|graceful-fs|jsonfile|universalify|js-yaml|argparse|sax|lazy-val|lodash.escaperegexp|lodash.isequal|semver|tiny-typed-emitter)/**"
     ],
     "asar": true,
     "asarUnpack": [
@@ -117,6 +124,12 @@
       "target": [
         {
           "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "arm64"
           ]

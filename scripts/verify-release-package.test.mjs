@@ -6,7 +6,7 @@ describe("release privacy boundary", () => {
   it("accepts generated public updater metadata and rejects credentials", () => {
     const repository = process.env.GITHUB_REPOSITORY ?? "example/project";
     const [owner, repo] = repository.split("/");
-    const metadata = `owner: ${owner}\nrepo: ${repo}\nprovider: github\nupdaterCacheDirName: example-app-updater\n`;
+    const metadata = `owner: ${owner}\nrepo: ${repo}\nprovider: github\nreleaseType: release\nupdaterCacheDirName: example-app-updater\n`;
     expect(() => assertPublicUpdateMetadata(metadata, "example-app")).not.toThrow();
     expect(() => assertPublicUpdateMetadata(`${metadata}token: private-value\n`, "example-app")).toThrow();
   });
@@ -32,6 +32,8 @@ describe("release privacy boundary", () => {
     "collector/douyinCollector.mjs",
     "app.asar.unpacked/collector/directSignerRunner.cjs",
     "node_modules/playwright-core/lib/server/cookieStore.js",
+    "node_modules/electron-updater/out/AppUpdater.js",
+    "node_modules/builder-util-runtime/out/index.js",
     "direct-signer/lib/runtime/bdms/env.js",
     "dist/_expo/static/js/web/AppEntry-example.js",
   ])("allows shipped application code: %s", (name) => {

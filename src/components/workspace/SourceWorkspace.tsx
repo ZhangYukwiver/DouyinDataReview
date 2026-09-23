@@ -16,6 +16,7 @@ import {
   Bookmark,
   Check,
   Database,
+  Download,
   Eye,
   FileArchive,
   History,
@@ -33,6 +34,7 @@ import {
 } from "lucide-react-native";
 
 import type { PersonalRecordCollection } from "../../domain/personalRecords";
+import type { DesktopUpdateState } from "../../desktopRuntime";
 import type { CollectorStatus } from "../../services/localCollector";
 import { APP_STYLES, type AppStyle } from "../../services/appStyle";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -79,6 +81,10 @@ export interface SetupWorkspaceProps {
   onToggleAutoSync: () => void;
   appStyle: AppStyle;
   onChangeAppStyle: (style: AppStyle) => void;
+  appUpdate: DesktopUpdateState | null;
+  onCheckAppUpdate: () => Promise<void>;
+  onDownloadAppUpdate: () => Promise<void>;
+  onInstallAppUpdate: () => Promise<void>;
 }
 
 const pointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
@@ -131,6 +137,10 @@ export function SetupWorkspace({
   status,
   stoppingSync,
   switchingAccount,
+  appUpdate,
+  onCheckAppUpdate,
+  onDownloadAppUpdate,
+  onInstallAppUpdate,
 }: SetupWorkspaceProps) {
   const { width } = useWindowDimensions();
   const mobile = width < 900;
@@ -182,6 +192,7 @@ export function SetupWorkspace({
             <View {...fx({ motion: "rise", i: 4 })} style={[styles.archive, mobile && styles.archiveMobile]}><View style={styles.archiveIcon}><FileArchive color={color.accent} size={20} /></View><View style={styles.flex}><Text style={styles.cardTitle}>{archive?.name ?? "备用档案导入"}</Text><Text numberOfLines={2} style={styles.cardMeta}>{archive?.detail ?? "读取 JSON / ZIP；仅在当前会话处理"}</Text></View><Pressable {...fx({ hover: "raise" })} accessibilityRole="button" disabled={pickingArchive} onPress={() => void onPickArchive()} style={({ pressed }) => [styles.archiveButton, pickingArchive && styles.disabled, pressed && styles.pressed, pointer]}>{pickingArchive ? <ActivityIndicator color={color.accent} size="small" /> : <FileArchive color={color.accent} size={17} />}<Text style={styles.archiveButtonText}>{archive ? "重新选择" : "选择文件"}</Text></Pressable></View>
 
             <View {...fx({ motion: "rise", i: 5 })} style={styles.utility}><Pressable {...fx({ hover: "tint" })} disabled={!connected || busy || switchingAccount} onPress={onSwitchAccount} style={({ pressed }) => [styles.utilityButton, pressed && styles.pressed, pointer]}><UserRoundCog color={color.textMuted} size={16} /><Text style={styles.utilityText}>切换账号</Text></Pressable><Pressable {...fx({ hover: "tint" })} disabled={!total || busy} onPress={onClearCache} style={({ pressed }) => [styles.utilityButton, pressed && styles.pressed, pointer]}><Trash2 color={color.textMuted} size={16} /><Text style={styles.utilityText}>清除本地记录</Text></Pressable><Text style={styles.utilityNote}>Cookie 与记录只保存在当前设备</Text></View>
+            {appUpdate ? <AppUpdatePanel busy={busy || observing} onCheck={onCheckAppUpdate} onDownload={onDownloadAppUpdate} onInstall={onInstallAppUpdate} state={appUpdate} /> : null}
           </View>
         </View>
       </ScrollView>
@@ -216,6 +227,47 @@ function ChatProgress({ progress }: { progress: CollectorStatus["progress"] }) {
   );
 }
 
+function AppUpdatePanel({
+  busy,
+  onCheck,
+  onDownload,
+  onInstall,
+  state,
+}: {
+  busy: boolean;
+  onCheck: () => Promise<void>;
+  onDownload: () => Promise<void>;
+  onInstall: () => Promise<void>;
+  state: DesktopUpdateState;
+}) {
+  const checking = state.phase === "checking";
+  const downloading = state.phase === "downloading";
+  const action = state.phase === "available"
+    ? { label: "下载更新", icon: Download, onPress: onDownload, disabled: false }
+    : state.phase === "downloaded"
+      ? { label: busy ? "采集完成后安装" : "重启并安装", icon: RefreshCw, onPress: onInstall, disabled: busy }
+      : state.phase === "unsupported"
+        ? null
+        : { label: state.phase === "error" ? "重试检查" : "检查更新", icon: RefreshCw, onPress: onCheck, disabled: checking || downloading };
+  const percent = state.progress === null ? null : Math.round(Math.max(0, Math.min(100, state.progress)));
+  return (
+    <View {...fx({ motion: "rise", i: 6 })} style={styles.updatePanel}>
+      <View style={styles.updateIcon}><Download color={color.signal} size={18} /></View>
+      <View style={styles.flex}>
+        <View style={styles.updateHead}>
+          <Text style={styles.updateTitle}>应用更新</Text>
+          <Text style={styles.updateVersion}>当前 v{state.currentVersion}</Text>
+        </View>
+        <Text numberOfLines={2} style={styles.updateMessage}>{state.message}</Text>
+        {state.version && state.phase !== "up-to-date" ? <Text numberOfLines={1} style={styles.updateTarget}>目标版本 v{state.version}{state.releaseName ? ` · ${state.releaseName}` : ""}</Text> : null}
+        {state.error ? <Text numberOfLines={2} style={styles.updateError}>{state.error}</Text> : null}
+        {percent !== null && (downloading || state.phase === "downloaded") ? <View accessibilityLabel={`更新下载进度 ${percent}%`} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: percent }} style={styles.updateTrack}><View style={[styles.updateFill, { width: `${percent}%` }]} /></View> : null}
+      </View>
+      {action ? <Pressable accessibilityLabel={action.label} accessibilityRole="button" accessibilityState={{ busy: checking || downloading, disabled: action.disabled }} disabled={action.disabled} onPress={() => void action.onPress()} style={({ pressed }) => [styles.updateAction, action.disabled && styles.disabled, pressed && styles.pressed, pointer]}>{checking || downloading ? <ActivityIndicator color={color.accent} size="small" /> : <action.icon color={color.accent} size={16} />}<Text style={styles.updateActionText}>{action.label}</Text></Pressable> : null}
+    </View>
+  );
+}
+
 const chatProgressStyles = StyleSheet.create({
   container: { marginTop: 12, padding: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.cyanSoft },
   head: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
@@ -245,6 +297,7 @@ const styles = StyleSheet.create({
   connection: { flexDirection: "row", gap: 18, marginTop: 23 }, connectionMobile: { flexDirection: "column" }, connectionCopy: { flex: 1.15 }, connectionAction: { flex: 0.85, minWidth: 230, justifyContent: "flex-end", padding: 18, borderLeftWidth: 3, borderLeftColor: color.signal, borderRadius: radius.medium, backgroundColor: color.surface }, iconTitle: { minHeight: 43, flexDirection: "row", alignItems: "center", gap: 11, marginBottom: 14 }, iconBox: { width: 39, height: 39, alignItems: "center", justifyContent: "center", borderRadius: 20, backgroundColor: color.cyanSoft }, cardTitle: { color: color.text, fontSize: 13, fontWeight: "800" }, cardMeta: { color: color.textMuted, fontSize: 10, lineHeight: 16, marginTop: 3 }, inputLabel: { color: color.textSecondary, fontSize: 10, fontWeight: "700", marginBottom: 6, marginTop: 8 }, input: { width: "100%", height: 44, paddingHorizontal: 12, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, color: color.text, backgroundColor: color.canvas, fontSize: 14, fontFamily: font.sans }, inputDisabled: { color: color.textMuted, backgroundColor: color.surfaceRaised }, codeWrap: { height: 44, flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 12, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.canvas }, codeInput: { flex: 1, color: color.text, fontSize: 15, fontFamily: font.sans }, actionKicker: { color: color.signal, fontSize: 8, letterSpacing: 1.1, fontWeight: "900", fontFamily: font.setupMono }, actionValue: { color: color.text, fontSize: 23, marginTop: 7, fontFamily: font.serif }, actionMeta: { color: color.textMuted, fontSize: 10, lineHeight: 16, marginTop: 6, marginBottom: 14 }, primary: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: radius.pill, backgroundColor: color.button }, primaryText: { color: color.buttonText, fontSize: 11, fontWeight: "800" },
   dataCard: { marginTop: 24, paddingTop: 22, borderTopWidth: 1, borderTopColor: color.border }, dataHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }, cardKicker: { color: color.signal, fontSize: 8, letterSpacing: 1.1, fontWeight: "900", fontFamily: font.setupMono }, updated: { color: color.textMuted, fontSize: 9 }, counts: { flexDirection: "row", marginTop: 16, overflow: "hidden", borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface }, countsMobile: { flexWrap: "wrap" }, count: { flex: 1, minWidth: 128, minHeight: 72, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 13, borderRightWidth: 1, borderRightColor: color.border }, countValue: { color: color.text, fontSize: 21, fontFamily: font.serif }, countLabel: { color: color.textMuted, fontSize: 9, marginTop: 3 }, actionGrid: { flexDirection: "row", gap: 7, marginTop: 14 }, actionGridMobile: { flexWrap: "wrap" }, action: { flex: 1, minWidth: 122, minHeight: 42, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7, borderWidth: 1, borderColor: color.border, borderRadius: radius.pill, backgroundColor: color.surface }, actionText: { color: color.textSecondary, fontSize: 10, fontWeight: "700" }, autoSync: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 14, padding: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.cyanSoft }, switch: { width: 29, height: 17, justifyContent: "center", padding: 2, borderRadius: 9, backgroundColor: color.surfaceMuted }, switchOn: { backgroundColor: color.signal }, switchThumb: { width: 13, height: 13, borderRadius: 7, backgroundColor: color.textMuted }, switchThumbOn: { transform: [{ translateX: 12 }], backgroundColor: color.white }, autoTitle: { color: color.textSecondary, fontSize: 10, fontWeight: "800" }, autoMeta: { color: color.textMuted, fontSize: 9, marginTop: 3 }, autoState: { color: color.textMuted, fontSize: 9 }, autoStateOn: { color: color.signal }, error: { marginTop: 13, padding: 12, borderLeftWidth: 3, borderLeftColor: color.danger, borderRadius: radius.small, backgroundColor: color.dangerSoft }, errorTitle: { color: color.danger, fontSize: 10, fontWeight: "800" }, errorText: { color: color.textSecondary, fontSize: 10, lineHeight: 16, marginTop: 4 },
   archive: { flexDirection: "row", alignItems: "center", gap: 11, marginTop: 24, paddingTop: 20, borderTopWidth: 1, borderTopColor: color.border }, archiveMobile: { alignItems: "flex-start" }, archiveIcon: { width: 37, height: 37, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.frame, borderRadius: radius.small }, archiveButton: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 11, borderWidth: 1, borderColor: color.frame, borderRadius: radius.pill }, archiveButtonText: { color: color.accent, fontSize: 10, fontWeight: "800" }, utility: { flexDirection: "row", alignItems: "center", gap: 9, marginTop: 18 }, utilityButton: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 9, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.pill }, utilityText: { color: color.textMuted, fontSize: 9 }, utilityNote: { flex: 1, color: color.textMuted, fontSize: 9, textAlign: "right" },
+  updatePanel: { flexDirection: "row", alignItems: "center", gap: 11, marginTop: 18, paddingTop: 16, borderTopWidth: 1, borderTopColor: color.border }, updateIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.frame, borderRadius: radius.small }, updateHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }, updateTitle: { color: color.textSecondary, fontSize: 10, fontWeight: "800" }, updateVersion: { color: color.textMuted, fontSize: 9 }, updateMessage: { color: color.textMuted, fontSize: 9, lineHeight: 15, marginTop: 4 }, updateTarget: { color: color.signal, fontSize: 9, marginTop: 3 }, updateError: { color: color.danger, fontSize: 9, lineHeight: 14, marginTop: 3 }, updateTrack: { height: 4, marginTop: 7, overflow: "hidden", borderRadius: radius.small, backgroundColor: color.surfaceMuted }, updateFill: { height: "100%", backgroundColor: color.signal }, updateAction: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: color.frame, borderRadius: radius.pill }, updateActionText: { flexShrink: 1, color: color.accent, fontSize: 9, fontWeight: "800" },
   styleBlock: { marginTop: 18, paddingTop: 18, borderTopWidth: 1, borderTopColor: color.border }, styleRow: { flexDirection: "row", gap: 8, marginTop: 10 }, styleOption: { flex: 1, minHeight: 52, justifyContent: "center", paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium }, styleOptionOn: { borderColor: color.accent, backgroundColor: color.accentSoft }, styleLabel: { color: color.textSecondary, fontSize: 11, fontWeight: "800" }, styleLabelOn: { color: color.text }, styleMeta: { color: color.textMuted, fontSize: 9, marginTop: 3 },
   pressed: { opacity: 0.72, transform: [{ translateY: 1 }] }, disabled: { opacity: 0.34 },
   chatPolicy: { color: color.textMuted, fontSize: 9, lineHeight: 15, marginTop: 9 },
