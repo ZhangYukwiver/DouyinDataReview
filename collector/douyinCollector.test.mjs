@@ -1395,6 +1395,58 @@ describe("DouyinCollector response completion", () => {
 });
 
 describe("DouyinCollector direct records", () => {
+  it("bootstraps the history template from the official www-hj endpoint", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "douyin-headless-history-template-"));
+    const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+    const requestUrl = new URL("https://www-hj.douyin.com/aweme/v1/web/history/read/");
+    for (const [name, value] of Object.entries({
+      count: "20",
+      max_cursor: "0",
+      device_platform: "webapp",
+      aid: "6383",
+      webid: "1234567890123456789",
+      verifyFp: "test-private-fingerprint",
+      fp: "test-private-fingerprint",
+      uifid: "test-private-uifid",
+      a_bogus: "test-private-signature",
+    })) requestUrl.searchParams.append(name, value);
+    const request = {
+      url: () => requestUrl.toString(),
+      headerValue: vi.fn(async () => null),
+    };
+    const response = { url: () => requestUrl.toString(), request: () => request };
+    const page = {
+      waitForResponse: vi.fn(async (predicate) => {
+        expect(predicate(response)).toBe(true);
+        expect(predicate({ url: () => "https://evil.example/aweme/v1/web/history/read/" })).toBe(false);
+        return response;
+      }),
+      evaluate: vi.fn(async () => userAgent),
+    };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory, store: {} });
+    collector.syncRunId = 1;
+    collector.visit = vi.fn(async () => undefined);
+    collector.hasLoginSession = vi.fn(async () => true);
+    collector.resolveOwnProfileUrl = vi.fn(async () => "https://www.douyin.com/user/account-id");
+
+    try {
+      await expect(collector.prepareDirectHistoryTemplate({}, page, 1)).resolves.toMatchObject({
+        values: { aid: "6383", device_platform: "webapp" },
+        headers: { "user-agent": userAgent },
+      });
+      expect(page.waitForResponse).toHaveBeenCalledTimes(1);
+      expect(collector.visit).toHaveBeenLastCalledWith(
+        page,
+        "https://www.douyin.com/user/account-id?showTab=record",
+        1,
+      );
+      const raw = await readFile(path.join(dataDirectory, "direct-history-template.json"), "utf8");
+      expect(raw).not.toContain("test-private-");
+    } finally {
+      await rm(dataDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("reads each list through its last page and saves each completed phase", async () => {
     const initial = emptySnapshot();
     initial.warnings = [

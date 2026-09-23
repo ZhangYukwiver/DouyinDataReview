@@ -279,6 +279,19 @@ describe("direct history request", () => {
     })).rejects.toMatchObject({ code: "unsafe_url" });
     expect(requestFactory.newContext).not.toHaveBeenCalled();
   });
+
+  it("rejects www-hj as the signed request host", async () => {
+    const { context, requestFactory } = fakeContext();
+
+    await expect(fetchDirectHistoryPage({
+      context,
+      currentUserAgent: userAgent,
+      dataDirectory,
+      requestFactory,
+      signer: async (url) => new URL(url.toString().replace("www.douyin.com", "www-hj.douyin.com")),
+    })).rejects.toMatchObject({ code: "unsafe_url" });
+    expect(requestFactory.newContext).not.toHaveBeenCalled();
+  });
 });
 
 describe("direct history URL boundary", () => {
@@ -321,6 +334,27 @@ describe("direct history URL boundary", () => {
     expect(raw).not.toMatch(/secret-ms-token|secret-fp|secret-uifid|secret-signature/u);
     expect(JSON.parse(raw).parameterOrder).toEqual(Object.keys(values).filter((name) => name !== "a_bogus"));
     expect(JSON.parse(raw).headers).toEqual({ "user-agent": userAgent });
+  });
+
+  it("captures a history template from the official www-hj host", async () => {
+    const url = new URL(DIRECT_HISTORY_ENDPOINT.replace("www.douyin.com", "www-hj.douyin.com"));
+    for (const [name, value] of Object.entries({
+      max_cursor: "0",
+      count: "20",
+      device_platform: "webapp",
+      aid: "6383",
+      webid: "1234567890123456789",
+      verifyFp: "secret-fp",
+      fp: "secret-fp",
+      uifid: "secret-uifid",
+      a_bogus: "secret-signature",
+    })) url.searchParams.append(name, value);
+    const request = {
+      url: () => url.toString(),
+      headerValue: vi.fn(async () => null),
+    };
+
+    await expect(captureDirectHistoryTemplate(dataDirectory, request, userAgent)).resolves.toBe(true);
   });
 });
 
