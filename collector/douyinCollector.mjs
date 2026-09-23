@@ -16,6 +16,7 @@ import {
   fetchDirectHistoryPage,
   invalidateDirectHistoryTemplate,
   loadDirectHistoryTemplate,
+  validateDirectHistoryUrl,
 } from "./directHistory.mjs";
 import { CollectorAdapterError, RecordAccumulator, matchDouyinEndpoint, mergeRecords } from "./normalizer.mjs";
 import {
@@ -1628,13 +1629,13 @@ export class DouyinCollector {
         if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
           throw new CollectorAdapterError("response_too_large", "抖音网页响应过大，已停止读取该页。");
         }
-        const payload = await readJsonWithReplay(response, page, replayUrls);
-        if (!observation.active || runId !== this.syncRunId) return;
-        accumulator.addResponse(endpoint, payload);
         if (endpoint.kind === "watch_history") {
           const request = typeof response.request === "function" ? response.request() : null;
           await captureDirectHistoryTemplate(this.dataDirectory, request, browserUserAgent).catch(() => false);
         }
+        const payload = await readJsonWithReplay(response, page, replayUrls);
+        if (!observation.active || runId !== this.syncRunId) return;
+        accumulator.addResponse(endpoint, payload);
         capturedResponses += 1;
         await persistSnapshot();
       }).catch(() => undefined).finally(() => {
@@ -2433,14 +2434,14 @@ export class DouyinCollector {
         if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
           throw new CollectorAdapterError("response_too_large", "抖音网页响应过大，已停止读取该页。");
         }
-        const payload = await readJsonWithReplay(response, page, replayUrls);
-        this.assertSyncActive(runId);
-        if (!acceptingResponses) return;
-        const normalized = accumulator.addResponse(endpoint, payload);
         if (endpoint.kind === "watch_history") {
           const request = typeof response.request === "function" ? response.request() : null;
           await captureDirectHistoryTemplate(this.dataDirectory, request, browserUserAgent).catch(() => false);
         }
+        const payload = await readJsonWithReplay(response, page, replayUrls);
+        this.assertSyncActive(runId);
+        if (!acceptingResponses) return;
+        const normalized = accumulator.addResponse(endpoint, payload);
         const ids = sampleIds.get(endpoint.kind);
         const seen = sampledIdSets.get(endpoint.kind);
         for (const id of normalized.recordIds ?? []) {
@@ -2576,6 +2577,38 @@ export class DouyinCollector {
     return collectDirectRecordPages(context, type, onPage);
   }
 
+  async prepareDirectHistoryTemplate(context, page, runId) {
+    try {
+      return await loadDirectHistoryTemplate(this.dataDirectory);
+    } catch (error) {
+      if (!error || !["template_missing", "template_invalid"].includes(error.code)) throw error;
+    }
+
+    // A valid login session can bootstrap the request template in a hidden
+    // page. This keeps the first usable incremental read headless even when a
+    // prior visible sync failed to persist its template.
+    if (typeof page?.waitForResponse !== "function") {
+      throw new DirectHistoryError("template_missing", "增量读取配置尚未建立，请先完成一次观看历史读取。");
+    }
+    await this.visit(page, HOME_URL, runId);
+    if (!await this.hasLoginSession(context, page)) {
+      throw new DirectHistoryError("login_required", "增量读取需要先在采集器中完成登录。");
+    }
+    const profileUrl = await this.resolveOwnProfileUrl(page, runId);
+    const responsePromise = page.waitForResponse((response) => (
+      Boolean(validateDirectHistoryUrl(response.url(), { allowSignature: true }))
+    ), { timeout: 30_000 });
+    await this.visit(page, profileTabUrl(profileUrl, "record") ?? `${SELF_PROFILE_URL}?showTab=record`, runId);
+    const response = await responsePromise;
+    const request = typeof response.request === "function" ? response.request() : null;
+    const browserUserAgent = await page.evaluate(() => navigator.userAgent).catch(() => null);
+    const captured = await captureDirectHistoryTemplate(this.dataDirectory, request, browserUserAgent).catch(() => false);
+    if (!captured) {
+      throw new DirectHistoryError("template_missing", "无法从观看历史请求建立增量读取配置。");
+    }
+    return loadDirectHistoryTemplate(this.dataDirectory);
+  }
+
   async runDirectRecords(runId) {
     this.assertSyncActive(runId);
     const visibleContext = this.contextHeadless === true ? null : this.context;
@@ -2591,6 +2624,9 @@ export class DouyinCollector {
     try {
       this.assertSyncActive(runId);
       page = await context.newPage();
+      if (typeof page.waitForResponse === "function") {
+        await this.prepareDirectHistoryTemplate(context, page, runId);
+      }
       const currentUserAgent = await page.evaluate(() => navigator.userAgent);
       const accumulator = new RecordAccumulator();
       const existingRecords = structuredClone(this.snapshot.records);

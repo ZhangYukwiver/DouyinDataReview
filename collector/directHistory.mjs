@@ -25,6 +25,12 @@ const signerRunnerPath = path.join(moduleDirectory, "directSignerRunner.cjs").re
   `${path.sep}app.asar.unpacked${path.sep}`,
 );
 const templateFileName = "direct-history-template.json";
+const DIRECT_HISTORY_ORIGIN = "https://www.douyin.com";
+const DIRECT_HISTORY_TEMPLATE_ORIGINS = new Set([
+  DIRECT_HISTORY_ORIGIN,
+  "https://www-hj.douyin.com",
+]);
+const DIRECT_HISTORY_PATH = "/aweme/v1/web/history/read/";
 const LOGIN_COOKIE_NAMES = new Set(["sessionid", "sessionid_ss", "sid_tt", "sid_guard"]);
 const BUSINESS_PARAMETERS = new Map([
   ["count", "20"],
@@ -212,7 +218,7 @@ function validatedTemplate(value) {
   };
 }
 
-function validHistoryUrl(value, allowSignature = false) {
+function validHistoryUrl(value, allowSignature = false, { canonicalHost = false } = {}) {
   let url;
   try {
     url = new URL(value);
@@ -220,12 +226,21 @@ function validHistoryUrl(value, allowSignature = false) {
     return null;
   }
   if (
-    url.origin + url.pathname !== DIRECT_HISTORY_ENDPOINT
+    url.pathname !== DIRECT_HISTORY_PATH
+    || (canonicalHost
+      ? url.origin !== DIRECT_HISTORY_ORIGIN
+      : !DIRECT_HISTORY_TEMPLATE_ORIGINS.has(url.origin))
     || url.username
     || url.password
     || (!allowSignature && url.searchParams.has("a_bogus"))
   ) return null;
   return url;
+}
+
+// The browser may route the same official endpoint through www-hj, while the
+// direct replay path intentionally stays on the canonical www host.
+export function validateDirectHistoryUrl(value, { allowSignature = false, canonicalHost = false } = {}) {
+  return validHistoryUrl(value, allowSignature, { canonicalHost });
 }
 
 export async function verifyDirectSigner(directory) {
@@ -249,7 +264,7 @@ export async function verifyDirectSigner(directory) {
 
 export async function captureDirectHistoryTemplate(dataDirectory, request, browserUserAgent = null) {
   if (!dataDirectory || !request || typeof request.url !== "function" || typeof request.headerValue !== "function") return false;
-  const url = validHistoryUrl(request.url(), true);
+  const url = validateDirectHistoryUrl(request.url(), { allowSignature: true });
   if (!url?.searchParams.has("a_bogus")) return false;
   const parameterOrder = [];
   const values = {};
@@ -363,7 +378,7 @@ export function buildUnsignedHistoryUrl(cookies, template) {
 }
 
 export async function signDirectHistoryUrl(unsignedUrl, { directory, uifid = "", userAgent } = {}) {
-  const url = validHistoryUrl(unsignedUrl);
+  const url = validateDirectHistoryUrl(unsignedUrl, { canonicalHost: true });
   if (!url) throw new DirectHistoryError("unsafe_url", "直接读取只允许固定的抖音观看历史接口。");
   const validatedUserAgent = validateUserAgent(userAgent);
   if (!validatedUserAgent) throw new DirectHistoryError("template_invalid", "直接读取模板缺少有效浏览器标识。");
@@ -487,7 +502,7 @@ export async function fetchDirectHistoryPage({
     uifid: sessionValue(cookies, "UIFID"),
     userAgent,
   });
-  if (!validHistoryUrl(signedUrl, true)?.searchParams.has("a_bogus")) {
+  if (!validateDirectHistoryUrl(signedUrl, { allowSignature: true, canonicalHost: true })?.searchParams.has("a_bogus")) {
     throw new DirectHistoryError("unsafe_url", "签名结果偏离固定观看历史接口，已拒绝发送。");
   }
 
@@ -522,7 +537,7 @@ export async function fetchDirectHistoryPage({
     }
     if (status === 429) throw new DirectHistoryError("rate_limited", "观看历史直接请求触发限流，已停止且不会自动重试。");
     if (status !== 200) throw new DirectHistoryError("http_error", `观看历史直接请求返回 HTTP ${status}。`);
-    if (!validHistoryUrl(response.url(), true)) {
+    if (!validateDirectHistoryUrl(response.url(), { allowSignature: true, canonicalHost: true })) {
       throw new DirectHistoryError("unexpected_response", "观看历史响应来自非预期地址，已拒绝处理。");
     }
     const declaredLength = Number(response.headers()["content-length"] ?? 0);
