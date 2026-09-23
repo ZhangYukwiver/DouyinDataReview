@@ -1384,7 +1384,7 @@ export class DouyinCollector {
       }),
     };
     this.chat = chat;
-    this.updateChat({ state: "launching_browser", connection: "connecting", message: "正在连接抖音实时消息" });
+    this.updateChat({ state: "launching_browser", connection: "connecting", progress: null, message: "正在连接抖音实时消息" });
     const promise = this.runChatObservation(runId, chat)
       .catch(async (error) => {
         if (error instanceof CollectorCancelledError || !chat.active || runId !== this.chatRunId) return;
@@ -1392,6 +1392,7 @@ export class DouyinCollector {
           state: "error",
           code: error?.code ?? null,
           connection: null,
+          progress: null,
           message: safeMessage(error, "聊天读取启动失败，请稍后重试。"),
         });
         await this.releaseHeadlessContextIfIdle();
@@ -1433,8 +1434,8 @@ export class DouyinCollector {
       }
     }
     await promise.catch(() => undefined);
+    this.updateChat({ state: "idle", connection: null, progress: null, ...(silent ? {} : { message: "已暂停实时接收，已保留聊天记录" }) });
     if (!silent) {
-      this.updateChat({ state: "idle", connection: null, message: "已暂停实时接收，已保留聊天记录" });
       this.updateStatus({
         counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
         updatedAt: this.snapshot.updatedAt,
@@ -1676,7 +1677,7 @@ export class DouyinCollector {
     const context = await this.ensureBrowser({ headless: true });
     this.assertChatActive(runId);
     let page = await this.currentPage(context);
-    await this.waitForLogin(context, page, runId, { headless: true });
+    await this.waitForLogin(context, page, runId, { headless: true, assertActive: (id) => this.assertChatActive(id) });
     this.assertChatActive(runId);
     page = await this.currentPage(context);
     if (!/^https:\/\/www\.douyin\.com\/(?:chat(?:[/?#]|$)|(?:[?#].*)?$)/u.test(page.url() ?? "") && page.url() !== "about:blank") {
@@ -1893,7 +1894,7 @@ export class DouyinCollector {
         await delay(1_500);
         this.assertChatActive(runId);
       } else {
-        await this.visit(page, CHAT_URL, runId);
+        await this.visit(page, CHAT_URL, runId, (id) => this.assertChatActive(id));
       }
       const detectedUserId = await readCurrentUserId(page);
       if (detectedUserId) conversationAccumulator.setCurrentUserId(detectedUserId);
@@ -2111,8 +2112,9 @@ export class DouyinCollector {
     return hasCookie && !await hasVisibleLoginControl(page);
   }
 
-  async waitForLogin(context, page, runId, { headless = false } = {}) {
-    this.assertSyncActive(runId);
+  // 记录读取和聊天接收各有自己的 runId，谁调用就用谁的取消判断
+  async waitForLogin(context, page, runId, { headless = false, assertActive = (id) => this.assertSyncActive(id) } = {}) {
+    assertActive(runId);
     if (await this.hasLoginSession(context, page)) return;
 
     if (headless) {
@@ -2126,22 +2128,22 @@ export class DouyinCollector {
     });
     const deadline = Date.now() + MAX_LOGIN_WAIT_MS;
     while (Date.now() < deadline) {
-      this.assertSyncActive(runId);
+      assertActive(runId);
       if (page.isClosed()) page = await this.currentPage(context);
       if (await this.hasLoginSession(context, page)) return;
       await delay(1_500);
     }
-    this.assertSyncActive(runId);
+    assertActive(runId);
     if (page.isClosed()) page = await this.currentPage(context);
     if (await this.hasLoginSession(context, page)) return;
     throw new Error("login_timeout");
   }
 
-  async visit(page, url, runId) {
-    this.assertSyncActive(runId);
+  async visit(page, url, runId, assertActive = (id) => this.assertSyncActive(id)) {
+    assertActive(runId);
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
     await delay(1_500);
-    this.assertSyncActive(runId);
+    assertActive(runId);
   }
 
   async resolveOwnProfileUrl(page, runId) {
