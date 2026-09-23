@@ -72,6 +72,7 @@ export interface ContentWorkspaceProps {
   chatConversations?: ChatConversationSummary[];
   chatConnected?: boolean;
   onToggleChatReception?: () => void;
+  onCollectChatHistory?: () => void;
   report: AnnualReport | LivingReport | null;
   sourceLabel: string;
   updatedAt: string | null;
@@ -135,6 +136,7 @@ export function ContentWorkspace({
   chatConversations = [],
   chatConnected = false,
   onToggleChatReception,
+  onCollectChatHistory,
   report,
   sourceLabel,
   updatedAt,
@@ -351,6 +353,7 @@ export function ContentWorkspace({
             connected={chatConnected}
             status={status}
             onToggleReception={onToggleChatReception ?? onOpenSettings}
+            onCollectHistory={onCollectChatHistory}
             sendConnection={commentsConnection}
             conversations={chatConversations}
             messages={chatMessages}

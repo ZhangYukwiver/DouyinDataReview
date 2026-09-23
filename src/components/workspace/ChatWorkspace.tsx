@@ -26,6 +26,7 @@ import {
   Phone,
   Pause,
   Play,
+  RefreshCw,
   Search,
   Send,
   ShieldCheck,
@@ -68,6 +69,7 @@ export interface ChatWorkspaceProps {
   connected?: boolean;
   status?: CollectorStatus | null;
   onToggleReception?: () => void;
+  onCollectHistory?: () => void;
   /** 有连接才能发送；消息经采集器里的抖音网页发出。 */
   sendConnection?: ChatSendConnection | null;
   onOpenRecord: (url: string) => Promise<void>;
@@ -221,6 +223,7 @@ export function ChatWorkspace({
   connected = false,
   status = null,
   onToggleReception,
+  onCollectHistory,
   sendConnection = null,
   onOpenRecord,
   onOpenSettings,
@@ -291,8 +294,10 @@ export function ChatWorkspace({
   };
 
   const receiving = isChatReceiving(status);
+  const chatError = status?.chat.state === "error" ? status.chat.message : null;
   const receptionLabel = !connected ? "未连接采集器"
-    : !receiving ? "已暂停接收"
+    : chatError ? "聊天接收失败"
+      : !receiving ? "已暂停接收"
       : status?.chatConnection === "connected" ? "实时接收中"
         : status?.chatConnection === "reconnecting" ? "连接中断，正在重连" : "正在连接消息";
   const controlDisabled = connected && busy && !receiving;
@@ -310,19 +315,36 @@ export function ChatWorkspace({
         <View style={styles.receptionCopy}>
           <View style={[styles.receptionDot, { backgroundColor: receiving && status?.chatConnection === "connected" ? color.green : color.textMuted }]} />
           <Text accessibilityLiveRegion="polite" style={styles.receptionLabel}>{receptionLabel}</Text>
-          {receiving && status?.chat.progress ? <Text style={styles.receptionProgress}>整理历史 {status.chat.progress.current}/{status.chat.progress.total || "…"}</Text> : null}
+          {chatError
+            ? <Text accessibilityLiveRegion="polite" numberOfLines={1} style={styles.receptionError}>{chatError}</Text>
+            : receiving && status?.chat.progress
+              ? <Text style={styles.receptionProgress}>整理历史 {status.chat.progress.current}/{status.chat.progress.total || "…"}</Text>
+              : null}
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={!connected ? "连接采集器" : receiving ? "暂停接收" : "开始接收"}
-          accessibilityState={{ disabled: controlDisabled }}
-          disabled={controlDisabled}
-          onPress={!connected ? onOpenSettings : onToggleReception}
-          style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, controlDisabled && { opacity: 0.45 }, webPointer]}
-        >
-          {receiving ? <Pause color={color.textSecondary} size={13} /> : <Play color={color.textSecondary} size={13} />}
-          <Text style={styles.receptionButtonText}>{!connected ? "连接采集器" : receiving ? "暂停接收" : "开始接收"}</Text>
-        </Pressable>
+        <View style={styles.receptionActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={!connected ? "连接采集器" : receiving ? "暂停接收" : "开始接收"}
+            accessibilityState={{ disabled: controlDisabled }}
+            disabled={controlDisabled}
+            onPress={!connected ? onOpenSettings : onToggleReception}
+            style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, controlDisabled && { opacity: 0.45 }, webPointer]}
+          >
+            {receiving ? <Pause color={color.textSecondary} size={13} /> : <Play color={color.textSecondary} size={13} />}
+            <Text style={styles.receptionButtonText}>{!connected ? "连接采集器" : receiving ? "暂停接收" : "开始接收"}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="采集聊天记录"
+            accessibilityState={{ disabled: !connected || busy || !onCollectHistory }}
+            disabled={!connected || busy || !onCollectHistory}
+            onPress={onCollectHistory}
+            style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, (!connected || busy || !onCollectHistory) && { opacity: 0.45 }, webPointer]}
+          >
+            {busy ? <ActivityIndicator color={color.textSecondary} size="small" /> : <RefreshCw color={color.textSecondary} size={13} />}
+            <Text style={styles.receptionButtonText}>采集聊天记录</Text>
+          </Pressable>
+        </View>
       </View>
       <View style={[styles.root, mobile && styles.rootMobile]}>
       {!showDetail ? (
@@ -1422,10 +1444,12 @@ function Text({ style, ...rest }: TextProps) {
 const styles = StyleSheet.create({
   workspace: { flex: 1, minWidth: 0, minHeight: 0 },
   receptionBar: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, paddingHorizontal: 16, paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border, backgroundColor: color.sidebar },
-  receptionCopy: { flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7 },
+  receptionCopy: { flex: 1, minWidth: 120, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7 },
+  receptionActions: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 6 },
   receptionDot: { width: 6, height: 6, borderRadius: 3 },
   receptionLabel: { color: color.textSecondary, fontSize: 11 },
   receptionProgress: { color: color.textMuted, fontSize: 10 },
+  receptionError: { color: color.amber, fontSize: 10, flexShrink: 1 },
   receptionButton: { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 6, paddingHorizontal: 9, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium },
   receptionButtonText: { color: color.textSecondary, fontSize: 10 },
   root: { flex: 1, flexDirection: "row", minWidth: 0, minHeight: 0, backgroundColor: color.canvas },

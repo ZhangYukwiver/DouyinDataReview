@@ -9,6 +9,7 @@ import {
   loadCollectorVideo,
   getCollectorStatus,
   getCollectorVideoDownload,
+  isChatReceiving,
   normalizeCollectorBaseUrl,
   parseLaunchPairingCode,
   pairCollector,
@@ -170,6 +171,51 @@ describe("parseLaunchPairingCode", () => {
 });
 
 describe("local collector client", () => {
+  it("uses the nested chat state even while the shared collector is idle", () => {
+    expect(isChatReceiving({
+      state: "idle",
+      phase: null,
+      message: "等待同步",
+      counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0, chat_messages: 0 },
+      progress: null,
+      updatedAt: null,
+      browserOpen: true,
+      syncMode: null,
+      chatConnection: "connecting",
+      chat: { state: "launching_browser", connection: "connecting", message: "正在连接", progress: null },
+    })).toBe(true);
+  });
+
+  it("accepts the legacy chat phase when a collector has no nested state", () => {
+    expect(isChatReceiving({
+      state: "observing",
+      phase: "chat_messages",
+      message: "聊天监听中",
+      counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0, chat_messages: 2 },
+      progress: null,
+      updatedAt: null,
+      browserOpen: true,
+      syncMode: null,
+      chatConnection: "connected",
+      chat: { state: "idle", connection: null, message: null, progress: null },
+    })).toBe(true);
+  });
+
+  it("does not let a nested chat error look active through the legacy phase", () => {
+    expect(isChatReceiving({
+      state: "observing",
+      phase: "chat_messages",
+      message: "记录监听中",
+      counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0, chat_messages: 2 },
+      progress: null,
+      updatedAt: null,
+      browserOpen: true,
+      syncMode: null,
+      chatConnection: null,
+      chat: { state: "error", connection: null, message: "登录超时", progress: null },
+    })).toBe(false);
+  });
+
   it("waits on revisions with header-only authentication and decodes the live connection state", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       state: "observing", phase: "chat_messages", revision: 8, chatConnection: "reconnecting", message: "正在重连",

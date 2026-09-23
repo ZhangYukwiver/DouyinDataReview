@@ -598,7 +598,16 @@ function parseStatus(value: unknown): CollectorStatus {
 
 // 聊天接收是否在跑（连接中也算），它和记录读取、视频下载各走各的
 export function isChatReceiving(status: CollectorStatus | null | undefined): boolean {
-  return status ? ["launching_browser", "observing"].includes(status.chat.state) : false;
+  if (!status) return false;
+  if (["launching_browser", "observing"].includes(status.chat.state)) return true;
+  // An explicit nested terminal error wins over the legacy phase fallback.
+  // Older collectors omit `chat`, while newer collectors can keep the
+  // top-level record task in `collecting` or `observing` after chat fails.
+  if (status.chat.state === "error") return false;
+  // Collectors before the split status model exposed chat work on the shared
+  // state/phase fields. Keep those responses usable while preferring the
+  // nested chat state whenever it is present.
+  return status.phase === "chat_messages" && ["launching_browser", "observing"].includes(status.state);
 }
 
 function parseChatStatus(value: unknown, validStates: CollectorState[]): CollectorChatStatus {
