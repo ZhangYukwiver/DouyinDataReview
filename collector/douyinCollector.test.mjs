@@ -776,6 +776,48 @@ describe("DouyinCollector manual observation", () => {
     expect(collector.getStatus().state).toBe("idle");
   });
 
+  it("starts reception after the records line moved on, and clears the previous run's progress", async () => {
+    const page = { url: () => "https://www.douyin.com/" };
+    const context = fakeContext(page);
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore() });
+    collector.snapshot = emptySnapshot();
+    // 记录读取那条线早就往前走过，聊天不该被它的运行编号判成已取消
+    collector.syncRunId = 7;
+    collector.ensureBrowser = vi.fn().mockResolvedValue(context);
+    collector.currentPage = vi.fn().mockResolvedValue(page);
+    collector.visit = vi.fn().mockResolvedValue(undefined);
+    collector.hasLoginSession = vi.fn().mockResolvedValue(true);
+    collector.updateChat({ progress: { current: 22, total: 22 } });
+
+    expect(collector.startChatObservation()).toBe(true);
+    expect(collector.getStatus().chat.progress).toBe(null);
+    await vi.waitFor(() => expect(collector.getStatus().chat.state).toBe("observing"));
+    const [, url, visitRunId, assertActive] = collector.visit.mock.calls[0];
+    expect(url).toContain("/chat");
+    expect(() => assertActive(visitRunId)).not.toThrow();
+
+    await expect(collector.stopChatObservation()).resolves.toBe(true);
+    expect(collector.getStatus().chat.progress).toBe(null);
+  });
+
+  it("clears chat state on a silent stop", async () => {
+    const page = { url: () => "https://www.douyin.com/" };
+    const context = fakeContext(page);
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore() });
+    collector.snapshot = emptySnapshot();
+    collector.ensureBrowser = vi.fn().mockResolvedValue(context);
+    collector.currentPage = vi.fn().mockResolvedValue(page);
+    collector.visit = vi.fn().mockResolvedValue(undefined);
+    collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
+
+    expect(collector.startChatObservation()).toBe(true);
+    await vi.waitFor(() => expect(collector.getStatus().chat.state).toBe("observing"));
+    collector.updateChat({ progress: { current: 22, total: 22 } });
+
+    await expect(collector.stopChatObservation({ silent: true })).resolves.toBe(true);
+    expect(collector.getStatus().chat).toMatchObject({ state: "idle", connection: null, progress: null });
+  });
+
   it("captures IM chat responses into the independent chat message collection", async () => {
     const page = { url: () => "https://www.douyin.com/" };
     const context = fakeContext(page);
