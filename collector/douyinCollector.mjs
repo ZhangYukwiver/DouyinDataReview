@@ -1434,7 +1434,15 @@ export class DouyinCollector {
       }
     }
     await promise.catch(() => undefined);
-    this.updateChat({ state: "idle", connection: null, progress: null, ...(silent ? {} : { message: "已暂停实时接收，已保留聊天记录" }) });
+    // Silent stops are used while another operation owns the shared browser.
+    // Keep the nested chat state truthful even though the top-level status is
+    // intentionally left to that other operation.
+    this.updateChat({
+      state: "idle",
+      connection: null,
+      progress: null,
+      message: silent ? null : "已暂停实时接收，已保留聊天记录",
+    });
     if (!silent) {
       this.updateStatus({
         counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),

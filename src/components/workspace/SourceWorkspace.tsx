@@ -68,6 +68,7 @@ export interface SetupWorkspaceProps {
   onDisconnect: () => Promise<void>;
   onStartObservation: () => Promise<void>;
   onStartChatObservation: () => Promise<void>;
+  onCollectChatHistory: () => Promise<void>;
   onStopObservation: () => Promise<void>;
   onStartIncrementalSync: () => void;
   onStartFullSync: () => void;
@@ -119,6 +120,7 @@ export function SetupWorkspace({
   onOpenDashboard,
   onPickArchive,
   onStartChatObservation,
+  onCollectChatHistory,
   onStartFullSync,
   onStartIncrementalSync,
   onStartObservation,
@@ -196,6 +198,15 @@ export function SetupWorkspace({
           </View>
         </View>
       </ScrollView>
+      <View {...fx({ motion: "rise", i: 6 })} style={styles.chatCollectFooter}>
+        <ActionButton
+          disabled={!connected || chatBusy || visibleBusy || (busy && !chatCollecting)}
+          icon={RefreshCw}
+          label="采集聊天记录"
+          onPress={() => void onCollectChatHistory()}
+          busy={chatBusy}
+        />
+      </View>
     </View>
   );
 }
@@ -300,5 +311,5 @@ const styles = StyleSheet.create({
   updatePanel: { flexDirection: "row", alignItems: "center", gap: 11, marginTop: 18, paddingTop: 16, borderTopWidth: 1, borderTopColor: color.border }, updateIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.frame, borderRadius: radius.small }, updateHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }, updateTitle: { color: color.textSecondary, fontSize: 10, fontWeight: "800" }, updateVersion: { color: color.textMuted, fontSize: 9 }, updateMessage: { color: color.textMuted, fontSize: 9, lineHeight: 15, marginTop: 4 }, updateTarget: { color: color.signal, fontSize: 9, marginTop: 3 }, updateError: { color: color.danger, fontSize: 9, lineHeight: 14, marginTop: 3 }, updateTrack: { height: 4, marginTop: 7, overflow: "hidden", borderRadius: radius.small, backgroundColor: color.surfaceMuted }, updateFill: { height: "100%", backgroundColor: color.signal }, updateAction: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: color.frame, borderRadius: radius.pill }, updateActionText: { flexShrink: 1, color: color.accent, fontSize: 9, fontWeight: "800" },
   styleBlock: { marginTop: 18, paddingTop: 18, borderTopWidth: 1, borderTopColor: color.border }, styleRow: { flexDirection: "row", gap: 8, marginTop: 10 }, styleOption: { flex: 1, minHeight: 52, justifyContent: "center", paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium }, styleOptionOn: { borderColor: color.accent, backgroundColor: color.accentSoft }, styleLabel: { color: color.textSecondary, fontSize: 11, fontWeight: "800" }, styleLabelOn: { color: color.text }, styleMeta: { color: color.textMuted, fontSize: 9, marginTop: 3 },
   pressed: { opacity: 0.72, transform: [{ translateY: 1 }] }, disabled: { opacity: 0.34 },
-  chatPolicy: { color: color.textMuted, fontSize: 9, lineHeight: 15, marginTop: 9 },
+  chatPolicy: { color: color.textMuted, fontSize: 9, lineHeight: 15, marginTop: 9 }, chatCollectFooter: { flexDirection: "row", alignItems: "center", paddingHorizontal: 32, paddingVertical: 10, borderTopWidth: 1, borderTopColor: color.border, backgroundColor: color.sidebar },
 });

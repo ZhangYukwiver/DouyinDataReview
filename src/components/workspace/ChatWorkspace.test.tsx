@@ -18,7 +18,7 @@ vi.mock("react-native", () => {
 vi.mock("lucide-react-native", () => {
   const Component = () => null;
   return Object.fromEntries([
-    "ChevronLeft", "FileText", "Image", "LockKeyhole", "MessageCircle", "Mic", "MoreHorizontal", "Phone", "Play", "Search", "Send", "ShieldCheck", "Smile", "UsersRound", "Video", "X",
+    "ChevronLeft", "FileText", "Image", "LockKeyhole", "MessageCircle", "Mic", "MoreHorizontal", "Phone", "Pause", "Play", "RefreshCw", "Search", "Send", "ShieldCheck", "Smile", "UsersRound", "Video", "X",
   ].map((name) => [name, Component]));
 });
 

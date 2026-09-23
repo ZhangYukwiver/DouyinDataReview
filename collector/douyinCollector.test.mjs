@@ -69,6 +69,83 @@ describe("collector browser page selection", () => {
   });
 });
 
+describe("collector chat run cancellation", () => {
+  it("uses the chat run id for the headless login gate", async () => {
+    const collector = new DouyinCollector({ dataDirectory: "/tmp/dy-chat-run", store: {} });
+    collector.chatRunId = 7;
+    collector.syncRunId = 1;
+    collector.hasLoginSession = vi.fn().mockResolvedValue(true);
+
+    await expect(collector.waitForLogin(
+      {},
+      { isClosed: () => false },
+      7,
+      { headless: true, assertActive: (id) => collector.assertChatActive(id) },
+    )).resolves.toBeUndefined();
+  });
+
+  it("uses the chat run id when opening the initial chat page", async () => {
+    vi.useFakeTimers();
+    try {
+      const collector = new DouyinCollector({ dataDirectory: "/tmp/dy-chat-visit", store: {} });
+      collector.chatRunId = 7;
+      collector.syncRunId = 1;
+      const page = { goto: vi.fn().mockResolvedValue(undefined) };
+      const visit = collector.visit(page, "https://www.douyin.com/chat?isPopup=1", 7, (id) => collector.assertChatActive(id));
+      await vi.runAllTimersAsync();
+      await expect(visit).resolves.toBeUndefined();
+      expect(page.goto).toHaveBeenCalledWith(
+        "https://www.douyin.com/chat?isPopup=1",
+        { waitUntil: "domcontentloaded", timeout: 45_000 },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps an about:blank first chat launch alive through the real login gate and navigation", async () => {
+    let currentUrl = "about:blank";
+    const hiddenLocator = { count: async () => 0 };
+    const page = {
+      url: () => currentUrl,
+      isClosed: () => false,
+      getByRole: vi.fn(() => hiddenLocator),
+      evaluate: vi.fn(async (callback) => {
+        const source = String(callback);
+        if (source.includes("userInfoStore")) return "logged-in-user";
+        if (source.includes("sortedConversationIdList")) {
+          return [{ id: "friend-about-blank", kind: "friend", name: "好友" }];
+        }
+        if (source.includes("setCurConversation")) return true;
+        return [];
+      }),
+      goto: vi.fn(async (url) => {
+        currentUrl = url;
+      }),
+    };
+    const context = fakeContext(page);
+    context.cookies = vi.fn(async () => [{ name: "sessionid", value: "logged-in" }]);
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore() });
+    collector.snapshot = emptySnapshot();
+    collector.ensureBrowser = vi.fn().mockResolvedValue(context);
+    collector.currentPage = vi.fn().mockResolvedValue(page);
+
+    expect(collector.startChatObservation()).toBe(true);
+    await vi.waitFor(() => expect(page.goto).toHaveBeenCalledWith(
+      "https://www.douyin.com/chat?isPopup=1",
+      { waitUntil: "domcontentloaded", timeout: 45_000 },
+    ), { timeout: 5_000 });
+    await vi.waitFor(() => expect(collector.getStatus()).toMatchObject({
+      browserOpen: true,
+      chat: { state: "observing", progress: null },
+    }), { timeout: 10_000 });
+
+    expect(context.cookies).toHaveBeenCalledWith("https://www.douyin.com/");
+    expect(collector.chatPromise).not.toBeNull();
+    await expect(collector.stopChatObservation()).resolves.toBe(true);
+  });
+});
+
 describe("normalizeChatConversationCatalog", () => {
   it("normalizes contact nickname aliases and safe avatar candidates", () => {
     expect(normalizeChatConversationCatalog([
@@ -1072,6 +1149,26 @@ describe("DouyinCollector manual observation", () => {
     expect(page.close).toHaveBeenCalledTimes(1);
     expect(context.close).not.toHaveBeenCalled();
     expect(otherPage.close).not.toHaveBeenCalled();
+  });
+
+  it("resets nested chat state when a shared operation stops chat silently", async () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.snapshot = emptySnapshot();
+    collector.chat = { active: true, mode: "chat", stop: vi.fn() };
+    collector.chatPromise = Promise.resolve();
+    collector.updateChat({
+      state: "observing",
+      connection: "connected",
+      progress: { current: 1, total: 2 },
+      message: "正在实时接收新消息",
+    });
+
+    await expect(collector.stopChatObservation({ silent: true })).resolves.toBe(true);
+
+    expect(collector.getStatus()).toMatchObject({
+      chatConnection: null,
+      chat: { state: "idle", connection: null, progress: null, message: null },
+    });
   });
 
   it("closes a chat context before waiting for a pending navigation to cancel", async () => {
