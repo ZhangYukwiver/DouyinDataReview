@@ -65,7 +65,15 @@ import {
   describePersonalArchiveError,
   importPersonalArchive,
 } from "./src/services/importPersonalArchive";
-import { getDesktopCollectorConfig } from "./src/desktopRuntime";
+import {
+  checkDesktopUpdates,
+  downloadDesktopUpdate,
+  getDesktopCollectorConfig,
+  getDesktopUpdateState,
+  installDesktopUpdate,
+  subscribeDesktopUpdateState,
+  type DesktopUpdateState,
+} from "./src/desktopRuntime";
 import { shouldAutoSync } from "./src/services/autoSync";
 import { createSyncRecovery } from "./src/services/syncRecovery";
 import { applyAppStyle, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
@@ -195,6 +203,7 @@ function AppContent() {
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
   const [batchDownloadActive, setBatchDownloadActive] = useState(false);
   const [appStyle, setAppStyle] = useState<AppStyle>(loadAppStyle);
+  const [appUpdate, setAppUpdate] = useState<DesktopUpdateState | null>(null);
   // 内容年志入口卡的地址；非空时以应用内 iframe 盖在工作台上（见 StoryFrame）
   const [storySrc, setStorySrc] = useState<string | null>(null);
   // 采集进行中，报告与内容库用这次采集开始前的快照；采集结束（busy 落下）再换成新数据
@@ -214,6 +223,7 @@ function AppContent() {
   const chatCollectionInFlightRef = useRef(false);
   const chatPollRequestRef = useRef<number | null>(null);
   const syncRecoveryRef = useRef(createSyncRecovery());
+  const appUpdateActionRef = useRef(false);
 
   // 只记录新增探索页的位置；刷新可直接回来，原有页面的启动流程保持不变。
   useEffect(() => {
@@ -224,7 +234,6 @@ function AppContent() {
     else if (url.searchParams.get("workspace") === "explore") url.searchParams.delete("workspace");
     if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url);
   }, [activeView, dashboardOpen, dashboardView, storySrc]);
-
   useEffect(() => () => {
     pollRequest.current += 1;
     statusPollAbortRef.current?.abort();
@@ -236,6 +245,52 @@ function AppContent() {
     downloadRequestRef.current += 1;
     downloadInFlightRef.current.clear();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeDesktopUpdateState((state) => {
+      if (active) setAppUpdate(state);
+    });
+    void getDesktopUpdateState().then((state) => {
+      if (active && state) setAppUpdate(state);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  async function checkForAppUpdates() {
+    if (appUpdateActionRef.current) return;
+    appUpdateActionRef.current = true;
+    try {
+      const state = await checkDesktopUpdates();
+      if (state) setAppUpdate(state);
+    } finally {
+      appUpdateActionRef.current = false;
+    }
+  }
+
+  async function downloadAppUpdate() {
+    if (appUpdateActionRef.current) return;
+    appUpdateActionRef.current = true;
+    try {
+      const state = await downloadDesktopUpdate();
+      if (state) setAppUpdate(state);
+    } finally {
+      appUpdateActionRef.current = false;
+    }
+  }
+
+  async function installAppUpdate() {
+    if (appUpdateActionRef.current) return;
+    appUpdateActionRef.current = true;
+    try {
+      await installDesktopUpdate();
+    } finally {
+      appUpdateActionRef.current = false;
+    }
+  }
 
   // 整体风格：主题 CSS 变量挂在 <html data-style> 上，采集器页、内容库与持续报告一起换。
   // 用 layout effect 是为了在首帧绘制前就把变量表和 data-style 挂上，否则第一帧没有颜色。
@@ -779,7 +834,7 @@ function AppContent() {
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "增量读取",
-      "尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。每个分类完成后立即合并保存，全程不会弹出浏览器。",
+      "尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。正常运行时不会弹出浏览器；如果增量配置尚未初始化或已失效，应用会先完成一次完整读取来建立配置。",
       "读取新记录",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
@@ -1169,6 +1224,10 @@ function AppContent() {
           status={collectorStatus}
           stoppingSync={stoppingSync}
           switchingAccount={switchingAccount}
+          appUpdate={appUpdate}
+          onCheckAppUpdate={checkForAppUpdates}
+          onDownloadAppUpdate={downloadAppUpdate}
+          onInstallAppUpdate={installAppUpdate}
         />
       ) : dashboardOpen || traceMode ? (
         <LegacyContentWorkspace

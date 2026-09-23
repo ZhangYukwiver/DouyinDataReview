@@ -10,6 +10,24 @@ import { DIRECT_SIGNER_FILES, verifyDirectSigner } from "../collector/directHist
 
 const projectDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|records(?:\.json)?|direct-history-template\.json|cookies?(?:\.sqlite|\.db|\.json)?(?:-journal|-wal|-shm)?|login data(?:-journal|-wal|-shm)?|local state|web data(?:-journal|-wal|-shm)?|\.env(?:\..*)?|\.git|\.ssh)$/i;
+const runtimeDependencyRoots = new Set([
+  "electron-updater",
+  "builder-util-runtime",
+  "debug",
+  "ms",
+  "fs-extra",
+  "graceful-fs",
+  "jsonfile",
+  "universalify",
+  "js-yaml",
+  "argparse",
+  "sax",
+  "lazy-val",
+  "lodash.escaperegexp",
+  "lodash.isequal",
+  "semver",
+  "tiny-typed-emitter",
+]);
 const extractFile = (archive, relative) => extractArchiveFile(archive, path.normalize(relative));
 const statFile = (archive, relative) => statArchiveFile(archive, path.normalize(relative));
 
@@ -24,8 +42,9 @@ export function assertPublicUpdateMetadata(value, packageName) {
     assert(match, "Unexpected updater metadata value");
     return [match[1], match[2]];
   }));
-  assert.deepEqual(Object.keys(metadata).sort(), ["owner", "provider", "repo", "updaterCacheDirName"]);
+  assert.deepEqual(Object.keys(metadata).sort(), ["owner", "provider", "releaseType", "repo", "updaterCacheDirName"]);
   assert.equal(metadata.provider, "github");
+  assert.equal(metadata.releaseType, "release");
   assert.equal(metadata.updaterCacheDirName, `${packageName}-updater`);
   if (process.env.GITHUB_REPOSITORY) {
     assert.equal(`${metadata.owner}/${metadata.repo}`, process.env.GITHUB_REPOSITORY);
@@ -58,7 +77,8 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     assert(/^(?:desktop|collector|dist|build|node_modules)(?:\/|$)|^package\.json$/.test(entry), `Unexpected archive path: ${entry}`);
     assert(!entry.startsWith("collector/fixtures/") && !entry.endsWith(".test.mjs"), `Test fixture in package: ${entry}`);
     if (entry.startsWith("node_modules/")) {
-      assert(entry === "node_modules/playwright-core" || entry.startsWith("node_modules/playwright-core/"), `Unexpected runtime dependency: ${entry}`);
+      const dependencyRoot = entry.split("/")[1];
+      assert(dependencyRoot === "playwright-core" || runtimeDependencyRoots.has(dependencyRoot), `Unexpected runtime dependency: ${entry}`);
     }
   }
 

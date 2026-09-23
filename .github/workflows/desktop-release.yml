@@ -67,9 +67,9 @@ jobs:
       - name: Package Windows installer
         if: runner.os == 'Windows'
         run: npx electron-builder --win nsis --x64 --publish never
-      - name: Package Apple Silicon DMG
+      - name: Package Apple Silicon installers
         if: runner.os == 'macOS'
-        run: npx electron-builder --mac dmg --arm64 --publish never
+        run: npx electron-builder --mac --arm64 --publish never
       - name: Verify Windows package
         if: runner.os == 'Windows'
         run: node scripts/verify-release-package.mjs release/win-unpacked/resources
@@ -83,15 +83,21 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: desktop-windows-x64
-          path: release/ContentInsights-Setup-*.exe
+          path: |
+            release/ContentInsights-Setup-*.exe
+            release/ContentInsights-Setup-*.exe.blockmap
+            release/latest.yml
           if-no-files-found: error
           retention-days: 14
-      - name: Upload Apple Silicon DMG
+      - name: Upload Apple Silicon installers
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: desktop-macos-arm64
-          path: release/ContentInsights-*-arm64.dmg
+          path: |
+            release/ContentInsights-*-arm64.dmg
+            release/ContentInsights-*-arm64.zip
+            release/latest-mac.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -115,7 +121,7 @@ jobs:
           pattern: desktop-*
           path: release-assets
           merge-multiple: true
-      - name: Check installer names and generate SHA-256 checksums
+      - name: Check update assets and generate SHA-256 checksums
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -125,9 +131,17 @@ jobs:
           import path from 'node:path';
           const { version } = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           assert.equal(process.env.GITHUB_REF_NAME, `v${version}`);
-          const expected = [`ContentInsights-${version}-arm64.dmg`, `ContentInsights-Setup-${version}.exe`].sort();
+          const expected = [
+            `ContentInsights-${version}-arm64.dmg`,
+            `ContentInsights-${version}-arm64.zip`,
+            `ContentInsights-Setup-${version}.exe`,
+            `ContentInsights-Setup-${version}.exe.blockmap`,
+            'latest-mac.yml',
+            'latest.yml',
+          ].sort();
           assert.deepEqual(fs.readdirSync('release-assets').sort(), expected);
-          const sums = expected.map(name => {
+          const installers = expected.filter(name => /\.(?:dmg|zip|exe)$/u.test(name));
+          const sums = installers.map(name => {
             const digest = createHash('sha256').update(fs.readFileSync(path.join('release-assets', name))).digest('hex');
             return `${digest}  ${name}`;
           });

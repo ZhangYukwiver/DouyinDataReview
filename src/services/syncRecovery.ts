@@ -1,6 +1,6 @@
 import type { CollectorStatus } from "./localCollector";
 
-// These failures require a visible browser to log in or capture a fresh template.
+// These failures need a visible browser once to log in or capture a fresh template.
 const PAGE_SYNC_REQUIRED_CODES = new Set([
   "login_required",
   "template_missing",
@@ -10,7 +10,8 @@ const PAGE_SYNC_REQUIRED_CODES = new Set([
 ]);
 
 export function createSyncRecovery() {
-  // Also allow recovery when reconnecting to an already running collector.
+  // A reconnect can observe an already-running incremental job, so keep the
+  // initial recovery opportunity until a matching error is actually seen.
   let fallbackAvailable = true;
 
   return {
