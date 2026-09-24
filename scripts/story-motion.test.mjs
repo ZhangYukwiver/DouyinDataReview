@@ -25,12 +25,13 @@ describe("story motion preference handoff", () => {
     const app = await readFile(path.join(root, "App.tsx"), "utf8");
     expect(app).toContain('}, story.year, { motion: "full" })');
     const story = await readStory("story-draft_副本.html");
-    expect(story).toContain('story-entry.html?motion=full');
-    expect(story).toContain('motionFull ? `${location.pathname}?motion=full` : location.pathname');
+    // the page behind the card starts white (the card's whitening) and develops into the night
+    expect(story).toContain('get("from") === "card"');
   });
 
-  it("keeps privacy text motion enabled for the explicit in-app mode", async () => {
+  it("hands the framed story back to the workspace", async () => {
     const story = await readStory("story-draft_副本.html");
-    expect(story).toContain('(!motionFull && privacyMotion.matches)');
+    expect(story).toContain('postMessage({ type: "trace:open-dashboard" }');
+    expect(story).toContain('event.key === "Escape"');
   });
 });
