@@ -24,7 +24,7 @@ import {
 } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { fx, polylineLength, useCountUp, useDraw, useInView } from "./motion";
-import { layoutReportTiles, reportColumnCount, reportTrailingGaps, REPORT_TILE_GAP } from "./reportLayout";
+import { buildReportGapShape, layoutReportTiles, reportColumnCount, REPORT_TILE_GAP } from "./reportLayout";
 
 export interface ReportDashboardProps {
   mobile: boolean;
@@ -228,7 +228,7 @@ function Board({ mobile, tiles, width }: {
   const layout = layoutReportTiles(tiles, columns, heights);
   // 估高阶段的空当是假的，等所有卡片量完再补，免得占位块先闪一下再跳走。
   const settled = tiles.every((tile) => heights[tile.key] !== undefined);
-  const gapShape = settled ? buildGapShape(layout.bottoms, layout.height, columnWidth) : null;
+  const gapShape = settled ? buildReportGapShape(layout.bottoms, layout.height, columnWidth) : null;
   const onMeasure = (key: string, event: LayoutChangeEvent) => {
     const { height, width: actualWidth } = event.nativeEvent.layout;
     if (height <= 0 || Math.abs(actualWidth - columnWidth) > 0.5) return;
@@ -278,69 +278,21 @@ function BoardTile({ children, index, onLayout, style, tileKey }: {
   return <View {...fx({ reveal: inView, i: (index % 6) + 1, hover: "lift" })} onLayout={onLayout} ref={ref} style={[styles.tile, style]} testID={`report-tile-${tileKey}`}>{children}</View>;
 }
 
-/**
- * 瀑布流末尾各列高度不齐，剩下的整片空当拼成一块「天际线」形状的卡片：
- * 上沿在每两列之间换台阶，底边和整块齐平，四周圆角，背景边框跟其它卡片一样。
- * 中间万一有一列刚好排满，也留 24px 的脖子，保证是连着的一整块而不是断成两坨。
- */
-function buildGapShape(bottoms: ReadonlyArray<number>, height: number, columnWidth: number) {
-  const gaps = reportTrailingGaps(bottoms, height, 40);
-  if (!gaps.length || Math.max(...gaps.map((gap) => gap.height)) < 90) return null;
-  const from = gaps[0]!.column;
-  const to = gaps[gaps.length - 1]!.column;
-  const spanLeft = (column: number) => column * (columnWidth + REPORT_TILE_GAP);
-  const left = spanLeft(from);
-  const right = spanLeft(to) + columnWidth;
-  const tops: number[] = [];
-  for (let column = from; column <= to; column += 1) tops.push(Math.min(bottoms[column]!, height - 24));
-  const top = Math.min(...tops);
-  const points: Array<[number, number]> = [];
-  tops.forEach((value, index) => {
-    const column = from + index;
-    const x0 = index === 0 ? left : spanLeft(column) - REPORT_TILE_GAP / 2;
-    const x1 = index === tops.length - 1 ? right : spanLeft(column) + columnWidth + REPORT_TILE_GAP / 2;
-    points.push([x0 - left, value - top], [x1 - left, value - top]);
-  });
-  points.push([right - left, height - top], [0, height - top]);
-  return { height: height - top, left, path: roundedPath(points, 14), top, width: right - left };
-}
-
-/** 多边形描边成带圆角的路径：每个拐角的半径缩到相邻两条边的一半以内，台阶再矮也不会画穿。 */
-function roundedPath(points: ReadonlyArray<[number, number]>, radius: number): string {
-  const shape = points.filter((point, index) => {
-    const previous = points[(index + points.length - 1) % points.length]!;
-    return Math.hypot(point[0] - previous[0], point[1] - previous[1]) > 0.5;
-  });
-  if (shape.length < 3) return "";
-  const toward = (from: [number, number], to: [number, number], distance: number): [number, number] => {
-    const length = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1;
-    return [from[0] + (to[0] - from[0]) * distance / length, from[1] + (to[1] - from[1]) * distance / length];
-  };
-  const parts: string[] = [];
-  shape.forEach((corner, index) => {
-    const previous = shape[(index + shape.length - 1) % shape.length]!;
-    const next = shape[(index + 1) % shape.length]!;
-    const limit = Math.min(
-      radius,
-      Math.hypot(corner[0] - previous[0], corner[1] - previous[1]) / 2,
-      Math.hypot(next[0] - corner[0], next[1] - corner[1]) / 2,
-    );
-    const enter = toward(corner, previous, limit);
-    const exit = toward(corner, next, limit);
-    parts.push(`${index === 0 ? "M" : "L"}${enter[0].toFixed(1)} ${enter[1].toFixed(1)}`);
-    parts.push(`Q${corner[0].toFixed(1)} ${corner[1].toFixed(1)} ${exit[0].toFixed(1)} ${exit[1].toFixed(1)}`);
-  });
-  return `${parts.join(" ")} Z`;
-}
-
-function SwarmGap({ height, left, path, top, width }: { height: number; left: number; path: string; top: number; width: number }) {
+function SwarmGap({ focus, height, left, path, top, width }: {
+  focus: { x: number; y: number };
+  height: number;
+  left: number;
+  path: string;
+  top: number;
+  width: number;
+}) {
   const paper = React.useRef<View | null>(null);
   React.useEffect(() => {
     const node = paper.current as unknown as HTMLElement | null;
     // clip-path 把背景、群点和点击热区一起裁成天际线的形状。
     if (node?.style) node.style.clipPath = `path("${path}")`;
   }, [path]);
-  useSwarm(paper);
+  useSwarm(paper, focus.x, focus.y);
   return (
     <View pointerEvents="box-none" style={{ height, left, position: "absolute", top, width }} testID="report-tile-swarm">
       <View ref={paper} style={[styles.swarmPaper, { height, width }]}>
@@ -360,7 +312,7 @@ function SwarmGap({ height, left, path, top, width }: { height: number; left: nu
  * （叠 n 遍等于 alpha×n 截顶，就是一次软阈值），再补一层模糊当辉光，最后 source-in 上色。
  * 不引依赖。native 不跑。
  */
-function useSwarm(ref: React.RefObject<View | null>): void {
+function useSwarm(ref: React.RefObject<View | null>, focusX: number, focusY: number): void {
   React.useEffect(() => {
     const node = ref.current as unknown as HTMLElement | null;
     if (Platform.OS !== "web" || !node || typeof window === "undefined") return undefined;
@@ -418,12 +370,14 @@ function useSwarm(ref: React.RefObject<View | null>): void {
     observer.observe(node);
     resize();
     readColors();
+    const anchorX = Math.max(0, Math.min(boxWidth, focusX));
+    const anchorY = Math.max(0, Math.min(boxHeight, focusY));
     for (const dot of dots) {
       const angle = Math.random() * Math.PI * 2;
-      dot.x = boxWidth / 2 + Math.cos(angle) * 40;
-      dot.y = boxHeight / 2 + Math.sin(angle) * 40;
+      dot.x = anchorX + Math.cos(angle) * 40;
+      dot.y = anchorY + Math.sin(angle) * 40;
     }
-    const cursor = { x: boxWidth / 2, y: boxHeight / 2, inside: false };
+    const cursor = { x: anchorX, y: anchorY, inside: false };
     let burst = 0;
     const move = (event: PointerEvent) => {
       const box = node.getBoundingClientRect();
@@ -445,8 +399,8 @@ function useSwarm(ref: React.RefObject<View | null>): void {
       const delta = Math.min((now - last) / 1000, 0.05);
       last = now;
       if (document.documentElement.dataset.style !== styleKey) readColors();
-      const anchorX = cursor.inside ? cursor.x : boxWidth / 2;
-      const anchorY = cursor.inside ? cursor.y : boxHeight / 2;
+      const anchorX = cursor.inside ? cursor.x : Math.max(0, Math.min(boxWidth, focusX));
+      const anchorY = cursor.inside ? cursor.y : Math.max(0, Math.min(boxHeight, focusY));
       const seconds = now / 1000;
       burst = Math.max(0, burst - delta / 0.55);
       const band = Math.max(28, Math.min(boxWidth, boxHeight) * 0.32);
@@ -549,7 +503,7 @@ function useSwarm(ref: React.RefObject<View | null>): void {
       node.removeEventListener("pointerdown", down);
       canvas.remove();
     };
-  }, [ref]);
+  }, [focusX, focusY, ref]);
 }
 
 function Cardlet({ children, en, foot, meta, title }: {
