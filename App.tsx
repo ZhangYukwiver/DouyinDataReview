@@ -1259,7 +1259,7 @@ function AppContent() {
         liked: workspaceRecords.liked_videos.length,
         favorite: workspaceRecords.favorite_videos.length,
         chat: collectorStatus?.counts.chat_messages ?? null,
-      }, story.year));
+      }, story.year, { motion: "full" }));
       return;
     }
     setDashboardOpen(false);

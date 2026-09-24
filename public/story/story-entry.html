@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TRACE · 内容年志 — 入口卡</title>
+  <script>
+    if (new URLSearchParams(location.search).get("motion") === "full") document.documentElement.classList.add("motion-full");
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -94,7 +97,12 @@
       .gate-fine { display: none; }
     }
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+      html:not(.motion-full) { scroll-behavior: auto !important; }
+      html:not(.motion-full) *, html:not(.motion-full) *::before, html:not(.motion-full) *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
     }
   </style>
 </head>
@@ -141,8 +149,9 @@
 
   <script src="story-images/entry-textures.js"></script>
   <script>
-    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const NEXT = "story-draft_副本.html?from=card";
+    const motionFull = document.documentElement.classList.contains("motion-full");
+    const reduced = !motionFull && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const NEXT = `story-draft_副本.html?from=card${motionFull ? "&motion=full" : ""}`;
 
     // the app opens this page with ?watch=&liked=&favorite=&chat=&year=; without them the demo numbers stay
     const query = new URLSearchParams(location.search);

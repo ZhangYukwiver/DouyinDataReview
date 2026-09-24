@@ -51,4 +51,9 @@ describe("app style", () => {
     expect(buildStoryEntryUrl({ watch: 1144, liked: 8, favorite: 6, chat: 42 }, 2026)).toBe("/story/story-entry.html?watch=1144&liked=8&favorite=6&year=2026&chat=42");
     expect(buildStoryEntryUrl({ watch: 0, liked: 0, favorite: 0, chat: null }, 2026)).not.toContain("chat=");
   });
+
+  it("marks the in-app story as an explicitly interactive surface", () => {
+    expect(buildStoryEntryUrl({ watch: 1, liked: 2, favorite: 3, chat: null }, 2026, { motion: "full" }))
+      .toBe("/story/story-entry.html?watch=1&liked=2&favorite=3&year=2026&motion=full");
+  });
 });
