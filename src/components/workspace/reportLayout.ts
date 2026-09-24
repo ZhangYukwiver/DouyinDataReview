@@ -37,3 +37,78 @@ export function reportTrailingGaps(
     .map((bottom, column) => ({ column, top: bottom, height: height - bottom }))
     .filter((gap) => gap.height >= minHeight);
 }
+
+export interface ReportGapShape {
+  focus: { x: number; y: number };
+  height: number;
+  left: number;
+  path: string;
+  top: number;
+  width: number;
+}
+
+/** Build the rounded skyline used to fill the trailing waterfall gaps. */
+export function buildReportGapShape(
+  bottoms: ReadonlyArray<number>,
+  height: number,
+  columnWidth: number,
+): ReportGapShape | null {
+  const gaps = reportTrailingGaps(bottoms, height, 40);
+  if (!gaps.length || Math.max(...gaps.map((gap) => gap.height)) < 90) return null;
+  const from = gaps[0]!.column;
+  const to = gaps[gaps.length - 1]!.column;
+  const spanLeft = (column: number) => column * (columnWidth + REPORT_TILE_GAP);
+  const left = spanLeft(from);
+  const right = spanLeft(to) + columnWidth;
+  const tops: number[] = [];
+  for (let column = from; column <= to; column += 1) tops.push(Math.min(bottoms[column]!, height - 24));
+  const top = Math.min(...tops);
+  // The skyline's bounding box can start above most of its visible area. Keep
+  // the swarm in the column with the deepest visible region so clip-path does
+  // not hide the whole animation at the geometric center of the box.
+  const focusIndex = tops.reduce((best, value, index) => value < tops[best]! ? index : best, 0);
+  const focusColumn = from + focusIndex;
+  const focusTop = tops[focusIndex]! - top;
+  const focusHeight = Math.max(1, height - top - focusTop);
+  const focus = {
+    x: spanLeft(focusColumn) - left + columnWidth / 2,
+    y: focusTop + focusHeight / 2,
+  };
+  const points: Array<[number, number]> = [];
+  tops.forEach((value, index) => {
+    const column = from + index;
+    const x0 = index === 0 ? left : spanLeft(column) - REPORT_TILE_GAP / 2;
+    const x1 = index === tops.length - 1 ? right : spanLeft(column) + columnWidth + REPORT_TILE_GAP / 2;
+    points.push([x0 - left, value - top], [x1 - left, value - top]);
+  });
+  points.push([right - left, height - top], [0, height - top]);
+  return { focus, height: height - top, left, path: roundedPath(points, 14), top, width: right - left };
+}
+
+/** Round polygon corners without drawing through short skyline steps. */
+function roundedPath(points: ReadonlyArray<[number, number]>, radius: number): string {
+  const shape = points.filter((point, index) => {
+    const previous = points[(index + points.length - 1) % points.length]!;
+    return Math.hypot(point[0] - previous[0], point[1] - previous[1]) > 0.5;
+  });
+  if (shape.length < 3) return "";
+  const toward = (from: [number, number], to: [number, number], distance: number): [number, number] => {
+    const length = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1;
+    return [from[0] + (to[0] - from[0]) * distance / length, from[1] + (to[1] - from[1]) * distance / length];
+  };
+  const parts: string[] = [];
+  shape.forEach((corner, index) => {
+    const previous = shape[(index + shape.length - 1) % shape.length]!;
+    const next = shape[(index + 1) % shape.length]!;
+    const limit = Math.min(
+      radius,
+      Math.hypot(corner[0] - previous[0], corner[1] - previous[1]) / 2,
+      Math.hypot(next[0] - corner[0], next[1] - corner[1]) / 2,
+    );
+    const enter = toward(corner, previous, limit);
+    const exit = toward(corner, next, limit);
+    parts.push(`${index === 0 ? "M" : "L"}${enter[0].toFixed(1)} ${enter[1].toFixed(1)}`);
+    parts.push(`Q${corner[0].toFixed(1)} ${corner[1].toFixed(1)} ${exit[0].toFixed(1)} ${exit[1].toFixed(1)}`);
+  });
+  return `${parts.join(" ")} Z`;
+}
