@@ -34,7 +34,7 @@ _本文所有截图均为合成示例数据。_
 
 ## 年度回顾
 
-两套版式可以在应用内一键切换：**档案馆**是深色纸面的分页报告，在应用内像翻档案一样一页页看；**内容年志**是纸面、墨色配信号蓝的长卷，从入口卡穿进去一路往下滚。
+两套版式可以在应用内一键切换，默认是**内容年志**：纸面、墨色配信号蓝的长卷，从入口卡穿进去一路往下滚；**档案馆**是深色纸面的分页报告，在应用内像翻档案一样一页页看。
 
 <table>
   <tr><td align="center" colspan="2"><b>档案馆</b>（应用内 12 章分页翻阅）</td></tr>
@@ -71,8 +71,8 @@ _本文所有截图均为合成示例数据。_
 <summary>连接与采集、内容库和聊天页，适合想先看看工作台长什么样的人查阅（点击展开）</summary>
 
 <table>
-  <tr><td align="center" colspan="2"><b>连接与采集</b>（点「连接采集器」后自动取配对码，不用手抄；在这里选整体风格，左为档案馆，右为内容年志）</td></tr>
-  <tr><td><img src="docs/screenshots/setup-archive.png" alt="连接与采集 · 档案馆" width="400"/></td><td><img src="docs/screenshots/setup-trace.png" alt="连接与采集 · 内容年志" width="400"/></td></tr>
+  <tr><td align="center" colspan="2"><b>连接与采集</b>（点「连接采集器」后自动取配对码，不用手抄；在这里选整体风格，左为内容年志，右为档案馆）</td></tr>
+  <tr><td><img src="docs/screenshots/setup-trace.png" alt="连接与采集 · 内容年志" width="400"/></td><td><img src="docs/screenshots/setup-archive.png" alt="连接与采集 · 档案馆" width="400"/></td></tr>
   <tr><td align="center" colspan="2"><b>内容库</b>（观看历史、喜欢、收藏按记录翻看；卡片上的「下载」按钮把视频存到本地，之后在应用内直接播）</td></tr>
   <tr><td colspan="2" align="center"><img src="docs/screenshots/records-archive.png" alt="内容库" width="800"/></td></tr>
   <tr><td align="center" colspan="2"><b>聊天</b>（按好友会话看本地保存的消息，新消息实时进来，能直接回复；列表头的火苗按钮打开续火花看板；群聊只给统计摘要）</td></tr>

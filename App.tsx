@@ -203,7 +203,7 @@ function AppContent() {
   const [downloadStates, setDownloadStates] = useState<Record<string, RecordDownloadState>>({});
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
   const [batchDownloadActive, setBatchDownloadActive] = useState(false);
-  const [appStyle, setAppStyle] = useState<AppStyle>(loadAppStyle);
+  const [appStyle, setAppStyle] = useState<AppStyle>(() => (Platform.OS === "web" ? loadAppStyle() : "archive"));
   const [appUpdate, setAppUpdate] = useState<DesktopUpdateState | null>(null);
   // 内容年志入口卡的地址；非空时以应用内 iframe 盖在工作台上（见 StoryFrame）
   const [storySrc, setStorySrc] = useState<string | null>(null);
@@ -1123,6 +1123,19 @@ function AppContent() {
     );
   }
 
+  // 导出的就是界面上正在用的这份数据：观看、喜欢、收藏记录和聊天
+  function exportCurrentData() {
+    if (!displaySnapshot) return;
+    const { source, updatedAt, warnings, records, chatConversations, chatMessages } = displaySnapshot;
+    const data = { exportedAt: new Date().toISOString(), source, updatedAt, warnings, records, chatConversations, chatMessages };
+    try {
+      // sv-SE 的日期格式正好是本地时区的 YYYY-MM-DD
+      triggerBrowserDownload(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
+    } catch (error) {
+      showAlert("无法导出数据", collectorErrorMessage(error));
+    }
+  }
+
   async function openRecord(url: string) {
     try {
       if (!(await Linking.canOpenURL(url))) throw new Error("unsupported_url");
@@ -1307,6 +1320,7 @@ function AppContent() {
             setCollectorError(null);
           }}
           onClearCache={clearCurrentRecords}
+          onExportData={exportCurrentData}
           onConnect={() => connectCollector({ automaticPairing: true })}
           onDisconnect={disconnectCollector}
           onEnterWorkspace={enterWorkspace}

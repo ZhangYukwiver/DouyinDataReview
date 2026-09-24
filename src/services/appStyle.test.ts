@@ -19,18 +19,18 @@ function fakeDocument() {
 }
 
 describe("app style", () => {
-  it("defaults to the archive style and round-trips the trace choice", () => {
+  it("defaults to the trace style and keeps an explicit archive choice", () => {
     const storage = memoryStorage();
-    expect(loadAppStyle(storage)).toBe("archive");
-    expect(loadAppStyle(undefined)).toBe("archive");
-    saveAppStyle("trace", storage);
     expect(loadAppStyle(storage)).toBe("trace");
-    expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "garbage" }))).toBe("archive");
+    expect(loadAppStyle(undefined)).toBe("trace");
+    saveAppStyle("archive", storage);
+    expect(loadAppStyle(storage)).toBe("archive");
+    expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "garbage" }))).toBe("trace");
   });
 
   it("survives a storage that throws", () => {
     const broken = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
-    expect(loadAppStyle(broken)).toBe("archive");
+    expect(loadAppStyle(broken)).toBe("trace");
     expect(() => saveAppStyle("trace", broken)).not.toThrow();
   });
 

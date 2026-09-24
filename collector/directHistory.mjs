@@ -446,6 +446,10 @@ function directValue(payload, key) {
 
 function validateDirectPayload(payload, label) {
   const statusCode = directValue(payload, "status_code");
+  // 8 是抖音的「未登录」：Cookie 还在，但服务端已让这次网页登录失效
+  if (statusCode === 8) {
+    throw new DirectHistoryError("login_required", "抖音登录已失效，请点「完整读取」，在弹出的浏览器里重新登录。");
+  }
   if (statusCode !== undefined && statusCode !== 0) {
     throw new DirectHistoryError("douyin_error", `抖音读取返回状态码 ${String(statusCode).slice(0, 20)}。`);
   }

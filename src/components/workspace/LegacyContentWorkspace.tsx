@@ -51,7 +51,7 @@ import type {
 } from "../../domain/personalRecords";
 import type { CollectorStatus } from "../../services/localCollector";
 import type { ExploreConnection } from "../../services/explorer";
-import type { AppStyle } from "../../services/appStyle";
+import { DEFAULT_APP_STYLE, type AppStyle } from "../../services/appStyle";
 import Svg, { Circle } from "react-native-svg";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { RecordVideoPlayer, type RecordVideoLoader } from "./RecordVideoPlayer";
@@ -155,7 +155,7 @@ export function ContentWorkspace({
   onSync,
   onTogglePrivacy,
   privacy,
-  appStyle = "archive",
+  appStyle = DEFAULT_APP_STYLE,
 }: ContentWorkspaceProps) {
   const { width } = useWindowDimensions();
   const mobile = width < 720;

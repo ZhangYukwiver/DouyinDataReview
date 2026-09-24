@@ -167,7 +167,8 @@ function declarations(style: AppStyle): string {
 }
 
 export function themeCss(): string {
-  return `:root{${declarations("archive")}}\n:root[data-style="trace"]{${declarations("trace")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}`;
+  // 默认内容年志：:root 直接发年志令牌，档案馆靠 data-style 覆盖。
+  return `:root{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}`;
 }
 
 const STYLE_ID = "content-insights-theme";

@@ -15,9 +15,9 @@ describe("workspace theme", () => {
 
   it("writes both palettes so <html data-style> can switch them", () => {
     const css = themeCss();
-    expect(css).toContain(`:root{--ws-canvas:${palettes.archive.colors.canvas}`);
-    expect(css).toContain(`:root[data-style="trace"]{--ws-canvas:${palettes.trace.colors.canvas}`);
-    expect(css).toContain("--ws-heat-5:#0081C0");
+    expect(css).toContain(`:root{--ws-canvas:${palettes.trace.colors.canvas}`);
+    expect(css).toContain(`:root[data-style="archive"]{--ws-canvas:${palettes.archive.colors.canvas}`);
+    expect(css).toContain("--ws-heat-5:#B07E40");
     expect(css).toContain("--ws-radius-pill:50px");
     expect(css).toContain("--ws-font-body:Inter");
   });
