@@ -241,6 +241,13 @@ describe("direct history request", () => {
       .rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("reports Douyin status 8 as an expired login so the app can reopen the login browser", async () => {
+    const { context, requestFactory } = fakeContext({ payload: { status_code: 8, status_msg: "用户未登录" } });
+
+    await expect(fetchDirectHistoryPage({ context, currentUserAgent: userAgent, dataDirectory, requestFactory, signer: async (url) => signedUrl(url) }))
+      .rejects.toMatchObject({ code: "login_required" });
+  });
+
   it("rejects a template captured by another browser before sending", async () => {
     const { context, requestFactory } = fakeContext();
 

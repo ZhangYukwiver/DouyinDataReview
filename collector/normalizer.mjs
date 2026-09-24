@@ -619,6 +619,9 @@ export function normalizeDouyinResponse(endpoint, payload) {
   }
 
   const code = statusCode(payload);
+  if (code === 8) {
+    throw new CollectorAdapterError("login_required", "抖音登录已失效，请在采集器的浏览器里重新登录。");
+  }
   if (code !== null && code !== 0) {
     throw new CollectorAdapterError("douyin_error", `抖音网页返回状态码 ${code}。`);
   }
