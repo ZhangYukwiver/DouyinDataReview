@@ -294,6 +294,7 @@ export function ContentWorkspace({
           <View style={styles.topbarActions}>
             {mobile ? (
               <Pressable
+                {...ws("w-mbtn")}
                 accessibilityLabel={replayLabel}
                 accessibilityRole="button"
                 onPress={onReplayStory}
@@ -324,6 +325,7 @@ export function ContentWorkspace({
             </Pressable> : null}
             {mobile ? (
               <Pressable
+                {...ws("w-mbtn")}
                 accessibilityLabel="打开连接与采集设置"
                 accessibilityRole="button"
                 onPress={onOpenSettings}
@@ -623,6 +625,7 @@ function RecordsGallery({
           </Pressable> : null}
           <View {...ws("w-switch")} accessibilityRole="tablist" style={styles.layoutSwitch}>
             <Pressable
+              {...ws("w-lay", layout === "grid" && "on")}
               accessibilityLabel="网格视图"
               accessibilityRole="tab"
               accessibilityState={{ selected: layout === "grid" }}
@@ -632,6 +635,7 @@ function RecordsGallery({
               <LayoutGrid color={layout === "grid" ? color.text : color.textMuted} size={18} />
             </Pressable>
             <Pressable
+              {...ws("w-lay", layout === "list" && "on")}
               accessibilityLabel="列表视图"
               accessibilityRole="tab"
               accessibilityState={{ selected: layout === "list" }}

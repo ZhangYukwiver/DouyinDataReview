@@ -97,10 +97,10 @@ export interface SetupWorkspaceProps {
 
 const pointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
-// 两种整体风格各说各的话：档案馆是观测档案，年志是一卷装订好的年志
+// 各风格各说各的话：档案馆是观测档案，年志是一张通往这一年的入口卡，海报是一叠印好的海报
 const COPY: Record<AppStyle, { brand: string; brandMeta: string; eyebrow: string; title: [string, string]; lead: string; seal: string }> = {
   archive: { brand: "内容宇宙", brandMeta: "LOCAL OBSERVATORY", eyebrow: "OBSERVATION DOSSIER · 01", title: ["先建立证据，", "再打开你的内容宇宙。"], lead: "连接本地采集器，或导入一份个人档案。数据只留在这台设备上。", seal: "LOCAL · PRIVATE" },
-  trace: { brand: "内容年志", brandMeta: "TRACE · ANNUAL", eyebrow: "TRACE · PERSONAL SIGNALS", title: ["把这一年的停留，", "装订成一卷。"], lead: "连接本地采集器，或导入一份个人档案。每个数字都有出处，也都只留在这台设备上。", seal: "LOCAL · PRIVATE" },
+  trace: { brand: "内容年志", brandMeta: "TRACE · ANNUAL", eyebrow: "TRACE · PERSONAL SIGNALS", title: ["先把这一年的光，", "收进一张卡。"], lead: "连接本地采集器，或导入一份个人档案。卡片的另一边是你的一年，每个数字都有出处，也都只留在这台设备上。", seal: "LOCAL · PRIVATE" },
   poster: { brand: "内容年志", brandMeta: "POSTER · EDITION", eyebrow: "FIG. 00 · PERSONAL SIGNALS", title: ["一整年的记录，", "印成一叠海报。"], lead: "连接本地采集器，或导入一份个人档案。每个数字都有出处，也都只留在这台设备上。", seal: "LOCAL · PRIVATE" },
 };
 

@@ -4,6 +4,7 @@ import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import { createVideoBatchZip, loadBatchVideoFile, runVideoBatch, type BatchItem } from "../../services/batchVideoDownload";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
+import { ws } from "./motion";
 
 export function BatchVideoDownloadDialog({ records, connection, onClose, privacy }: {
   records: PersonalVideoRecord[];
@@ -71,7 +72,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
   const stopQueue = () => { stop.current = true; setStopping(true); };
   return <Modal transparent visible animationType="fade" onRequestClose={() => { if (!running && !packing) onClose(); }}>
     <View style={styles.backdrop}>
-      <View accessibilityViewIsModal style={styles.dialog} testID="batch-download-dialog">
+      <View {...ws("w-dialog")} accessibilityViewIsModal style={styles.dialog} testID="batch-download-dialog">
         <Text accessibilityRole="header" style={styles.title}>批量下载视频</Text>
         <Text accessibilityLiveRegion="polite" style={styles.meta}>共 {items.length} 个 · 已完成 {complete} · 失败 {failed} · 待下载 {pending}</Text>
         <Text style={styles.hint}>每批最多 50 个、合计 500 MB。下载完成后保存 ZIP；请保持此页面打开。</Text>

@@ -3,7 +3,7 @@ export type AppStyle = "archive" | "trace" | "poster";
 // 整体风格：采集器页、持续报告与报告本体共用同一个选择。默认内容年志。
 export const DEFAULT_APP_STYLE: AppStyle = "trace";
 export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: string }> = [
-  { key: "trace", label: "内容年志", detail: "纸面年志 · 穿卡入口" },
+  { key: "trace", label: "内容年志", detail: "墨夜玻璃 · 穿卡入口" },
   { key: "archive", label: "档案馆", detail: "深色档案 · 应用内分页翻阅" },
   { key: "poster", label: "海报", detail: "黑橙新闻纸 · 硬切长卷" },
 ];
@@ -12,7 +12,8 @@ export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: s
 const STORAGE_KEY = "content-insights.report-style";
 // 各风格与自己的故事页同一组字体；选到哪套才去取哪套，取过一次不再重复。
 const FONTS: Partial<Record<AppStyle, string>> = {
-  trace: "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600;700&display=swap",
+  // 年志的巨大数字用 Fraunces 200 斜体，所以正斜两套都取整段字重（可变字体，一个文件）
+  trace: "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=Inter:wght@300;400;500;600;700&display=swap",
   poster: "https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap",
 };
 const STORED: ReadonlySet<string> = new Set(APP_STYLES.map((item) => item.key));

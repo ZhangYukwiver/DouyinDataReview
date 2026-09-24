@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyAppStyle, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle } from "./appStyle";
+import { APP_STYLES, applyAppStyle, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle } from "./appStyle";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const data = new Map(Object.entries(initial));
@@ -47,6 +47,15 @@ describe("app style", () => {
     expect(doc.nodes.size).toBe(1);
     expect([...doc.nodes.values()][0]?.href).toContain("fonts.googleapis.com");
     expect(() => applyAppStyle("trace", undefined)).not.toThrow();
+  });
+
+  it("describes the trace style as the night entry card and loads Fraunces with its italics", () => {
+    expect(APP_STYLES.find((item) => item.key === "trace")?.detail).toBe("墨夜玻璃 · 穿卡入口");
+    const doc = fakeDocument();
+    applyAppStyle("trace", doc);
+    const href = doc.nodes.get("content-insights-trace-fonts")?.href ?? "";
+    expect(href).toContain("family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900");
+    expect(href).toContain("family=Inter");
   });
 
   it("loads the poster fonts on their own link, once", () => {
