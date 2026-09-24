@@ -15,6 +15,7 @@ import {
   collectDirectRecordPages,
   directSignerProcessConfiguration,
   fetchDirectHistoryPage,
+  scrollHiddenListPage,
 } from "./directHistory.mjs";
 
 const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
@@ -366,6 +367,99 @@ describe("direct history URL boundary", () => {
 });
 
 describe("hidden likes and favorites", () => {
+  it("scrolls a visible nested list even when it is narrower than half the viewport", () => {
+    const list = {
+      clientHeight: 480,
+      clientWidth: 520,
+      scrollHeight: 1_480,
+      scrollTop: 0,
+      getBoundingClientRect: () => ({ left: 40, right: 560, top: 120, bottom: 600, width: 520, height: 480 }),
+      scrollTo: vi.fn(function scrollTo(_left, top) { this.scrollTop = top; }),
+    };
+    const root = {
+      clientHeight: 900,
+      clientWidth: 1_280,
+      scrollHeight: 900,
+      scrollTop: 0,
+      getBoundingClientRect: () => ({ left: 0, right: 1_280, top: 0, bottom: 900, width: 1_280, height: 900 }),
+    };
+    const scrollTo = vi.fn();
+    vi.stubGlobal("innerWidth", 1_280);
+    vi.stubGlobal("innerHeight", 900);
+    vi.stubGlobal("getComputedStyle", () => ({ overflowY: "auto" }));
+    vi.stubGlobal("window", { scrollTo });
+    vi.stubGlobal("document", {
+      scrollingElement: root,
+      documentElement: root,
+      querySelectorAll: () => [list],
+    });
+
+    try {
+      expect(scrollHiddenListPage()).toMatchObject({ candidateCount: 1, movedCount: 1 });
+      expect(list.scrollTop).toBe(1_000);
+      expect(list.scrollTo).toHaveBeenCalledWith(0, 1_000);
+      expect(scrollTo).toHaveBeenCalledWith(0, 900);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("continues a hidden likes list through multiple response pages", async () => {
+    let onResponse;
+    let scrollCount = 0;
+    const response = (payload) => ({
+      body: vi.fn(async () => Buffer.from(JSON.stringify(payload))),
+      finished: vi.fn(async () => null),
+      headers: vi.fn(() => ({})),
+      status: vi.fn(() => 200),
+      url: vi.fn(() => DIRECT_LIKED_ENDPOINT),
+    });
+    const page = {
+      close: vi.fn(async () => undefined),
+      evaluate: vi.fn(async () => {
+        scrollCount += 1;
+        if (scrollCount === 1) {
+          onResponse(response({
+            status_code: 0,
+            aweme_list: [{ aweme_id: "liked-2" }],
+            has_more: 1,
+            max_cursor: "1700000000001",
+          }));
+        } else if (scrollCount === 2) {
+          onResponse(response({
+            status_code: 0,
+            aweme_list: [{ aweme_id: "liked-3" }],
+            has_more: 0,
+          }));
+        }
+      }),
+      goto: vi.fn(async () => {
+        onResponse(response({
+          status_code: 0,
+          aweme_list: [{ aweme_id: "liked-1" }],
+          has_more: 1,
+          max_cursor: "1700000000000",
+        }));
+      }),
+      on: vi.fn((event, callback) => { if (event === "response") onResponse = callback; }),
+    };
+    const pages = [];
+
+    await expect(collectDirectRecordPages(
+      { newPage: vi.fn(async () => page) },
+      "liked_videos",
+      async (payload) => { pages.push(payload); return true; },
+    )).resolves.toBe(3);
+
+    expect(pages.map((payload) => payload.aweme_list[0].aweme_id)).toEqual([
+      "liked-1",
+      "liked-2",
+      "liked-3",
+    ]);
+    expect(page.evaluate).toHaveBeenCalledTimes(2);
+    expect(page.close).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts a successful list response after an initial access rejection", async () => {
     let onResponse;
     const response = (status, payload) => ({

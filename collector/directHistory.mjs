@@ -17,6 +17,88 @@ export const DIRECT_SIGNER_FILES = Object.freeze({
   "lib/runtime/bdms/bdms.js": "393b30953e215c3c006cd44c179c1e0cd2375a458bea268eb17bf1401096469b",
 });
 
+// Scroll every visible list surface. The profile page can put the record grid
+// in a smaller nested container, so choosing only the largest half-viewport
+// surface can leave the first response as the only page we ever receive.
+export function scrollHiddenListPage() {
+  const root = document.scrollingElement;
+  const surfaces = [];
+  const seen = new Set();
+  const viewportWidth = Number(globalThis.innerWidth) || 0;
+  const viewportHeight = Number(globalThis.innerHeight) || 0;
+  const addSurface = (element, force = false) => {
+    if (!element || seen.has(element)) return;
+    const scrollHeight = Number(element.scrollHeight);
+    const clientHeight = Number(element.clientHeight);
+    const maximum = scrollHeight - clientHeight;
+    if (!Number.isFinite(maximum) || maximum <= 32) return;
+    const style = typeof globalThis.getComputedStyle === "function"
+      ? globalThis.getComputedStyle(element)
+      : null;
+    if (!force && !/auto|scroll|overlay|hidden/u.test(String(style?.overflowY ?? ""))) return;
+    const rect = typeof element.getBoundingClientRect === "function"
+      ? element.getBoundingClientRect()
+      : null;
+    if (!force && (
+      !rect
+      || rect.width < 80
+      || rect.height < 80
+      || rect.right <= 0
+      || rect.bottom <= 0
+      || (viewportWidth > 0 && rect.left >= viewportWidth)
+      || (viewportHeight > 0 && rect.top >= viewportHeight)
+    )) return;
+    seen.add(element);
+    surfaces.push({
+      element,
+      area: Math.max(1, Number(rect?.width ?? element.clientWidth) * Number(rect?.height ?? element.clientHeight)),
+    });
+  };
+
+  addSurface(root, true);
+  for (const element of document.querySelectorAll("*")) addSurface(element);
+
+  // Inner record lists should get a chance to trigger their own lazy loader
+  // before an outer page surface changes the layout around them.
+  surfaces.sort((left, right) => left.area - right.area);
+  const maxSurfaces = 48;
+  let movedCount = 0;
+  for (const { element } of surfaces.slice(0, maxSurfaces)) {
+    const before = Number(element.scrollTop) || 0;
+    const target = Math.max(0, Number(element.scrollHeight) - Number(element.clientHeight));
+    try {
+      if (typeof element.scrollTo === "function") element.scrollTo(0, target);
+    } catch {
+      // Fall back to the property assignment below for partial DOM shims.
+    }
+    try {
+      element.scrollTop = target;
+    } catch {
+      // A read-only surface cannot be used for pagination.
+    }
+    const after = Number(element.scrollTop) || 0;
+    if (Math.abs(after - before) <= 1) continue;
+    movedCount += 1;
+    try {
+      element.dispatchEvent?.(new Event("scroll", { bubbles: true }));
+    } catch {
+      // Dispatch is only an additional nudge; scrolling already happened.
+    }
+  }
+
+  const documentHeight = Math.max(
+    Number(document.documentElement?.scrollHeight) || 0,
+    Number(root?.scrollHeight) || 0,
+  );
+  try {
+    window.scrollTo?.(0, documentHeight);
+  } catch {
+    // The list response listener remains authoritative if the window surface
+    // is unavailable in a browser shim.
+  }
+  return { candidateCount: surfaces.length, movedCount };
+}
+
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultSignerDirectory = path.resolve(moduleDirectory, "..", ".local-data", "direct-signer");
 const asarPathMarker = `${path.sep}app.asar${path.sep}`;
@@ -678,21 +760,7 @@ export async function collectDirectRecordPages(context, type, onPage) {
     let stalled = 0;
     while (!terminal && !responseError && stalled < 20) {
       const previousResponseCount = responseCount;
-      await settleWithin(() => page.evaluate(() => {
-        const candidates = [document.scrollingElement, ...document.querySelectorAll("*")]
-          .filter((element) => {
-            if (!element || element.scrollHeight <= element.clientHeight + 200) return false;
-            const style = getComputedStyle(element);
-            const rect = element.getBoundingClientRect();
-            return /auto|scroll|overlay/u.test(style.overflowY)
-              && rect.width >= innerWidth / 2
-              && rect.height >= innerHeight / 2;
-          })
-          .sort((left, right) => right.clientWidth * right.clientHeight - left.clientWidth * left.clientHeight);
-        const surface = candidates[0] ?? document.scrollingElement;
-        surface?.scrollTo?.(0, surface.scrollHeight);
-        window.scrollTo(0, document.documentElement.scrollHeight);
-      }), DIRECT_LIST_PAGE_OPERATION_TIMEOUT_MS, () => new DirectHistoryError(
+      await settleWithin(() => page.evaluate(scrollHiddenListPage), DIRECT_LIST_PAGE_OPERATION_TIMEOUT_MS, () => new DirectHistoryError(
         "page_timeout",
         `${config.label}页面操作超时，已停止读取。`,
       ));
