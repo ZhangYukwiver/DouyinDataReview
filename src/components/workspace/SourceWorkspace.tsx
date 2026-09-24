@@ -36,7 +36,7 @@ import {
 import type { PersonalRecordCollection } from "../../domain/personalRecords";
 import type { DesktopUpdateState } from "../../desktopRuntime";
 import type { CollectorStatus } from "../../services/localCollector";
-import { APP_STYLES, type AppStyle } from "../../services/appStyle";
+import { APP_STYLES, DEFAULT_APP_STYLE, type AppStyle } from "../../services/appStyle";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, fx, useCountUp } from "./motion";
 
@@ -176,7 +176,7 @@ export function SetupWorkspace({
             <Text {...fx({ motion: "rise", i: 3 })} style={styles.lead}>{copy.lead}</Text>
             <View {...fx({ motion: "rise", i: 4 })} style={styles.seal}><ShieldCheck color={color.accent} size={31} strokeWidth={1.2} /><Text style={styles.sealText}>{copy.seal}</Text><Text style={styles.sealYear}>{new Date().getFullYear()}</Text></View>
             <View {...fx({ motion: "rise", i: 5 })} style={styles.steps}><Step index="01" label="连接数据源" detail={connected ? "本地服务已连接" : "点击连接后自动获取配对码"} done={connected} /><Step index="02" label="读取内容记录" detail={total ? `${total.toLocaleString("zh-CN")} 条记录已准备` : "观看、喜欢与收藏"} done={ready} /></View>
-            {Platform.OS === "web" ? <View {...fx({ motion: "rise", i: 6 })} testID="app-style" style={styles.styleBlock}><Text style={styles.stepLabel}>03 · 整体风格</Text><Text style={styles.stepDetail}>采集器、报告与持续报告共用的版式</Text><View style={styles.styleRow}>{APP_STYLES.map((item) => <Pressable {...fx({ hover: "tint" })} key={item.key} accessibilityRole="radio" aria-checked={appStyle === item.key} onPress={() => onChangeAppStyle(item.key)} style={({ pressed }) => [styles.styleOption, appStyle === item.key && styles.styleOptionOn, pressed && styles.pressed, pointer]}><Text style={[styles.styleLabel, appStyle === item.key && styles.styleLabelOn]}>{item.label}</Text><Text style={styles.styleMeta}>{item.detail}</Text></Pressable>)}</View></View> : null}
+            {Platform.OS === "web" ? <View {...fx({ motion: "rise", i: 6 })} testID="app-style" style={styles.styleBlock}><Text style={styles.stepLabel}>03 · 整体风格</Text><Text style={styles.stepDetail}>采集器、报告与持续报告共用的版式</Text><View style={styles.styleRow}>{APP_STYLES.map((item) => <Pressable {...fx({ hover: "tint" })} key={item.key} accessibilityRole="radio" aria-checked={appStyle === item.key} onPress={() => onChangeAppStyle(item.key)} style={({ pressed }) => [styles.styleOption, appStyle === item.key && styles.styleOptionOn, pressed && styles.pressed, pointer]}><Text style={[styles.styleLabel, appStyle === item.key && styles.styleLabelOn]}>{item.label}</Text><Text style={styles.styleMeta}>{item.detail}{item.key === DEFAULT_APP_STYLE ? " · 默认" : ""}</Text></Pressable>)}</View></View> : null}
           </View>
 
           <View style={styles.operations}>

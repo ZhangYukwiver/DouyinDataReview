@@ -1,9 +1,10 @@
 export type AppStyle = "archive" | "trace";
 
-// 整体风格：采集器页、持续报告与报告本体共用同一个选择。
+// 整体风格：采集器页、持续报告与报告本体共用同一个选择。默认内容年志。
+export const DEFAULT_APP_STYLE: AppStyle = "trace";
 export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: string }> = [
-  { key: "archive", label: "档案馆", detail: "深色档案 · 应用内分页翻阅" },
   { key: "trace", label: "内容年志", detail: "纸面年志 · 穿卡入口" },
+  { key: "archive", label: "档案馆", detail: "深色档案 · 应用内分页翻阅" },
 ];
 
 // 键名沿用“报告风格”时期的，用户之前保存的选择继续有效。
@@ -18,11 +19,12 @@ interface StyleStorage {
 }
 
 // Native has no localStorage and private browsing may throw; both fall back to the default style.
+// 只有显式选过档案馆才回档案馆，其余情况（没选过 / 存了旧值）都用默认的内容年志。
 export function loadAppStyle(storage: StyleStorage | undefined = globalThis.localStorage): AppStyle {
   try {
-    return storage?.getItem(STORAGE_KEY) === "trace" ? "trace" : "archive";
+    return storage?.getItem(STORAGE_KEY) === "archive" ? "archive" : DEFAULT_APP_STYLE;
   } catch {
-    return "archive";
+    return DEFAULT_APP_STYLE;
   }
 }
 

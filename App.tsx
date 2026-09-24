@@ -203,7 +203,7 @@ function AppContent() {
   const [downloadStates, setDownloadStates] = useState<Record<string, RecordDownloadState>>({});
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
   const [batchDownloadActive, setBatchDownloadActive] = useState(false);
-  const [appStyle, setAppStyle] = useState<AppStyle>(loadAppStyle);
+  const [appStyle, setAppStyle] = useState<AppStyle>(() => (Platform.OS === "web" ? loadAppStyle() : "archive"));
   const [appUpdate, setAppUpdate] = useState<DesktopUpdateState | null>(null);
   // 内容年志入口卡的地址；非空时以应用内 iframe 盖在工作台上（见 StoryFrame）
   const [storySrc, setStorySrc] = useState<string | null>(null);
