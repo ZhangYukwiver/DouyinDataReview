@@ -18,7 +18,7 @@ import {
   loadDirectHistoryTemplate,
   validateDirectHistoryUrl,
 } from "./directHistory.mjs";
-import { CollectorAdapterError, RecordAccumulator, matchDouyinEndpoint, mergeRecords } from "./normalizer.mjs";
+import { CollectorAdapterError, RecordAccumulator, createEmptyRecords, matchDouyinEndpoint, mergeRecords, normalizeRecord } from "./normalizer.mjs";
 import {
   ChatAdapterError,
   ChatConversationAccumulator,
@@ -1289,6 +1289,51 @@ export class DouyinCollector {
       updatedAt: this.snapshot.updatedAt,
     });
     return this.getSnapshot();
+  }
+
+  // 把本应用导出的文件并进本机记录：只补本机没有的，两边都有的以本机为准。
+  // 聊天接收会拿内存里那份整份写回，所以和清除记录一样先停下，应用随后再接上
+  async importRecords(data) {
+    if (this.syncPromise || this.observationPromise || this.accountSwitchPromise) {
+      throw Object.assign(new Error("正在读取或监听，等它结束后再并入。"), { status: 409, code: "import_busy" });
+    }
+    await this.stopChatObservation({ silent: true });
+    const before = this.snapshot;
+    const records = createEmptyRecords();
+    for (const type of Object.keys(records)) {
+      const seen = new Set(before.records[type].map((record) => record.id));
+      const added = (Array.isArray(data?.records?.[type]) ? data.records[type] : []).flatMap((item) => {
+        const record = normalizeRecord(item);
+        if (!record || seen.has(record.id)) return [];
+        seen.add(record.id);
+        return [record];
+      });
+      // 观看历史按时间排好；喜欢和收藏保留本机顺序，文件里多出来的接在后面
+      records[type] = type === "watch_history"
+        ? mergeRecordList(type, before.records[type], added)
+        : [...before.records[type], ...added];
+    }
+    const conversations = Array.isArray(data?.chatConversations)
+      ? data.chatConversations.filter((conversation) => typeof conversation?.id === "string")
+      : [];
+    this.snapshot = await this.store.save(records, before.warnings, {
+      directSync: before.directSync,
+      // 存盘时按编号去重，排在前面的本机消息优先
+      chatMessages: [...before.chatMessages, ...(Array.isArray(data?.chatMessages) ? data.chatMessages : [])],
+      chatConversations: mergeChatConversationSnapshots(conversations, before.chatConversations),
+    });
+    this.updateStatus({
+      message: "已并入导入的记录",
+      counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
+      updatedAt: this.snapshot.updatedAt,
+    });
+    // 新增条数和状态里的计数同一个口径：聊天含群聊统计
+    const after = recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations);
+    const previous = recordCounts(before.records, before.chatMessages, before.chatConversations);
+    return {
+      added: Object.fromEntries(Object.keys(after).map((key) => [key, after[key] - previous[key]])),
+      snapshot: this.getSnapshot(),
+    };
   }
 
   startSync({ allowAccountSwitch = false, mode = "page" } = {}) {

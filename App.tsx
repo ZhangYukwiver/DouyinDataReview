@@ -32,7 +32,7 @@ import {
   type PersonalRecordCollection,
   type PersonalVideoRecord,
 } from "./src/domain/personalRecords";
-import type { ChatConversationSummary, ChatMessage } from "./src/domain/chatRecords";
+import { countChatMessages, type ChatConversationSummary, type ChatMessage } from "./src/domain/chatRecords";
 import {
   checkCollectorHealth,
   clearCollectorRecords,
@@ -41,6 +41,7 @@ import {
   getCollectorStatus,
   getCollectorVideoDownload,
   getDefaultCollectorBaseUrl,
+  importCollectorRecords,
   LocalCollectorError,
   isChatReceiving,
   loadCollectorVideo,
@@ -57,6 +58,7 @@ import {
   stopCollectorChatObservation,
   switchCollectorAccount,
   fetchCollectorVideoFile,
+  type CollectorImportResult,
   type CollectorSnapshot,
   type CollectorStatus,
   type VideoDownloadJob,
@@ -89,7 +91,6 @@ const DOWNLOAD_JOB_TIMEOUT_MS = 15 * 60 * 1_000;
 
 interface SelectedArchive {
   name: string;
-  size: number | null;
   mimeType: string | null;
   inspection: PersonalArchiveInspection;
   data: PersonalArchiveData | null;
@@ -166,11 +167,24 @@ function confirmAlert(
   ], { cancelable: true, onDismiss: () => settle(false) });
 }
 
-function formatBytes(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "大小未知";
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+// 「5,086 条观看、1,377 条喜欢和 766 条聊天」，为 0 的不列
+function countList(counts: [number, string][]): string {
+  const parts = counts.filter(([count]) => count > 0).map(([count, label]) => `${count.toLocaleString("zh-CN")} 条${label}`);
+  return parts.length > 1 ? `${parts.slice(0, -1).join("、")}和 ${parts[parts.length - 1]}` : parts[0] ?? "";
+}
+
+// 导入后卡片上的说明：读到了什么，报告现在用哪份，接下来能做什么
+function describeImportedArchive(data: PersonalArchiveData, connected: boolean): string {
+  const list = countList([
+    [data.records.watch_history.length, "观看"],
+    [data.records.liked_videos.length, "喜欢"],
+    [data.records.favorite_videos.length, "收藏"],
+    [countChatMessages(data.chatMessages ?? [], data.chatConversations ?? []), "聊天"],
+  ]);
+  if (!connected) return `读到 ${list}。报告和工作台现在用这份文件，关掉应用后要重新导入。`;
+  return data.fromCollector
+    ? `读到 ${list}。报告和工作台现在用这份文件。点「并入本机记录」会把它加进采集器，之后增量读取接着往上加；点「移除」换回采集器的数据。`
+    : `读到 ${list}。报告和工作台现在用这份文件，点「移除」就换回采集器的数据。`;
 }
 
 function collectorErrorMessage(error: unknown): string {
@@ -352,26 +366,30 @@ function AppContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectorBusy]);
 
-  const shownSnapshot = frozenSnapshot ?? collectorSnapshot;
-  const displaySnapshot: DisplaySnapshot | null = shownSnapshot
+  // 冻结的样本只在采集器忙的时候用；忙完那一帧 effect 还没清掉它，别让旧数字闪回来
+  const shownSnapshot = (collectorBusy && frozenSnapshot) || collectorSnapshot;
+  // 导入的文件是用户刚明确选的，连着采集器也先用它；移除文件就换回采集器的数据
+  const displaySnapshot: DisplaySnapshot | null = selectedArchive?.data
     ? {
-        source: "collector",
-        records: shownSnapshot.records,
-        chatMessages: collectorSnapshot?.chatMessages ?? shownSnapshot.chatMessages,
-        chatConversations: collectorSnapshot?.chatConversations ?? shownSnapshot.chatConversations,
-        warnings: shownSnapshot.warnings,
-        updatedAt: shownSnapshot.updatedAt,
+        source: "archive",
+        records: selectedArchive.data.records,
+        chatMessages: selectedArchive.data.chatMessages ?? [],
+        chatConversations: selectedArchive.data.chatConversations ?? [],
+        warnings: selectedArchive.data.warnings,
+        updatedAt: selectedArchive.data.updatedAt ?? null,
       }
-    : selectedArchive?.data
+    : shownSnapshot
       ? {
-          source: "archive",
-          records: selectedArchive.data.records,
-          chatMessages: [],
-          chatConversations: [],
-          warnings: selectedArchive.data.warnings,
-          updatedAt: null,
+          source: "collector",
+          records: shownSnapshot.records,
+          chatMessages: collectorSnapshot?.chatMessages ?? shownSnapshot.chatMessages,
+          chatConversations: collectorSnapshot?.chatConversations ?? shownSnapshot.chatConversations,
+          warnings: shownSnapshot.warnings,
+          updatedAt: shownSnapshot.updatedAt,
         }
       : null;
+  // 数据页和故事入口显示的聊天条数：采集器用服务端计数，导入的文件按同一个口径（好友消息加群聊统计）自己数
+  const chatCount = displaySnapshot?.source === "archive" ? countChatMessages(displaySnapshot.chatMessages, displaySnapshot.chatConversations) : collectorStatus?.counts.chat_messages ?? null;
 
   const personalSummary = useMemo(() => {
     if (!displaySnapshot) return null;
@@ -932,7 +950,9 @@ function AppContent() {
       "开始",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
-        if (confirmed) void beginSync(collectorUrl, collectorToken);
+        if (!confirmed) return;
+        leaveArchiveView();
+        void beginSync(collectorUrl, collectorToken);
       },
     );
   }
@@ -946,7 +966,9 @@ function AppContent() {
       "读取新记录",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
-        if (confirmed) void beginSync(collectorUrl, collectorToken, true);
+        if (!confirmed) return;
+        leaveArchiveView();
+        void beginSync(collectorUrl, collectorToken, true);
       },
     );
   }
@@ -1053,7 +1075,6 @@ function AppContent() {
         const asset = result.assets[0];
         const archive: SelectedArchive = {
           name: asset.name,
-          size: asset.size ?? null,
           mimeType: asset.mimeType ?? null,
           inspection: { status: "inspecting" },
           data: null,
@@ -1062,6 +1083,12 @@ function AppContent() {
         try {
           const data = await importPersonalArchive(asset);
           if (importRequest.current !== requestId) return;
+          // 一条都没认出来就别顶掉正在用的数据
+          if (countPersonalRecords(data.records) === 0 && !data.chatMessages?.length) {
+            setSelectedArchive({ ...archive, inspection: { status: "failed" } });
+            showAlert("没有读到记录", "文件里没有认出观看、喜欢、收藏或聊天记录。请选抖音官方下载的个人信息文件，或者这个应用导出的数据文件。");
+            return;
+          }
           clearStoryData();
           setSelectedArchive({ ...archive, inspection: { status: "complete", format: data.format }, data });
         } catch (error) {
@@ -1086,49 +1113,98 @@ function AppContent() {
         if (!confirmed) return;
         autoSyncInFlightRef.current = false;
         clearStoryData();
-        if (collectorToken) {
-          chatStartupRef.current.request();
-          chatAutomaticRequestRef.current.clear();
-          chatCollectionInFlightRef.current = false;
-          chatPollRequestRef.current = null;
-          resetChatControlBusy();
-          const requestId = pollRequest.current + 1;
-          const token = collectorToken;
-          pollRequest.current = requestId;
-          setCollectorBusy(true);
-          setCollectorError(null);
-          void (async () => {
-            try {
-              const snapshot = await clearCollectorRecords(collectorUrl, token);
-              if (pollRequest.current !== requestId) return;
-              setCollectorSnapshot(snapshot);
-              const status = await getCollectorStatus(collectorUrl, token);
-              if (pollRequest.current !== requestId) return;
-              setCollectorStatus(status);
-            } catch (error) {
-              if (pollRequest.current !== requestId) return;
-              const message = collectorErrorMessage(error);
-              setCollectorError(message);
-              showAlert("无法清除记录", message);
-            } finally {
-              if (pollRequest.current === requestId) setCollectorBusy(false);
-            }
-          })();
-        } else {
-          importRequest.current += 1;
-          setSelectedArchive(null);
-        }
+        dropArchive();
+        void changeCollectorRecords((token) => clearCollectorRecords(collectorUrl, token), "无法清除记录");
       },
       true,
     );
   }
 
-  // 导出的就是界面上正在用的这份数据：观看、喜欢、收藏记录和聊天
-  function exportCurrentData() {
-    if (!displaySnapshot) return;
-    const { source, updatedAt, warnings, records, chatConversations, chatMessages } = displaySnapshot;
-    const data = { exportedAt: new Date().toISOString(), source, updatedAt, warnings, records, chatConversations, chatMessages };
+  // 清除和并入都要改采集器的本地记录：采集器会先停下聊天接收，这里先记下，改完自动接上
+  async function changeCollectorRecords(operation: (token: string) => Promise<CollectorSnapshot>, failureTitle: string): Promise<boolean> {
+    const token = collectorToken;
+    if (!token) return false;
+    chatStartupRef.current.request();
+    chatAutomaticRequestRef.current.clear();
+    chatCollectionInFlightRef.current = false;
+    chatPollRequestRef.current = null;
+    resetChatControlBusy();
+    const requestId = pollRequest.current + 1;
+    pollRequest.current = requestId;
+    setCollectorBusy(true);
+    setCollectorError(null);
     try {
+      const snapshot = await operation(token);
+      if (pollRequest.current !== requestId) return false;
+      setCollectorSnapshot(snapshot);
+      const status = await getCollectorStatus(collectorUrl, token);
+      if (pollRequest.current !== requestId) return false;
+      setCollectorStatus(status);
+      return true;
+    } catch (error) {
+      if (pollRequest.current !== requestId) return false;
+      const message = collectorErrorMessage(error);
+      setCollectorError(message);
+      showAlert(failureTitle, message);
+      return false;
+    } finally {
+      if (pollRequest.current === requestId) setCollectorBusy(false);
+    }
+  }
+
+  // 把导入的文件并进采集器的本地记录，之后增量读取就在这份基础上接着往上加
+  function mergeArchive() {
+    const data = selectedArchive?.data;
+    if (!data?.fromCollector || !collectorToken || collectorBusy) return;
+    confirmAlert(
+      "并入本机记录",
+      "把文件里本机还没有的观看、喜欢、收藏和聊天记录加进采集器，两边都有的以本机为准。观看历史会一直留着；喜欢和收藏以抖音当前的列表为准，下次完整读取时，已经取消的会去掉。请确认这份文件来自当前登录的抖音账号。",
+      "并入",
+      (confirmed) => {
+        if (!confirmed) return;
+        let added: CollectorImportResult["added"] | null = null;
+        void changeCollectorRecords(async (token) => {
+          const result = await importCollectorRecords(collectorUrl, token, {
+            records: data.records,
+            chatMessages: data.chatMessages ?? [],
+            chatConversations: data.chatConversations ?? [],
+          });
+          added = result.added;
+          return result.snapshot;
+        }, "无法并入本机记录").then((merged) => {
+          if (!merged || !added) return;
+          removeArchive();
+          const list = countList([[added.watch_history, "观看"], [added.liked_videos, "喜欢"], [added.favorite_videos, "收藏"], [added.chat_messages, "聊天"]]);
+          showAlert("已并入本机记录", list
+            ? `新增 ${list}，其余的本机已经有了。之后增量读取会在这份基础上接着往上加。`
+            : "文件里的记录本机都已经有了，这次没有新增。");
+        });
+      },
+    );
+  }
+
+  function dropArchive() {
+    importRequest.current += 1;
+    setPickingArchive(false);
+    setSelectedArchive(null);
+  }
+
+  function removeArchive() {
+    clearStoryData();
+    dropArchive();
+  }
+
+  // 看导入文件时手动开始读取，就换回采集器的数据，读到的新记录才看得见
+  function leaveArchiveView() {
+    if (selectedArchive?.data) removeArchive();
+  }
+
+  // 导出直接找采集器要最新的一份：界面这会儿可能在看导入的文件，或者采集中用的是冻结的旧样本
+  async function exportCurrentData() {
+    if (!collectorToken) return;
+    try {
+      const { updatedAt, warnings, records, chatConversations, chatMessages } = await getCollectorRecords(collectorUrl, collectorToken);
+      const data = { exportedAt: new Date().toISOString(), source: "collector", updatedAt, warnings, records, chatConversations, chatMessages };
       // sv-SE 的日期格式正好是本地时区的 YYYY-MM-DD
       triggerBrowserDownload(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
     } catch (error) {
@@ -1242,8 +1318,10 @@ function AppContent() {
     ? {
         name: selectedArchive.name,
         detail: selectedArchive.data
-          ? `${countPersonalRecords(selectedArchive.data.records)} 条记录 | ${formatBytes(selectedArchive.size)}`
+          ? describeImportedArchive(selectedArchive.data, collectorToken !== null)
           : describeArchiveInspection(selectedArchive.inspection),
+        loaded: selectedArchive.data !== null,
+        mergeable: Boolean(selectedArchive.data?.fromCollector) && collectorToken !== null,
       }
     : null;
 
@@ -1271,7 +1349,7 @@ function AppContent() {
         watch: workspaceRecords.watch_history.length,
         liked: workspaceRecords.liked_videos.length,
         favorite: workspaceRecords.favorite_videos.length,
-        chat: collectorStatus?.counts.chat_messages ?? null,
+        chat: chatCount,
       }, story.year, { motion: "full" }));
       return;
     }
@@ -1326,8 +1404,14 @@ function AppContent() {
           onEnterWorkspace={enterWorkspace}
           onOpenDashboard={openDashboard}
           onPickArchive={pickArchive}
+          onRemoveArchive={removeArchive}
+          onMergeArchive={mergeArchive}
           onStartIncrementalSync={confirmIncrementalSync}
-          onStartObservation={() => collectorToken ? beginObservation(collectorUrl, collectorToken) : Promise.resolve()}
+          onStartObservation={() => {
+            if (!collectorToken) return Promise.resolve();
+            leaveArchiveView();
+            return beginObservation(collectorUrl, collectorToken);
+          }}
           onStartChatObservation={() => {
             chatStartupRef.current.cancel();
             chatAutomaticRequestRef.current.clear();
@@ -1362,6 +1446,7 @@ function AppContent() {
           pairingCode={pairingCode}
           pickingArchive={pickingArchive}
           records={workspaceRecords}
+          chatCount={chatCount}
           snapshotSource={displaySnapshot?.source ?? null}
           snapshotUpdatedAt={displaySnapshot?.updatedAt ?? null}
           status={collectorStatus}

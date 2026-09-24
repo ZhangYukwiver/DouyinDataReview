@@ -465,6 +465,18 @@ export async function startCollectorServer({
       }
     } else if (request.method === "DELETE" && url.pathname === "/v1/records") {
       sendJson(response, 200, await collector.clearRecords());
+    } else if (request.method === "POST" && url.pathname === "/v1/records/import") {
+      try {
+        // 和应用里导入文件的上限一致
+        const body = await readJsonBody(request, 32 * 1024 * 1024);
+        sendJson(response, 200, await collector.importRecords(body));
+      } catch (error) {
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        sendJson(response, error?.status ?? (malformed ? 400 : 500), {
+          error: error?.code ?? (malformed ? "invalid_request" : "import_failed"),
+          message: error?.status ? error.message : malformed ? "文件内容无效或超过 32 MB。" : "并入失败，请稍后再试。",
+        });
+      }
     } else if (request.method === "POST" && url.pathname === "/v1/browser/close") {
       await collector.close();
       sendJson(response, 200, { ok: true });
