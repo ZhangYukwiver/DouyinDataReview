@@ -47,7 +47,7 @@ import { buildSparks, shiftDay, SPARK_LIT_DAYS, sparkDayKey, type Spark, type Sp
 import { CHAT_SEND_UNCONFIRMED, sendChatMessage, type ChatSendConnection, type ChatSendOutcome } from "../../services/chatSend";
 import { type CollectorStatus, LocalCollectorError, isChatReceiving } from "../../services/localCollector";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
-import { fx } from "./motion";
+import { fx, ws } from "./motion";
 import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
@@ -311,10 +311,10 @@ export function ChatWorkspace({
 
   return (
     <View style={styles.workspace} testID="chat-workspace">
-      <View style={styles.receptionBar}>
+      <View {...ws("c-bar g-ink")} style={styles.receptionBar}>
         <View style={styles.receptionCopy}>
-          <View style={[styles.receptionDot, { backgroundColor: receiving && status?.chatConnection === "connected" ? color.green : color.textMuted }]} />
-          <Text accessibilityLiveRegion="polite" style={styles.receptionLabel}>{receptionLabel}</Text>
+          <View {...ws("dot", receiving && status?.chatConnection === "connected" && "on")} style={[styles.receptionDot, { backgroundColor: receiving && status?.chatConnection === "connected" ? color.green : color.textMuted }]} />
+          <Text {...ws("mono")} accessibilityLiveRegion="polite" style={styles.receptionLabel}>{receptionLabel}</Text>
           {chatError
             ? <Text accessibilityLiveRegion="polite" numberOfLines={1} style={styles.receptionError}>{chatError}</Text>
             : receiving && status?.chat.progress
@@ -328,6 +328,7 @@ export function ChatWorkspace({
             accessibilityState={{ disabled: controlDisabled }}
             disabled={controlDisabled}
             onPress={!connected ? onOpenSettings : onToggleReception}
+            {...ws("btn small")}
             style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, controlDisabled && { opacity: 0.45 }, webPointer]}
           >
             {receiving ? <Pause color={color.textSecondary} size={13} /> : <Play color={color.textSecondary} size={13} />}
@@ -339,6 +340,7 @@ export function ChatWorkspace({
             accessibilityState={{ disabled: !connected || busy || !onCollectHistory }}
             disabled={!connected || busy || !onCollectHistory}
             onPress={onCollectHistory}
+            {...ws("btn small")}
             style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, (!connected || busy || !onCollectHistory) && { opacity: 0.45 }, webPointer]}
           >
             {busy ? <ActivityIndicator color={color.textSecondary} size="small" /> : <RefreshCw color={color.textSecondary} size={13} />}
@@ -466,24 +468,24 @@ function ChatListPane({
   ];
 
   return (
-    <View style={[styles.listPane, mobile && styles.listPaneMobile]}>
-      <View style={styles.listHeader}>
+    <View {...ws("c-list")} style={[styles.listPane, mobile && styles.listPaneMobile]}>
+      <View {...ws("c-head")} style={styles.listHeader}>
         <View style={styles.listHeaderCopy}>
-          <Text style={styles.chatTitle}>消息</Text>
-          <Text style={styles.chatSubtitle}>{allRows.length ? `${formatCount(allRows.length)} 个会话 · ${formatCount(totalMessages)} 条消息` : "消息会保存在本机"}</Text>
+          <Text {...ws("c-title")} style={styles.chatTitle}>消息</Text>
+          <Text {...ws("mono")} style={styles.chatSubtitle}>{allRows.length ? `${formatCount(allRows.length)} 个会话 · ${formatCount(totalMessages)} 条消息` : "消息会保存在本机"}</Text>
         </View>
         <Pressable
           accessibilityLabel={sparkAlerts ? `火花看板，${sparkAlerts} 位好友的火花今天还没续` : "火花看板"}
           accessibilityRole="button"
           accessibilityState={{ selected: sparkBoard }}
-          {...fx({ hover: "raise" })}
+          {...fx({ hover: "raise", ws: sparkBoard ? "btn square on" : "btn square" })}
           onPress={onToggleSparks}
           style={({ pressed }) => [styles.iconButton, sparkBoard && styles.iconButtonActive, pressed && styles.pressed, webPointer]}
           testID="chat-spark-toggle"
         >
           <Flame color={sparkBoard || sparkAlerts ? color.amber : color.textSecondary} size={19} strokeWidth={2} />
           {sparkAlerts ? (
-            <View style={styles.sparkBadge}>
+            <View {...ws("stamp-sig c-badge")} style={styles.sparkBadge}>
               <Text style={styles.sparkBadgeText}>{sparkAlerts}</Text>
             </View>
           ) : null}
@@ -491,7 +493,7 @@ function ChatListPane({
         <Pressable
           accessibilityLabel="聚焦搜索聊天"
           accessibilityRole="button"
-          {...fx({ hover: "raise" })}
+          {...fx({ hover: "raise", ws: "btn square" })}
           onPress={onFocusSearch}
           style={({ pressed }) => [styles.iconButton, pressed && styles.pressed, webPointer]}
         >
@@ -499,7 +501,7 @@ function ChatListPane({
         </Pressable>
       </View>
 
-      <View style={styles.searchBox}>
+      <View {...ws("c-search")} style={styles.searchBox}>
         <Search color={color.textMuted} size={16} strokeWidth={2} />
         <TextInput
           accessibilityLabel="搜索聊天"
@@ -521,14 +523,14 @@ function ChatListPane({
         ) : null}
       </View>
 
-      <View accessibilityRole="tablist" style={styles.filterRow}>
+      <View {...ws("c-filters")} accessibilityRole="tablist" style={styles.filterRow}>
         {filters.map((item) => (
           <Pressable
             accessibilityLabel={`${item.label}，${item.count} 个会话`}
             accessibilityRole="tab"
             accessibilityState={{ selected: filter === item.id }}
             key={item.id}
-            {...fx({ hover: "tint" })}
+            {...fx({ hover: "tint", ws: filter === item.id ? "c-filter on" : "c-filter" })}
             onPress={() => onChangeFilter(item.id)}
             style={({ pressed }) => [styles.filterTab, filter === item.id && styles.filterTabActive, pressed && styles.pressed, webPointer]}
           >
@@ -579,7 +581,7 @@ function ConversationListItem({
   const presence = chatPresence(row.lastActiveAt);
   return (
     <Pressable
-      {...fx({ motion: "rise", i: index < 12 ? index + 1 : 0, hover: "tint" })}
+      {...fx({ motion: "rise", i: index < 12 ? index + 1 : 0, hover: "tint", ws: selected ? "c-conv on" : "c-conv" })}
       accessibilityLabel={`${visibleName}，${row.messageCount} 条聊天消息`}
       accessibilityRole="button"
       onPress={onPress}
@@ -589,16 +591,16 @@ function ConversationListItem({
       <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} online={presence.online} privacy={privacy} size={48} />
       <View style={styles.conversationCopy}>
         <View style={styles.conversationTopLine}>
-          <Text numberOfLines={1} style={styles.conversationName}>{visibleName}</Text>
-          <Text style={styles.conversationTime}>{formatChatListTime(row.latestAt)}</Text>
+          <Text {...ws("c-name")} numberOfLines={1} style={styles.conversationName}>{visibleName}</Text>
+          <Text {...ws("mono")} style={styles.conversationTime}>{formatChatListTime(row.latestAt)}</Text>
         </View>
         <Text numberOfLines={1} style={styles.conversationPreview}>{visiblePreview}</Text>
         <View style={styles.conversationMeta}>
           <Text style={styles.conversationKind}>{row.kind === "group" ? "群聊摘要" : row.kind === "unknown" ? "私聊" : "好友对话"}</Text>
-          <Text style={styles.conversationCount}>{formatCount(row.messageCount)} 条</Text>
+          <Text {...ws("mono c-count")} style={styles.conversationCount}>{formatCount(row.messageCount)} 条</Text>
         </View>
       </View>
-      {selected ? <View style={styles.conversationActiveMark} /> : null}
+      {selected ? <View {...ws("c-mark")} style={styles.conversationActiveMark} /> : null}
     </Pressable>
   );
 }
@@ -615,10 +617,10 @@ function ChatListEmpty({ busy, hasQuery, onOpenSettings, privacy }: { busy: bool
   }
   return (
     <View {...fx({ motion: "rise" })} style={styles.listEmptyState}>
-      <View style={styles.emptyChatIcon}><MessageCircle color={color.cyan} size={25} strokeWidth={1.8} /></View>
-      <Text style={styles.listEmptyTitle}>{busy ? "正在整理聊天" : "还没有聊天快照"}</Text>
+      <View {...ws("w-emptyicon")} style={styles.emptyChatIcon}><MessageCircle color={color.cyan} size={25} strokeWidth={1.8} /></View>
+      <Text {...ws("w-emptytitle small")} style={styles.listEmptyTitle}>{busy ? "正在整理聊天" : "还没有聊天快照"}</Text>
       <Text style={styles.listEmptyBody}>{privacy ? "隐私模式已开启；读取后仍只在本机显示。" : "连接采集器后读取聊天，即可在这里回看好友对话。"}</Text>
-      <Pressable accessibilityRole="button" onPress={onOpenSettings} style={({ pressed }) => [styles.emptyAction, pressed && styles.pressed, webPointer]}>
+      <Pressable {...ws("btn-solid")} accessibilityRole="button" onPress={onOpenSettings} style={({ pressed }) => [styles.emptyAction, pressed && styles.pressed, webPointer]}>
         <Text style={styles.emptyActionText}>连接与采集</Text>
       </Pressable>
     </View>
@@ -666,8 +668,8 @@ function ChatDetailPane({
     return (
       <View style={[styles.detailPane, mobile && styles.detailPaneMobile]}>
         <View {...fx({ motion: "rise" })} style={styles.detailEmptyState}>
-          <View style={styles.emptyChatIcon}><MessageCircle color={color.cyan} size={26} strokeWidth={1.8} /></View>
-          <Text style={styles.detailEmptyTitle}>选择一个会话</Text>
+          <View {...ws("w-emptyicon")} style={styles.emptyChatIcon}><MessageCircle color={color.cyan} size={26} strokeWidth={1.8} /></View>
+          <Text {...ws("w-emptytitle small")} style={styles.detailEmptyTitle}>选择一个会话</Text>
           <Text style={styles.detailEmptyBody}>从左侧列表打开好友对话。</Text>
         </View>
       </View>
@@ -690,7 +692,7 @@ function ChatDetailPane({
 
   return (
     <View {...fx({ motion: "fade" })} style={[styles.detailPane, mobile && styles.detailPaneMobile]}>
-      <View style={styles.detailHeader}>
+      <View {...ws("c-dhead")} style={styles.detailHeader}>
         {mobile ? (
           <Pressable accessibilityLabel="返回聊天列表" accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.detailBackButton, pressed && styles.pressed, webPointer]}>
             <ChevronLeft color={color.textSecondary} size={21} strokeWidth={2} />
@@ -698,25 +700,25 @@ function ChatDetailPane({
         ) : null}
         <ChatAvatar avatarUrl={row.avatarUrl} initials={row.initials} accent={row.accent} kind={row.kind} online={presence.online} privacy={privacy} size={38} />
         <View style={styles.detailHeaderCopy}>
-          <Text numberOfLines={1} style={styles.detailTitle}>{visibleName}</Text>
-          <Text style={styles.detailMeta}>
+          <Text {...ws("c-dtitle")} numberOfLines={1} style={styles.detailTitle}>{visibleName}</Text>
+          <Text {...ws("mono")} style={styles.detailMeta}>
             {presence.text ? `${presence.text} · ` : ""}
             {row.kind === "group" ? "群聊统计摘要" : `${formatCount(row.messageCount)} 条本地消息`}
           </Text>
         </View>
         <View style={styles.detailHeaderActions}>
-          <View style={styles.readonlyBadge}>
+          <View {...ws("stamp-ghost c-ro")} style={styles.readonlyBadge}>
             <ShieldCheck color={color.green} size={13} strokeWidth={2} />
             <Text style={styles.readonlyBadgeText}>本地保存</Text>
           </View>
-          <Pressable accessibilityLabel="聊天详情" accessibilityRole="button" style={[styles.iconButton, webPointer]}>
+          <Pressable {...ws("btn square")} accessibilityLabel="聊天详情" accessibilityRole="button" style={[styles.iconButton, webPointer]}>
             <MoreHorizontal color={color.textMuted} size={19} />
           </Pressable>
         </View>
       </View>
 
       {privacy ? (
-        <View style={styles.privacyNotice}>
+        <View {...ws("stamp-bar")} style={styles.privacyNotice}>
           <LockKeyhole color={color.cyan} size={15} strokeWidth={2} />
           <Text style={styles.privacyNoticeText}>隐私模式已开启，联系人和消息正文已隐藏。</Text>
         </View>
@@ -763,17 +765,17 @@ function ChatDetailPane({
 function GroupSummary({ row, privacy }: { row: ChatConversationRow; privacy: boolean }) {
   return (
     <ScrollView contentContainerStyle={styles.groupSummaryContent} showsVerticalScrollIndicator={false}>
-      <View style={[styles.groupSummaryIcon, { backgroundColor: alpha(row.accent, 0.16) }]}>
+      <View {...ws("w-emptyicon")} style={[styles.groupSummaryIcon, { backgroundColor: alpha(row.accent, 0.16) }]}>
         <UsersRound color={row.accent} size={30} strokeWidth={1.7} />
       </View>
-      <Text style={styles.groupSummaryTitle}>{privacy ? "群聊" : row.name}</Text>
+      <Text {...ws("w-emptytitle")} style={styles.groupSummaryTitle}>{privacy ? "群聊" : row.name}</Text>
       <Text style={styles.groupSummaryBody}>群聊正文不会落盘，这里只展示采集到的统计信息。</Text>
       <View style={styles.groupFacts}>
         <ChatFact label="已采集消息" value={formatCount(row.messageCount)} />
         <ChatFact label="本人发言" value={formatCount(row.ownMessageCount)} />
         <ChatFact label="可读正文" value="0" />
       </View>
-      <View style={styles.groupPrivacyNote}>
+      <View {...ws("stamp-bar")} style={styles.groupPrivacyNote}>
         <ShieldCheck color={color.green} size={16} strokeWidth={2} />
         <Text style={styles.groupPrivacyNoteText}>为保护群聊成员隐私，群聊正文从采集边界开始即被丢弃。</Text>
       </View>
@@ -783,8 +785,8 @@ function GroupSummary({ row, privacy }: { row: ChatConversationRow; privacy: boo
 
 function ChatFact({ label, value }: { label: string; value: string }) {
   return (
-    <View style={styles.chatFact}>
-      <Text style={styles.chatFactValue}>{value}</Text>
+    <View {...ws("c-fact")} style={styles.chatFact}>
+      <Text {...ws("c-factvalue")} style={styles.chatFactValue}>{value}</Text>
       <Text style={styles.chatFactLabel}>{label}</Text>
     </View>
   );
@@ -829,25 +831,25 @@ function SparkBoard({
 
   return (
     <View {...fx({ motion: "fade" })} style={[styles.detailPane, mobile && styles.detailPaneMobile]} testID="chat-spark-board">
-      <View style={styles.detailHeader}>
+      <View {...ws("c-dhead")} style={styles.detailHeader}>
         {mobile ? (
           <Pressable accessibilityLabel="返回聊天列表" accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.detailBackButton, pressed && styles.pressed, webPointer]}>
             <ChevronLeft color={color.textSecondary} size={21} strokeWidth={2} />
           </Pressable>
         ) : null}
         <View style={styles.detailHeaderCopy}>
-          <Text style={styles.detailTitle}>火花</Text>
+          <Text {...ws("c-dtitle")} style={styles.detailTitle}>火花</Text>
           <Text style={styles.detailMeta}>{summary}</Text>
         </View>
         {!mobile ? (
-          <Pressable accessibilityLabel="关闭火花看板" accessibilityRole="button" {...fx({ hover: "raise" })} onPress={onBack} style={({ pressed }) => [styles.iconButton, pressed && styles.pressed, webPointer]}>
+          <Pressable accessibilityLabel="关闭火花看板" accessibilityRole="button" {...fx({ hover: "raise", ws: "btn square" })} onPress={onBack} style={({ pressed }) => [styles.iconButton, pressed && styles.pressed, webPointer]}>
             <X color={color.textSecondary} size={17} />
           </Pressable>
         ) : null}
       </View>
 
       {!live ? (
-        <View style={[styles.privacyNotice, styles.sparkNotice]}>
+        <View {...ws("stamp-bar")} style={[styles.privacyNotice, styles.sparkNotice]}>
           <Pause color={color.amber} size={14} strokeWidth={2} />
           <Text style={[styles.privacyNoticeText, styles.sparkNoticeText]}>现在没有在接收新消息，今天的情况可能还没更新。</Text>
         </View>
@@ -863,10 +865,10 @@ function SparkBoard({
         {sections.length ? sections.map((section) => (
           <View key={section.title} style={styles.sparkSection}>
             <View style={styles.sparkSectionHead}>
-              <Text style={styles.sparkSectionTitle}>{section.title}</Text>
+              <Text {...ws("c-sectiontitle")} style={styles.sparkSectionTitle}>{section.title}</Text>
               <Text style={styles.sparkSectionCount}>{section.items.length}</Text>
             </View>
-            <View style={styles.sparkList}>
+            <View {...ws("c-sparklist")} style={styles.sparkList}>
               {section.items.map((spark, index) => {
                 const row = byId.get(spark.id);
                 order += 1;
@@ -878,8 +880,8 @@ function SparkBoard({
           </View>
         )) : (
           <View {...fx({ motion: "rise" })} style={styles.sparkEmpty}>
-            <View style={[styles.emptyChatIcon, styles.sparkEmptyIcon]}><Flame color={color.amber} size={25} strokeWidth={1.8} /></View>
-            <Text style={styles.detailEmptyTitle}>还没有火花</Text>
+            <View {...ws("w-emptyicon")} style={[styles.emptyChatIcon, styles.sparkEmptyIcon]}><Flame color={color.amber} size={25} strokeWidth={1.8} /></View>
+            <Text {...ws("w-emptytitle small")} style={styles.detailEmptyTitle}>还没有火花</Text>
             <Text style={styles.listEmptyBody}>{rows.length ? "和好友连着几天互相发消息，这里就会开始计天数。" : "连接采集器读取聊天后，这里会显示你和好友的火花。"}</Text>
           </View>
         )}
@@ -934,7 +936,7 @@ function SparkRow({
       <View style={styles.sparkCount}>
         <View style={styles.sparkDays}>
           <Flame color={burning ? color.amber : color.textMuted} fill={burning ? color.amber : "none"} size={14} strokeWidth={2} />
-          <Text style={[styles.sparkDaysValue, !burning && styles.sparkDaysMuted]}>{spark.days}</Text>
+          <Text {...ws("c-sparkdays")} style={[styles.sparkDaysValue, !burning && styles.sparkDaysMuted]}>{spark.days}</Text>
           <Text style={styles.sparkDaysUnit}>天</Text>
         </View>
         {countdown ? <Text style={[styles.sparkLeft, msUntilMidnight(now) < 3 * 3_600_000 && styles.sparkLeftUrgent]}>还剩 {formatTimeLeft(now)}</Text> : null}
@@ -1000,7 +1002,7 @@ function formatTimeLeft(now: Date): string {
 }
 
 function ConversationDateDivider() {
-  return <Text style={styles.dateDivider}>本地聊天快照 · 由采集时间整理</Text>;
+  return <Text {...ws("mono")} style={styles.dateDivider}>本地聊天快照 · 由采集时间整理</Text>;
 }
 
 function MessageListEmpty({ privacy }: { privacy: boolean }) {
@@ -1028,7 +1030,7 @@ function ChatMessageBubble({
   selfId: string | null;
 }) {
   if (message.type === "system") {
-    return <Text style={styles.systemMessage}>{privacy ? "系统消息已隐藏" : chatPreview(message)}</Text>;
+    return <Text {...ws("stamp-ghost c-system")} style={styles.systemMessage}>{privacy ? "系统消息已隐藏" : chatPreview(message)}</Text>;
   }
   const own = !privacy && isOwnMessage(message, selfId);
   const sender = privacy ? "好友" : cleanText(message.senderName) ?? (own ? "我" : "对方");
@@ -1041,10 +1043,10 @@ function ChatMessageBubble({
       {!own ? <ChatAvatar avatarUrl={row.avatarUrl} accent={row.accent} initials={initialsFor(sender, "friend")} kind="friend" privacy={privacy} size={30} /> : null}
       <View style={[styles.messageColumn, own && styles.messageColumnOwn]}>
         {!own ? <Text style={styles.senderLabel}>{sender}</Text> : null}
-        <View style={[styles.bubble, framelessSticker ? styles.bubbleSticker : own ? styles.bubbleOwn : styles.bubbleIncoming]}>
+        <View {...ws("c-bubble", framelessSticker ? "sticker" : own ? "own" : "in")} style={[styles.bubble, framelessSticker ? styles.bubbleSticker : own ? styles.bubbleOwn : styles.bubbleIncoming]}>
           {privacy ? <Text style={styles.bubbleText}>消息内容已隐藏</Text> : <MessageContent message={message} onOpenRecord={onOpenRecord} />}
         </View>
-        <Text style={[styles.messageTime, own && styles.messageTimeOwn]}>{formatMessageTime(message.sentAt)}</Text>
+        <Text {...ws("mono")} style={[styles.messageTime, own && styles.messageTimeOwn]}>{formatMessageTime(message.sentAt)}</Text>
       </View>
       {own ? <ChatAvatar accent={color.cyan} initials="我" kind="friend" size={30} /> : null}
     </View>
@@ -1198,7 +1200,7 @@ function ChatComposer({
   };
 
   return (
-    <View style={styles.composerWrap}>
+    <View {...ws("c-composer")} style={styles.composerWrap}>
       {notice ? (
         <View style={[styles.composerNotice, notice.tone === "warn" && styles.composerNoticeWarn]} testID="chat-send-notice">
           <Text accessibilityLiveRegion="polite" style={[styles.composerNoticeText, notice.tone === "warn" && styles.composerNoticeTextWarn]}>{notice.text}</Text>
@@ -1244,6 +1246,7 @@ function ChatComposer({
           placeholder={blockedReason ?? "发消息（回车发送，Shift+回车换行）"}
           placeholderTextColor={color.textMuted}
           ref={inputRef}
+          {...ws("c-input")}
           style={[styles.composerInput, webAutoHeight, blocked && styles.composerDisabled]}
           testID="chat-composer-input"
           value={hidden ? "" : text}
@@ -1254,6 +1257,7 @@ function ChatComposer({
           accessibilityState={{ disabled: !canSend, busy: sending }}
           disabled={!canSend}
           onPress={() => void submit()}
+          {...ws("c-send", canSend && "on")}
           style={({ pressed }) => [styles.composerSend, canSend && styles.composerSendReady, pressed && styles.pressed, webPointer]}
           testID="chat-send-button"
         >
@@ -1288,7 +1292,7 @@ function ChatAvatar({
   const showImage = !privacy && !imageFailed && Boolean(safeChatAvatarUrl(avatarUrl));
   // 隐私模式下名字缩写也要藏：两个字的名字，缩写就是全名。
   return (
-    <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: alpha(accent, 0.19) }]}>
+    <View {...ws("c-avatar")} style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: alpha(accent, 0.19) }]}>
       {showImage ? (
         <Image
           accessibilityLabel="联系人头像"
@@ -1298,7 +1302,7 @@ function ChatAvatar({
           style={[styles.avatarImage, { width: size, height: size, borderRadius: size / 2 }]}
         />
       ) : kind === "group" ? <UsersRound color={accent} size={Math.round(size * 0.45)} strokeWidth={1.8} /> : <Text style={[styles.avatarText, { color: accent, fontSize: Math.max(11, Math.round(size * 0.32)) }]}>{privacy ? "友" : initials}</Text>}
-      {online ? <View {...fx({ motion: "pulse" })} style={[styles.onlineDot, { width: Math.max(7, Math.round(size * 0.2)), height: Math.max(7, Math.round(size * 0.2)), borderRadius: size, borderColor: color.sidebar }]} /> : null}
+      {online ? <View {...fx({ motion: "pulse", ws: "dot on c-online" })} style={[styles.onlineDot, { width: Math.max(7, Math.round(size * 0.2)), height: Math.max(7, Math.round(size * 0.2)), borderRadius: size, borderColor: color.sidebar }]} /> : null}
     </View>
   );
 }

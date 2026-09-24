@@ -40,15 +40,24 @@ function reduced(): boolean {
   return web && typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-/** 一个元素上的动效标记：进场种类、错开序号（1–16，每级 70ms）、悬停反馈、是否已进入视口。 */
-export function fx(set: { motion?: Motion | false | null; i?: number; hover?: Hover; reveal?: boolean }): { dataSet?: Record<string, string> } {
+/**
+ * 一个元素上的动效标记：进场种类、错开序号（1–16，每级 70ms）、悬停反馈、是否已进入视口。
+ * ws 是版式角色（空格分隔，可带状态词如 "btn on"），只有海报和内容年志的版式层认它（见 posterCss / traceCss），档案馆不受影响。
+ */
+export function fx(set: { motion?: Motion | false | null; i?: number; hover?: Hover; reveal?: boolean; ws?: string }): { dataSet?: Record<string, string> } {
   if (!web) return {};
   const dataSet: Record<string, string> = {};
   if (set.motion) dataSet.motion = set.motion;
   if (set.reveal !== undefined) dataSet.reveal = set.reveal ? "in" : "wait";
   if (set.i) dataSet.i = String(Math.min(16, set.i));
   if (set.hover) dataSet.hover = set.hover;
+  if (set.ws) dataSet.ws = set.ws;
   return { dataSet };
+}
+
+/** 只带版式角色的标记：ws("btn")、ws("tile", on && "on")。 */
+export function ws(...roles: Array<string | false | null | undefined>): { dataSet?: Record<string, string> } {
+  return fx({ ws: roles.filter(Boolean).join(" ") || undefined });
 }
 
 /** 状态驱动的过渡（悬停放大、进度条宽度、开关滑块）。 */

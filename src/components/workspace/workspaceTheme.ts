@@ -2,11 +2,14 @@ import { Platform } from "react-native";
 
 import type { AppStyle } from "../../services/appStyle";
 import { motionCss } from "./motion";
+import { posterCss } from "./posterCss";
+import { traceCss } from "./traceCss";
 
 /**
- * 两套整体风格共用一份 token 名：
+ * 三套整体风格共用一份 token 名：
  * - 档案馆：暖金 + 冷青 + 近黑纸面（与 ReportWorkspace 十二章同源）
- * - 内容年志：故事页的纸面 / 墨色 / 信号蓝（prototype/story-draft_副本.html 的 :root）
+ * - 内容年志：入口卡的墨夜 / 玻璃 / 奶油字 / 信号蓝 / 琥珀光（prototype/story-entry.html）
+ * - 海报：墨黑 / 新闻纸 / 信号橙
  * web 上每个 token 是 CSS 变量，<html data-style> 一换整套界面跟着换（见 ensureThemeStyles / applyAppStyle）；
  * native 没有 CSS 变量，永远拿档案馆的实色。
  */
@@ -57,46 +60,96 @@ const archive = {
 
 export type WorkspacePalette = typeof archive;
 
+// 内容年志：入口卡（public/story/story-entry.html）的墨夜——油画作固定底，面板是半透明的夜色玻璃，
+// 正文奶油色，可交互的是信号蓝，光和选中是琥珀。canvas 透明，让 traceCss 铺在 body 下的那张画透上来。
 const trace: WorkspacePalette = {
-  canvas: "#F3F2EC",
-  sidebar: "#FBFBF7",
-  surface: "#FFFFFF",
-  surfaceRaised: "#F9FAF7",
-  surfaceMuted: "#ECEEE9",
-  border: "#DEE2DE",
-  borderSoft: "#E8EBE6",
-  frame: "#D3D8D3",
-  text: "#171717",
-  textSecondary: "#444141",
-  textMuted: "#6B6B69",
-  accent: "#282834",
-  accentPressed: "#1F1F29",
+  canvas: "transparent",
+  sidebar: "rgba(8,11,20,0.52)",
+  surface: "rgba(12,17,30,0.58)",
+  surfaceRaised: "rgba(246,241,228,0.07)",
+  surfaceMuted: "rgba(246,241,228,0.11)",
+  border: "rgba(254,255,252,0.22)",
+  borderSoft: "rgba(254,255,252,0.12)",
+  frame: "rgba(254,255,252,0.42)",
+  text: "#F6F1E4",
+  textSecondary: "#DEE2DE",
+  textMuted: "rgba(222,226,222,0.62)",
+  accent: "#EEA44E",
+  accentPressed: "#D98C35",
   accentAction: "#41A1CF",
-  accentSoft: "#EAEAF0",
-  figure: "#171717",
+  accentSoft: "rgba(238,164,78,0.14)",
+  figure: "#F6F1E4",
   cyan: "#41A1CF",
-  cyanSoft: "#E7F3F9",
-  green: "#0081C0",
-  greenSoft: "#E3F1F9",
-  amber: "#B8702F",
-  amberSoft: "#FAF1E6",
-  danger: "#C0554A",
-  dangerSoft: "#FBE9E6",
-  white: "#FFFFFF",
-  black: "#171717",
-  scrim: "rgba(31,31,41,0.72)",
-  button: "#1F1F29",
-  buttonText: "#FFFFFF",
-  signal: "#0081C0",
-  funnel0: "#C9DFE9",
-  funnel1: "#8FC4E0",
+  cyanSoft: "rgba(65,161,207,0.14)",
+  green: "#86C6E6",
+  greenSoft: "rgba(65,161,207,0.12)",
+  amber: "#EEA44E",
+  amberSoft: "rgba(238,164,78,0.12)",
+  danger: "#E8826F",
+  dangerSoft: "rgba(232,130,111,0.14)",
+  white: "#FEFFFC",
+  black: "#070A12",
+  scrim: "rgba(7,10,18,0.74)",
+  // 实心主按钮在年志里也是蓝描边胶囊：底只透一点蓝，字和图标是蓝
+  button: "rgba(65,161,207,0.10)",
+  buttonText: "#41A1CF",
+  signal: "#EEA44E",
+  funnel0: "rgba(65,161,207,0.34)",
+  funnel1: "rgba(65,161,207,0.62)",
   vennWatch: "#41A1CF",
-  vennFavorite: "#B8702F",
-  shadow: "rgba(0,0,0,0.08) 0 1px 1px, rgba(0,0,0,0.08) 0 4px 5px",
-  heat: ["#F1F3F0", "#DCECF5", "#A9D3EA", "#6FB8DC", "#41A1CF", "#0081C0"],
-  slices: ["#41A1CF", "#282834", "#8FC7E3", "#7C5468", "#0081C0", "#B4B8B4"],
-  avatars: ["#41A1CF", "#7C5468", "#B8702F", "#282834", "#453E63", "#0081C0"],
-  tints: ["#E8EEF5", "#F0E9EE", "#EAF1F3", "#F6EDE4", "#ECF0EA", "#F2EFE6"],
+  vennFavorite: "#EEA44E",
+  // 入口卡的内发光
+  shadow: "inset 0 0 40px rgba(254,255,252,0.08)",
+  heat: ["rgba(246,241,228,0.06)", "#1D3552", "#2C5F88", "#41A1CF", "#B98545", "#EEA44E"],
+  slices: ["#41A1CF", "#EEA44E", "#F6F1E4", "#2C5F88", "#B8703A", "#8E9CB2"],
+  avatars: ["#41A1CF", "#EEA44E", "#8E9CB2", "#5E9AC4", "#D98C35", "#B7C4D6"],
+  // 封面缺图时的底：几种深浅不同的夜色
+  tints: ["#101A2C", "#191A26", "#132131", "#1F1A1C", "#111C2B", "#1A1D2C"],
+};
+
+// 海报：与 public/story/story-poster.html 同一套——墨黑、新闻纸、信号橙，线一律实心黑
+const poster: WorkspacePalette = {
+  canvas: "#F1EEE6",
+  sidebar: "#F1EEE6",
+  surface: "#FFFFFF",
+  surfaceRaised: "#F7F5EF",
+  surfaceMuted: "#E4E0D4",
+  border: "#0A0A0A",
+  borderSoft: "#0A0A0A",
+  frame: "#0A0A0A",
+  text: "#0A0A0A",
+  textSecondary: "#2A2A2A",
+  textMuted: "#5E5A52",
+  accent: "#FF4A1C",
+  accentPressed: "#E03A10",
+  accentAction: "#FF4A1C",
+  accentSoft: "#FFE2D8",
+  figure: "#0A0A0A",
+  cyan: "#0A0A0A",
+  cyanSoft: "#E4E0D4",
+  green: "#0A0A0A",
+  greenSoft: "#E4E0D4",
+  amber: "#FF4A1C",
+  amberSoft: "#FFE2D8",
+  danger: "#B3001B",
+  dangerSoft: "#F7D9D9",
+  white: "#FFFFFF",
+  black: "#0A0A0A",
+  scrim: "rgba(10,10,10,0.82)",
+  button: "#0A0A0A",
+  buttonText: "#F1EEE6",
+  signal: "#FF4A1C",
+  funnel0: "#E4E0D4",
+  funnel1: "#BDB8AB",
+  vennWatch: "#0A0A0A",
+  vennFavorite: "#FF4A1C",
+  shadow: "none",
+  heat: ["#E9E5DA", "#D6D1C4", "#A9A396", "#5E5A52", "#0A0A0A", "#FF4A1C"],
+  // 第五片原来是浅橙，饼图里看着发粉；海报只用墨黑 / 信号橙 / 灰纸
+  slices: ["#0A0A0A", "#FF4A1C", "#5E5A52", "#BDB8AB", "#E4E0D4", "#2A2A2A"],
+  avatars: ["#0A0A0A", "#FF4A1C", "#2A2A2A", "#5E5A52", "#FF6A42", "#3A3A3A"],
+  // 封面缺图时的底：只用新闻纸 / 纯白 / 灰纸 / 信号橙，出血编号一律墨黑印在上面
+  tints: ["#F1EEE6", "#FFFFFF", "#E4E0D4", "#FF4A1C", "#F1EEE6", "#FFFFFF"],
 };
 
 const archiveFonts = {
@@ -118,13 +171,23 @@ const traceFonts: typeof archiveFonts = {
   setupMono: "'SFMono-Regular', ui-monospace, 'Roboto Mono', monospace",
 };
 
-// 档案页面是直角的；年志的卡片 12–16、按钮是胶囊
+const posterFonts: typeof archiveFonts = {
+  serif: "Anton, 'Noto Sans SC', 'PingFang SC', sans-serif",
+  didot: "Anton, 'Noto Sans SC', 'PingFang SC', sans-serif",
+  body: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
+  sans: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
+  mono: "'JetBrains Mono', ui-monospace, 'Roboto Mono', monospace",
+  setupMono: "'JetBrains Mono', ui-monospace, 'Roboto Mono', monospace",
+};
+
+// 档案页面是直角的；年志跟入口卡：卡片 24、按钮是胶囊
 const archiveRadii = { small: 0, medium: 0, large: 0, pill: 0 };
-const traceRadii: typeof archiveRadii = { small: 8, medium: 12, large: 16, pill: 50 };
+const traceRadii: typeof archiveRadii = { small: 10, medium: 16, large: 24, pill: 50 };
 
 export const palettes: Record<AppStyle, { colors: WorkspacePalette; fonts: typeof archiveFonts; radii: typeof archiveRadii }> = {
   archive: { colors: archive, fonts: archiveFonts, radii: archiveRadii },
   trace: { colors: trace, fonts: traceFonts, radii: traceRadii },
+  poster: { colors: poster, fonts: posterFonts, radii: archiveRadii },
 };
 
 const web = Platform.OS === "web";
@@ -168,7 +231,7 @@ function declarations(style: AppStyle): string {
 
 export function themeCss(): string {
   // 默认内容年志：:root 直接发年志令牌，档案馆靠 data-style 覆盖。
-  return `:root{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}`;
+  return `:root{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\n:root[data-style="poster"]{${declarations("poster")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}\n${posterCss}\n${traceCss}`;
 }
 
 const STYLE_ID = "content-insights-theme";

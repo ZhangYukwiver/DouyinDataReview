@@ -18,76 +18,43 @@
 > [!NOTE]
 > 本机需要已安装 Chrome、Edge、Brave 或 Chromium 中的任意一个（Windows 自带的 Edge 即可；macOS 上也能自动识别 Comet）。工具只读取你本人登录账号在网页端当前可见的记录；增量读取走的是抖音未公开承诺的私有接口，可能失效或触发账号风控，只用于本机个人账号。详见[采集原理与边界](#采集原理与边界)。
 
-<p align="center"><img src="docs/screenshots/report-01.jpg" alt="档案馆 · 入口" width="800" /></p>
+https://github.com/user-attachments/assets/f1f3efef-ad55-4f9c-9240-90a4d468b80c
 
-_本文所有截图均为合成示例数据。_
+<p align="center"><sub>海报风格的年度回顾，从封面一路滚到落款。本文视频和截图都是合成示例数据。</sub></p>
 
 ## 主要功能
 
 - 本地读取观看历史、喜欢、收藏和聊天记录，默认无界面增量更新
-- 聊天实时接收，能直接回复好友，看得到好友在线状态；续火花看板帮你盯着哪段火花今天还没续
-- 内容库按记录浏览，视频可下载到本地并在应用内播放
+- 聊天实时接收，能直接回复好友、看好友在线状态；续火花看板提醒今天还没续的火花
+- 内容库按记录浏览，视频可下载到本地、在应用内播放
 - 持续报告：默认看最近 30 天，和上一段比较变化
-- 年度回顾两套版式：档案馆分页翻阅，内容年志长卷滚动
+- 年度回顾：内容年志和海报两种风格，读的是同一份本地汇总
 - 探索工作台：复用登录会话搜索用户与内容，可点赞、收藏、关注、评论
-- 完整能力见[详细功能清单](#详细功能清单)
 
 ## 年度回顾
 
-两套版式可以在应用内一键切换，默认是**内容年志**：纸面、墨色配信号蓝的长卷，从入口卡穿进去一路往下滚；**档案馆**是深色纸面的分页报告，在应用内像翻档案一样一页页看。
+在「连接与采集」页的「整体风格」里挑一种，再点「打开报告」。风格同时决定采集器页和工作台的样子。
+
+- **内容年志**（默认）：先看到一张入口卡，写着观看、喜欢、收藏、聊天各有多少条；点卡片穿过去，是一卷十章的夜色长卷，天色随章节在五个时辰的油画之间变换。
+- **海报**：墨黑、新闻纸配信号橙的展览海报，十章硬切长卷，就是上面那段视频。
 
 <table>
-  <tr><td align="center" colspan="2"><b>档案馆</b>（应用内 12 章分页翻阅）</td></tr>
-  <tr><td><img src="docs/screenshots/report-02.jpg" alt="档案馆 · 观测凭证" width="400"/></td><td><img src="docs/screenshots/report-03.jpg" alt="档案馆 · 内容足迹" width="400"/></td></tr>
-  <tr><td><img src="docs/screenshots/report-04.jpg" alt="档案馆 · 时间轴" width="400"/></td><td><img src="docs/screenshots/report-05.jpg" alt="档案馆 · 你的节拍" width="400"/></td></tr>
-  <tr><td><img src="docs/screenshots/report-06.jpg" alt="档案馆 · 你如何停留" width="400"/></td><td><img src="docs/screenshots/report-08.jpg" alt="档案馆 · 创作者宇宙" width="400"/></td></tr>
-  <tr><td><img src="docs/screenshots/report-11.jpg" alt="档案馆 · 意外发现" width="400"/></td><td><img src="docs/screenshots/report-12.jpg" alt="档案馆 · 习惯印章" width="400"/></td></tr>
-  <tr><td align="center" colspan="2"><b>内容年志</b>（先在入口卡看到当前观看、喜欢、收藏和聊天各有多少条，穿过卡片就进逐章往下滚的长卷）</td></tr>
-  <tr><td align="center" colspan="2"><img src="docs/screenshots/story-entry.jpg" alt="内容年志 · 入口卡" width="800"/></td></tr>
-  <tr><td align="center" colspan="2"><img src="docs/screenshots/story-hero.jpg" alt="内容年志 · 卷首" width="800"/></td></tr>
-  <tr><td><img src="docs/screenshots/story-sample.jpg" alt="内容年志 · 样本" width="400"/></td><td><img src="docs/screenshots/story-time.jpg" alt="内容年志 · 时间" width="400"/></td></tr>
-  <tr><td><img src="docs/screenshots/story-kept.jpg" alt="内容年志 · 留下" width="400"/></td><td><img src="docs/screenshots/story-mix.jpg" alt="内容年志 · 组成" width="400"/></td></tr>
-  <tr><td><img src="docs/screenshots/story-roll.jpg" alt="内容年志 · 高频词条长卷" width="400"/></td><td><img src="docs/screenshots/story-echo.jpg" alt="内容年志 · 聊天回声" width="400"/></td></tr>
-  <tr><td><img src="docs/screenshots/story-evidence.jpg" alt="内容年志 · 台账与边界" width="400"/></td><td><img src="docs/screenshots/story-signature.jpg" alt="内容年志 · 落款" width="400"/></td></tr>
+  <tr><td><img src="docs/screenshots/story-entry.jpg" alt="内容年志 · 入口卡" width="400"/></td><td><img src="docs/screenshots/trace-arrive.jpg" alt="内容年志 · 抵达" width="400"/></td></tr>
+  <tr><td><img src="docs/screenshots/trace-time.jpg" alt="内容年志 · 二十四小时的天色" width="400"/></td><td><img src="docs/screenshots/trace-kept.jpg" alt="内容年志 · 三张叠在一起的卡" width="400"/></td></tr>
+  <tr><td><img src="docs/screenshots/trace-taste.jpg" alt="内容年志 · 被光照到的名字" width="400"/></td><td><img src="docs/screenshots/trace-sign.jpg" alt="内容年志 · 落款" width="400"/></td></tr>
 </table>
 
-| 档案馆（12 章） | 内容年志（9 幕） |
-| --- | --- |
-| 01 入口 · 02 观测凭证 | 卷首：把这一年的痕迹，摊开成一卷 |
-| 03 内容足迹 | 样本：一份样本，四种笔迹 |
-| 04 时间轴 | 时间：常来的日子，常来的时辰 |
-| 05 你的节拍 | 留下：三个环的交集，和看完的深度 |
-| 06 你如何停留 | 组成：话题、来路，与质地 |
-| 07 内容回声 · 08 创作者宇宙 | 长卷：高频词条 |
-| 09 聊天回声 · 10 交叉洞察 | 回声：九种消息形态，两种边界 |
-| 11 意外发现 | 证据：台账与边界 |
-| 12 习惯印章 | 落款：一个正在成形的自己 |
-
-> 报告只使用记录中的显式作者、话题、音乐、时长和平台互动字段，不调用外部 AI 推测兴趣，也不做心理诊断。视频侧的「词条」只取显式话题标签，不做分词；聊天高频词用浏览器内置的 `Intl.Segmenter` 分词并先剔除平台模板消息，群聊正文不参与。
-
-## 界面预览
+> 报告只用记录里明确带着的作者、话题、音乐、时长和互动数，不接外部 AI 推测兴趣，也不做心理诊断。视频的「词条」只取显式话题标签；聊天高频词用浏览器内置的 `Intl.Segmenter` 分词，先剔除平台模板消息，群聊正文不参与。
 
 <details>
-<summary>连接与采集、内容库和聊天页，适合想先看看工作台长什么样的人查阅（点击展开）</summary>
+<summary>工作台截图：连接与采集、持续报告、内容库、聊天（点击展开）</summary>
 
 <table>
-  <tr><td align="center" colspan="2"><b>连接与采集</b>（点「连接采集器」后自动取配对码，不用手抄；在这里选整体风格，左为内容年志，右为档案馆）</td></tr>
-  <tr><td><img src="docs/screenshots/setup-trace.png" alt="连接与采集 · 内容年志" width="400"/></td><td><img src="docs/screenshots/setup-archive.png" alt="连接与采集 · 档案馆" width="400"/></td></tr>
-  <tr><td align="center" colspan="2"><b>内容库</b>（观看历史、喜欢、收藏按记录翻看；卡片上的「下载」按钮把视频存到本地，之后在应用内直接播）</td></tr>
-  <tr><td colspan="2" align="center"><img src="docs/screenshots/records-archive.png" alt="内容库" width="800"/></td></tr>
-  <tr><td align="center" colspan="2"><b>聊天</b>（按好友会话看本地保存的消息，新消息实时进来，能直接回复；列表头的火苗按钮打开续火花看板；群聊只给统计摘要）</td></tr>
-  <tr><td colspan="2" align="center"><img src="docs/screenshots/chat-archive.png" alt="聊天" width="800"/></td></tr>
+  <tr><td><img src="docs/screenshots/setup-trace.jpg" alt="连接与采集" width="400"/></td><td><img src="docs/screenshots/dashboard-trace.jpg" alt="持续报告" width="400"/></td></tr>
+  <tr><td><img src="docs/screenshots/records-trace.jpg" alt="内容库" width="400"/></td><td><img src="docs/screenshots/chat-trace.jpg" alt="聊天" width="400"/></td></tr>
 </table>
 
-</details>
-
-<details>
-<summary>持续报告，适合想看最近 30 天怎么和上一段比较的人查阅（点击展开）</summary>
-
-<table>
-  <tr><td align="center" colspan="2"><b>持续报告</b>（不用选年份，打开就是最近 30 天和上一段的对比；采集结束后自动换成新数据。左为档案馆，右为内容年志）</td></tr>
-  <tr><td><img src="docs/screenshots/dashboard-archive.png" alt="持续报告 · 档案馆" width="400"/></td><td><img src="docs/screenshots/dashboard-trace.png" alt="持续报告 · 内容年志" width="400"/></td></tr>
-</table>
+连接与采集页点「连接采集器」会自动取配对码；内容库的卡片可以下载视频、在应用内播放；聊天页的新消息实时进来，列表头的火苗按钮打开续火花看板，群聊只给统计摘要。
 
 </details>
 
@@ -108,11 +75,11 @@ _本文所有截图均为合成示例数据。_
 
 2. 启动「内容数据工作台」，点击「连接采集器」。应用会从本机采集器自动取一次性配对码完成连接，之后默认在前台自动读取新记录，也可以手动点「增量读取」。
 3. 首次连接时独立浏览器还没登录，会自动开始一次完整读取并弹出浏览器窗口，在里面登录自己的抖音账号；登录后自动继续，之后整理聊天历史并保持实时接收。
-4. 进入内容库，在观看历史、喜欢、收藏、聊天和持续报告之间切换；在「03 · 整体风格」里选档案馆或内容年志，点「打开报告」。
+4. 进入内容库，在观看历史、喜欢、收藏、聊天和持续报告之间切换；在「整体风格」里选内容年志或海报，点「打开报告」看年度回顾。
 
 > 安装包只含应用代码、Web 页面和已校验的签名器，不含本地记录、登录状态或浏览器配置。采集记录保存在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录，升级不会覆盖。
 >
-> 桌面版会在启动后检查 GitHub Release。发现新版本时可在「连接与采集」页下载，下载完成后点击「重启并安装」；采集进行中不会自动重启。发布新版本时需要同时上传 electron-builder 生成的 `latest.yml` / `latest-mac.yml`、对应安装包和 `.blockmap` / macOS `.zip`，否则旧版本无法接收更新。
+> 桌面版启动后会检查 GitHub Release，有新版本时在「连接与采集」页下载，下载完点「重启并安装」；采集进行中不会自动重启。
 
 想看每个模块能做什么，去[详细功能清单](#详细功能清单)；出了问题，先看[常见问题](#常见问题)；要从源码跑、自己打包或用手机连，看[面向开发者](#面向开发者)。
 
@@ -130,8 +97,8 @@ _本文所有截图均为合成示例数据。_
 | **探索** | 复用采集器已有的登录会话搜索用户与内容，不额外启动浏览器；已就绪的手动监听和聊天接收可以和搜索并行。看主页、作品详情和评论，可点赞、收藏、关注、评论，并在应用内播放 |
 | **内容库** | 观看历史 / 喜欢 / 收藏 / 聊天 / 持续报告五个页面；采集进行中也能打开，结束后自动换成新数据。记录卡片可把视频下载到本地并在应用内播放；桌面 Web 里点「批量下载」可在网格或列表多选、全选，再下载并保存为 ZIP（每批最多 50 个、合计 500 MB） |
 | **持续报告** | 不用先选年份，也不要求每条记录都有行为时间；默认观察最近 30 天，样本不足时回退 90 天，并和上一段比较变化 |
-| **年度回顾** | 档案馆：深色纸面的应用内 12 章分页报告；内容年志：穿卡入口 + 逐章滚动的长卷，各章按写入浏览器本地的汇总快照渲染 |
-| **整体风格** | 档案馆 / 内容年志一键切换，同时决定采集器页、内容库和报告本体的配色、字体与圆角；选择保存在浏览器本地 |
+| **年度回顾** | 内容年志：穿卡入口 + 十章夜色长卷；海报：十章黑橙硬切长卷。两种都按写入浏览器本地的同一份汇总快照渲染，没有数据时显示演示样本 |
+| **整体风格** | 一键切换，同时决定采集器页、内容库和报告本体的配色、字体与版式；选择保存在浏览器本地 |
 | **切换账号** | 清除独立浏览器里的抖音会话和本地记录，然后等你登录另一个账号 |
 | **导出与导入** | 连接与采集页可以把采集器里的观看、喜欢、收藏和聊天导出成一个 JSON 文件。导入这份文件或官方个人信息下载的 JSON / ZIP 后，报告和工作台先用文件里的数据，点「移除」就换回采集器；本应用导出的文件还能「并入本机记录」，只补本机没有的记录，之后增量读取接着往上加，换电脑或清过记录后可以这样恢复 |
 | **手机连接** | 电脑端启用 LAN 模式后，同一可信局域网内的手机可以用一次性配对码连接 |
@@ -148,6 +115,9 @@ _本文所有截图均为合成示例数据。_
 
 第一次使用或浏览器标识变化时，增量配置还没有建立，应用会自动回退一次完整读取来完成登录并捕获页面请求模板；这一次可能打开独立浏览器。配置建立后，增量读取和前台自动读取均保持无头运行；完整读取失败不会再次自动弹窗。
 
+<details>
+<summary>时间字段口径与各模块细节（点击展开）</summary>
+
 ### 时间字段口径
 
 观看日期优先读取响应中的逐作品 `aweme_date` 映射并兼容 `history_info.view_time`；喜欢和收藏日期统一读取 `play_progress.last_modified_time`；两者缺失时保持为空，不会用发布时间或采集时间替代。观看进度优先用 `play_progress.play_progress` 与视频时长计算，采集器不会按进度阈值丢弃可识别记录。
@@ -160,6 +130,8 @@ _本文所有截图均为合成示例数据。_
 - 探索：读取可以取消，超时会停止；需要登录或验证时，会提示你去手动监听里处理。
 - 批量下载：可以停止后续下载、继续未完成的和重试失败项；关闭前需要先保存 ZIP。
 
+</details>
+
 ### 当前边界
 
 - 增量读取走的是未经抖音公开文档承诺的私有接口，可能失效或触发账号风控；当前仅用于本机个人账号，不应作为公开、多用户或商业服务。
@@ -169,6 +141,9 @@ _本文所有截图均为合成示例数据。_
 - Web 端提供持续报告、记录、聊天和数据源页面；手机原生端暂时只保留记录和数据源。
 
 ## 本地数据与接口
+
+<details>
+<summary>数据放在哪、本地接口和不落盘的内容（点击展开）</summary>
 
 ### 数据放在哪
 
@@ -206,6 +181,8 @@ _本文所有截图均为合成示例数据。_
 
 - 12 小时会话 Token 只保存在应用内存和请求头中，不进入 URL 或本地存储。
 - 原始响应、请求头、Cookie、签名和完整诊断 URL 不会写入记录文件。
+
+</details>
 
 ## 常见问题
 

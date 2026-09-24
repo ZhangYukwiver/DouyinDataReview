@@ -60,7 +60,7 @@ import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../
 import { ReportDashboard } from "./ReportDashboard";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
-import { ease, easeImage, fx, useCountUp, useDraw, useInView } from "./motion";
+import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
 export type WorkspaceViewKey = PersonalRecordType | "summary" | "highlights" | "chat" | "explore";
 
@@ -159,8 +159,9 @@ export function ContentWorkspace({
 }: ContentWorkspaceProps) {
   const { width } = useWindowDimensions();
   const mobile = width < 720;
-  const trace = appStyle === "trace";
-  const replayLabel = trace ? "重读内容年志" : "重看内容故事";
+  // 年志与海报的报告都是 /story 下的静态页，工作台不铺档案馆的纸纹
+  const trace = appStyle !== "archive";
+  const replayLabel = appStyle === "poster" ? "重看年度海报" : trace ? "重读内容年志" : "重看内容故事";
   const reportView = isReportView(activeView);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // 持续报告首次打开时自动收起；用户仍可用左上角按钮临时展开。
@@ -225,14 +226,14 @@ export function ContentWorkspace({
 
   return (
     <View {...fx({ motion: "fade" })} testID="content-workspace" style={[styles.root, mobile && styles.rootMobile]}>
-      <View style={[styles.stage, mobile && styles.stageMobile]}>
+      <View {...ws("w-stage")} style={[styles.stage, mobile && styles.stageMobile]}>
       {!mobile ? <SidebarToggle collapsed={compactSidebar} onPress={toggleSidebar} /> : null}
       {!mobile ? (
-        <View testID="workspace-sidebar" style={[styles.sidebar, collapseWidth, compactSidebar && styles.sidebarCompact]}>
+        <View {...ws("w-side g-ink")} testID="workspace-sidebar" style={[styles.sidebar, collapseWidth, compactSidebar && styles.sidebarCompact]}>
           <View style={styles.sidebarBody}>
           <View accessibilityRole="tablist" style={styles.sidebarNav}>
             {Platform.OS === "web" && navTops[activeView] !== undefined ? (
-              <View pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[activeView]! + 14, backgroundColor: currentNav.accent }]} />
+              <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[activeView]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
             {navItems.map((item) => (
               <NavButton
@@ -252,7 +253,7 @@ export function ContentWorkspace({
             <Pressable
               accessibilityLabel={replayLabel}
               accessibilityRole="button"
-              {...fx({ hover: "tint" })}
+              {...fx({ hover: "tint", ws: "w-nav w-replay" })}
               disabled={!report || report.status === "empty"}
               onPress={onReplayStory}
               style={({ pressed }) => [
@@ -268,7 +269,7 @@ export function ContentWorkspace({
               </View>
             </Pressable>
             <Pressable
-              {...fx({ hover: "raise" })}
+              {...fx({ hover: "raise", ws: "btn w-settings" })}
               accessibilityLabel="打开连接与采集设置"
               accessibilityRole="button"
               onPress={onOpenSettings}
@@ -282,17 +283,18 @@ export function ContentWorkspace({
       ) : null}
 
       <View style={[styles.main, mobile && styles.mainMobile]}>
-        <View testID="workspace-topbar" style={[styles.topbar, mobile && styles.topbarMobile]}>
+        <View {...ws("w-top")} testID="workspace-topbar" style={[styles.topbar, mobile && styles.topbarMobile]}>
           <View style={styles.topbarHeading}>
-            <Text style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : trace ? "CONTENT STREAMS" : "CONTENT ARCHIVE"}</Text>
+            <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : trace ? "CONTENT STREAMS" : "CONTENT ARCHIVE"}</Text>
             <View style={styles.topbarTitleRow}>
-              <Text numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{currentNav.label}</Text>
-              {activeView !== "explore" ? <Text style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
+              <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{currentNav.label}</Text>
+              {activeView !== "explore" ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
             </View>
           </View>
           <View style={styles.topbarActions}>
             {mobile ? (
               <Pressable
+                {...ws("w-mbtn")}
                 accessibilityLabel={replayLabel}
                 accessibilityRole="button"
                 onPress={onReplayStory}
@@ -305,7 +307,7 @@ export function ContentWorkspace({
               accessibilityLabel={privacy ? "关闭隐私模式" : "开启隐私模式"}
               accessibilityRole="switch"
               accessibilityState={{ checked: privacy }}
-              {...fx({ hover: "raise" })}
+              {...fx({ hover: "raise", ws: privacy ? "btn square on" : "btn square" })}
               onPress={onTogglePrivacy}
               style={({ pressed }) => [styles.toolbarButton, privacy && styles.toolbarButtonActive, pressed && styles.buttonPressed, webPointer]}
             >
@@ -315,7 +317,7 @@ export function ContentWorkspace({
               accessibilityLabel="重新增量读取记录"
               accessibilityRole="button"
               disabled={busy}
-              {...fx({ hover: "raise" })}
+              {...fx({ hover: "raise", ws: "btn square" })}
               onPress={onSync}
               style={({ pressed }) => [styles.toolbarButton, busy && styles.buttonDisabled, pressed && styles.buttonPressed, webPointer]}
             >
@@ -323,6 +325,7 @@ export function ContentWorkspace({
             </Pressable> : null}
             {mobile ? (
               <Pressable
+                {...ws("w-mbtn")}
                 accessibilityLabel="打开连接与采集设置"
                 accessibilityRole="button"
                 onPress={onOpenSettings}
@@ -337,7 +340,7 @@ export function ContentWorkspace({
         {reportView && reportUpdateNotice ? (
           <Pressable
             accessibilityRole="button"
-            {...fx({ motion: "rise" })}
+            {...fx({ motion: "rise", ws: "stamp-bar" })}
             accessibilityLabel="报告有更新，关闭提示"
             onPress={() => setReportUpdateNotice(false)}
             style={({ pressed }) => [styles.reportUpdateNotice, pressed && styles.buttonPressed, webPointer]}
@@ -365,7 +368,7 @@ export function ContentWorkspace({
         ) : activeView === "summary" ? (
           model.status === "empty"
             ? <SummaryEmpty />
-            : <ReportDashboard mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} width={mainWidth} />
+            : <ReportDashboard mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} square={appStyle === "poster"} width={mainWidth} />
         ) : activeView === "highlights" ? (
           livingReport
             ? <LivingHighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={livingReport} />
@@ -409,7 +412,7 @@ export function ContentWorkspace({
       ) : null}
 
       {mobile ? (
-        <View accessibilityRole="tablist" style={styles.bottomNav}>
+        <View {...ws("w-bottom g-ink")} accessibilityRole="tablist" style={styles.bottomNav}>
           {Platform.OS === "web" ? (
             <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(navItems.findIndex((item) => item.id === activeView) + 0.5) / navItems.length * 100}%`, backgroundColor: currentNav.accent }]} />
           ) : null}
@@ -443,7 +446,7 @@ function ActiveDays({ compact, days, drawn, viewRef, year }: { compact: boolean;
   const circumference = 2 * Math.PI * radius;
   const filled = circumference * Math.min(1, days / 365) * drawn;
   return (
-    <View ref={viewRef} style={styles.activeDays}>
+    <View {...ws("w-days")} ref={viewRef} style={styles.activeDays}>
       <View style={styles.navIconWrap}>
         <Svg height={34} viewBox="0 0 34 34" width={34}>
           <Circle cx={17} cy={17} fill="none" r={radius} stroke={color.border} strokeWidth={3} />
@@ -463,6 +466,7 @@ function SidebarToggle({ collapsed, onPress }: { collapsed: boolean; onPress: ()
   const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
   return (
     <Pressable
+      {...ws("btn square w-toggle g-ink")}
       testID="sidebar-collapse-toggle"
       accessibilityLabel={collapsed ? "展开侧栏" : "收起侧栏"}
       accessibilityRole="button"
@@ -494,7 +498,7 @@ function NavButton({
   const Icon = item.icon;
   return (
     <Pressable
-      {...fx({ hover: "tint" })}
+      {...fx({ hover: "tint", ws: selected ? "w-nav on" : "w-nav" })}
       testID={`workspace-nav-${item.id}`}
       accessibilityLabel={item.id === "explore" ? item.label : `${item.label}，${count} 条`}
       accessibilityRole="tab"
@@ -508,12 +512,12 @@ function NavButton({
         webPointer,
       ]}
     >
-      <View style={[styles.navIconWrap, selected && { backgroundColor: alpha(item.accent, 0.13) }]}>
+      <View {...ws("w-navicon")} style={[styles.navIconWrap, selected && { backgroundColor: alpha(item.accent, 0.13) }]}>
         <Icon color={selected ? item.accent : color.textMuted} size={20} strokeWidth={selected ? 2.5 : 2} />
       </View>
       <View style={[styles.navMeta, collapseCopy, compact && styles.sidebarCopyHidden]}>
-        <Text numberOfLines={1} style={[styles.navLabel, selected && styles.navLabelSelected]}>{item.label}</Text>
-        {item.id !== "explore" ? <Text style={[styles.navCount, selected && { color: item.accent }]}>{formatCompactNumber(count)}</Text> : null}
+        <Text {...ws("w-navlabel")} numberOfLines={1} style={[styles.navLabel, selected && styles.navLabelSelected]}>{item.label}</Text>
+        {item.id !== "explore" ? <Text {...ws("mono w-navcount")} style={[styles.navCount, selected && { color: item.accent }]}>{formatCompactNumber(count)}</Text> : null}
       </View>
       {selected && Platform.OS !== "web" ? <View style={[styles.navIndicator, { backgroundColor: item.accent }]} /> : null}
     </Pressable>
@@ -587,14 +591,14 @@ function RecordsGallery({
 
   return (
     <>
-    {selecting ? <View style={styles.batchToolbar}>
+    {selecting ? <View {...ws("w-batch")} style={styles.batchToolbar}>
       <Text style={styles.batchMeta}>已选 {chosen.length} / {candidates.length} 个可下载视频</Text>
       <View style={styles.batchActions}>
-        <Pressable accessibilityRole="button" onPress={() => setSelected(new Set(candidates.slice(0, MAX_BATCH_VIDEOS).map((record) => videoDownloadKey(record)!)))} style={styles.batchButton}>
+        <Pressable {...ws("btn")} accessibilityRole="button" onPress={() => setSelected(new Set(candidates.slice(0, MAX_BATCH_VIDEOS).map((record) => videoDownloadKey(record)!)))} style={styles.batchButton}>
           <Text style={styles.batchButtonText}>{candidates.length > MAX_BATCH_VIDEOS ? "选择前 50 个" : "全选"}</Text>
         </Pressable>
-        <Pressable accessibilityRole="button" onPress={() => setSelected(new Set())} style={styles.batchButton}><Text style={styles.batchButtonText}>清空选择</Text></Pressable>
-        <Pressable accessibilityRole="button" accessibilityState={{ disabled: chosen.length === 0 }} disabled={chosen.length === 0}
+        <Pressable {...ws("btn")} accessibilityRole="button" onPress={() => setSelected(new Set())} style={styles.batchButton}><Text style={styles.batchButtonText}>清空选择</Text></Pressable>
+        <Pressable {...ws("btn-solid")} accessibilityRole="button" accessibilityState={{ disabled: chosen.length === 0 }} disabled={chosen.length === 0}
           onPress={() => { if (!commentsConnection) { onOpenSettings(); return; } setPlayingRecord(null); setBatchRecords(chosen); }}
           style={[styles.batchButton, styles.batchPrimary, chosen.length === 0 && styles.buttonDisabled]}>
           <Download size={14} color={color.buttonText} /><Text style={styles.batchPrimaryText}>下载所选（{chosen.length}）</Text>
@@ -610,17 +614,18 @@ function RecordsGallery({
       data={sortedRecords}
       keyExtractor={(item) => item.id}
       ListHeaderComponent={(
-        <View {...fx({ motion: "rise" })} style={styles.galleryHeader}>
+        <View {...fx({ motion: "rise", ws: "w-ghead" })} style={styles.galleryHeader}>
           <View style={styles.galleryHeaderCopy}>
-            <Text style={styles.galleryTitle}>{label}</Text>
-            <Text style={styles.galleryMeta}>{sourceLabel} · {status?.message ?? `${records.length} 条本地记录`}</Text>
+            <Text {...ws("w-gtitle")} style={styles.galleryTitle}>{label}</Text>
+            <Text {...ws("mono")} style={styles.galleryMeta}>{sourceLabel} · {status?.message ?? `${records.length} 条本地记录`}</Text>
           </View>
-          {Platform.OS === "web" && !privacy && candidates.length > 0 ? <Pressable accessibilityRole="button"
+          {Platform.OS === "web" && !privacy && candidates.length > 0 ? <Pressable {...ws("btn")} accessibilityRole="button"
             onPress={() => { setSelecting(!selecting); setSelected(new Set()); }} style={styles.batchButton}>
             <Download size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{selecting ? "退出多选" : "批量下载"}</Text>
           </Pressable> : null}
-          <View accessibilityRole="tablist" style={styles.layoutSwitch}>
+          <View {...ws("w-switch")} accessibilityRole="tablist" style={styles.layoutSwitch}>
             <Pressable
+              {...ws("w-lay", layout === "grid" && "on")}
               accessibilityLabel="网格视图"
               accessibilityRole="tab"
               accessibilityState={{ selected: layout === "grid" }}
@@ -630,6 +635,7 @@ function RecordsGallery({
               <LayoutGrid color={layout === "grid" ? color.text : color.textMuted} size={18} />
             </Pressable>
             <Pressable
+              {...ws("w-lay", layout === "list" && "on")}
               accessibilityLabel="列表视图"
               accessibilityRole="tab"
               accessibilityState={{ selected: layout === "list" }}
@@ -643,10 +649,11 @@ function RecordsGallery({
       )}
       ListEmptyComponent={(
         <View {...fx({ motion: "rise" })} style={styles.emptyState}>
-          <View style={styles.emptyIcon}><Play color={color.cyan} fill={color.cyan} size={24} /></View>
-          <Text style={styles.emptyTitle}>{label}还没有内容</Text>
+          <View {...ws("w-emptyicon")} style={styles.emptyIcon}><Play color={color.cyan} fill={color.cyan} size={24} /></View>
+          <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>{label}还没有内容</Text>
           <Text style={styles.emptyDetail}>返回连接与采集页面读取本地记录。</Text>
           <Pressable
+            {...ws("btn-solid")}
             accessibilityRole="button"
             onPress={onOpenSettings}
             style={({ pressed }) => [styles.emptyButton, pressed && styles.buttonPressed, webPointer]}
@@ -682,7 +689,7 @@ function RecordsGallery({
 type RecordSelection = { checked: boolean; disabled: boolean; toggle: () => void };
 
 function SelectionMark({ selection }: { selection: RecordSelection }) {
-  return <View pointerEvents="none" style={[styles.selectionMark, selection.checked && styles.selectionChecked, selection.disabled && styles.buttonDisabled]}>
+  return <View {...ws("w-check", selection.checked && "on")} pointerEvents="none" style={[styles.selectionMark, selection.checked && styles.selectionChecked, selection.disabled && styles.buttonDisabled]}>
     {selection.checked ? <Check size={16} color={color.buttonText} /> : null}
   </View>;
 }
@@ -747,7 +754,7 @@ function RecordTile({
   }, []);
   return (
     <View
-      {...fx({ reveal: inView, hover: "card" })}
+      {...fx({ reveal: inView, hover: "card", ws: "w-tile" })}
       ref={tileRef}
       testID={`record-tile-${record.id}`}
       onFocus={markFocused}
@@ -770,7 +777,7 @@ function RecordTile({
         onPress={() => selection ? selection.toggle() : record.url && void onOpenRecord(record.url)}
         style={({ pressed }) => [styles.tileMain, pressed && styles.tilePressed, record.url && webPointer]}
       >
-        <View style={[styles.tileVisual, { backgroundColor: fallbackColor(record.id) }]}>
+        <View {...ws("w-cover")} style={[styles.tileVisual, { backgroundColor: fallbackColor(record.id) }]}>
           {selection ? <View style={styles.tileSelection}><SelectionMark selection={selection} /></View> : null}
           {imageAvailable ? (
             <ImageBackground
@@ -783,32 +790,32 @@ function RecordTile({
             />
           ) : (
             <View style={styles.fallbackVisual}>
-              <View style={[styles.fallbackDisc, { borderColor: accent }]}><Music2 color={accent} size={26} strokeWidth={1.8} /></View>
-              <Text style={styles.fallbackIndex}>{String(hashString(record.id) % 99 + 1).padStart(2, "0")}</Text>
+              <View {...ws("w-disc")} style={[styles.fallbackDisc, { borderColor: accent }]}><Music2 color={accent} size={26} strokeWidth={1.8} /></View>
+              <Text {...ws("w-bignum")} style={styles.fallbackIndex}>{String(hashString(record.id) % 99 + 1).padStart(2, "0")}</Text>
             </View>
           )}
           <View style={styles.tileTopMeta}>
             <View style={[styles.typeBadge, { backgroundColor: accent }]} />
-            {record.durationSeconds ? <Text style={styles.durationBadge}>{formatDuration(record.durationSeconds)}</Text> : null}
+            {record.durationSeconds ? <Text {...ws("stamp")} style={styles.durationBadge}>{formatDuration(record.durationSeconds)}</Text> : null}
           </View>
-          <View style={styles.tileBottomMeta}>
+          <View {...ws("w-tilebar")} style={styles.tileBottomMeta}>
             {record.watchProgress?.percent !== undefined && record.watchProgress.percent !== null ? (
               <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.max(2, Math.min(100, record.watchProgress.percent))}%`, backgroundColor: accent }]} /></View>
             ) : null}
             <View style={styles.tilePlayMeta}>
               <Play color={color.white} fill={color.white} size={12} />
-              <Text style={styles.tilePlayText}>{record.stats?.playCount ? formatCompactNumber(record.stats.playCount) : "记录"}</Text>
+              <Text {...ws("mono")} style={styles.tilePlayText}>{record.stats?.playCount ? formatCompactNumber(record.stats.playCount) : "记录"}</Text>
             </View>
           </View>
         </View>
-        <Text numberOfLines={2} style={styles.tileTitle}>{privacy ? "内容标题已隐藏" : record.title}</Text>
+        <Text {...ws("w-tiletitle")} numberOfLines={2} style={styles.tileTitle}>{privacy ? "内容标题已隐藏" : record.title}</Text>
         <View style={styles.tileMetaRow}>
           <Text numberOfLines={1} style={styles.tileAuthor}>{privacy ? "创作者已隐藏" : record.author ?? "未知创作者"}</Text>
-          <Text style={styles.tileDate}>{formatShortDate(record.occurredAt)}</Text>
+          <Text {...ws("mono")} style={styles.tileDate}>{formatShortDate(record.occurredAt)}</Text>
         </View>
       </Pressable>
       {showActions ? (
-        <View {...fx({ motion: "fade" })} pointerEvents="auto" style={styles.tileActionsOverlay}>
+        <View {...fx({ motion: "fade", ws: "w-overlay" })} pointerEvents="auto" style={styles.tileActionsOverlay}>
           {onPlayRecord ? (
             <Pressable
               testID="record-tile-action"
@@ -817,6 +824,7 @@ function RecordTile({
               onFocus={markFocused}
               onBlur={checkFocusBoundary}
               onPress={() => onPlayRecord(record)}
+              {...ws("w-play")}
               style={({ pressed }) => [styles.tilePlayButton, pressed && styles.tileActionPressed, webPointer]}
             >
               <Play color={color.white} fill={color.white} size={28} style={{ marginLeft: 3 }} />
@@ -830,6 +838,7 @@ function RecordTile({
               onFocus={markFocused}
               onBlur={checkFocusBoundary}
               onPress={() => record.url && void onOpenRecord(record.url)}
+              {...ws("btn-sig w-tileaction")}
               style={({ pressed }) => [styles.tileAction, pressed && styles.tileActionPressed, webPointer]}
             >
               <ArrowUpRight color={color.white} size={14} strokeWidth={2.2} />
@@ -844,6 +853,7 @@ function RecordTile({
               onFocus={markFocused}
               onBlur={checkFocusBoundary}
               onPress={() => onDownloadRecord && void onDownloadRecord(record)}
+              {...ws("btn-sig w-tileaction")}
               style={({ pressed }) => [styles.tileAction, (downloading || !onDownloadRecord) && styles.tileActionDisabled, pressed && styles.tileActionPressed, webPointer]}
             >
               {downloading ? <ActivityIndicator color={color.white} size="small" /> : <Download color={color.white} size={14} strokeWidth={2.2} />}
@@ -868,22 +878,22 @@ function RecordRow({ record, type, privacy, onOpenRecord, selection }: { record:
       aria-checked={selection?.checked}
       disabled={selection ? selection.disabled : !record.url}
       onPress={() => selection ? selection.toggle() : record.url && void onOpenRecord(record.url)}
-      {...fx({ hover: "tint" })}
+      {...fx({ hover: "tint", ws: "w-row" })}
       style={({ pressed }) => [styles.recordRow, pressed && styles.recordRowPressed, record.url && webPointer]}
     >
       {selection ? <SelectionMark selection={selection} /> : null}
-      <View style={[styles.rowThumb, { backgroundColor: fallbackColor(record.id) }]}>
+      <View {...ws("w-thumb")} style={[styles.rowThumb, { backgroundColor: fallbackColor(record.id) }]}>
         {imageAvailable ? (
           <ImageBackground onError={() => setImageFailed(true)} resizeMode="cover" source={{ uri: record.coverUrl! }} style={styles.rowThumbImage} />
         ) : <Music2 color={accent} size={22} />}
       </View>
       <View style={styles.rowCopy}>
-        <Text numberOfLines={2} style={styles.rowTitle}>{privacy ? "内容标题已隐藏" : record.title}</Text>
+        <Text {...ws("w-rowtitle")} numberOfLines={2} style={styles.rowTitle}>{privacy ? "内容标题已隐藏" : record.title}</Text>
         <Text numberOfLines={1} style={styles.rowAuthor}>{privacy ? "创作者已隐藏" : record.author ?? "未知创作者"}</Text>
         <View style={styles.rowMeta}>
-          <Text style={styles.rowMetaText}>{formatShortDate(record.occurredAt)}</Text>
-          {record.durationSeconds ? <Text style={styles.rowMetaText}>{formatDuration(record.durationSeconds)}</Text> : null}
-          {record.topics?.[0] ? <Text style={[styles.rowTopic, { color: accent }]}>#{privacy ? "话题" : record.topics[0]}</Text> : null}
+          <Text {...ws("mono")} style={styles.rowMetaText}>{formatShortDate(record.occurredAt)}</Text>
+          {record.durationSeconds ? <Text {...ws("mono")} style={styles.rowMetaText}>{formatDuration(record.durationSeconds)}</Text> : null}
+          {record.topics?.[0] ? <Text {...ws("stamp-sig")} style={[styles.rowTopic, { color: accent }]}>#{privacy ? "话题" : record.topics[0]}</Text> : null}
         </View>
       </View>
       {record.url && !selection ? <ArrowUpRight color={color.textMuted} size={19} /> : null}
@@ -917,21 +927,21 @@ function LivingHighlightsView({
       contentContainerStyle={[styles.highlightsContent, mobile && styles.summaryContentMobile]}
       showsVerticalScrollIndicator={false}
     >
-      <View {...fx({ motion: "rise" })} style={[styles.highlightsHeader, mobile && styles.highlightsHeaderMobile]}>
+      <View {...fx({ motion: "rise", ws: "w-hhead" })} style={[styles.highlightsHeader, mobile && styles.highlightsHeaderMobile]}>
         <View style={styles.dashboardHeaderCopy}>
-          <Text style={styles.summaryEyebrow}>CHANGES · {formatLivingFreshness(report.freshness)}</Text>
-          <Text style={[styles.summaryTitle, mobile && styles.summaryTitleMobile]}>变化线索</Text>
+          <Text {...ws("stamp-sig")} style={styles.summaryEyebrow}>CHANGES · {formatLivingFreshness(report.freshness)}</Text>
+          <Text {...ws("w-htitle")} style={[styles.summaryTitle, mobile && styles.summaryTitleMobile]}>变化线索</Text>
           <Text style={styles.summaryLead}>把最近发生的变化、稳定倾向和真实证据放在同一条线上。</Text>
         </View>
-        <View style={[styles.highlightCountBlock, mobile && styles.dashboardPeriodMobile]}>
-          <Text style={styles.highlightCountValue}>{chapters.filter((chapter) => chapter.status === "ok").length}</Text>
+        <View {...ws("w-hcountblock")} style={[styles.highlightCountBlock, mobile && styles.dashboardPeriodMobile]}>
+          <Text {...ws("w-hcount")} style={styles.highlightCountValue}>{chapters.filter((chapter) => chapter.status === "ok").length}</Text>
           <Text style={styles.dashboardPeriodMeta}>项当前线索</Text>
         </View>
       </View>
       <View style={styles.livingChangeList}>
         {chapters.map((chapter, index) => <LivingChangeCard chapter={chapter} index={index} key={chapter.id} onOpenRecord={onOpenRecord} privacy={privacy} />)}
       </View>
-      <View style={styles.highlightsFootnote}>
+      <View {...ws("w-foot g-ink")} style={styles.highlightsFootnote}>
         <Sparkles color={color.cyan} size={16} />
         <Text style={styles.highlightsFootnoteText}>线索来自当前本地样本；不足以判断的部分会保留为“尚在形成”。</Text>
       </View>
@@ -953,12 +963,12 @@ function LivingChangeCard({
   const accent = chapter.id === "shift" ? color.accent : chapter.id === "profile" ? color.green : color.cyan;
   const [cardRef, inView] = useInView<View>();
   return (
-    <View {...fx({ reveal: inView, i: index + 1, hover: "lift" })} ref={cardRef} style={[styles.livingChangeCard, { borderTopColor: accent }]}>
+    <View {...fx({ reveal: inView, i: index + 1, hover: "lift", ws: "w-card" })} ref={cardRef} style={[styles.livingChangeCard, { borderTopColor: accent }]}>
       <View style={styles.livingChangeHeader}>
-        <Text style={styles.livingChangeEyebrow}>{chapter.eyebrow}</Text>
+        <Text {...ws("stamp")} style={styles.livingChangeEyebrow}>{chapter.eyebrow}</Text>
         <Text style={[styles.livingChangeStatus, chapter.status !== "ok" && styles.livingChangeStatusMuted]}>{chapter.status === "ok" ? "已形成" : "尚在形成"}</Text>
       </View>
-      <Text style={styles.livingChangeTitle}>{chapter.title}</Text>
+      <Text {...ws("w-cardtitle")} style={styles.livingChangeTitle}>{chapter.title}</Text>
       <Text style={styles.livingChangeNarrative}>{privacy ? privateLivingNarrative(chapter) : chapter.narrative}</Text>
       {chapter.signals.slice(0, 3).map((signal) => (
         <View key={signal.id} style={styles.livingChangeSignal}>
@@ -1046,14 +1056,14 @@ function HighlightsView({
       contentContainerStyle={[styles.highlightsContent, mobile && styles.summaryContentMobile]}
       showsVerticalScrollIndicator={false}
     >
-      <View {...fx({ motion: "rise" })} style={[styles.highlightsHeader, mobile && styles.highlightsHeaderMobile]}>
+      <View {...fx({ motion: "rise", ws: "w-hhead" })} style={[styles.highlightsHeader, mobile && styles.highlightsHeaderMobile]}>
         <View style={styles.dashboardHeaderCopy}>
-          <Text style={styles.summaryEyebrow}>HIGHLIGHTS · {report.periodLabel.toUpperCase()}</Text>
-          <Text style={[styles.summaryTitle, mobile && styles.summaryTitleMobile]}>变化线索</Text>
+          <Text {...ws("stamp-sig")} style={styles.summaryEyebrow}>HIGHLIGHTS · {report.periodLabel.toUpperCase()}</Text>
+          <Text {...ws("w-htitle")} style={[styles.summaryTitle, mobile && styles.summaryTitleMobile]}>变化线索</Text>
           <Text style={styles.summaryLead}>从最近新增、偏好变化、回访模式和稳定倾向里，保留可被证据支持的线索。</Text>
         </View>
-        <View style={[styles.highlightCountBlock, mobile && styles.dashboardPeriodMobile]}>
-          <Text style={styles.highlightCountValue}>{availableCount}</Text>
+        <View {...ws("w-hcountblock")} style={[styles.highlightCountBlock, mobile && styles.dashboardPeriodMobile]}>
+          <Text {...ws("w-hcount")} style={styles.highlightCountValue}>{availableCount}</Text>
           <Text style={styles.dashboardPeriodMeta}>项当前线索</Text>
         </View>
       </View>
@@ -1074,7 +1084,7 @@ function HighlightsView({
           />
         ))}
       </View>
-      <View style={styles.highlightsFootnote}>
+      <View {...ws("w-foot g-ink")} style={styles.highlightsFootnote}>
         <Star color={color.amber} size={16} />
         <Text style={styles.highlightsFootnoteText}>互动最高仅表示平台统计快照；首条、末条与峰值日仅使用可靠行为时间。</Text>
       </View>
@@ -1112,7 +1122,7 @@ function HighlightCard({
 
   return (
     <Pressable
-      {...fx({ reveal: inView, i: index + 1, hover: "card" })}
+      {...fx({ reveal: inView, i: index + 1, hover: "card", ws: "w-card" })}
       ref={cardRef}
       accessibilityLabel={`${label}：${title}${canOpen ? "，打开抖音视频" : ""}`}
       accessibilityRole={canOpen ? "link" : undefined}
@@ -1127,7 +1137,7 @@ function HighlightCard({
         canOpen && webPointer,
       ]}
     >
-      <View style={[styles.highlightVisual, { backgroundColor: fallbackColor(`${label}:${index}`) }]}>
+      <View {...ws("w-hvisual")} style={[styles.highlightVisual, { backgroundColor: fallbackColor(`${label}:${index}`) }]}>
         {imageAvailable ? (
           <ImageBackground
             accessibilityLabel={`${title}的视频封面`}
@@ -1139,16 +1149,16 @@ function HighlightCard({
         ) : (
           <View style={styles.highlightFallback}>
             <Star color={accent} size={38} strokeWidth={1.7} />
-            <Text style={styles.highlightIndex}>{String(index + 1).padStart(2, "0")}</Text>
+            <Text {...ws("w-bignum")} style={styles.highlightIndex}>{String(index + 1).padStart(2, "0")}</Text>
           </View>
         )}
-        <View style={[styles.highlightLabel, { borderColor: accent }]}><Text style={styles.highlightLabelText}>{label}</Text></View>
+        <View {...ws("w-hlabel")} style={[styles.highlightLabel, { borderColor: accent }]}><Text {...ws("w-hlabeltext")} style={styles.highlightLabelText}>{label}</Text></View>
       </View>
       <View style={styles.highlightBody}>
-        <Text numberOfLines={2} style={styles.highlightTitle}>{title}</Text>
+        <Text {...ws("w-cardtitle")} numberOfLines={2} style={styles.highlightTitle}>{title}</Text>
         <Text numberOfLines={1} style={styles.highlightAuthor}>{author}</Text>
         <Text style={styles.highlightDetail}>{detail}</Text>
-        <View style={styles.highlightRuleRow}>
+        <View {...ws("w-hrule")} style={styles.highlightRuleRow}>
           <Text style={styles.highlightRule}>{rule}</Text>
           {canOpen ? <ArrowUpRight color={color.textMuted} size={17} /> : null}
         </View>
@@ -1161,7 +1171,7 @@ function SummaryEmpty() {
   return (
     <View {...fx({ motion: "rise" })} style={styles.summaryEmpty}>
       <Sparkles color={color.green} size={30} />
-      <Text style={styles.emptyTitle}>这一章还在形成</Text>
+      <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>这一章还在形成</Text>
       <Text style={styles.emptyDetail}>完成一次读取并积累带可靠行为时间的记录后，持续报告会逐步生成当前主线、变化线索和行为画像。</Text>
     </View>
   );

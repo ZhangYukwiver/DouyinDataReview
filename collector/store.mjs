@@ -366,10 +366,15 @@ export class CollectorStore {
     return snapshot;
   }
 
-  async writeSnapshot(snapshot) {
-    const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temporaryPath, this.filePath);
+  writeSnapshot(snapshot) {
+    // 聊天接收和直接读取会同时存盘，共用一个临时文件名；排队写，否则后到的 rename 会 ENOENT
+    const task = (this.writeQueue ?? Promise.resolve()).catch(() => undefined).then(async () => {
+      const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
+      await writeFile(temporaryPath, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      await rename(temporaryPath, this.filePath);
+    });
+    this.writeQueue = task;
+    return task;
   }
 
   async clear() {

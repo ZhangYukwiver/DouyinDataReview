@@ -272,4 +272,15 @@ describe("CollectorStore", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("keeps concurrent saves from racing on the shared temporary file", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
+    try {
+      const store = new CollectorStore(directory);
+      await Promise.all(Array.from({ length: 5 }, () => store.save(createEmptyRecords())));
+      expect((await store.load()).records.liked_videos).toEqual([]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
