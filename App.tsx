@@ -79,7 +79,7 @@ import {
 import { shouldAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { createSyncRecovery } from "./src/services/syncRecovery";
-import { applyAppStyle, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
@@ -1340,10 +1340,11 @@ function AppContent() {
       }
     : null;
 
-  const traceMode = appStyle === "trace" && Platform.OS === "web";
+  // 内容年志与海报都把报告做成 /story 下的静态页，以 iframe 盖在工作台上；只有档案馆走应用内分页报告
+  const storyMode = (appStyle === "trace" || appStyle === "poster") && Platform.OS === "web";
 
   function enterWorkspace() {
-    if (traceMode) {
+    if (storyMode) {
       // The story pages are static HTML under /story, shown in a same-origin iframe so this session's
       // collector token and records stay alive. They read one aggregated snapshot from localStorage.
       const chatMessages = displaySnapshot?.chatMessages ?? [];
@@ -1360,7 +1361,7 @@ function AppContent() {
         archive: source === "archive" && selectedArchive?.data ? { parsedFileCount: selectedArchive.data.parsedFileCount, ignoredFileCount: selectedArchive.data.ignoredFileCount } : null,
       });
       writeStoryData(story);
-      setStorySrc(buildStoryEntryUrl({
+      setStorySrc(appStyle === "poster" ? buildPosterStoryUrl({ motion: "full" }) : buildStoryEntryUrl({
         watch: workspaceRecords.watch_history.length,
         liked: workspaceRecords.liked_videos.length,
         favorite: workspaceRecords.favorite_videos.length,
@@ -1373,7 +1374,7 @@ function AppContent() {
   }
 
   function replayStory() {
-    if (traceMode) {
+    if (storyMode) {
       enterWorkspace();
       return;
     }
@@ -1472,7 +1473,7 @@ function AppContent() {
           onDownloadAppUpdate={downloadAppUpdate}
           onInstallAppUpdate={installAppUpdate}
         />
-      ) : dashboardOpen || traceMode ? (
+      ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
           explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           activeView={dashboardView}
@@ -1539,7 +1540,7 @@ function AppContent() {
           updatedAt={displaySnapshot?.updatedAt ?? null}
         />
       )}
-      {storySrc && traceMode ? <StoryFrame src={storySrc} /> : null}
+      {storySrc && storyMode ? <StoryFrame src={storySrc} /> : null}
     </SafeAreaView>
   );
 }

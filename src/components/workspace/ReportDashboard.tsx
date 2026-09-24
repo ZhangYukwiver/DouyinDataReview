@@ -23,7 +23,7 @@ import {
   type ReportModel,
 } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
-import { fx, polylineLength, useCountUp, useDraw, useInView } from "./motion";
+import { fx, polylineLength, useCountUp, useDraw, useInView, ws } from "./motion";
 import { buildReportGapShape, layoutReportTiles, reportColumnCount, REPORT_TILE_GAP } from "./reportLayout";
 
 export interface ReportDashboardProps {
@@ -33,6 +33,8 @@ export interface ReportDashboardProps {
   privacy: boolean;
   /** 可用内容宽度，决定瀑布列数。 */
   width: number;
+  /** 海报风格：尾部空当按直角切，不做圆角天际线。 */
+  square?: boolean;
 }
 
 const weekLetters = ["M", "T", "W", "T", "F", "S", "S"];
@@ -48,7 +50,7 @@ const sliceColors = color.slices;
  * 持续报告：与故事页（ReportWorkspace 十二章）同源的一屏读数。
  * 卡片按实际内容高度排入最短的一列，后续卡片向上补位，保持固定间距。
  */
-export function ReportDashboard({ mobile, model, onOpenRecord, privacy, width }: ReportDashboardProps) {
+export function ReportDashboard({ mobile, model, onOpenRecord, privacy, square = false, width }: ReportDashboardProps) {
   const observed = model.total + model.chat;
   const partial = model.status === "partial" || model.reliableRatio < 1;
   const pcts = model.progressPercents;
@@ -196,8 +198,8 @@ export function ReportDashboard({ mobile, model, onOpenRecord, privacy, width }:
       showsVerticalScrollIndicator={false}
     >
       {partial ? (
-        <View {...fx({ motion: "rise" })} style={styles.coverage}>
-          <Text style={styles.coverageLabel}>样本覆盖</Text>
+        <View {...fx({ motion: "rise", ws: "stamp-bar" })} style={styles.coverage}>
+          <Text {...ws("stamp")} style={styles.coverageLabel}>样本覆盖</Text>
           <Text style={styles.coverageText}>
             {model.dated.toLocaleString("zh-CN")} / {model.total.toLocaleString("zh-CN")} 条记录带可靠行为时间
             {model.warnings[0] ? ` · ${model.warnings[0]}` : ""}
@@ -205,7 +207,7 @@ export function ReportDashboard({ mobile, model, onOpenRecord, privacy, width }:
         </View>
       ) : null}
 
-      <Board mobile={mobile} tiles={tiles} width={width - (mobile ? 24 : 40)} />
+      <Board mobile={mobile} square={square} tiles={tiles} width={width - (mobile ? 24 : 40)} />
     </ScrollView>
   );
 }
@@ -214,8 +216,9 @@ export function ReportDashboard({ mobile, model, onOpenRecord, privacy, width }:
 
 interface Tile { key: string; h: number; node: React.ReactNode }
 
-function Board({ mobile, tiles, width }: {
+function Board({ mobile, square, tiles, width }: {
   mobile: boolean;
+  square: boolean;
   tiles: Tile[];
   width: number;
 }) {
@@ -228,7 +231,7 @@ function Board({ mobile, tiles, width }: {
   const layout = layoutReportTiles(tiles, columns, heights);
   // 估高阶段的空当是假的，等所有卡片量完再补，免得占位块先闪一下再跳走。
   const settled = tiles.every((tile) => heights[tile.key] !== undefined);
-  const gapShape = settled ? buildReportGapShape(layout.bottoms, layout.height, columnWidth) : null;
+  const gapShape = settled ? buildReportGapShape(layout.bottoms, layout.height, columnWidth, square ? 0 : undefined) : null;
   const onMeasure = (key: string, event: LayoutChangeEvent) => {
     const { height, width: actualWidth } = event.nativeEvent.layout;
     if (height <= 0 || Math.abs(actualWidth - columnWidth) > 0.5) return;
@@ -275,7 +278,7 @@ function BoardTile({ children, index, onLayout, style, tileKey }: {
   tileKey: string;
 }) {
   const [ref, inView] = useInView<View>();
-  return <View {...fx({ reveal: inView, i: (index % 6) + 1, hover: "lift" })} onLayout={onLayout} ref={ref} style={[styles.tile, style]} testID={`report-tile-${tileKey}`}>{children}</View>;
+  return <View {...fx({ reveal: inView, i: (index % 6) + 1, hover: "lift", ws: "d-tile" })} onLayout={onLayout} ref={ref} style={[styles.tile, style]} testID={`report-tile-${tileKey}`}>{children}</View>;
 }
 
 function SwarmGap({ focus, height, left, path, top, width }: {
@@ -295,8 +298,8 @@ function SwarmGap({ focus, height, left, path, top, width }: {
   useSwarm(paper, focus.x, focus.y);
   return (
     <View pointerEvents="box-none" style={{ height, left, position: "absolute", top, width }} testID="report-tile-swarm">
-      <View ref={paper} style={[styles.swarmPaper, { height, width }]}>
-        <Text style={styles.swarmHint}>点一下会散开</Text>
+      <View {...ws("d-swarm")} ref={paper} style={[styles.swarmPaper, { height, width }]}>
+        <Text {...ws("d-swarmhint")} style={styles.swarmHint}>点一下会散开</Text>
       </View>
       <Svg height={height} pointerEvents="none" style={StyleSheet.absoluteFill} width={width}>
         <Path d={path} fill="none" stroke={color.border} strokeWidth={1} />
@@ -350,10 +353,13 @@ function useSwarm(ref: React.RefObject<View | null>, focusX: number, focusY: num
     let edgeColor = "#9ab";
     let coreColor = "#456";
     let styleKey = "";
+    // 海报风格把这块空当印成实心色块（posterCss 里 --ws-swarm:off），群点不画
+    let paused = false;
     const readColors = () => {
       const computed = window.getComputedStyle(node);
       edgeColor = computed.getPropertyValue("--ws-cyan").trim() || edgeColor;
       coreColor = computed.getPropertyValue("--ws-accent").trim() || coreColor;
+      paused = computed.getPropertyValue("--ws-swarm").trim() === "off";
       styleKey = document.documentElement.dataset.style ?? "";
     };
     const resize = () => {
@@ -399,6 +405,10 @@ function useSwarm(ref: React.RefObject<View | null>, focusX: number, focusY: num
       const delta = Math.min((now - last) / 1000, 0.05);
       last = now;
       if (document.documentElement.dataset.style !== styleKey) readColors();
+      if (paused) {
+        ctx.clearRect(0, 0, boxWidth, boxHeight);
+        return;
+      }
       const anchorX = cursor.inside ? cursor.x : Math.max(0, Math.min(boxWidth, focusX));
       const anchorY = cursor.inside ? cursor.y : Math.max(0, Math.min(boxHeight, focusY));
       const seconds = now / 1000;
@@ -515,15 +525,15 @@ function Cardlet({ children, en, foot, meta, title }: {
 }) {
   return (
     <>
-      <View style={styles.tileHead}>
-        <Text style={styles.tileTitle}>{title}</Text>
-        <Text style={styles.tileEn}>/ {en}</Text>
-        {meta ? <Text numberOfLines={1} style={styles.tileMeta}>{meta}</Text> : null}
+      <View {...ws("d-head")} style={styles.tileHead}>
+        <Text {...ws("d-title")} style={styles.tileTitle}>{title}</Text>
+        <Text {...ws("d-en")} style={styles.tileEn}>/ {en}</Text>
+        {meta ? <Text {...ws("d-meta")} numberOfLines={1} style={styles.tileMeta}>{meta}</Text> : null}
       </View>
       <View style={styles.tileBody}>{children}</View>
       {foot ? (
-        <View style={styles.tileFoot}>
-          <Text style={styles.tileFootMark}>✦</Text>
+        <View {...ws("d-foot")} style={styles.tileFoot}>
+          <Text {...ws("d-mark")} style={styles.tileFootMark}>✦</Text>
           <Text style={styles.tileFootText}>{foot}</Text>
         </View>
       ) : null}
@@ -549,8 +559,8 @@ function Figure({ sub, value }: { sub: string; value: string | number }) {
   const count = useCountUp(typeof value === "number" ? value : 0);
   return (
     <View style={styles.figure}>
-      <Text style={styles.figureValue}>{typeof value === "number" ? count.toLocaleString("en-US") : value}</Text>
-      <Text numberOfLines={1} style={styles.figureSub}>{sub}</Text>
+      <Text {...ws("d-figure")} style={styles.figureValue}>{typeof value === "number" ? count.toLocaleString("en-US") : value}</Text>
+      <Text {...ws("mono")} numberOfLines={1} style={styles.figureSub}>{sub}</Text>
     </View>
   );
 }
@@ -573,11 +583,11 @@ function HeatGrid({ heatmap }: { heatmap: number[] }) {
         </View>
       ))}
       <View style={styles.heatAxis}>
-        <Text style={styles.axisText}>00</Text>
-        <Text style={styles.axisText}>06</Text>
-        <Text style={styles.axisText}>12</Text>
-        <Text style={styles.axisText}>18</Text>
-        <Text style={styles.axisText}>23</Text>
+        <Text {...ws("mono")} style={styles.axisText}>00</Text>
+        <Text {...ws("mono")} style={styles.axisText}>06</Text>
+        <Text {...ws("mono")} style={styles.axisText}>12</Text>
+        <Text {...ws("mono")} style={styles.axisText}>18</Text>
+        <Text {...ws("mono")} style={styles.axisText}>23</Text>
       </View>
     </View>
   );
@@ -599,11 +609,11 @@ function HourCurve({ peak, values }: { peak: number | null; values: number[] }) 
         {peakPoint ? <Circle cx={peakPoint[0]} cy={peakPoint[1]} fill={GOLD} opacity={t} r={3} /> : null}
       </Svg>
       <View style={styles.axisRow}>
-        <Text style={styles.axisText}>00</Text>
-        <Text style={styles.axisText}>06</Text>
-        <Text style={styles.axisText}>12</Text>
-        <Text style={styles.axisText}>18</Text>
-        <Text style={styles.axisText}>23</Text>
+        <Text {...ws("mono")} style={styles.axisText}>00</Text>
+        <Text {...ws("mono")} style={styles.axisText}>06</Text>
+        <Text {...ws("mono")} style={styles.axisText}>12</Text>
+        <Text {...ws("mono")} style={styles.axisText}>18</Text>
+        <Text {...ws("mono")} style={styles.axisText}>23</Text>
       </View>
     </View>
   );
@@ -632,7 +642,7 @@ function Ring({ caption, label, tone = TEAL, value }: { caption: string; label: 
           />
         ) : null}
       </Svg>
-      <View pointerEvents="none" style={styles.ringCenter}><Text style={styles.ringValue}>{label}</Text></View>
+      <View pointerEvents="none" style={styles.ringCenter}><Text {...ws("d-ringvalue")} style={styles.ringValue}>{label}</Text></View>
       <View style={styles.ringSide}>
         <View style={[styles.ringSideMark, { backgroundColor: tone }]} />
         <Text style={styles.ringCaption}>{caption}</Text>
@@ -665,7 +675,7 @@ function Pie({ donut = false, slices }: { donut?: boolean; slices: Array<{ label
         <View style={[styles.soloBar, { backgroundColor: only.tone }]} />
         <View style={styles.soloCopy}>
           <Text numberOfLines={1} style={styles.legendLabel}>{only.slice.label}</Text>
-          <Text style={styles.soloValue}>{only.slice.sub}</Text>
+          <Text {...ws("d-num big")} style={styles.soloValue}>{only.slice.sub}</Text>
         </View>
       </View>
     );
@@ -681,7 +691,7 @@ function Pie({ donut = false, slices }: { donut?: boolean; slices: Array<{ label
           <View key={`${slice.label}:${index}`} style={styles.legendRow}>
             <View style={[styles.legendSwatch, { backgroundColor: tone }]} />
             <Text numberOfLines={1} style={styles.legendLabel}>{slice.label}</Text>
-            <Text style={styles.legendValue}>{Math.round(slice.value / total * 100)}%</Text>
+            <Text {...ws("d-num")} style={styles.legendValue}>{Math.round(slice.value / total * 100)}%</Text>
           </View>
         ))}
       </View>
@@ -705,6 +715,7 @@ function Mosaic({ items }: { items: Array<{ label: string; value: number }> }) {
             const step = max === min ? 3 : 1 + Math.round((item.value - min) / (max - min) * (heatColors.length - 2));
             return (
               <View
+                {...ws("d-mosaic", step === heatColors.length - 2 && "dark")}
                 key={`${item.label}:${index}`}
                 style={[styles.mosaicCell, {
                   flexGrow: Math.max(0.4, weight),
@@ -713,7 +724,7 @@ function Mosaic({ items }: { items: Array<{ label: string; value: number }> }) {
                 }]}
               >
                 <Text style={styles.mosaicLabel}>{item.label}</Text>
-                <Text style={styles.mosaicValue}>{item.value}</Text>
+                <Text {...ws("d-num")} style={styles.mosaicValue}>{item.value}</Text>
               </View>
             );
           })}
@@ -731,13 +742,13 @@ function Funnel({ steps }: { steps: Array<{ label: string; value: number | null 
       {steps.map((step, index) => (
         <View key={step.label} style={styles.funnelRow}>
           <Text style={styles.funnelLabel}>{step.label}</Text>
-          <View style={styles.funnelTrack}>
+          <View {...ws("d-track")} style={styles.funnelTrack}>
             <View style={[styles.funnelBlock, {
               width: `${step.value === null ? 0 : Math.max(3, step.value) * t}%`,
               backgroundColor: index === 0 ? color.funnel0 : index === 1 ? color.funnel1 : index === 2 ? TEAL : GOLD,
             }]} />
           </View>
-          <Text style={styles.funnelValue}>{pctLabel(step.value)}</Text>
+          <Text {...ws("d-num")} style={styles.funnelValue}>{pctLabel(step.value)}</Text>
         </View>
       ))}
     </View>
@@ -763,9 +774,9 @@ function TailCurve({ head, tail }: { head: Array<{ label: string; value: number 
       <View style={styles.headList}>
         {head.map((item, index) => (
           <View key={`${item.label}:${index}`} style={styles.headRow}>
-            <Text style={styles.headRank}>{pad(index + 1)}</Text>
+            <Text {...ws("d-rank")} style={styles.headRank}>{pad(index + 1)}</Text>
             <Text numberOfLines={1} style={styles.headName}>{item.label}</Text>
-            <Text style={styles.headValue}>{item.value}</Text>
+            <Text {...ws("d-num")} style={styles.headValue}>{item.value}</Text>
           </View>
         ))}
       </View>
@@ -792,11 +803,11 @@ function DualCurve({ chat, watch }: { chat: number[]; watch: number[] }) {
         {hasChat ? <Path d={chatLine.d} fill="none" opacity={t} stroke={GOLD} strokeDasharray="4 3" strokeWidth={1.4} /> : null}
       </Svg>
       <View style={styles.axisRow}>
-        <Text style={styles.axisText}>00</Text>
-        <Text style={styles.axisText}>06</Text>
-        <Text style={styles.axisText}>12</Text>
-        <Text style={styles.axisText}>18</Text>
-        <Text style={styles.axisText}>23</Text>
+        <Text {...ws("mono")} style={styles.axisText}>00</Text>
+        <Text {...ws("mono")} style={styles.axisText}>06</Text>
+        <Text {...ws("mono")} style={styles.axisText}>12</Text>
+        <Text {...ws("mono")} style={styles.axisText}>18</Text>
+        <Text {...ws("mono")} style={styles.axisText}>23</Text>
       </View>
       <View style={styles.legendInline}>
         <View style={[styles.legendSwatch, { backgroundColor: TEAL }]} /><Text style={styles.legendLabel}>内容</Text>
@@ -823,7 +834,7 @@ function MonthCurve({ months, peak }: { months: number[]; peak: number | null })
       </Svg>
       <View style={styles.axisRow}>
         {monthNames.filter((_, index) => index % 3 === 0).map((name) => <Text key={name} style={styles.axisText}>{name}</Text>)}
-        <Text style={styles.axisText}>12月</Text>
+        <Text {...ws("mono")} style={styles.axisText}>12月</Text>
       </View>
     </View>
   );
@@ -929,11 +940,11 @@ function InsightList({ items }: { items: Array<{ badge?: string; text: string; t
     <View style={styles.insightList}>
       {items.map((item, index) => (
         <View key={`${item.title}:${index}`} style={styles.insight}>
-          <Text style={[styles.insightMark, item.badge === "pending" && styles.insightMarkMuted]}>✦</Text>
+          <Text {...ws("d-mark", item.badge === "pending" && "off")} style={[styles.insightMark, item.badge === "pending" && styles.insightMarkMuted]}>✦</Text>
           <View style={styles.insightCopy}>
             <View style={styles.insightTitleRow}>
-              <Text style={styles.insightTitle}>{item.title}</Text>
-              {item.badge ? <Text style={[styles.badge, item.badge === "pending" && styles.badgeMuted]}>{item.badge}</Text> : null}
+              <Text {...ws("d-ititle")} style={styles.insightTitle}>{item.title}</Text>
+              {item.badge ? <Text {...ws(item.badge === "pending" ? "stamp-ghost" : "stamp-sig")} style={[styles.badge, item.badge === "pending" && styles.badgeMuted]}>{item.badge}</Text> : null}
             </View>
             <Text style={styles.insightText}>{item.text}</Text>
           </View>
@@ -960,12 +971,12 @@ function EventList({ items, onOpenRecord, privacy }: {
             accessibilityRole={canOpen ? "link" : undefined}
             disabled={!canOpen}
             onPress={() => item.url && void onOpenRecord(item.url)}
-            {...fx({ hover: "tint" })}
+            {...fx({ hover: "tint", ws: "d-event" })}
             style={({ pressed }) => [styles.event, pressed && styles.pressed]}
           >
-            <Text style={styles.eventRank}>{pad(index + 1)}</Text>
+            <Text {...ws("d-rank")} style={styles.eventRank}>{pad(index + 1)}</Text>
             <Text numberOfLines={1} style={styles.eventTitle}>{privacy ? `内容 ${index + 1}` : item.title}</Text>
-            <Text style={styles.eventTime}>{formatTime(item.time)}</Text>
+            <Text {...ws("mono")} style={styles.eventTime}>{formatTime(item.time)}</Text>
           </Pressable>
         );
       })}
@@ -975,9 +986,9 @@ function EventList({ items, onOpenRecord, privacy }: {
 
 function Cell({ label, value }: { label: string; value: number }) {
   return (
-    <View style={styles.cell}>
+    <View {...ws("d-cell")} style={styles.cell}>
       <Text style={styles.cellLabel}>{label}</Text>
-      <Text style={styles.cellValue}>{value.toLocaleString("zh-CN")}</Text>
+      <Text {...ws("d-num big")} style={styles.cellValue}>{value.toLocaleString("zh-CN")}</Text>
     </View>
   );
 }

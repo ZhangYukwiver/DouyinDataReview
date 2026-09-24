@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 
 import type { AppStyle } from "../../services/appStyle";
 import { motionCss } from "./motion";
+import { posterCss } from "./posterCss";
 
 /**
  * 两套整体风格共用一份 token 名：
@@ -99,6 +100,50 @@ const trace: WorkspacePalette = {
   tints: ["#E8EEF5", "#F0E9EE", "#EAF1F3", "#F6EDE4", "#ECF0EA", "#F2EFE6"],
 };
 
+// 海报：与 public/story/story-poster.html 同一套——墨黑、新闻纸、信号橙，线一律实心黑
+const poster: WorkspacePalette = {
+  canvas: "#F1EEE6",
+  sidebar: "#F1EEE6",
+  surface: "#FFFFFF",
+  surfaceRaised: "#F7F5EF",
+  surfaceMuted: "#E4E0D4",
+  border: "#0A0A0A",
+  borderSoft: "#0A0A0A",
+  frame: "#0A0A0A",
+  text: "#0A0A0A",
+  textSecondary: "#2A2A2A",
+  textMuted: "#5E5A52",
+  accent: "#FF4A1C",
+  accentPressed: "#E03A10",
+  accentAction: "#FF4A1C",
+  accentSoft: "#FFE2D8",
+  figure: "#0A0A0A",
+  cyan: "#0A0A0A",
+  cyanSoft: "#E4E0D4",
+  green: "#0A0A0A",
+  greenSoft: "#E4E0D4",
+  amber: "#FF4A1C",
+  amberSoft: "#FFE2D8",
+  danger: "#B3001B",
+  dangerSoft: "#F7D9D9",
+  white: "#FFFFFF",
+  black: "#0A0A0A",
+  scrim: "rgba(10,10,10,0.82)",
+  button: "#0A0A0A",
+  buttonText: "#F1EEE6",
+  signal: "#FF4A1C",
+  funnel0: "#E4E0D4",
+  funnel1: "#BDB8AB",
+  vennWatch: "#0A0A0A",
+  vennFavorite: "#FF4A1C",
+  shadow: "none",
+  heat: ["#E9E5DA", "#D6D1C4", "#A9A396", "#5E5A52", "#0A0A0A", "#FF4A1C"],
+  slices: ["#0A0A0A", "#FF4A1C", "#5E5A52", "#BDB8AB", "#FF9A7E", "#2A2A2A"],
+  avatars: ["#0A0A0A", "#FF4A1C", "#2A2A2A", "#5E5A52", "#FF6A42", "#3A3A3A"],
+  // 封面缺图时的底：只用新闻纸 / 纯白 / 灰纸 / 信号橙，出血编号一律墨黑印在上面
+  tints: ["#F1EEE6", "#FFFFFF", "#E4E0D4", "#FF4A1C", "#F1EEE6", "#FFFFFF"],
+};
+
 const archiveFonts = {
   serif: "Georgia, 'Songti SC', 'STSong', 'SimSun', serif",
   didot: "Didot, 'Bodoni 72', Georgia, 'Songti SC', serif",
@@ -118,6 +163,15 @@ const traceFonts: typeof archiveFonts = {
   setupMono: "'SFMono-Regular', ui-monospace, 'Roboto Mono', monospace",
 };
 
+const posterFonts: typeof archiveFonts = {
+  serif: "Anton, 'Noto Sans SC', 'PingFang SC', sans-serif",
+  didot: "Anton, 'Noto Sans SC', 'PingFang SC', sans-serif",
+  body: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
+  sans: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
+  mono: "'JetBrains Mono', ui-monospace, 'Roboto Mono', monospace",
+  setupMono: "'JetBrains Mono', ui-monospace, 'Roboto Mono', monospace",
+};
+
 // 档案页面是直角的；年志的卡片 12–16、按钮是胶囊
 const archiveRadii = { small: 0, medium: 0, large: 0, pill: 0 };
 const traceRadii: typeof archiveRadii = { small: 8, medium: 12, large: 16, pill: 50 };
@@ -125,6 +179,7 @@ const traceRadii: typeof archiveRadii = { small: 8, medium: 12, large: 16, pill:
 export const palettes: Record<AppStyle, { colors: WorkspacePalette; fonts: typeof archiveFonts; radii: typeof archiveRadii }> = {
   archive: { colors: archive, fonts: archiveFonts, radii: archiveRadii },
   trace: { colors: trace, fonts: traceFonts, radii: traceRadii },
+  poster: { colors: poster, fonts: posterFonts, radii: archiveRadii },
 };
 
 const web = Platform.OS === "web";
@@ -168,7 +223,7 @@ function declarations(style: AppStyle): string {
 
 export function themeCss(): string {
   // 默认内容年志：:root 直接发年志令牌，档案馆靠 data-style 覆盖。
-  return `:root{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}`;
+  return `:root{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\n:root[data-style="poster"]{${declarations("poster")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}\n${posterCss}`;
 }
 
 const STYLE_ID = "content-insights-theme";

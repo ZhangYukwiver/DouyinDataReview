@@ -1,0 +1,2319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TRACE · 内容年志 — 极端版</title>
+  <script>
+    const storyMotionFull = new URLSearchParams(location.search).get("motion") === "full";
+    if (storyMotionFull) document.documentElement.classList.add("motion-full");
+    if (/[?&]from=card/.test(location.search)) document.documentElement.classList.add("from-card");
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* ============ tokens (refero: General Intelligence Company) ============ */
+    :root {
+      --parchment: #fefffc;
+      --paper: #ffffff;
+      --linen: #f9faf7;
+      --ink: #171717;
+      --graphite: #2c2c2c;
+      --charcoal: #444141;
+      --ash: #646464;
+      --fog: #b4b8b4;
+      --mist: #dee2de;
+      --twilight: #282834;
+      --dusk: #1f1f29;
+      --blue: #41a1cf;
+      --cerulean: #0081c0;
+      --cream: #f6f1e4;          /* text over painted sky */
+      --serif: "Fraunces", "Songti SC", "STSong", "Noto Serif SC", Georgia, serif;
+      --sans: "Inter", "PingFang SC", "Helvetica Neue", sans-serif;
+      --mono: "SFMono-Regular", ui-monospace, "Roboto Mono", monospace;
+      --shadow-card: rgba(0,0,0,.08) 0 1px 1px, rgba(0,0,0,.08) 0 4px 5px;
+      --shadow-diagram: rgba(0,0,0,.05) 0 1px 8px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-snap-type: y mandatory; }
+    body { margin: 0; overflow-x: hidden; background: var(--dusk); color: var(--graphite); font-family: var(--sans); font-size: 16px; letter-spacing: -.01em; }
+    button { font: inherit; letter-spacing: inherit; }
+    button:focus-visible, a:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+    h1, h2, h3, p { margin: 0; }
+
+    /* ============ the painted sky — one continuous world ============ */
+    #sky { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: #0c1018; }
+    .sky-state { position: absolute; inset: -6% 0; opacity: 0; will-change: opacity; }
+    .cloudband { position: absolute; inset: 0; will-change: transform; }
+    .blob { position: absolute; border-radius: 50%; filter: blur(32px); animation: drift 26s ease-in-out infinite alternate; }
+    .blob.slow { animation-duration: 38s; }
+    @keyframes drift { to { transform: translateX(2.2%) translateY(-1.2%) scale(1.03); } }
+
+    /* S0 · the hero layer — the painting is set by the script (local hour); this gradient is the loading fallback */
+    .s0 { background:
+      radial-gradient(120% 68% at 76% 10%, #2f5480 0%, rgba(47,84,128,0) 52%),
+      radial-gradient(85% 55% at 22% 40%, rgba(238,164,78,.72) 0%, rgba(238,164,78,0) 60%),
+      radial-gradient(150% 85% at 50% 112%, #331d17 0%, rgba(51,29,23,0) 60%),
+      linear-gradient(180deg, #23405f 0%, #7d6448 38%, #d29a4e 62%, #a86331 80%, #3d211a 100%); }
+    /* S1 · clear morning (01 样本 / 02 时间) */
+    .s1 { background:
+      radial-gradient(110% 60% at 74% 8%, #8fb4cc 0%, rgba(143,180,204,0) 56%),
+      radial-gradient(90% 55% at 22% 66%, rgba(250,238,208,.9) 0%, rgba(250,238,208,0) 62%),
+      linear-gradient(180deg, #9cbcd2 0%, #d8dcCb 46%, #f2ecd8 74%, #e6d9bd 100%); }
+    /* S2 · violet dusk (03 留下 / 04 组成) */
+    .s2 { background:
+      radial-gradient(110% 62% at 72% 6%, #4d456e 0%, rgba(77,69,110,0) 58%),
+      radial-gradient(95% 58% at 26% 62%, rgba(226,164,138,.78) 0%, rgba(226,164,138,0) 60%),
+      linear-gradient(180deg, #453e63 0%, #907a9c 44%, #d8ac96 76%, #7c5468 100%); }
+    /* S3 · ink night (05 回声 / 06 证据) */
+    .s3 { background:
+      radial-gradient(120% 70% at 70% 4%, #1d2940 0%, rgba(29,41,64,0) 60%),
+      radial-gradient(80% 45% at 30% 82%, rgba(58,76,110,.5) 0%, rgba(58,76,110,0) 62%),
+      linear-gradient(180deg, #0e1420 0%, #162034 52%, #0a0e16 100%); }
+    /* S4 · ember colophon (07 签名) */
+    .s4 { background:
+      radial-gradient(110% 60% at 70% 6%, #46202a 0%, rgba(70,32,42,0) 58%),
+      radial-gradient(95% 55% at 28% 70%, rgba(226,150,66,.8) 0%, rgba(226,150,66,0) 58%),
+      linear-gradient(180deg, #24121a 0%, #612a26 46%, #c07a35 78%, #38191a 100%); }
+
+    /* painted sky (即梦生成，同一组云的五个时辰) — only behind the hero, picked by the local hour in the script;
+       every window after the hero keeps the gradient skies above */
+    .sky-state { background-size: cover; background-repeat: no-repeat; background-position: center calc(50% + var(--shift, 0px)); animation: skydrift 52s ease-in-out infinite alternate; transform-origin: 50% 60%; }
+    .sky-state:nth-child(2n) { animation-duration: 64s; }
+    @keyframes skydrift { to { transform: scale(1.05) translateY(-0.8%); } }
+
+    /* painted birds crossing the upper sky */
+    .bird { position: absolute; width: 26px; height: 12px; opacity: 0; animation: fly 34s linear infinite; }
+    .bird svg { width: 100%; height: 100%; }
+    .bird.b2 { width: 18px; animation-delay: -12s; animation-duration: 46s; }
+    .bird.b3 { width: 13px; animation-delay: -25s; animation-duration: 40s; }
+    @keyframes fly {
+      0%   { transform: translate(-6vw, 30vh) rotate(4deg); opacity: 0; }
+      6%   { opacity: .85; }
+      50%  { transform: translate(52vw, 16vh) rotate(-3deg); opacity: .85; }
+      94%  { opacity: .7; }
+      100% { transform: translate(108vw, 24vh) rotate(2deg); opacity: 0; }
+    }
+
+    /* ============ frosted pill navigation ============ */
+    .nav { position: fixed; z-index: 40; top: 18px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 40px); height: 56px; display: flex; align-items: center; gap: 30px; padding: 0 12px 0 20px; border: 1px solid rgba(40,40,52,.35); border-radius: 50px; background: rgba(255,255,255,.07); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: rgba(0,0,0,.15) 0 2px 6px; transition: background .4s ease, border-color .4s ease; }
+    body.nav-light .nav { background: rgba(255,255,255,.6); border-color: var(--mist); }
+    .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--cream); text-decoration: none; transition: color .4s ease; }
+    body.nav-light .brand { color: var(--graphite); }
+    .brand svg { width: 20px; height: 20px; display: block; }
+    .brand-name { font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+    .brand-name small { display: block; margin-top: 1px; font: 400 9px var(--mono); letter-spacing: .22em; opacity: .72; }
+    .nav-center { display: flex; align-items: center; gap: 14px; color: var(--cream); font: 400 10px var(--mono); letter-spacing: .14em; opacity: .8; transition: color .4s ease; }
+    body.nav-light .nav-center { color: var(--charcoal); }
+    .nav-center i { width: 36px; height: 1px; background: currentColor; opacity: .4; }
+    .nav-right { display: flex; align-items: center; gap: 8px; }
+    #clock { color: var(--cream); font: 400 10px var(--mono); letter-spacing: .1em; opacity: .85; transition: color .4s ease; }
+    body.nav-light #clock { color: var(--charcoal); }
+    .nav-btn { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; border-radius: 50px; border: 1px solid var(--blue); color: var(--blue); background: transparent; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .nav-btn:hover { background: rgba(65,161,207,.09); }
+    .nav-icon { width: 36px; min-height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: 50%; border: 1px solid rgba(180,184,180,.55); color: var(--cream); background: transparent; cursor: pointer; font-size: 13px; transition: color .4s ease; }
+    body.nav-light .nav-icon { color: var(--charcoal); border-color: var(--fog); }
+    .nav-icon:hover { border-color: var(--blue); }
+    /* framed inside the app (StoryFrame): a way back to the workspace */
+    [hidden] { display: none !important; }
+    .nav-btn.ghost { border-color: rgba(246,241,228,.35); color: var(--cream); transition: color .4s ease, border-color .4s ease; }
+    body.nav-light .nav-btn.ghost { color: var(--charcoal); border-color: var(--fog); }
+
+    /* chapter rail */
+    .rail { position: fixed; z-index: 35; right: 22px; top: 50%; transform: translateY(-50%); display: grid; gap: 12px; }
+    .rail button { display: flex; align-items: center; justify-content: flex-end; gap: 9px; padding: 0; border: 0; background: transparent; cursor: pointer; color: var(--cream); font: 400 9px var(--mono); letter-spacing: .08em; opacity: .62; transition: opacity .3s ease, color .4s ease; }
+    body.over-light .rail button { color: var(--charcoal); }
+    .rail button .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .5; transition: all .25s ease; }
+    .rail button.active { opacity: 1; }
+    .rail button.active .dot { width: 9px; height: 9px; background: var(--blue); opacity: 1; }
+    .rail button span { opacity: 0; transform: translateX(4px); transition: all .25s ease; }
+    .rail:hover button span, .rail button.active span { opacity: 1; transform: none; }
+
+    main { position: relative; z-index: 5; }
+    /* paging: every sky window / chapter snaps to the top; a fling stops one section at a time (ponytail: swap mandatory→proximity if trackpad snap-back feels stiff) */
+    main > section { scroll-snap-align: start; scroll-snap-stop: always; }
+
+    /* ============ sky windows — illustrated interludes ============ */
+    /* ============ chapter gates — the teaser screen before each chapter: a stories-style progress bar, the statement, one figure and a few specimens ============ */
+    .window { position: relative; min-height: 100vh; display: grid; place-items: center; padding: 120px 8%; text-align: center; --wc: var(--cream); --wl: rgba(246,241,228,.34); --wg: rgba(255,255,255,.09); }
+    .window[data-tone="light"] { --wc: var(--ink); --wl: rgba(40,40,52,.3); --wg: rgba(255,255,255,.36); }
+    .window::before { content: ""; position: absolute; inset: 0; background: radial-gradient(92% 50% at 50% 54%, rgba(12,14,20,.30), transparent 76%); opacity: 0; transition: opacity .8s ease; }
+    .window[data-tone="light"]::before { background: radial-gradient(92% 50% at 50% 54%, rgba(254,255,252,.5), transparent 76%); }
+    .window.in::before { opacity: 1; }
+    .window:not(.hero) { align-content: center; justify-items: start; row-gap: 34px; padding: 128px 8% 112px; text-align: left; overflow: hidden; }
+    /* watermark numeral: faint, oversized, running off the right edge */
+    .w-num { position: absolute; right: -3vw; top: 52%; z-index: 0; transform: translateY(-46%) scale(1.06); color: var(--wc); font: 300 min(42vw, 620px)/1 var(--serif); letter-spacing: -.07em; opacity: 0; pointer-events: none; transition: opacity 1.8s ease, transform 1.8s cubic-bezier(.2,.6,.2,1); }
+    .window.in .w-num { opacity: .075; transform: translateY(-46%); }
+    .window[data-tone="light"].in .w-num { opacity: .045; }
+    /* top frame: progress segments (the current one fills on arrival) + the bracket tag */
+    .w-frame { position: absolute; left: 8%; right: 8%; top: 108px; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 20px; color: var(--wc); font: 400 10px var(--mono); letter-spacing: .22em; opacity: 0; transform: translateY(-8px); transition: opacity .8s ease, transform .8s ease; }
+    .window.in .w-frame { opacity: .9; transform: none; }
+    .w-steps { display: flex; align-items: center; gap: 14px; }
+    .w-steps span { display: flex; gap: 5px; }
+    .w-steps i { position: relative; width: 34px; height: 2px; border-radius: 2px; background: var(--wl); overflow: hidden; }
+    .w-steps i.done { background: var(--wc); opacity: .75; }
+    .w-steps i.now::after { content: ""; position: absolute; inset: 0; background: var(--wc); transform: scaleX(0); transform-origin: 0 50%; transition: transform 1.4s cubic-bezier(.2,.6,.2,1) .2s; }
+    .window.in .w-steps i.now::after { transform: none; }
+    .w-steps b { font-weight: 400; }
+    .w-tag { opacity: .8; white-space: nowrap; }
+    /* the statement: eyebrow, two masked lines that rise one after the other, one line of context */
+    .window-copy { position: relative; z-index: 1; width: 100%; max-width: 760px; }
+    .w-eyebrow { display: inline-flex; align-items: center; gap: 12px; margin-bottom: 22px; color: var(--wc); font: 400 10px var(--mono); letter-spacing: .3em; opacity: 0; transform: translateY(14px); transition: all .7s ease .1s; }
+    .w-eyebrow::before { content: ""; width: 44px; height: 1px; background: currentColor; opacity: .5; }
+    .window.in .w-eyebrow { opacity: .92; transform: none; }
+    .w-title { color: var(--wc); font: 300 clamp(36px, 4.5vw, 64px)/1.16 var(--serif); letter-spacing: -.025em; }
+    .w-title em { font-style: italic; font-weight: 400; }
+    .w-title b { font-weight: 600; }
+    .w-title .ln { display: block; overflow: hidden; padding-bottom: .12em; margin-bottom: -.12em; }
+    .w-title .ln > span { display: block; transform: translateY(112%); transition: transform 1s cubic-bezier(.2,.7,.2,1) .14s; }
+    .w-title .ln:nth-child(2) > span { transition-delay: .26s; }
+    .window.in .w-title .ln > span { transform: none; }
+    .w-sub { max-width: 520px; margin-top: 22px; color: var(--wc); font-size: 15px; line-height: 1.8; opacity: 0; transform: translateY(16px); transition: all .8s ease .5s; }
+    .window.in .w-sub { opacity: .82; transform: none; }
+    /* ---- shared teaser primitives: one figure that sharpens as it counts, its label, glass chips ---- */
+    .w-fig { display: block; color: var(--wc); font: 300 clamp(64px, 8.6vw, 124px)/1 var(--serif); letter-spacing: -.045em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; opacity: 0; transform: translateY(18px) scale(.94); transform-origin: 0 100%; filter: blur(6px); transition: opacity .9s ease .35s, transform 1.1s cubic-bezier(.2,.7,.2,1) .35s, filter .9s ease .35s; }
+    .w-fig small { font-size: .42em; letter-spacing: 0; margin-left: .04em; }
+    .window.in .w-fig { opacity: 1; transform: none; filter: none; }
+    .w-fig-label { display: block; margin-top: -6px; color: var(--wc); font: 400 10px/1.7 var(--mono); letter-spacing: .18em; opacity: 0; transition: opacity .8s ease .6s; }
+    .window.in .w-fig-label { opacity: .78; }
+    .w-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .w-chips i { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border: 1px solid var(--wl); border-radius: 999px; background: var(--wg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: var(--wc); font: 400 12px var(--sans); font-style: normal; letter-spacing: .01em; white-space: nowrap; opacity: 0; transform: translateY(12px); transition: opacity .6s ease calc(.55s + var(--i, 0) * 80ms), transform .7s cubic-bezier(.2,.7,.2,1) calc(.55s + var(--i, 0) * 80ms); }
+    .w-chips i b { font: 400 12px var(--mono); }
+    .w-chips .ava { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(255,255,255,.5); background: linear-gradient(160deg, #453e63, #d8ac96); background-size: cover; }
+    .window.in .w-chips i { opacity: 1; transform: none; }
+    /* centred gates (01 / 03 / 07) */
+    .window.g-row, .window.g-float, .window.g-colophon { justify-items: center; text-align: center; }
+    .g-row .window-copy, .g-float .window-copy, .g-colophon .window-copy { max-width: 880px; }
+    .g-row .w-sub, .g-float .w-sub, .g-colophon .w-sub { max-width: 640px; margin-left: auto; margin-right: auto; }
+    /* 01 · a row of four stream cards */
+    .w-streams { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; width: 100%; max-width: 1080px; }
+    .w-streams .st { display: grid; gap: 10px; padding: 22px 24px 20px; border: 1px solid var(--wl); border-radius: 20px; background: var(--wg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: var(--wc); text-align: left; opacity: 0; transform: translateY(16px); transition: opacity .7s ease calc(.4s + var(--i, 0) * 110ms), transform .8s cubic-bezier(.2,.7,.2,1) calc(.4s + var(--i, 0) * 110ms); }
+    .window.in .w-streams .st { opacity: 1; transform: none; }
+    .w-streams .st small { font: 400 9px var(--mono); letter-spacing: .22em; opacity: .75; }
+    .w-streams .st strong { font: 300 clamp(40px, 4vw, 60px)/1 var(--serif); letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+    .w-streams .st .bar { display: block; height: 2px; background: var(--wl); overflow: hidden; }
+    .w-streams .st .bar i { display: block; height: 100%; width: var(--w, 0%); background: var(--wc); transform: scaleX(0); transform-origin: 0 50%; transition: transform 1.2s cubic-bezier(.2,.7,.2,1) calc(.7s + var(--i, 0) * 110ms); }
+    .window.in .w-streams .st .bar i { transform: none; }
+    .w-streams .st em { font: 400 11px var(--sans); font-style: normal; opacity: .78; }
+    /* 02 · the peak hour set huge, twelve months across the width */
+    .window.g-clock { grid-template-columns: minmax(0, 1.1fr) auto; grid-template-areas: "copy clock" "months months" "chips chips"; column-gap: 6%; row-gap: 26px; align-items: end; }
+    .g-clock .window-copy { grid-area: copy; }
+    .w-clock { grid-area: clock; justify-self: end; text-align: right; }
+    .w-clock .w-fig { font-size: clamp(96px, 11vw, 158px); transform-origin: 100% 100%; }
+    .w-months { grid-area: months; display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; align-items: end; width: 100%; height: 132px; padding-top: 10px; border-top: 1px solid var(--wl); }
+    .mo { display: grid; grid-template-rows: 1fr auto; align-items: end; justify-items: center; height: 100%; gap: 8px; }
+    .mo i { display: block; width: 66%; height: var(--h, 10%); border-radius: 3px 3px 0 0; background: var(--wc); opacity: .42; transform: scaleY(0); transform-origin: 50% 100%; transition: transform .9s cubic-bezier(.2,.7,.2,1) calc(.35s + var(--i, 0) * 50ms); }
+    .mo.peak i { opacity: .95; }
+    .window.in .mo i { transform: none; }
+    .mo b { font: 400 9px var(--mono); letter-spacing: .1em; opacity: .6; }
+    .mo.peak b { opacity: 1; }
+    .g-clock .w-chips { grid-area: chips; }
+    /* 03 · the statement in the middle, real covers drifting around it */
+    .w-float { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+    .w-float .tile { position: absolute; width: 176px; height: 236px; border-radius: 16px; border: 1px solid rgba(255,255,255,.74); background: linear-gradient(160deg, #453e63 0%, #d8ac96 82%); background-size: cover; background-position: center; box-shadow: rgba(0,0,0,.28) 0 18px 40px; opacity: 0; transform: translateY(24px) scale(.92) rotate(var(--r, 0deg)); transition: opacity .8s ease calc(.3s + var(--i, 0) * 140ms), transform 1.1s cubic-bezier(.2,.7,.2,1) calc(.3s + var(--i, 0) * 140ms); }
+    .w-float .tile.c1 { background-image: linear-gradient(160deg, #2f5480 0%, #d29a4e 78%); }
+    .w-float .tile.c3 { background-image: linear-gradient(160deg, #162034 0%, #4c6a94 90%); }
+    .w-float .f1 { left: 9%; top: 21%; --r: -9deg; }
+    .w-float .f2 { right: 11%; top: 17%; width: 150px; height: 200px; --r: 7deg; }
+    .w-float .f3 { right: 19%; bottom: 17%; width: 164px; height: 220px; --r: -5deg; }
+    .w-float .tile.round { border-radius: 50%; }
+    .w-float .tile.c4 { background-image: linear-gradient(160deg, #612a26 0%, #e2a24e 84%); }
+    .w-float .a1 { left: 10%; top: 20%; width: 164px; height: 164px; }
+    .w-float .a2 { right: 12%; top: 16%; width: 124px; height: 124px; }
+    .w-float .a3 { right: 16%; bottom: 18%; width: 140px; height: 140px; }
+    .w-float .sc { left: 15%; bottom: 16%; width: 150px; height: 200px; --r: -6deg; }
+    .window.in .w-float .tile { opacity: 1; transform: rotate(var(--r, 0deg)); animation: hover-float 7s ease-in-out calc(1.5s + var(--i, 0) * .8s) infinite alternate; }
+    @keyframes hover-float { to { translate: 0 -10px; } }
+    .w-stat { display: grid; justify-items: center; gap: 14px; text-align: center; }
+    .w-stat .w-fig { font-size: clamp(72px, 9vw, 128px); transform-origin: 50% 100%; }
+    .w-stat .w-chips { justify-content: center; max-width: 600px; }
+    /* 03 · three rings sized by √count, overlapping around one point; the triple intersection sits where they meet */
+    .window.g-rings { grid-template-columns: minmax(0, 1fr) minmax(360px, 600px); column-gap: 4%; align-items: center; }
+    .g-rings .window-copy .w-chips { margin-top: 26px; }
+    .w-rings { position: relative; justify-self: end; width: 100%; color: var(--wc); }
+    .w-rings svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .w-rings circle { fill: currentColor; fill-opacity: 0; stroke: currentColor; stroke-opacity: .85; stroke-width: 1.2; stroke-dasharray: 1; stroke-dashoffset: 1; transform: rotate(-90deg); transform-box: fill-box; transform-origin: center; transition: stroke-dashoffset 1.6s cubic-bezier(.2,.6,.2,1) calc(.3s + var(--i, 0) * .25s), fill-opacity 1s ease calc(1s + var(--i, 0) * .25s); }
+    .window.in .w-rings circle { stroke-dashoffset: 0; fill-opacity: .06; }
+    .w-rings text { fill: currentColor; font: 400 10px var(--mono); letter-spacing: .2em; opacity: 0; transition: opacity .8s ease calc(1.1s + var(--i, 0) * .25s); }
+    .window.in .w-rings text { opacity: .85; }
+    .w-rings .core { position: absolute; left: 57.4%; top: 58.5%; transform: translate(-50%, -50%); text-align: center; }
+    .w-rings .w-fig { font-size: clamp(60px, 6.6vw, 96px); transform-origin: 50% 100%; }
+    .w-rings .w-fig-label { margin-top: 2px; text-align: center; }
+    .w-cloud { display: flex; flex-wrap: wrap; align-items: baseline; gap: .05em .55em; width: 100%; max-width: 900px; color: var(--wc); font-family: var(--serif); font-weight: 300; line-height: 1.02; letter-spacing: -.03em; }
+    .wd { display: inline-flex; align-items: baseline; gap: .18em; font-size: calc(24px + var(--s, .5) * clamp(36px, 5.2vw, 76px)); opacity: 0; transform: translateY(.35em); transition: opacity .7s ease calc(.25s + var(--i, 0) * 80ms), transform .9s cubic-bezier(.2,.7,.2,1) calc(.25s + var(--i, 0) * 80ms); }
+    .window.in .wd { opacity: calc(.62 + var(--s, .5) * .38); transform: none; }
+    .wd b { font-weight: 300; }
+    .wd small { font: 400 10px var(--mono); letter-spacing: .12em; opacity: .7; }
+    /* 06 · a ledger card */
+    .g-ledger { grid-template-columns: minmax(0, 1.1fr) minmax(320px, .9fr); column-gap: 6%; align-items: center; }
+    .w-ledger { justify-self: end; width: 100%; max-width: 430px; padding: 20px 22px 6px; border: 1px solid var(--wl); border-radius: 20px; background: var(--wg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); color: var(--wc); opacity: 0; transform: translateY(16px); transition: opacity .7s ease .3s, transform .8s cubic-bezier(.2,.7,.2,1) .3s; }
+    .window.in .w-ledger { opacity: 1; transform: none; }
+    .lg-head { display: flex; justify-content: space-between; margin-bottom: 18px; font: 400 9px var(--mono); letter-spacing: .22em; opacity: .75; }
+    .w-ledger .w-fig { font-size: clamp(56px, 6vw, 84px); }
+    .lg-rows { margin-top: 16px; }
+    .lr { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 0; border-top: 1px dashed var(--wl); font: 400 12px var(--sans); opacity: 0; transform: translateX(-8px); transition: opacity .5s ease calc(.7s + var(--i, 0) * 110ms), transform .6s ease calc(.7s + var(--i, 0) * 110ms); }
+    .window.in .lr { opacity: 1; transform: none; }
+    .lr b { font: 400 12px var(--mono); }
+    /* 07 · the three-word signature inside a ring, like a title page */
+    .w-sig { position: relative; width: 280px; height: 280px; display: grid; align-content: center; justify-items: center; gap: 18px; text-align: center; color: var(--wc); }
+    .w-sig .ring { position: absolute; left: 50%; top: 50%; width: 280px; height: 280px; border: 1px solid var(--wl); border-radius: 50%; transform: translate(-50%, -50%) scale(.86); opacity: 0; transition: opacity 1.2s ease .3s, transform 1.4s cubic-bezier(.2,.7,.2,1) .3s; }
+    .window.in .w-sig .ring { opacity: 1; transform: translate(-50%, -50%); }
+    .w-sig small { font: 400 9px var(--mono); letter-spacing: .28em; opacity: 0; transition: opacity .8s ease 1.2s; }
+    .window.in .w-sig small { opacity: .8; }
+    .w-sig .slots { display: flex; gap: 20px; }
+    .w-sig .slots span { display: grid; gap: 10px; justify-items: center; font: 400 10px var(--mono); letter-spacing: .12em; opacity: 0; transition: opacity .7s ease calc(1.3s + var(--i, 0) * .15s); }
+    .window.in .w-sig .slots span { opacity: .82; }
+    .w-sig .slots i { width: 46px; height: 1px; background: currentColor; opacity: .65; transform: scaleX(0); transition: transform .7s ease calc(1.3s + var(--i, 0) * .15s); }
+    .window.in .w-sig .slots i { transform: none; }
+    /* the signals: dots swirl in from outside and settle on the ring */
+    .w-sig .dots { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+    .w-sig .dots i { position: absolute; left: -2px; top: -2px; width: 4px; height: 4px; border-radius: 50%; background: var(--wc); opacity: 0; transform: translate(var(--sx), var(--sy)); transition: transform 1.7s cubic-bezier(.2,.7,.2,1) calc(.2s + var(--i, 0) * 45ms), opacity .7s ease calc(.2s + var(--i, 0) * 45ms); }
+    .window.in .w-sig .dots i { opacity: .9; transform: translate(var(--x), var(--y)); animation: dot-breathe 3s ease-in-out calc(2.6s + var(--i, 0) * .13s) infinite alternate; }
+    @keyframes dot-breathe { from { opacity: .9; } to { opacity: .4; } }
+    .w-sig-note { margin: -6px 0 0; color: var(--wc); font: 400 15px var(--serif); opacity: 0; transition: opacity .8s ease 1.8s; }
+    .window.in .w-sig-note { opacity: .85; }
+    @media (max-height: 760px) {
+      .window:not(.hero) { row-gap: 22px; padding-top: 112px; padding-bottom: 96px; }
+      .w-title { font-size: clamp(32px, 3.8vw, 52px); }
+      .w-stat .w-fig { font-size: clamp(64px, 7vw, 96px); }
+      .w-clock .w-fig { font-size: clamp(80px, 9vw, 120px); }
+      .w-months { height: 100px; }
+      .w-float .tile { width: 132px; height: 176px; }
+      .w-float .f2 { width: 116px; height: 156px; }
+      .w-rings { max-width: 460px; }
+      .w-float .a1 { width: 124px; height: 124px; }
+      .w-float .a2 { width: 92px; height: 92px; }
+      .w-float .a3 { right: 14%; width: 104px; height: 104px; }
+      .w-float .sc { width: 112px; height: 150px; }
+      .wd { font-size: calc(20px + var(--s, .5) * clamp(28px, 4vw, 56px)); }
+      .w-sig { zoom: .86; }
+    }
+    /* foot: the chapter that follows, and the scroll cue */
+    .w-foot { position: absolute; left: 8%; right: 8%; bottom: 34px; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; color: var(--wc); opacity: 0; transform: translateY(8px); transition: opacity .8s ease .9s, transform .8s ease .9s; }
+    .window.in .w-foot { opacity: 1; transform: none; }
+    .w-next { display: grid; gap: 7px; font: 400 10px var(--mono); letter-spacing: .22em; opacity: .85; }
+    .w-next em { font: 400 16px var(--serif); letter-spacing: -.01em; }
+    .w-foot .scroll-cue { position: static; color: var(--wc); }
+    .w-foot .scroll-cue::after { background: linear-gradient(currentColor, transparent); }
+
+    /* hero window */
+    .hero { min-height: 100vh; align-items: end; text-align: left; place-items: end start; padding: 0 8% 11vh; }
+    .hero::before { background: linear-gradient(180deg, transparent 30%, rgba(20,14,12,.42) 100%); }
+    .hero-copy { position: relative; max-width: 760px; }
+    .hero .eyebrow { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; color: var(--cream); font: 400 10px var(--mono); letter-spacing: .3em; opacity: .9; }
+    .hero .eyebrow i { width: 44px; height: 1px; background: var(--cream); opacity: .5; }
+    .hero h1 { color: var(--cream); font: 300 clamp(48px, 5.6vw, 78px)/1.1 var(--serif); letter-spacing: -.03em; }
+    .hero h1 b { font-weight: 600; }
+    .hero-lead { max-width: 520px; margin-top: 24px; color: var(--cream); font-size: 15px; line-height: 1.85; opacity: .88; }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 26px; margin-top: 30px; color: var(--cream); font: 400 10px var(--mono); letter-spacing: .06em; opacity: .78; }
+    .hero-actions { display: flex; gap: 12px; margin-top: 32px; }
+    .scroll-cue { position: absolute; right: 8%; bottom: 30px; display: flex; align-items: center; gap: 10px; color: var(--cream); font: 400 9px var(--mono); letter-spacing: .26em; opacity: .7; }
+    .scroll-cue::after { content: ""; width: 1px; height: 34px; background: linear-gradient(var(--cream), transparent); animation: cue 2.2s ease-in-out infinite; }
+    @keyframes cue { 50% { transform: translateY(6px); opacity: .4; } }
+    /* hero on the bright morning painting */
+    /* the morning painting is too bright on its own: a gamma curve (#dimcurve, inline svg below) pushes the mids down while white stays white —
+       plain brightness() reads as haze, and contrast() alone cannot lift a white point once the image sits below mid-grey */
+    .s0.dim { filter: url(#dimcurve) contrast(1.12) saturate(1.2); }
+
+    /* buttons — outlined is the identity */
+    .btn { min-height: 44px; display: inline-flex; align-items: center; gap: 9px; padding: 0 18px; border-radius: 50px; background: transparent; cursor: pointer; font-size: 14px; font-weight: 500; text-decoration: none; transition: transform .25s ease, background .25s ease; }
+    .btn:hover { transform: translateY(-1px); }
+    .btn .cir { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid currentColor; border-radius: 50%; font-size: 11px; }
+    .btn-blue { border: 1px solid var(--blue); color: var(--blue); }
+    .btn-blue:hover { background: rgba(65,161,207,.1); }
+    .btn-cream { border: 1px solid rgba(246,241,228,.75); color: var(--cream); }
+    .btn-cream:hover { background: rgba(246,241,228,.09); }
+    .btn-cream.faint { border-color: rgba(246,241,228,.35); }
+    .btn-dark { border: 1px solid var(--twilight); background: var(--dusk); color: #fff; }
+    .btn-ghost { border: 1px solid transparent; color: var(--charcoal); }
+
+    /* ============ parchment chapters ============ */
+    .chapter { position: relative; height: 100vh; padding: clamp(84px, 10vh, 120px) 8% clamp(40px, 5vh, 80px); display: grid; align-content: center; overflow: clip; background: var(--parchment); border-top: 1px solid var(--mist); border-bottom: 1px solid var(--mist); }
+    .chapter-inner { width: 100%; max-width: 1200px; margin: 0 auto; transform: scale(var(--fit, 1)); }
+    .ch-head { max-width: 760px; }
+    .meta-line { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; color: var(--ash); font: 400 10px var(--mono); letter-spacing: .22em; }
+    .meta-line b { color: var(--blue); font-weight: 400; }
+    .meta-line::after { content: ""; flex: 0 0 46px; height: 1px; background: var(--mist); }
+    .chapter h2 { color: var(--graphite); font: 400 clamp(30px, 3.4vw, 44px)/1.18 var(--serif); letter-spacing: -.02em; }
+    .chapter h2 em { font-style: italic; }
+    .lead { max-width: 560px; margin-top: 18px; color: var(--ash); font-size: 15px; line-height: 1.8; }
+    .lead code { color: var(--charcoal); font: 12px var(--mono); background: var(--linen); padding: 1px 5px; border-radius: 4px; }
+    .note { margin-top: 24px; color: var(--fog); font: 400 11px/1.8 var(--mono); }
+    .note b { color: var(--ash); font-weight: 400; }
+
+    .cols { display: grid; grid-template-columns: .9fr 1.1fr; gap: 56px; align-items: center; margin-top: 56px; }
+    .cols.rev { grid-template-columns: 1.1fr .9fr; }
+    .metrics { display: flex; flex-wrap: wrap; gap: 30px; margin-top: 28px; }
+    .metric strong { display: block; color: var(--ink); font: 400 30px var(--serif); }
+    .metric span { display: block; margin-top: 6px; color: var(--ash); font: 400 10px var(--mono); letter-spacing: .04em; }
+
+    /* boards — white paper cards */
+    .board { padding: 26px; border: 1px solid var(--mist); border-radius: 16px; background: var(--paper); box-shadow: var(--shadow-card); }
+    .board-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 20px; color: var(--charcoal); font: 400 10px var(--mono); letter-spacing: .18em; }
+    .board-head small { color: var(--fog); letter-spacing: .04em; }
+    .board-foot { display: flex; align-items: center; gap: 9px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--mist); color: var(--fog); font: 400 10px var(--mono); }
+
+    /* 01 · the loom — an overview, not a dashboard: the four source streams on the left (what each one is, what every record carries),
+       the six chapters they feed on the right, and a ribbon in between for every feed */
+    #sample .chapter-inner, #time .chapter-inner { max-width: 1400px; }
+    .ch-split { display: grid; grid-template-columns: 1fr minmax(0, 520px); gap: 40px; align-items: end; }
+    .ch-split .lead { margin-top: 0; padding-bottom: 4px; }
+    .map-head { display: flex; justify-content: space-between; align-items: baseline; margin-top: 34px; padding-bottom: 12px; border-bottom: 1px solid var(--mist); color: var(--charcoal); font: 400 10px var(--mono); letter-spacing: .18em; }
+    .map-head small { color: var(--fog); letter-spacing: .04em; }
+    .map { position: relative; display: grid; grid-template-columns: minmax(320px, 400px) minmax(120px, 1fr) minmax(280px, 330px); align-items: center; margin-top: 20px; --watch: #41a1cf; --liked: #c8705f; --favorite: #c39a3a; --chat: #5f8e78; }
+    .src-col { grid-column: 1; display: grid; gap: 8px; }
+    .carry { padding-bottom: 12px; border-bottom: 1px dashed var(--mist); color: var(--ash); font: 400 10px var(--mono); letter-spacing: .04em; }
+    .src { display: grid; grid-template-columns: 42px 1fr; gap: 14px; align-items: start; padding: 8px 18px 8px 0; transition: opacity .4s ease; }
+    .src.off { opacity: .45; }
+    .k-watch { --c: var(--watch); --t: rgba(65,161,207,.16); } .k-liked { --c: var(--liked); --t: rgba(200,112,95,.14); } .k-favorite { --c: var(--favorite); --t: rgba(195,154,58,.17); } .k-chat { --c: var(--chat); --t: rgba(95,142,120,.15); }
+    .src .glyph { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: var(--t); color: var(--c); box-shadow: inset 0 0 0 1px rgba(255,255,255,.65); }
+    .src .glyph svg { width: 20px; height: 20px; }
+    .src b { display: block; color: var(--graphite); font-size: 14px; font-weight: 500; }
+    .src b small { margin-left: 8px; color: var(--fog); font: 400 9px var(--mono); letter-spacing: .16em; }
+    .src p { margin: 4px 0 0; color: var(--ash); font-size: 12px; line-height: 1.7; }
+    .flds { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+    .flds i { padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(44,44,44,.1); background: rgba(255,255,255,.45); color: var(--charcoal); font: 9px var(--mono); font-style: normal; }
+    .src .flds i { border-color: transparent; background: var(--t); }
+    .loom { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+    .loom path { fill: none; stroke: var(--c); stroke-width: 1.5; opacity: .5; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 1.3s cubic-bezier(.2,.7,.2,1) calc(var(--i) * 40ms), opacity .3s ease, stroke-width .3s ease; }
+    .loom path.watch { --c: var(--watch); } .loom path.liked { --c: var(--liked); } .loom path.favorite { --c: var(--favorite); } .loom path.chat { --c: var(--chat); }
+    .in .loom path { stroke-dashoffset: 0; }
+    .loom path.off { display: none; }
+    .loom circle { fill: var(--c, var(--fog)); stroke: var(--parchment); stroke-width: 1.5; opacity: 0; transition: opacity .5s ease .4s; }
+    .loom circle.watch { --c: var(--watch); } .loom circle.liked { --c: var(--liked); } .loom circle.favorite { --c: var(--favorite); } .loom circle.chat { --c: var(--chat); }
+    .in .loom circle { opacity: 1; }
+    .map.dim .loom path { opacity: .08; }
+    .map.dim .loom path.hl { opacity: .95; stroke-width: 2; }
+    .dst-col { grid-column: 3; display: grid; gap: 9px; }
+    .dst { display: grid; grid-template-columns: 30px 1fr; column-gap: 12px; align-items: center; padding: 9px 14px; border: 1px solid var(--mist); border-radius: 12px; background: var(--paper); color: inherit; text-decoration: none; transition: transform .25s ease, border-color .25s ease; }
+    .dst:hover { transform: translateX(3px); border-color: var(--blue); }
+    .dst .mo { grid-row: span 2; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: rgba(44,44,44,.05); color: var(--charcoal); }
+    .dst .mo svg { width: 18px; height: 18px; }
+    .dst small { color: var(--ash); font: 400 9px var(--mono); letter-spacing: .18em; }
+    .dst small b { color: var(--blue); font-weight: 400; }
+    .dst em { display: block; margin-top: 2px; color: var(--graphite); font: 400 13px var(--serif); font-style: normal; letter-spacing: -.01em; }
+    .map-foot { margin: 18px 0 0; color: var(--fog); font: 400 11px/1.8 var(--mono); }
+    .map-foot b { color: var(--ash); font-weight: 400; }
+    .time-foot .note { margin-top: 6px; }
+    .track { height: 4px; border-radius: 2px; overflow: hidden; background: var(--linen); }
+    .fill { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--graphite); transition: width 1.2s cubic-bezier(.2,.7,.2,1) .2s; }
+    .fill.blue { background: var(--blue); }
+    .in .fill { width: var(--w); }
+
+    /* 02 · a calendar of the days that carry records (one block per month in the range) and the 24 hours as a clock face */
+    .time-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: stretch; margin-top: 38px; }
+    .cal-board { display: grid; grid-template-rows: auto 1fr auto; padding: 22px 26px 18px; }
+    .cal-legend { align-self: end; }
+    .cal { display: flex; flex-wrap: wrap; gap: 20px 26px; --cell: 22px; --gap: 4px; }
+    .cal-m { display: grid; gap: 7px; align-content: start; }
+    .cal-m h5 { margin: 0 0 2px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; color: var(--charcoal); font: 500 11px var(--sans); }
+    .cal-m h5 small { color: var(--fog); font: 400 9px var(--mono); letter-spacing: .04em; }
+    .cal-wk { display: grid; grid-template-columns: repeat(7, var(--cell)); gap: var(--gap); color: var(--fog); font: 8px var(--mono); text-align: center; }
+    .cal-d { display: grid; grid-template-columns: repeat(7, var(--cell)); grid-auto-rows: var(--cell); gap: var(--gap); }
+    .cal-d i { position: relative; border-radius: 4px; background: rgba(44,44,44,.07); opacity: 0; transform: scale(.4); transition: opacity .5s ease calc(var(--d) * 5ms), transform .5s cubic-bezier(.2,.7,.2,1) calc(var(--d) * 5ms); }
+    .in .cal-d i { opacity: 1; transform: none; }
+    .cal-d .pad { visibility: hidden; }
+    .cal-d i.out { background: transparent; box-shadow: inset 0 0 0 1px rgba(44,44,44,.07); }
+    .cal-d i.on { background: rgba(65,161,207, var(--a)); }
+    .cal-d i.peak { z-index: 1; background: var(--cerulean); box-shadow: 0 0 0 2px var(--parchment), 0 0 0 3.5px var(--cerulean); }
+    .cal-d i b { display: none; position: absolute; inset: 0; place-content: center; color: rgba(23,23,23,.62); font: 400 9px var(--mono); }
+    .cal.big .cal-d i b { display: grid; }
+    .cal-d i.peak b { color: #fff; }
+    .cal-empty { margin: 0; color: var(--ash); font-size: 13px; line-height: 1.7; }
+    .cal-legend { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--mist); color: var(--ash); font: 400 10px/1.7 var(--mono); }
+    .cal-legend .scale { flex: none; color: var(--fog); }
+    .cal-legend .scale i { display: inline-block; width: 9px; height: 9px; margin: 0 2px; border-radius: 2px; vertical-align: -1px; background: rgba(65,161,207, var(--a)); }
+    .clock-board { display: grid; align-content: start; gap: 12px; padding: 22px 24px 20px; }
+    .clock { position: relative; width: 100%; max-width: 272px; margin: 6px auto 0; }
+    .clock svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .clock .ring { fill: none; stroke: var(--mist); stroke-width: 1; }
+    .clock .night { fill: none; stroke: rgba(31,31,41,.08); stroke-width: 10; }
+    .clock .hb { stroke: var(--graphite); stroke-width: 6; stroke-linecap: round; opacity: .26; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset .9s cubic-bezier(.2,.7,.2,1) calc(var(--i) * 28ms); }
+    .in .clock .hb { stroke-dashoffset: 0; }
+    .clock .hb.hot { opacity: .58; }
+    .clock .hb.peak { stroke: var(--blue); opacity: 1; }
+    .clock text { fill: var(--fog); font: 9px var(--mono); }
+    .clock .core { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none; }
+    .clock .core strong { color: var(--ink); font: 300 40px/1 var(--serif); letter-spacing: -.03em; }
+    .clock .core small { display: block; margin-top: 8px; color: var(--ash); font: 9px var(--mono); letter-spacing: .16em; }
+    .dn { display: grid; gap: 8px; margin-top: 6px; }
+    .dn .bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(44,44,44,.09); }
+    .dn .bar i { display: block; height: 100%; width: 0; transition: width 1.2s cubic-bezier(.2,.7,.2,1) .3s; }
+    .dn .bar .day { background: var(--fog); } .dn .bar .night { background: var(--graphite); }
+    .in .dn .bar i { width: var(--w); }
+    .dn .lg { display: flex; justify-content: space-between; color: var(--ash); font: 10px var(--mono); }
+    .dn .lg b { color: var(--ink); font-weight: 400; }
+    .time-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 40px; align-items: center; margin-top: 22px; }
+    .time-sources { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+    .ts-row { display: flex; align-items: baseline; gap: 10px; color: var(--ash); font-size: 12px; }
+    .ts-row code { color: var(--charcoal); font: 9px var(--mono); letter-spacing: .04em; }
+    .ts-row b { color: var(--ink); font: 12px var(--mono); font-weight: 400; }
+
+    /* 03 kept */
+    .venn { position: relative; width: 320px; height: 260px; margin: 0 auto; }
+    .venn i { position: absolute; width: 165px; height: 165px; border: 1.5px solid; border-radius: 50%; opacity: 0; transform: scale(.7); transition: all .9s cubic-bezier(.2,.7,.2,1); }
+    .venn.in i, .in .venn i { opacity: 1; transform: none; }
+    .venn .va { left: 26px; top: 22px; border-color: var(--blue); background: rgba(65,161,207,.07); }
+    .venn .vb { left: 122px; top: 22px; border-color: var(--fog); background: rgba(180,184,180,.1); transition-delay: .15s; }
+    .venn .vc { left: 74px; top: 74px; border-color: var(--charcoal); background: rgba(68,65,65,.05); transition-delay: .3s; }
+    .venn strong { position: absolute; left: 0; right: 0; top: 108px; color: var(--ink); font: 400 30px var(--serif); text-align: center; }
+    .venn strong small { display: block; margin-top: 3px; color: var(--ash); font: 9px var(--mono); letter-spacing: .14em; }
+    .venn span { position: absolute; color: var(--ash); font: 10px var(--mono); }
+    .venn .la { left: 52px; top: 4px; color: var(--cerulean); }
+    .venn .lb { right: 52px; top: 4px; }
+    .venn .lc { left: 0; right: 0; bottom: 2px; text-align: center; }
+    .key-list { margin-top: 4px; }
+    .key-row { display: flex; justify-content: space-between; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--linen); color: var(--ash); font-size: 13px; }
+    .key-row b { color: var(--ink); font: 14px var(--mono); font-weight: 400; }
+    .progress-mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 22px; }
+    .pm { padding: 14px; border: 1px solid var(--mist); border-radius: 12px; background: var(--linen); }
+    .pm strong { display: block; color: var(--ink); font: 400 21px var(--serif); }
+    .pm span { display: block; margin-top: 4px; color: var(--ash); font: 9px var(--mono); }
+
+    .recent { margin-top: 64px; padding-top: 26px; border-top: 1px solid var(--mist); }
+    .recent-head { display: flex; align-items: end; justify-content: space-between; margin-bottom: 20px; }
+    .recent-head h3 { color: var(--graphite); font: 400 24px var(--serif); }
+    .recent-head small { color: var(--fog); font: 9px var(--mono); letter-spacing: .06em; }
+    .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .card { display: block; color: inherit; text-decoration: none; border: 1px solid var(--mist); border-radius: 12px; background: var(--paper); overflow: hidden; box-shadow: var(--shadow-diagram); transition: transform .3s ease, border-color .3s ease; }
+    .card:hover { transform: translateY(-3px); border-color: var(--blue); }
+    .card-cover { position: relative; height: 132px; transition: filter .4s ease; }
+    .card-cover.c1 { background: linear-gradient(160deg, #2f5480 0%, #d29a4e 78%); }
+    .card-cover.c2 { background: linear-gradient(160deg, #453e63 0%, #d8ac96 82%); }
+    .card-cover.c3 { background: linear-gradient(160deg, #162034 0%, #4c6a94 90%); }
+    .card-cover.c4 { background: linear-gradient(160deg, #612a26 0%, #e2a24e 84%); }
+    .card-cover::after { content: ""; position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; transform: translate(-50%,-50%); border: 1px solid rgba(254,255,252,.65); border-radius: 50%; }
+    .card-cover.real::after { display: none; }
+    .card-cover b { position: absolute; left: 10px; top: 10px; padding: 3px 7px; border-radius: 4px; color: var(--charcoal); background: rgba(254,255,252,.92); font: 400 9px var(--mono); }
+    .card-body { padding: 13px 14px 15px; }
+    .card h4 { margin: 0; color: var(--graphite); font-size: 13px; font-weight: 500; line-height: 1.5; }
+    .card p { margin: 6px 0 0; color: var(--fog); font: 9px var(--mono); }
+    .card .open { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; color: var(--blue); font-size: 11px; font-weight: 500; }
+
+    /* 03 · staggered sheet: a wider page on wide screens, one beat of offset between neighbours */
+    #kept .chapter-inner { max-width: 1400px; --beat: 36px; }
+    .kept-grid { display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 44px; align-items: start; margin-top: 44px; }
+    .venn-col, .depth { margin-top: var(--beat); }
+    .kept-copy .lead { margin-top: 0; }
+    .venn strong small em { font-style: normal; color: var(--blue); }
+    .rings { gap: 26px; margin-top: 24px; }
+    .rings .metric span i { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; border: 1.5px solid var(--fog); background: rgba(180,184,180,.35); vertical-align: 0; }
+    .rings .metric span i.dot-a { border-color: var(--blue); background: rgba(65,161,207,.25); }
+    .rings .metric span i.dot-c { border-color: var(--charcoal); background: rgba(68,65,65,.2); }
+    .kept-copy .key-list { margin-top: 18px; }
+    .key-row.muted { color: var(--fog); border-bottom: 0; border-top: 1px dashed var(--mist); }
+    .key-row.muted b { color: var(--ash); }
+    .depth .deep { --c: var(--blue); }
+    .depth .mid { --c: var(--graphite); }
+    .depth .shallow { --c: var(--fog); }
+    .depth-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--linen); }
+    .depth-bar i { display: block; width: 0; height: 100%; background: var(--c); transition: width 1.2s cubic-bezier(.2,.7,.2,1) .2s; }
+    .depth-bar i + i { box-shadow: -1px 0 0 rgba(255,255,255,.9); }
+    .in .depth-bar i { width: var(--w, 0%); }
+    .stair { grid-template-columns: 1fr; gap: 8px; margin-top: 18px; }
+    .stair .pm { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; }
+    .stair .pm:nth-child(2) { margin-left: 18px; }
+    .stair .pm:nth-child(3) { margin-left: 36px; }
+    .stair .dot { align-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+    .stair .pm strong { font-size: 22px; }
+    .stair .pm span { margin: 0 0 0 auto; }
+    .depth .board-foot { margin-top: 18px; padding-top: 12px; }
+    #kept .recent { display: grid; grid-template-columns: 200px 1fr; gap: 24px; align-items: start; margin-top: 40px; }
+    #kept .recent-head { flex-direction: column; align-items: start; gap: 10px; margin: 0; padding-top: 4px; }
+    #kept .recent-head h3 { font-size: 20px; line-height: 1.3; white-space: nowrap; }
+    #kept .recent-head small { line-height: 1.7; }
+    .cards { align-items: stretch; }
+    .cards .card:nth-child(even) { margin-top: var(--beat); }
+    .card { display: flex; flex-direction: column; }
+    .card-cover { flex: none; }
+    .card-body { display: flex; flex: 1; flex-direction: column; }
+    .card h4 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .card .open { margin-top: auto; padding-top: 12px; }
+    .card.in:hover { transform: translateY(-3px); }
+    .card-kind { position: absolute; right: 10px; top: 10px; padding: 3px 7px; border-radius: 4px; color: var(--cerulean); background: rgba(255,255,255,.78); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); font: 400 9px var(--mono); font-style: normal; letter-spacing: .1em; }
+    body.privacy-on .card-cover, body.privacy-on .avatar, body.privacy-on .ava, body.privacy-on .sc, body.privacy-on .w-float .tile, body.privacy-on .w-chips .ava { filter: blur(12px) saturate(.4); }
+    .privacy-text { user-select: none; }
+    .privacy-run { display: contents; font: inherit; }
+    .privacy-char { display: inline-block; inline-size: var(--privacy-width); font: inherit; font-family: var(--mono); letter-spacing: 0; text-align: center; }
+
+    /* 04 mix — bento; cerulean card is the one saturated surface */
+    .bento { display: grid; grid-template-columns: 1.1fr .9fr .9fr; gap: 16px; align-items: start; margin-top: 40px; --beat: 36px; }
+    .bento-col { display: grid; gap: 16px; }
+    .bento-col:nth-child(2) { margin-top: var(--beat); }
+    .bento-cell { position: relative; padding: 22px; border: 1px solid var(--mist); border-radius: 16px; background: var(--paper); box-shadow: var(--shadow-diagram); overflow: hidden; }
+    .bento-cell.cerulean { border-color: var(--cerulean); background: var(--cerulean); color: #fff; }
+    .bento-cell .label { color: var(--ash); font: 400 9px var(--mono); letter-spacing: .18em; }
+    .bento-cell.cerulean .label { color: rgba(255,255,255,.75); }
+    .bento-cell strong { display: block; margin-top: 18px; color: var(--ink); font: 400 27px var(--serif); letter-spacing: -.02em; }
+    .bento-cell.cerulean strong { color: #fff; font-size: 32px; }
+    .bento-cell small { display: block; margin-top: 8px; color: var(--ash); font: 400 10px var(--mono); }
+    .bento-cell.cerulean small { color: rgba(255,255,255,.78); }
+    .bento-cell .avatar { position: absolute; right: 20px; top: 18px; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--mist); background: linear-gradient(140deg, #907a9c, #d8ac96); }
+    .mini-lines { margin-top: 20px; display: grid; gap: 10px; }
+    .mini-lines .ml { display: grid; grid-template-columns: 58px 1fr 38px; gap: 10px; align-items: center; color: var(--ash); font-size: 11px; }
+    .mini-lines .ml b { color: var(--charcoal); font: 11px var(--mono); font-weight: 400; text-align: right; }
+    .mini-lines .track { height: 3px; }
+    .topic-lines, .creator-lines { margin-top: 22px; }
+    .topic-lines .ml, .creator-lines .ml { grid-template-columns: 96px 1fr 30px; }
+    .topic-lines .ml > span:first-child, .creator-lines .ml > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cerulean .mini-lines .ml { color: rgba(255,255,255,.86); }
+    .cerulean .mini-lines .ml b { color: #fff; }
+    .cerulean .track { background: rgba(255,255,255,.22); }
+    .cerulean .fill { background: #fff; }
+    .cell-foot { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--mist); color: var(--fog); font: 400 10px/1.6 var(--mono); }
+    .cerulean .cell-foot { border-top-color: rgba(255,255,255,.28); color: rgba(255,255,255,.72); }
+    .cell-metrics { display: flex; gap: 28px; margin-top: 20px; }
+    .cell-metrics strong { margin-top: 0; font-size: 22px; }
+    .cell-metrics span { display: block; margin-top: 4px; color: var(--ash); font: 400 9px var(--mono); letter-spacing: .04em; }
+    .music-rows { margin-top: 10px; }
+    .music-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--linen); color: var(--charcoal); font-size: 12px; }
+    .music-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+    .music-row .mt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .music-row .mt b { color: var(--graphite); font-weight: 500; }
+    .music-row small { color: var(--ash); font: 10px var(--mono); white-space: nowrap; }
+    .heat-rows { margin-top: 18px; }
+    .heat-row { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--linen); color: var(--charcoal); font-size: 12px; }
+    .heat-row span { color: var(--fog); font: 9px var(--mono); letter-spacing: .1em; }
+    .heat-row em { font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .heat-row b { color: var(--ink); font: 12px var(--mono); font-weight: 400; }
+    .age-bar { margin-top: 18px; }
+    .age-bar i:nth-child(1), .age-legend span:nth-child(1) i { --c: var(--blue); }
+    .age-bar i:nth-child(2), .age-legend span:nth-child(2) i { --c: var(--graphite); }
+    .age-bar i:nth-child(3), .age-legend span:nth-child(3) i { --c: var(--fog); }
+    .age-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; color: var(--ash); font: 400 10px var(--mono); }
+    .age-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .age-legend i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+    .age-legend b { color: var(--ink); font-weight: 400; }
+    .tag-line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 36px; padding-top: 22px; border-top: 1px solid var(--mist); }
+    .tag-line > b { margin-right: 12px; color: var(--ash); font: 400 10px var(--mono); font-weight: 400; letter-spacing: .1em; }
+    .tag { padding: 7px 12px; border: 1px solid var(--mist); border-radius: 50px; color: var(--charcoal); background: var(--paper); font-size: 12px; transition: border-color .25s ease; }
+    .tag:hover { border-color: var(--blue); }
+    .music-line { display: flex; align-items: center; gap: 12px; margin-top: 22px; padding: 14px 16px; border: 1px solid var(--mist); border-radius: 12px; background: var(--linen); color: var(--charcoal); font-size: 12px; }
+    .eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; flex: none; }
+    .eq i { width: 2.5px; background: var(--blue); animation: eq 1.1s ease-in-out infinite alternate; }
+    .eq i:nth-child(1) { height: 6px; } .eq i:nth-child(2) { height: 13px; animation-delay: -.3s; } .eq i:nth-child(3) { height: 9px; animation-delay: -.6s; } .eq i:nth-child(4) { height: 12px; animation-delay: -.15s; }
+    @keyframes eq { to { transform: scaleY(.4); } }
+    .music-line b { color: var(--ink); font-weight: 500; }
+    .music-line small { margin-left: auto; color: var(--fog); font: 9px var(--mono); }
+
+    /* 04 · roll — one sticky screen; the page keeps scrolling down while the roll slides left (ponytail: direct scroll→x mapping, no inertia).
+       Each panel is set like the reference screen (see rollLayout): a headline of two tags across the width, and a row of
+       standing word · cover · caption · standing word filling the rest; the headline alternates top / bottom per panel. --bh = body height. */
+    .roll { position: relative; height: 400vh; }
+    .roll-stage { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: clamp(84px, 10vh, 120px) 0 0; overflow: hidden; }
+    .roll-head .lead { max-width: 760px; }
+    .roll-head { position: relative; z-index: 1; display: flex; align-items: end; justify-content: space-between; gap: 24px; padding: 0 8%; }
+    .roll-cue { display: grid; gap: 8px; justify-items: end; color: var(--ash); font: 400 9px var(--mono); letter-spacing: .22em; white-space: nowrap; }
+    .roll-cue .track { width: 120px; }
+    .roll-cue .fill { width: var(--w, 0%); transition: none; }
+    .roll-body { position: relative; z-index: 1; flex: 1; margin-top: 2vh; }
+    .roll-strip { position: absolute; inset: 0; will-change: transform; }
+    .roll-strip > * { position: absolute; white-space: nowrap; }
+    /* big words: the script sizes each one to fill its 52vw box (capped at 29% of the body); the letters rise out of a mask one by one on entry */
+    .rw { color: var(--ink); font-family: var(--serif); font-weight: 300; line-height: 1; letter-spacing: -.03em; }
+    .rw .mask { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: .08em; margin-bottom: -.08em; }
+    .rw .ch { display: inline-block; transform: translateY(108%); transition: transform .8s cubic-bezier(.2,.7,.2,1) calc(var(--d) * 55ms); }
+    .rw.in .ch { transform: none; }
+    .rw small { display: inline-block; vertical-align: top; margin: .28em .1em 0 .3em; color: var(--ash); font: 400 10px var(--mono); letter-spacing: .14em; opacity: 0; transition: opacity .5s ease .7s; }
+    .rw.in small { opacity: 1; }
+    .rw.first small { color: var(--blue); }
+    /* the standing word hangs from the tail of the top word down to the bottom edge, its right side against the bottom word — the script sets
+       its size (fills that height, capped like the big words) and x; drawn top-down on entry (a 1px outline turned the thin serif into wireframe) */
+    .rv { writing-mode: vertical-rl; text-orientation: upright; color: rgba(23,23,23,.6); font-family: var(--serif); font-weight: 300; line-height: 1; letter-spacing: .04em; clip-path: inset(0 0 100% 0); transition: clip-path .9s cubic-bezier(.2,.7,.2,1) .15s; }
+    .rv.in { clip-path: inset(0); }
+    /* cover card: the cover opens from a sliver, the caption slides in after it */
+    .rc { display: flex; gap: 26px; align-items: flex-start; color: inherit; text-decoration: none; }
+    .rc .card-cover { width: calc(var(--bh, 60vh) * .465); height: calc(var(--bh, 60vh) * .62); flex: none; border: 1px solid rgba(255,255,255,.74); border-radius: 12px; box-shadow: var(--shadow-card); transform-origin: 0 50%; transform: scaleX(.04); transition: transform .9s cubic-bezier(.2,.7,.2,1); }
+    .rc.in .card-cover { transform: none; }
+    .rc-body { width: 24vw; min-width: 220px; padding-top: 6px; white-space: normal; opacity: 0; transform: translateX(28px); transition: opacity .7s ease .35s, transform .7s cubic-bezier(.2,.7,.2,1) .35s; }
+    .rc.in .rc-body { opacity: 1; transform: none; }
+    .rc h4 { margin: 0; color: var(--graphite); font: 400 clamp(20px, 1.9vw, 30px)/1.35 var(--serif); letter-spacing: -.01em; line-break: strict; } /* #tags are wrapped nowrap by the script */ /* #tags are wrapped nowrap by the script */
+    .rc p { margin: 10px 0 0; color: var(--ash); font: 10px var(--mono); letter-spacing: .04em; }
+    .rc .open { display: inline-flex; align-items: center; gap: 5px; margin-top: 12px; color: var(--blue); font-size: 11px; font-weight: 500; }
+    .rc:hover h4 { color: var(--blue); }
+    .rend { max-width: 460px; white-space: normal; opacity: 0; transform: translateY(18px); transition: opacity .8s ease .2s, transform .8s cubic-bezier(.2,.6,.2,1) .2s; }
+    .rend.in { opacity: 1; transform: none; }
+    .rend .meta-line { margin-bottom: 12px; }
+    .rend strong { display: block; color: var(--ink); font: 400 clamp(22px, 2.2vw, 30px)/1.25 var(--serif); letter-spacing: -.02em; }
+    .rend small { display: block; margin-top: 10px; color: var(--fog); font: 400 10px/1.7 var(--mono); }
+
+    /* 05 echo */
+    .echo-rows { margin-top: 4px; }
+    .echo-row { display: grid; grid-template-columns: 64px 1fr 46px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--linen); }
+    .echo-row:last-child { border-bottom: 0; }
+    .echo-row span { color: var(--charcoal); font-size: 12px; }
+    .echo-row span code { color: var(--fog); font: 8px var(--mono); display: block; letter-spacing: .04em; }
+    .echo-row b { color: var(--ink); text-align: right; font: 12px var(--mono); font-weight: 400; }
+    .conv-list { margin-top: 24px; padding-top: 8px; border-top: 1px solid var(--mist); }
+    .conv { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--linen); }
+    .conv:last-child { border-bottom: 0; }
+    .conv .ava { width: 34px; height: 34px; flex: none; border-radius: 50%; border: 1px solid var(--mist); background: linear-gradient(140deg, #9cbcd2, #f2ecd8); }
+    .conv .ava.g { border-radius: 10px; background: linear-gradient(140deg, #453e63, #907a9c); }
+    .conv .who { min-width: 0; }
+    .conv .who b { display: block; color: var(--graphite); font-size: 13px; font-weight: 500; }
+    .conv .who small { display: block; margin-top: 2px; color: var(--fog); font: 9px var(--mono); }
+    .conv .n { margin-left: auto; color: var(--ash); font: 11px var(--mono); white-space: nowrap; }
+    .share-sample { display: flex; gap: 14px; margin-top: 22px; padding: 14px; border: 1px solid var(--mist); border-radius: 12px; background: var(--linen); }
+    .share-sample .sc { width: 62px; height: 78px; flex: none; border-radius: 8px; background: linear-gradient(160deg, #162034, #4c6a94); }
+    .share-sample .st b { display: block; color: var(--graphite); font-size: 12px; font-weight: 500; line-height: 1.5; }
+    .share-sample .st span { display: block; margin-top: 5px; color: var(--fog); font: 9px var(--mono); }
+    .share-sample .st p { margin: 8px 0 0; color: var(--ash); font-size: 10px; line-height: 1.6; }
+
+    /* 05 · third column: the words themselves */
+    #echo .chapter-inner { max-width: 1400px; --beat: 36px; }
+    #echo .cols { grid-template-columns: .95fr 1.05fr 1fr; gap: 40px; align-items: start; }
+    #echo .words { margin-top: var(--beat); }
+    .words .sub { margin-top: 22px; color: var(--ash); font: 400 9px var(--mono); letter-spacing: .18em; }
+    .words .sub:first-of-type { margin-top: 0; }
+    .words .mini-lines { margin-top: 12px; gap: 8px; }
+    .words .ml { grid-template-columns: 96px 1fr 38px; }
+    .words .ml > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .words .cell-foot { margin-top: 12px; white-space: normal; }
+    .chips-block { display: grid; gap: 8px; margin-top: 24px; }
+    .chips-head { margin: 0; color: var(--ash); font: 400 9px var(--mono); letter-spacing: .18em; }
+    .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--fog); font: 400 10px var(--mono); }
+    .chips i { padding: 2px 6px; border-radius: 4px; color: var(--charcoal); background: var(--linen); font-style: normal; }
+
+    /* 06 evidence */
+    .ratio { display: grid; grid-template-columns: 1fr 100px; gap: 22px; align-items: center; padding-bottom: 22px; border-bottom: 1px solid var(--mist); }
+    .ratio-track { height: 6px; border-radius: 3px; overflow: hidden; background: var(--linen); }
+    .ratio-track i { display: block; width: 0; height: 100%; border-radius: 3px; background: var(--blue); transition: width 1.3s cubic-bezier(.2,.7,.2,1) .2s; }
+    .in .ratio-track i { width: var(--w, 97%); }
+    .ratio strong { display: block; color: var(--ink); font: 400 30px var(--serif); }
+    .ratio span { display: block; margin-top: 3px; color: var(--ash); font: 9px var(--mono); }
+    .evidence-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 12px; min-height: 48px; align-items: center; border-bottom: 1px solid var(--linen); }
+    .evidence-row code { color: var(--ash); font: 9px var(--mono); letter-spacing: .04em; }
+    .evidence-row span { color: var(--charcoal); font-size: 12px; }
+    .evidence-row b { color: var(--ink); font: 12px var(--mono); font-weight: 400; }
+    .caveat { display: none; margin-top: 18px; padding: 15px 16px; border: 1px solid var(--mist); border-left: 2px solid var(--blue); border-radius: 0 8px 8px 0; background: var(--linen); color: var(--ash); font-size: 12px; line-height: 1.8; }
+    .caveat.open { display: block; }
+    .caveat b { color: var(--charcoal); font-weight: 500; }
+
+    /* 06 · field ledger */
+    #evidence .chapter-inner { max-width: 1400px; }
+    .fields { margin-top: 12px; }
+    .fields .ml { grid-template-columns: 96px 1fr 78px 42px; }
+    .fields .ml small { color: var(--ash); font: 10px var(--mono); text-align: right; }
+
+    /* 07 signature */
+    .chapter.colophon { background: var(--parchment); }
+    .signature { display: grid; grid-template-columns: 1fr 380px; gap: 56px; align-items: center; margin-top: 56px; }
+    .signature-name { color: var(--ink); font: 300 clamp(40px, 4.6vw, 62px)/1.12 var(--serif); letter-spacing: -.025em; }
+    .signature-name em { font-style: italic; font-weight: 400; }
+    .signature-en { margin-top: 12px; color: var(--ash); font: 400 10px var(--mono); letter-spacing: .3em; }
+    .seal { position: relative; min-height: 320px; display: flex; flex-direction: column; gap: 14px; padding: 30px 30px 46px; border: 1px solid var(--mist); border-radius: 24px; background: var(--paper); box-shadow: var(--shadow-diagram); overflow: hidden; }
+    .seal .kicker { color: var(--fog); font: 400 9px var(--mono); letter-spacing: .28em; }
+    .type-name { margin: 0; color: var(--ink); font: 300 clamp(28px, 2.6vw, 36px)/1.2 var(--serif); letter-spacing: -.02em; }
+    .type-name em { font-style: italic; font-weight: 400; }
+    .type-en { margin-top: -6px; color: var(--ash); font: 400 9px var(--mono); letter-spacing: .26em; }
+    .type-note { margin: 0; padding-top: 14px; border-top: 1px solid var(--mist); color: var(--charcoal); font: 400 13px/1.95 var(--sans); }
+    .seal small { position: absolute; left: 30px; bottom: 16px; color: var(--fog); font: 9px var(--mono); letter-spacing: .12em; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+    .colophon-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 72px; padding-top: 22px; border-top: 1px solid var(--mist); color: var(--fog); font: 400 10px var(--mono); letter-spacing: .04em; }
+    .colophon-foot span { flex: 1; min-width: 220px; }
+    .colophon-foot button { border: 0; padding: 0; color: var(--charcoal); background: none; cursor: pointer; font-size: 11px; }
+    .colophon-foot button:hover { color: var(--blue); }
+
+    /* reveal helpers */
+    [data-reveal] { opacity: 0; transform: translateY(24px); transition: opacity .8s ease, transform .8s cubic-bezier(.2,.6,.2,1); transition-delay: calc(var(--i, 0) * 90ms); }
+    [data-reveal].in { opacity: 1; transform: none; }
+
+    /* arriving from the entry card: white curtain lifts onto the hero */
+    #curtain { position: fixed; inset: 0; z-index: 70; background: #fff; opacity: 0; pointer-events: none; transition: opacity 1s ease .1s; }
+    html.from-card #curtain { opacity: 1; }
+    html.from-card.arrived #curtain { opacity: 0; }
+    html.from-card .hero-copy { transform: scale(1.06); transition: transform 1.3s cubic-bezier(.2,.7,.2,1) .05s; }
+    html.from-card.arrived .hero-copy { transform: none; }
+    .colophon-foot a { color: var(--charcoal); text-decoration: none; font-size: 11px; }
+    .colophon-foot a:hover { color: var(--blue); }
+
+    /* ============ glass — paper lets the sky through; cards are three tiers of frosted glass ============ */
+    .chapter { background: rgba(254,255,252,.80); backdrop-filter: blur(26px) saturate(1.12); -webkit-backdrop-filter: blur(26px) saturate(1.12); border-color: rgba(255,255,255,.7); }
+    /* watercolour wash in the chapter's own sky colours — this is what the glass has to show through */
+    .chapter::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; filter: blur(34px); background:
+      radial-gradient(40% 36% at 76% 44%, var(--w1), transparent 72%),
+      radial-gradient(34% 30% at 20% 80%, var(--w2), transparent 72%),
+      radial-gradient(26% 24% at 52% 16%, var(--w3), transparent 74%),
+      radial-gradient(22% 20% at 40% 56%, var(--w2), transparent 72%); }
+    .chapter-inner { position: relative; z-index: 1; }
+    .chapter[data-wash="dawn"]  { --w1: rgba(120,168,204,.62); --w2: rgba(236,196,120,.58); --w3: rgba(210,154,78,.34); }
+    .chapter[data-wash="dusk"]  { --w1: rgba(150,118,170,.6);  --w2: rgba(228,164,140,.62); --w3: rgba(77,69,110,.36); }
+    .chapter[data-wash="night"] { --w1: rgba(96,124,168,.6);   --w2: rgba(150,176,210,.6);  --w3: rgba(29,41,64,.34); }
+    .chapter[data-wash="ember"] { --w1: rgba(204,128,54,.55);  --w2: rgba(150,80,56,.48);   --w3: rgba(226,150,66,.36); }
+    /* tier A · primary boards */
+    .board, .seal { background: linear-gradient(150deg, rgba(255,255,255,.64), rgba(255,255,255,.36)); border-color: rgba(255,255,255,.82); box-shadow: 0 0 0 1px rgba(222,226,222,.55), inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(255,255,255,.35), rgba(0,0,0,.06) 0 6px 18px; backdrop-filter: blur(20px) saturate(1.25); -webkit-backdrop-filter: blur(20px) saturate(1.25); }
+    /* tier B · bento cells, content cards, share card */
+    .bento-cell, .card, .share-sample { background: linear-gradient(150deg, rgba(255,255,255,.5), rgba(255,255,255,.24)); border-color: rgba(255,255,255,.74); box-shadow: 0 0 0 1px rgba(222,226,222,.5), inset 0 1px 0 rgba(255,255,255,.9), rgba(0,0,0,.05) 0 4px 12px; backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2); }
+    /* tier C · small tiles, pills, notes */
+    .pm, .music-line, .caveat, .tag, .dst { background: linear-gradient(150deg, rgba(255,255,255,.34), rgba(255,255,255,.12)); border-color: rgba(255,255,255,.66); box-shadow: 0 0 0 1px rgba(222,226,222,.42), inset 0 1px 0 rgba(255,255,255,.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    .caveat { border-left-color: var(--blue); }
+    /* the one saturated surface stays saturated, but it is glass too */
+    .bento-cell.cerulean { background: linear-gradient(150deg, rgba(0,129,192,.92), rgba(0,129,192,.72)); border-color: rgba(255,255,255,.42); box-shadow: 0 0 0 1px rgba(0,129,192,.45), inset 0 1px 0 rgba(255,255,255,.4), rgba(0,80,120,.18) 0 8px 22px; }
+    /* inner hairlines and tracks read through the glass */
+    .track, .ratio-track { background: rgba(44,44,44,.09); }
+    .key-row, .echo-row, .conv, .evidence-row { border-bottom-color: rgba(44,44,44,.08); }
+    .board-foot, .conv-list, .ratio, .strip-head, .cal-legend, .tag-line, .recent { border-color: rgba(44,44,44,.12); }
+    .card-cover b { background: rgba(255,255,255,.78); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    .card:hover, .tag:hover { border-color: rgba(65,161,207,.8); }
+
+    @media (max-width: 1240px) {
+      #kept .recent { grid-template-columns: 1fr; gap: 20px; }
+      #kept .recent-head { flex-direction: row; align-items: end; }
+    }
+    @media (max-width: 1180px) {
+      .kept-grid { grid-template-columns: 1fr 1.1fr 1fr; gap: 28px; }
+      .rings { gap: 18px; }
+      .stair .pm { flex-wrap: wrap; }
+      .stair .pm:nth-child(2) { margin-left: 10px; }
+      .stair .pm:nth-child(3) { margin-left: 20px; }
+    }
+    @media (max-width: 1000px) {
+      .kept-grid { grid-template-columns: 1fr 1fr; }
+      .depth { grid-column: 1 / -1; margin-top: 0; }
+      .stair { grid-template-columns: repeat(3, 1fr); }
+      .stair .pm:nth-child(2) { margin: 14px 0 0; }
+      .stair .pm:nth-child(3) { margin: 28px 0 0; }
+    }
+    @media (max-width: 1100px) {
+      #echo .cols { grid-template-columns: 1fr 1fr; }
+      #echo .words { grid-column: 1 / -1; margin-top: 0; }
+    }
+    @media (max-width: 880px) {
+      .nav { top: 12px; height: 50px; }
+      .nav-center, #clock { display: none; }
+      .rail { right: 12px; }
+      .rail button span { display: none; }
+      .hero { padding: 0 8% 16vh; }
+      .cols, .cols.rev, .signature { grid-template-columns: 1fr; gap: 36px; }
+      .ch-split, .time-foot, .time-grid, .map { grid-template-columns: 1fr; gap: 18px; }
+      .src-col, .dst-col { grid-column: auto; }
+      .loom { display: none; }
+      .cards { grid-template-columns: repeat(2, 1fr); }
+      .kept-grid { grid-template-columns: 1fr; gap: 28px; }
+      .venn-col, .depth, .cards .card:nth-child(even) { margin-top: 0; }
+      .stair { grid-template-columns: 1fr; }
+      .stair .pm:nth-child(2), .stair .pm:nth-child(3) { margin: 0; }
+      .bento { grid-template-columns: 1fr; }
+      .bento-col:nth-child(2) { margin-top: 0; }
+      .window { min-height: 78vh; }
+      .window:not(.hero) { row-gap: 26px; padding: 118px 8% 100px; }
+      .window.g-clock, .window.g-ledger, .window.g-rings { grid-template-columns: 1fr; grid-template-areas: none; }
+      .w-rings { justify-self: center; max-width: 400px; }
+      .g-clock .window-copy, .w-clock, .w-months, .g-clock .w-chips { grid-area: auto; }
+      .w-clock, .w-ledger { justify-self: start; text-align: left; }
+      .w-clock .w-fig { font-size: clamp(72px, 18vw, 110px); transform-origin: 0 100%; }
+      .w-months { height: 96px; }
+      .w-streams { grid-template-columns: 1fr 1fr; }
+      .w-float .tile { width: 64px; height: 86px; }
+      .w-float .f1 { left: 4%; top: 15%; }
+      .w-float .f2 { right: 5%; top: 13%; width: 56px; height: 76px; }
+      .w-float .f3, .w-float .a3, .w-float .sc { display: none; }
+      .w-float .a1 { left: 4%; top: 14%; width: 64px; height: 64px; }
+      .w-float .a2 { right: 5%; top: 12%; width: 52px; height: 52px; }
+      .w-num, .w-tag { display: none; }
+      .w-steps i { width: 22px; }
+      .w-frame { top: 84px; }
+      .chapter { height: auto; }
+      .chapter-inner { transform: none; }
+      .roll-stage { height: 100vh; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html:not(.motion-full) { scroll-behavior: auto !important; }
+      html:not(.motion-full) *, html:not(.motion-full) *::before, html:not(.motion-full) *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
+    }
+  </style>
+  <!-- 极端版：展览海报式野兽派覆盖层。样式由 scratchpad 的 extreme-css/*.css 经 build.mjs 注入到下面这个 style 块，原样式一行未动 -->
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <style id="extreme">
+/*EXTREME:BEGIN*/
+/* ---- 00-poster.css ---- */
+/* 极端版 · 展览海报式野兽派：油画与渐变天空不动，画面之上全部换成 墨黑 / 新闻纸 / 信号橙 + 粗黑体 + 硬线 */
+:root {
+  --x-ink: #0a0a0a; --x-paper: #f1eee6; --x-sig: #ff4a1c;
+  --ink: var(--x-ink); --graphite: var(--x-ink); --charcoal: #1c1c1c; --ash: #3b3b3b; --fog: #6d6a63; --mist: var(--x-ink);
+  --parchment: var(--x-paper); --paper: var(--x-paper); --linen: #e4e0d4;
+  --blue: var(--x-sig); --cerulean: var(--x-sig); --twilight: var(--x-ink); --dusk: var(--x-ink); --cream: #f1eee6;
+  --serif: "Anton", "Noto Sans SC", "PingFang SC", sans-serif;
+  --sans: "Noto Sans SC", "PingFang SC", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --x-display: "Anton", "Noto Sans SC", sans-serif;
+}
+*, *::before, *::after { border-radius: 0 !important; box-shadow: none !important; text-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; font-synthesis: none; }
+/* 圆只留给数据本身：头像、韦恩圆、印章环 */
+.w-chips .ava, .w-float .tile.round, .w-sig .ring, .w-sig .dots i, .venn i, .rings .metric span i, .stair .dot, .bento-cell .avatar, .conv .ava { border-radius: 50% !important; }
+body { background: var(--x-ink); font-family: var(--sans); letter-spacing: 0; }
+h1, h2, .w-title, .signature-name, .type-name { word-break: keep-all; overflow-wrap: anywhere; }
+
+/* ---------- 导航：通栏黑条 + 橙色底线 ---------- */
+.nav, body.nav-light .nav { top: 0; left: 0; right: 0; transform: none; width: auto; max-width: none; height: 50px; padding: 0 0 0 22px; gap: 24px; justify-content: space-between; border: 0; border-bottom: 4px solid var(--x-sig); background: var(--x-ink); }
+.brand, body.nav-light .brand { color: var(--cream); }
+.brand-name { font: 900 17px var(--sans); letter-spacing: .04em; }
+.brand-name small { color: var(--x-sig); font: 700 9px var(--mono); opacity: 1; }
+.nav-center, body.nav-light .nav-center { color: var(--cream); font: 500 11px var(--mono); letter-spacing: .12em; opacity: 1; }
+.nav-center i { width: 56px; height: 4px; background: var(--x-sig); opacity: 1; }
+.nav-right { align-self: stretch; gap: 0; }
+#clock, body.nav-light #clock { align-self: center; margin-right: 14px; padding: 5px 9px; color: var(--x-ink); background: var(--x-sig); font: 700 11px var(--mono); opacity: 1; }
+.nav-btn, .nav-btn.ghost, .nav-icon, body.nav-light .nav-btn.ghost, body.nav-light .nav-icon { height: 100%; min-height: 0; width: auto; padding: 0 20px; border: 0; border-left: 2px solid #3a3a3a; color: var(--cream); background: var(--x-ink); font: 700 13px var(--sans); }
+.nav-btn:hover, .nav-icon:hover { background: var(--x-sig); color: var(--x-ink); }
+
+/* ---------- 右侧目录：编号方块 ---------- */
+.rail { right: 0; gap: 0; border: 3px solid var(--x-ink); border-right: 0; background: var(--x-paper); }
+.rail button, body.over-light .rail button { gap: 8px; padding: 7px 10px; color: var(--x-ink); font: 700 10px var(--mono); letter-spacing: .06em; opacity: 1; }
+.rail button + button { border-top: 1px solid var(--x-ink); }
+.rail button span { opacity: 1; transform: none; }
+.rail button .dot, .rail button.active .dot { width: 10px; height: 10px; background: var(--x-ink); opacity: 1; }
+.rail button.active { background: var(--x-sig); }
+
+/* ---------- 卷首：画不动，字压在实心色块上 ---------- */
+.hero::before, .window::before { display: none; }
+.hero .eyebrow { display: inline-flex; padding: 6px 10px; background: var(--x-sig); color: var(--x-ink); font: 700 12px var(--mono); letter-spacing: .14em; }
+.hero .eyebrow i { display: none; }
+.hero-copy { max-width: 980px; }
+.hero h1 { display: inline; padding: 0 .14em; background: var(--x-ink); color: var(--cream); font: 900 clamp(60px, 7.8vw, 124px)/1.2 var(--sans); letter-spacing: -.05em; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.hero h1 b { font-weight: 900; background: var(--x-sig); color: var(--x-ink); padding: 0 .06em; }
+.hero-lead { width: fit-content; max-width: 36em; margin-top: 28px; padding: 14px 18px; background: var(--x-paper); color: var(--x-ink); font: 500 16px/1.75 var(--sans); opacity: 1; border-left: 8px solid var(--x-sig); }
+.hero-meta { gap: 0; margin-top: 0; opacity: 1; }
+.hero-meta span { padding: 7px 12px; background: var(--x-ink); color: var(--cream); font: 700 11px var(--mono); border-right: 1px solid #3a3a3a; }
+.hero-actions { gap: 0; margin-top: 22px; }
+.btn { min-height: 52px; padding: 0 24px; gap: 12px; border: 3px solid var(--x-ink) !important; font: 900 15px var(--sans); letter-spacing: .04em; }
+.btn .cir { border: 0; width: auto; height: auto; font: 700 16px var(--mono); }
+.btn-cream { background: var(--x-paper); color: var(--x-ink); }
+.btn-cream.faint { background: var(--x-ink); color: var(--cream); }
+.btn:hover, .btn-cream:hover { background: var(--x-sig); color: var(--x-ink); transform: none; }
+.scroll-cue, .w-foot .scroll-cue { padding: 6px 10px; background: var(--x-ink); color: var(--x-sig); font: 700 10px var(--mono); opacity: 1; }
+.scroll-cue::after { display: none; }
+
+/* ---------- 天空窗：巨大空心序号 + 贴条标题 ---------- */
+.w-num { font: 400 min(56vw, 860px)/.8 var(--x-display); letter-spacing: -.02em; color: transparent; -webkit-text-stroke: 4px var(--x-sig); right: -4vw; }
+.window.in .w-num, .window[data-tone="light"].in .w-num { opacity: .95; }
+.w-tag { padding: 5px 9px; background: var(--x-ink); color: var(--x-sig); font: 700 11px var(--mono); opacity: 1; }
+.window-copy { max-width: 1000px; }
+.w-eyebrow { padding: 6px 10px; background: var(--x-sig); color: var(--x-ink); font: 700 12px var(--mono); letter-spacing: .14em; }
+.w-eyebrow::before { display: none; }
+.w-title { font: 900 clamp(48px, 6vw, 100px)/1.08 var(--sans); letter-spacing: -.05em; }
+.w-title .ln { padding-bottom: .06em; margin-bottom: 0; }
+.w-title .ln > span { display: inline-block; padding: 0 .14em .04em; background: var(--x-ink); color: var(--cream); }
+/* 03、06 过渡屏文案栏窄（1440 下约 560–620px），按最长一行 9 字核过 */
+.g-rings .w-title, .g-ledger .w-title { font-size: clamp(40px, 4.2vw, 68px); }
+.w-title em, .w-title b { font-style: normal; font-weight: 900; color: var(--x-sig); }
+.w-sub { width: fit-content; max-width: 34em; padding: 12px 16px; background: var(--x-paper); color: var(--x-ink); font: 500 15px/1.7 var(--sans); border-left: 8px solid var(--x-sig); }
+.w-fig { width: fit-content; padding: .02em .12em 0; background: var(--x-ink); color: var(--x-sig); font: 400 clamp(84px, 11vw, 176px)/1 var(--x-display); letter-spacing: 0; }
+.w-fig small { color: var(--cream); font: 700 .16em var(--mono); }
+.w-fig-label { padding: 4px 8px; background: var(--x-paper); color: var(--x-ink); font: 700 11px var(--mono); opacity: 1; }
+.w-chips i { padding: 6px 10px; background: var(--x-ink); color: var(--cream); border: 0; font: 500 12px var(--sans); }
+.w-chips i b { color: var(--x-sig); }
+.w-steps i { height: 5px; background: rgba(10,10,10,.55); }
+.w-steps i.done, .w-steps i.now::after { background: var(--x-sig); }
+.w-steps span, .w-steps b { color: var(--cream); font: 700 11px var(--mono); padding: 2px 6px; background: var(--x-ink); }
+.w-next { padding: 8px 12px; background: var(--x-ink); color: var(--cream); font: 700 11px var(--mono); opacity: 1; }
+.w-next em { color: var(--x-sig); font-style: normal; font-family: var(--sans); font-weight: 900; font-size: 15px; }
+/* 窗内小部件：纸色硬框 */
+.w-streams .st, .w-ledger, .lr, .w-float .tile, .wd { background: var(--x-paper); color: var(--x-ink); border: 3px solid var(--x-ink); }
+.w-streams .st strong, .lr b, .wd b { color: var(--x-ink); font: 400 44px/1 var(--x-display); }
+.w-streams .st small, .w-streams .st em { color: var(--x-ink); font: 700 10px var(--mono); opacity: 1; font-style: normal; }
+.w-streams .st .bar, .dn .bar { background: rgba(10,10,10,.14); height: 8px; }
+.w-streams .st .bar i, .mo i, .dn .bar i { background: var(--x-ink); }
+.mo.peak i { background: var(--x-sig); }
+.mo b { color: var(--cream); font: 700 10px var(--mono); }
+.wd small { color: var(--x-ink); font: 700 10px var(--mono); }
+.w-sig .ring { border: 4px solid var(--x-sig); }
+.w-sig small, .w-sig-note { color: var(--cream); background: var(--x-ink); padding: 4px 8px; font: 700 11px var(--mono); }
+
+/* ---------- 章节：新闻纸 + 可见 12 栏网格 + 出血空心章号 ---------- */
+.chapter { background-color: var(--x-paper) !important; background-image: linear-gradient(to right, color-mix(in srgb, var(--x-ink) 9%, transparent) 1px, transparent 1px) !important; background-size: calc(100% / 12) 100% !important; border-top: 6px solid var(--x-ink); border-bottom: 0; color: var(--x-ink); }
+.chapter::before { display: none; }
+.chapter::after { position: absolute; right: -2vw; bottom: -9vh; z-index: 0; color: transparent; -webkit-text-stroke: 2px var(--x-ink); font: 400 62vh/.8 var(--x-display); opacity: .16; pointer-events: none; }
+#sample::after { content: "01"; } #time::after { content: "02"; } #kept::after { content: "03"; } #mix::after { content: "04"; }
+#echo::after { content: "05"; } #evidence::after { content: "06"; } #signature::after { content: "07"; }
+/* 夜色两章整屏反相，卷尾整屏信号橙 */
+.chapter[data-wash="night"] { --x-ink: #f1eee6; --x-paper: #0a0a0a; --ink: #f1eee6; --graphite: #f1eee6; --charcoal: #e4e0d4; --ash: #bdb8ab; --fog: #8f8b80; --mist: #f1eee6; --parchment: #0a0a0a; --paper: #0a0a0a; --linen: #1d1d1d; }
+.chapter[data-wash="night"]::after { opacity: .22; -webkit-text-stroke-color: var(--x-sig); }
+.chapter[data-wash="ember"] { --x-paper: #ff4a1c; --x-sig: #0a0a0a; --paper: #ff4a1c; --parchment: #ff4a1c; --linen: #ff6a42; --blue: #0a0a0a; --cerulean: #0a0a0a; --ash: #1c1c1c; --fog: #3a1a10; }
+.chapter[data-wash="ember"]::after { opacity: .3; }
+
+.meta-line { color: var(--x-ink); font: 700 11px var(--mono); letter-spacing: .14em; }
+.meta-line b { padding: 3px 7px; background: var(--x-sig); color: #0a0a0a; font-weight: 700; }
+.chapter[data-wash="ember"] .meta-line b { color: #ff4a1c; }
+.meta-line::after { flex: 1 1 auto; height: 4px; background: var(--x-ink); }
+.ch-head { max-width: 980px; }
+.chapter h2 { color: var(--x-ink); font: 900 clamp(40px, 4.4vw, 68px)/1.06 var(--sans); letter-spacing: -.05em; }
+.chapter h2 em { font-style: normal; color: var(--x-sig); }
+.lead, .kept-copy .lead, .roll-head .lead, .ch-split .lead { color: var(--x-ink); font: 500 15px/1.75 var(--sans); }
+.lead code, .ts-row code, .echo-row span code, .evidence-row code { background: var(--x-ink); color: var(--x-paper); font: 700 11px var(--mono); }
+.note, .note b, .cell-foot, .board-foot, .map-foot, .board-head small, .map-head small, .recent-head small { color: var(--x-ink); opacity: .78; }
+
+/* 所有面板：同底色 + 硬黑框，玻璃三层一律拍平 */
+.board, .seal, .bento-cell, .card, .share-sample, .rc, .map, .cal-board, .clock-board { background: var(--x-paper) !important; border: 3px solid var(--x-ink) !important; }
+.pm, .music-line, .caveat, .tag, .dst, .src, .chips i { background: var(--x-paper) !important; border: 2px solid var(--x-ink) !important; color: var(--x-ink); }
+.caveat { border-left: 10px solid var(--x-sig) !important; }
+.bento-cell.cerulean { background: var(--x-sig) !important; }
+.bento-cell.cerulean, .bento-cell.cerulean .label, .bento-cell.cerulean strong, .bento-cell.cerulean small, .cerulean .cell-foot, .cerulean .mini-lines .ml, .cerulean .mini-lines .ml b { color: #0a0a0a !important; }
+.cerulean .track { background: rgba(10,10,10,.2) !important; } .cerulean .fill { background: #0a0a0a !important; }
+.board-head, .recent-head, .chips-head, .lg-head, .strip-head { border-bottom: 3px solid var(--x-ink); padding-bottom: 8px; }
+.bento-cell .label, .card-kind, .chips-head, .recent-head h3 { color: var(--x-ink); font: 700 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+.key-row, .echo-row, .conv, .evidence-row, .music-row, .heat-row, .ts-row { border-bottom: 1px solid var(--x-ink) !important; }
+.board-foot, .conv-list, .ratio, .strip-head, .cal-legend, .tag-line, .recent { border-color: var(--x-ink) !important; }
+.tag:hover, .card:hover, .dst:hover { background: var(--x-sig) !important; transform: none; }
+
+/* 数字：一律压缩黑体，放大 */
+.metric strong, .bento-cell strong, .pm strong, .cell-metrics strong, .ratio strong, .rend strong, .venn strong, .clock .core strong, .stair .pm strong, .conv .n { color: var(--x-ink); font-family: var(--x-display) !important; font-weight: 400 !important; letter-spacing: 0; }
+.metric strong { font-size: 56px; line-height: 1; }
+.bento-cell strong { font-size: 52px; line-height: 1; }
+.metric span, .pm span, .cell-metrics span, .ratio span { color: var(--x-ink); font: 700 10px var(--mono); }
+
+/* 条形与轨道：灰底 + 橙色实填 */
+.track, .ratio-track, .depth-bar, .age-bar { background: color-mix(in srgb, var(--x-ink) 14%, transparent) !important; }
+.fill, .fill.blue, .ratio-track i { background: var(--x-sig) !important; }
+.depth-bar i { background: var(--x-ink); } .depth-bar i + i { background: var(--x-sig); }
+.card-cover { border-bottom: 3px solid var(--x-ink); }
+.card-cover b { background: var(--x-ink) !important; color: var(--x-paper); font: 700 10px var(--mono); }
+.card h4, .rc h4 { font: 900 15px/1.35 var(--sans); color: var(--x-ink); }
+.card .open, .rc .open { color: var(--x-sig); font: 700 11px var(--mono); }
+
+/* 04 后的横滚长卷：竖排词改成超粗黑体 */
+.rw .ch { font-family: var(--sans); font-weight: 900; }
+.rw small { color: var(--x-ink); font: 700 11px var(--mono); }
+.rend strong { font-size: 96px; line-height: 1; }
+
+/* 07 卷尾 */
+.signature-name { color: #0a0a0a; font: 900 clamp(48px, 5.6vw, 88px)/1.04 var(--sans); letter-spacing: -.05em; }
+.signature-name em { font-style: normal; background: #0a0a0a; color: #ff4a1c; padding: 0 .1em; }
+.type-name { color: #0a0a0a; font: 900 clamp(30px, 2.8vw, 42px)/1.1 var(--sans); letter-spacing: -.04em; }
+.type-name em { font-style: normal; }
+.seal .kicker, .signature-en, .type-en { color: #0a0a0a; font: 700 11px var(--mono); letter-spacing: .14em; }
+.colophon-foot, .colophon-foot span, .colophon-foot a, .colophon-foot button { color: #0a0a0a; font: 700 11px var(--mono); }
+
+/* 进场：硬切，不再柔和淡入 */
+[data-reveal] { transform: translateY(40px); transition-timing-function: steps(4, end) !important; transition-duration: .36s !important; }
+[data-reveal].in { transform: none; }
+
+@media (max-width: 880px) {
+  .nav, body.nav-light .nav { height: 46px; padding-left: 14px; }
+  .hero h1 { font-size: clamp(32px, 9.4vw, 64px); }
+  .w-title, .g-rings .w-title, .g-ledger .w-title { font-size: clamp(28px, 8.4vw, 56px); }
+  .w-num { -webkit-text-stroke-width: 2px; }
+  .chapter h2 { font-size: clamp(30px, 8vw, 44px); }
+  .chapter::after { font-size: 34vh; }
+  .rail { display: none; }
+}
+/*EXTREME:END*/
+  </style>
+</head>
+<body>
+  <div id="curtain" aria-hidden="true"></div>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="dimcurve" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="gamma" exponent="2.3"/><feFuncG type="gamma" exponent="2.3"/><feFuncB type="gamma" exponent="2.3"/></feComponentTransfer></filter></svg>
+  <!-- one continuous painted sky -->
+  <div id="sky" aria-hidden="true">
+    <div class="sky-state s0" style="opacity:1"><div class="cloudband" data-par="0.05"></div></div>
+    <div class="sky-state s1"><div class="cloudband" data-par="0.07"></div></div>
+    <div class="sky-state s2"><div class="cloudband" data-par="0.06"></div></div>
+    <div class="sky-state s3"><div class="cloudband" data-par="0.04"></div></div>
+    <div class="sky-state s4"><div class="cloudband" data-par="0.06"></div></div>
+    <div class="bird b1"><svg viewBox="0 0 26 12" fill="none"><path d="M1 7 Q7 1 13 6 Q19 1 25 7" stroke="#f6f1e4" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+    <div class="bird b2"><svg viewBox="0 0 26 12" fill="none"><path d="M1 7 Q7 1 13 6 Q19 1 25 7" stroke="#f6f1e4" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+    <div class="bird b3"><svg viewBox="0 0 26 12" fill="none"><path d="M1 7 Q7 1 13 6 Q19 1 25 7" stroke="#f6f1e4" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+  </div>
+
+  <header class="nav">
+    <a href="story-entry.html" class="brand" aria-label="回到入口卡">
+      <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="9" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M1.5 15.5 H18.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M4 12.8 Q10 10.4 16 12.8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+      <span class="brand-name">内容年志<small>TRACE · ANNUAL</small></span>
+    </a>
+    <div class="nav-center"><span data-slot="nav-mode">演示快照</span><i></i><span>仅本地解释 · 不上传</span></div>
+    <div class="nav-right">
+      <span id="clock">--:--</span>
+      <button id="skyBtn" class="nav-icon" aria-label="切换卷首天空" title="切换卷首天空">◐</button>
+      <button id="privacy" class="nav-btn ghost" aria-pressed="false">开启隐私模式 ◐</button>
+      <button id="toWorkspace" class="nav-btn ghost" hidden onclick="toWorkspace()">工作台</button>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="章节">
+    <button data-target="sample"><span>01 样本</span><i class="dot"></i></button>
+    <button data-target="time"><span>02 时间</span><i class="dot"></i></button>
+    <button data-target="kept"><span>03 留下</span><i class="dot"></i></button>
+    <button data-target="mix"><span>04 组成</span><i class="dot"></i></button>
+    <button data-target="echo"><span>05 回声</span><i class="dot"></i></button>
+    <button data-target="evidence"><span>06 证据</span><i class="dot"></i></button>
+    <button data-target="signature"><span>07 签名</span><i class="dot"></i></button>
+  </nav>
+
+  <main id="top">
+
+    <!-- 卷首 -->
+    <section class="window hero in" data-skystate="0" data-tone="dark" id="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><i></i>TRACE · <span data-slot="hero-year">二〇二五</span> · PERSONAL SIGNALS</p>
+        <h1>把这一年的痕迹，<br><b>摊开成一卷。</b></h1>
+        <p class="hero-lead">观看、喜欢、收藏和聊天，这四类在本地采集的记录，装订成一册可以回看的年志。每个数字都有出处，每条边界都写得清楚。</p>
+        <div class="hero-meta"><span data-slot="hero-unique">21 个独立内容</span><span data-slot="hero-days">28 个活跃日</span><span data-slot="hero-streams">4 条数据流</span><span>LOCAL · PRIVATE</span></div>
+        <div class="hero-actions">
+          <button class="btn btn-cream" onclick="document.querySelector('#w-sample').scrollIntoView({behavior:'smooth'})">开始阅读 <span class="cir">↓</span></button>
+          <button class="btn btn-cream faint" onclick="document.querySelector('#evidence').scrollIntoView({behavior:'smooth'})">先看数据口径</button>
+        </div>
+      </div>
+      <span class="scroll-cue">SCROLL TO REVEAL</span>
+    </section>
+
+    <!-- ( 01 ) 样本 -->
+    <section class="window g-row" data-skystate="1" data-tone="light" id="w-sample">
+      <span class="w-tag">[ <span data-slot="streams-n">4</span> STREAMS ]</span>
+      <div class="window-copy">
+        <p class="w-eyebrow">( 01 ) · THE SAMPLE</p>
+        <h2 class="w-title"><span class="ln"><span>你留下的，</span></span><span class="ln"><span><em>不只是</em>播放记录。</span></span></h2>
+        <p class="w-sub">四条数据流在同一片天空下汇合，<span data-slot="g1-total">一共 34 条记录，去重后 21 个内容</span>。</p>
+      </div>
+      <div class="w-streams" data-slot="g1-streams">
+        <div class="st"><small>WATCH · 看过</small><strong data-count="20">0</strong><span class="bar"><i style="--w:100%"></i></span><em>占四条流的 59%</em></div>
+        <div class="st"><small>LIKED · 喜欢</small><strong data-count="8">0</strong><span class="bar"><i style="--w:40%"></i></span><em>占四条流的 24%</em></div>
+        <div class="st"><small>FAVORITE · 收藏</small><strong data-count="6">0</strong><span class="bar"><i style="--w:30%"></i></span><em>占四条流的 18%</em></div>
+        <div class="st"><small>CHAT · 聊天</small><strong>—</strong><span class="bar"><i style="--w:0%"></i></span><em>备用文件不含聊天</em></div>
+      </div>
+    </section>
+
+    <section class="chapter" id="sample" data-wash="dawn">
+      <div class="chapter-inner">
+        <div class="ch-split" data-reveal>
+          <div class="ch-head">
+            <div class="meta-line"><b>01</b> THE SAMPLE</div>
+            <h2>一份样本，四种笔迹。</h2>
+          </div>
+          <p class="lead">观看历史、喜欢、收藏、聊天，是四种笔迹不同的记录。年志只写已经记下的事，不去推断没有被记录的生活。</p>
+        </div>
+        <div class="map-head" data-reveal style="--i:1"><span>FOUR STREAMS → SIX CHAPTERS · 四条流各自记着什么，又会走进哪几章</span><small>悬停一条流，看它走向哪几章</small></div>
+        <div class="map" id="map" data-reveal style="--i:2">
+          <div class="src-col">
+            <div class="carry">每条内容记录都带着<div class="flds"><i>标题与封面</i><i>创作者</i><i>话题标签</i><i>行为时间</i><i>时长</i><i>发布时间</i><i>点赞数</i><i>背景音乐</i><i>图文还是视频</i></div></div>
+            <div class="src k-watch" data-key="watch" data-feeds="time kept mix evidence signature">
+              <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+              <div><b>观看历史<small>WATCH</small></b><p>刷到过、停留过的内容，连看到哪里也一起记着。</p><div class="flds"><i>看到哪里</i><i>停了多久</i></div></div>
+            </div>
+            <div class="src k-liked" data-key="liked" data-feeds="time kept mix echo evidence signature">
+              <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/></svg></span>
+              <div><b>喜欢<small>LIKED</small></b><p>点过赞的内容，是你主动留下的第一个记号。</p></div>
+            </div>
+            <div class="src k-favorite" data-key="favorite" data-feeds="time kept mix evidence signature">
+              <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></span>
+              <div><b>收藏<small>FAVORITE</small></b><p>特意收起来、打算回头再看的那些。</p></div>
+            </div>
+            <div class="src k-chat" data-key="chat" data-feeds="echo evidence signature">
+              <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></svg></span>
+              <div><b>聊天<small>CHAT</small></b><p>和朋友的私信，只读一次；群聊正文不进来。</p><div class="flds"><i>发送时间</i><i>文字 / 图片 / 表情 / 分享 / 通话</i><i>分享卡的标题与封面</i><i>好友还是群</i></div></div>
+            </div>
+          </div>
+          <svg class="loom" id="loom" aria-hidden="true"></svg>
+          <div class="dst-col">
+            <a class="dst" href="#time" data-target="time"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><circle cx="9" cy="15" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1.2" fill="currentColor" stroke="none"/></svg></span><small><b>02</b> · 时间</small><em>常来的日子，常来的时辰</em></a>
+            <a class="dst" href="#kept" data-target="kept"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9.5" r="5.5"/><circle cx="15" cy="9.5" r="5.5"/><circle cx="12" cy="14.5" r="5.5"/></svg></span><small><b>03</b> · 留下</small><em>三个环的交集，和看完的深度</em></a>
+            <a class="dst" href="#mix" data-target="mix"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="9" r="4.2"/><circle cx="16.5" cy="7.5" r="2.6"/><circle cx="13.5" cy="16" r="3.2"/></svg></span><small><b>04</b> · 组成</small><em>话题、来路，与质地</em></a>
+            <a class="dst" href="#echo" data-target="echo"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h10a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H8l-3 3v-3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M17 9h2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2v3l-3-3h-4"/></svg></span><small><b>05</b> · 回声</small><em>九种消息形态，两种边界</em></a>
+            <a class="dst" href="#evidence" data-target="evidence"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 11h16M4 16h9"/></svg></span><small><b>06</b> · 证据</small><em>台账与边界</em></a>
+            <a class="dst" href="#signature" data-target="signature"><span class="mo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4" stroke-dasharray="2.2 2.2"/></svg></span><small><b>07</b> · 落款</small><em>一个正在成形的自己</em></a>
+          </div>
+        </div>
+        <p class="map-foot"><b data-slot="range">这一卷记录的是 2025-01-03 到 2025-12-20 这段时间</b>，<span data-slot="source">数字来自演示快照</span>。▤ 只读取一次，不持续监听，也不上传云端。</p>
+      </div>
+    </section>
+
+    <!-- ( 02 ) 时间 -->
+    <section class="window g-clock" data-skystate="1" data-tone="light" id="w-time">
+      <span class="w-tag">[ ASIA/SHANGHAI ]</span>
+      <div class="window-copy">
+        <p class="w-eyebrow">( 02 ) · WHEN YOU ARRIVED</p>
+        <h2 class="w-title"><span class="ln"><span>时间把偏好，</span></span><span class="ln"><span>写成<em>一条起伏的线</em>。</span></span></h2>
+        <p class="w-sub">只有带可靠行为时间的记录，才会进入时间轴。</p>
+      </div>
+      <div class="w-clock">
+        <strong class="w-fig" data-slot="g2-hour">15:00</strong>
+        <span class="w-fig-label">最常出现的时辰 · PEAK HOUR</span>
+      </div>
+      <div class="w-months" data-slot="g2-months" aria-hidden="true"><div class="mo" style="--h:22%"><i></i><b>1</b></div><div class="mo" style="--h:38%"><i></i><b>2</b></div><div class="mo" style="--h:52%"><i></i><b>3</b></div><div class="mo" style="--h:65%"><i></i><b>4</b></div><div class="mo" style="--h:72%"><i></i><b>5</b></div><div class="mo" style="--h:56%"><i></i><b>6</b></div><div class="mo" style="--h:42%"><i></i><b>7</b></div><div class="mo peak" style="--h:88%"><i></i><b>8</b></div><div class="mo" style="--h:60%"><i></i><b>9</b></div><div class="mo" style="--h:48%"><i></i><b>10</b></div><div class="mo" style="--h:33%"><i></i><b>11</b></div><div class="mo" style="--h:26%"><i></i><b>12</b></div></div>
+      <div class="w-chips" data-slot="g2-chips"><i>活跃 <b>28</b> 天</i><i>最密集的一天 <b>2025-05-05</b></i><i>从 <b>01-03</b> 到 12-20</i></div>
+    </section>
+
+    <section class="chapter" id="time" data-wash="dawn">
+      <div class="chapter-inner">
+        <div class="ch-split" data-reveal>
+          <div class="ch-head">
+            <div class="meta-line"><b>02</b> WHEN YOU ARRIVED</div>
+            <h2>常来的日子，常来的时辰。</h2>
+          </div>
+          <p class="lead">每条记录都标了行为时间的来源。发布时间是内容自己的时间，不算你的行为，所以不画进这本年历。</p>
+        </div>
+        <div class="time-grid">
+          <div class="board cal-board" data-reveal style="--i:1">
+            <div class="board-head"><span>CALENDAR · 有记录的日子</span><small data-slot="months-label">2025-01-03 → 2025-12-20</small></div>
+            <div class="cal" id="calendar"></div>
+            <div class="cal-legend"><span data-slot="cal-sum">从 01-03 到 12-20 的 352 天里，有 28 天留下了记录。</span><span class="scale">少 <i style="--a:.18"></i><i style="--a:.45"></i><i style="--a:.72"></i><i style="--a:1"></i> 多</span></div>
+          </div>
+          <div class="board clock-board" data-reveal style="--i:2">
+            <div class="board-head"><span>24 HOURS · 常来的时刻</span><small>ASIA/SHANGHAI</small></div>
+            <div class="clock"><svg id="clockSvg" viewBox="0 0 300 300" aria-hidden="true"></svg><div class="core"><strong data-slot="peak-hour">15:00</strong><small>最常来的时刻</small></div></div>
+            <div class="dn"><div class="bar"><i class="day" style="--w:62%"></i><i class="night" style="--w:38%"></i></div><div class="lg"><span>白天 <b data-slot="dn-day">62%</b></span><span>夜里 20:00–05:00 <b data-slot="dn-night">38%</b></span></div></div>
+          </div>
+        </div>
+        <div class="time-foot" data-reveal style="--i:3">
+          <p class="note"><b data-slot="peak-day">最密集的一天是 2025-05-05，那天留下了 9 条记录。</b> 没有可靠时间的内容仍留在清单里，只是不会硬塞进这本年历。</p>
+          <div class="time-sources">
+            <div class="ts-row"><code>PLATFORM</code><span>平台行为时间</span><b data-slot="ts-platform">33 条</b></div>
+            <div class="ts-row"><code>ARCHIVE</code><span>归档动作时间</span><b data-slot="ts-archive">0 条</b></div>
+            <div class="ts-row"><code>NO TIME</code><span>暂无可靠时间 · 不进年历</span><b data-slot="ts-unknown">1 条</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ( 03 ) 留下 -->
+    <section class="window g-rings" data-skystate="2" data-tone="dark" id="w-kept">
+      <span class="w-tag">[ STABLE IDS ONLY ]</span>
+      <div class="window-copy">
+        <p class="w-eyebrow">( 03 ) · WHAT STAYED</p>
+        <h2 class="w-title"><span class="ln"><span>真正留下来的，</span></span><span class="ln"><span>都经过<em>两次选择</em>。</span></span></h2>
+        <p class="w-sub">看过、喜欢、收藏三个环，只靠稳定的作品 ID 相扣。</p>
+        <div class="w-chips" data-slot="g3-chips"><i>看过 × 喜欢 <b>8</b></i><i>看过 × 收藏 <b>5</b></i><i>看完的 <b>42%</b></i></div>
+      </div>
+      <div class="w-rings">
+        <svg viewBox="-130 0 680 410" data-slot="g3-rings" aria-hidden="true"></svg>
+        <div class="core"><strong class="w-fig" data-count="5">0</strong></div>
+        <span class="w-fig-label">看过、喜欢、收藏都有的内容 · ALL THREE</span>
+      </div>
+    </section>
+
+    <section class="chapter" id="kept" data-wash="dusk">
+      <div class="chapter-inner">
+        <div class="ch-head" data-reveal>
+          <div class="meta-line"><b>03</b> WHAT STAYED</div>
+          <h2>三个环的交集，和看完的深度。</h2>
+        </div>
+        <div class="kept-grid">
+          <div class="venn-col" data-reveal style="--i:1">
+            <div class="venn">
+              <i class="va"></i><i class="vb"></i><i class="vc"></i>
+              <strong data-slot="all-three" data-count="5">0<small>三重交集<em data-slot="k-share">，占独立内容的 0.4%</em></small></strong>
+              <span class="la">看过</span><span class="lb">喜欢</span><span class="lc">收藏</span>
+            </div>
+          </div>
+          <div class="kept-copy" data-reveal style="--i:2">
+            <p class="lead">交集只认稳定的作品 ID，没有 ID 的记录不会硬连在一起。看得深浅，按每条观看记录的已看时长和百分比算。</p>
+            <div class="metrics rings">
+              <div class="metric"><strong data-slot="k-watch" data-count="1240">0</strong><span><i class="dot-a"></i>看过 · WATCHED</span></div>
+              <div class="metric"><strong data-slot="k-liked" data-count="96">0</strong><span><i class="dot-b"></i>喜欢 · LIKED</span></div>
+              <div class="metric"><strong data-slot="k-fav" data-count="24">0</strong><span><i class="dot-c"></i>收藏 · SAVED</span></div>
+            </div>
+            <div class="key-list">
+              <div class="key-row"><span>看过 × 喜欢</span><b data-slot="x-wl">8</b></div>
+              <div class="key-row"><span>看过 × 收藏</span><b data-slot="x-wf">5</b></div>
+              <div class="key-row"><span>喜欢 × 收藏</span><b data-slot="x-lf">5</b></div>
+              <div class="key-row muted"><span>没有作品 ID · 未连线</span><b data-slot="k-noid">1 条</b></div>
+            </div>
+          </div>
+          <div class="board depth" data-reveal style="--i:3">
+            <div class="board-head"><span>DEPTH OF WATCH</span><small>已看百分比 · 三层</small></div>
+            <div class="depth-bar" id="depthBar"><i class="deep" data-k="done" style="--w:42%"></i><i class="mid" data-k="mid" style="--w:37%"></i><i class="shallow" data-k="shallow" style="--w:21%"></i></div>
+            <div class="progress-mini stair">
+              <div class="pm deep"><i class="dot"></i><strong data-slot="p-done">42%</strong><span>看完 · ≥90%</span></div>
+              <div class="pm mid"><i class="dot"></i><strong data-slot="p-mid">37%</strong><span>中途 · 30–90%</span></div>
+              <div class="pm shallow"><i class="dot"></i><strong data-slot="p-shallow">21%</strong><span>浅尝 · &lt;30%</span></div>
+            </div>
+            <div class="board-foot">只统计带已看时长的观看记录。</div>
+          </div>
+        </div>
+        <div class="recent">
+          <div class="recent-head" data-reveal>
+            <div><div class="meta-line" style="margin-bottom:10px"><b>RECENT</b> SIGNALS</div><h3>你最近留下的内容</h3></div>
+            <small>封面来自原视频，点击可打开抖音</small>
+          </div>
+          <div class="cards">
+            <a class="card" href="#" onclick="return false" data-reveal style="--i:1"><div class="card-cover c1"><b>01</b><em class="card-kind">喜欢</em></div><div class="card-body"><h4>#城市散步 年末灯火</h4><p>示例创作者甲</p><span class="open">查看 ↗</span></div></a>
+            <a class="card" href="#" onclick="return false" data-reveal style="--i:2"><div class="card-cover c2"><b>02</b><em class="card-kind">收藏</em></div><div class="card-body"><h4>修补一只旧包 #手作</h4><p>示例创作者乙</p><span class="open">查看 ↗</span></div></a>
+            <a class="card" href="#" onclick="return false" data-reveal style="--i:3"><div class="card-cover c3"><b>03</b><em class="card-kind">喜欢</em></div><div class="card-body"><h4>#家常菜 热气腾腾</h4><p>示例创作者丙</p><span class="open">查看 ↗</span></div></a>
+            <a class="card" href="#" onclick="return false" data-reveal style="--i:4"><div class="card-cover c4"><b>04</b><em class="card-kind">看过</em></div><div class="card-body"><h4>秋天的配色 #摄影</h4><p>示例创作者甲</p><span class="open">查看 ↗</span></div></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ( 04 ) 组成 -->
+    <section class="window g-cloud" data-skystate="2" data-tone="dark" id="w-mix">
+      <span class="w-tag">[ TOPICS · CREATORS · MEDIA · DURATION · MUSIC ]</span>
+      <div class="window-copy">
+        <p class="w-eyebrow">( 04 ) · THE MIX</p>
+        <h2 class="w-title"><span class="ln"><span>你选的内容，</span></span><span class="ln"><span>有自己的<em>质地</em>。</span></span></h2>
+        <p class="w-sub">话题聚成星群，创作者留下轨迹。</p>
+      </div>
+      <div class="w-cloud" data-slot="g4-cloud">
+        <span class="wd" style="--s:1"><b>#城市散步</b><small>6</small></span>
+        <span class="wd" style="--s:.7"><b>#手作</b><small>4</small></span>
+        <span class="wd" style="--s:.55"><b>#家常菜</b><small>3</small></span>
+        <span class="wd" style="--s:.55"><b>#摄影</b><small>3</small></span>
+        <span class="wd" style="--s:.3"><b>#植物</b><small>1</small></span>
+      </div>
+      <div class="w-chips" data-slot="g4-chips"><i><span class="ava"></span>示例创作者甲 <b>6</b> 个作品</i><i>视频 <b>78%</b></i></div>
+    </section>
+
+    <section class="chapter" id="mix" data-wash="dusk">
+      <div class="chapter-inner">
+        <div class="ch-head" data-reveal>
+          <div class="meta-line"><b>04</b> THE MIX</div>
+          <h2>话题、来路，与质地。</h2>
+          <p class="lead">话题标签、创作者、媒介形态和时长分层，拼出了内容的质地；作品热度只是内容本身的快照，不算作你的行为。</p>
+        </div>
+        <div class="bento">
+          <div class="bento-col">
+            <div class="bento-cell cerulean" data-reveal style="--i:1">
+              <span class="label">TOPIC SIGNAL · 唯一的一块颜色</span>
+              <strong data-slot="topic-name">#城市散步</strong>
+              <small data-slot="topic-meta">这一年出现最多的话题，出现在 5 条记录里，占 31%。</small>
+              <div class="mini-lines topic-lines" data-slot="tags">
+                <div class="ml"><span>#手作</span><span class="track"><i class="fill" style="--w:100%"></i></span><b>4</b></div>
+                <div class="ml"><span>#家常菜</span><span class="track"><i class="fill" style="--w:75%"></i></span><b>3</b></div>
+                <div class="ml"><span>#摄影</span><span class="track"><i class="fill" style="--w:75%"></i></span><b>3</b></div>
+                <div class="ml"><span>#植物</span><span class="track"><i class="fill" style="--w:25%"></i></span><b>1</b></div>
+              </div>
+              <div class="cell-foot" data-slot="topic-foot">记录里一共有 5 个不同的话题，按出现次数排序。</div>
+            </div>
+            <div class="bento-cell" data-reveal style="--i:4"><span class="label">DURATION</span>
+              <div class="mini-lines" data-slot="duration">
+                <div class="ml"><span>&lt; 1 分钟</span><span class="track"><i class="fill" style="--w:43%"></i></span><b>43%</b></div>
+                <div class="ml"><span>1–10 分钟</span><span class="track"><i class="fill blue" style="--w:48%"></i></span><b>48%</b></div>
+                <div class="ml"><span>10 分钟以上</span><span class="track"><i class="fill" style="--w:9%"></i></span><b>9%</b></div>
+              </div>
+              <div class="cell-metrics">
+                <div><strong data-slot="len-median">48 秒</strong><span>内容中位时长</span></div>
+                <div><strong data-slot="len-watched">3 时 20 分</strong><span>累计已看</span></div>
+              </div>
+              <div class="cell-foot" data-slot="len-longest">最长的一条是《示例长视频》，长 1 时 12 分。</div>
+            </div>
+          </div>
+          <div class="bento-col">
+            <div class="bento-cell" data-reveal style="--i:2"><span class="label">CREATOR FIELD</span><span class="avatar" data-slot="creator-avatar" aria-hidden="true"></span><strong data-slot="creator-name">示例创作者甲</strong><small data-slot="creator-meta">出现最多的创作者，贡献了 5 个不同的作品。</small>
+              <div class="mini-lines creator-lines" data-slot="creators">
+                <div class="ml"><span>示例创作者乙</span><span class="track"><i class="fill" style="--w:100%"></i></span><b>5</b></div>
+                <div class="ml"><span>示例创作者丙</span><span class="track"><i class="fill" style="--w:60%"></i></span><b>3</b></div>
+                <div class="ml"><span>示例创作者丁</span><span class="track"><i class="fill" style="--w:40%"></i></span><b>2</b></div>
+                <div class="ml"><span>示例创作者戊</span><span class="track"><i class="fill" style="--w:20%"></i></span><b>1</b></div>
+              </div>
+              <div class="cell-foot" data-slot="creator-foot">一共 12 位创作者，前三位占了 62%。</div>
+            </div>
+            <div class="bento-cell" data-reveal style="--i:5"><span class="label">BGM · 重复出现的音乐</span>
+              <div class="music-rows" data-slot="musics">
+                <div class="music-row"><span class="eq"><i></i><i></i><i></i><i></i></span><span class="mt"><b>《示例旋律 · 城市黄昏》</b> — 示例音乐人</span><small>7 次</small></div>
+                <div class="music-row"><span class="eq"><i></i><i></i><i></i><i></i></span><span class="mt"><b>《示例旋律 · 雨夜》</b> — 示例音乐人</span><small>4 次</small></div>
+                <div class="music-row"><span class="eq"><i></i><i></i><i></i><i></i></span><span class="mt"><b>《示例旋律 · 清晨》</b> — 示例乐队</span><small>2 次</small></div>
+              </div>
+              <div class="cell-foot" data-slot="music-foot">一共 9 首不同的音乐，这里只列出出现两次以上的。</div>
+            </div>
+          </div>
+          <div class="bento-col">
+            <div class="bento-cell" data-reveal style="--i:3"><span class="label">STATS SNAPSHOT</span><strong data-slot="heat-median">1.2 万</strong><small data-slot="heat-meta">你遇到的内容，点赞数的中位数——热度只是内容本身的快照。</small>
+              <div class="heat-rows">
+                <div class="heat-row"><span>最热</span><em data-slot="heat-hot-title">示例 · 最多人点赞的一条</em><b data-slot="heat-hot">320 万</b></div>
+                <div class="heat-row"><span>最冷</span><em data-slot="heat-cold-title">示例 · 最安静的一条</em><b data-slot="heat-cold">12</b></div>
+              </div>
+            </div>
+            <div class="bento-cell" data-reveal style="--i:6"><span class="label">CONTENT AGE</span><strong data-slot="age-median">3 天</strong><small data-slot="age-meta">内容从发布到被你遇到，中间隔了这么久，取中位数。</small>
+              <div class="depth-bar age-bar" data-slot="age-bar"><i style="--w:60%"></i><i style="--w:30%"></i><i style="--w:10%"></i></div>
+              <div class="age-legend" data-slot="age-legend"><span><i></i>一周内 <b>60%</b></span><span><i></i>三个月内 <b>30%</b></span><span><i></i>更早 <b>10%</b></span></div>
+            </div>
+            <div class="bento-cell" data-reveal style="--i:7"><span class="label">MEDIA</span>
+              <div class="mini-lines" data-slot="media">
+                <div class="ml"><span>视频</span><span class="track"><i class="fill blue" style="--w:72%"></i></span><b>72%</b></div>
+                <div class="ml"><span>图文</span><span class="track"><i class="fill" style="--w:18%"></i></span><b>18%</b></div>
+                <div class="ml"><span>直播</span><span class="track"><i class="fill" style="--w:10%"></i></span><b>10%</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ( 04 · roll ) 高频词条长卷 — the page scrolls down, the roll slides sideways -->
+    <section class="roll" id="roll" data-tone="light">
+      <div class="chapter roll-stage" data-wash="dusk">
+        <div class="roll-head">
+          <div class="ch-head" data-reveal>
+            <div class="meta-line"><b>04</b> THE MIX · HIGH-FREQUENCY ROLL</div>
+            <h2>高频词条，铺成<em>一卷</em>。</h2>
+          </div>
+          <div class="roll-cue" aria-hidden="true"><span>SCROLL ↓ · ROLL ←</span><span class="track"><i class="fill blue" id="rollBar"></i></span></div>
+        </div>
+        <div class="roll-body"><div class="roll-strip" id="rollStrip"></div></div>
+      </div>
+    </section>
+
+    <!-- ( 05 ) 回声 -->
+    <section class="window g-float g-echo" data-skystate="3" data-tone="dark" id="w-echo">
+      <span class="w-tag">[ CHAT · ONE-TIME READ ]</span>
+      <div class="w-float" aria-hidden="true"><i class="tile round c3 a1"></i><i class="tile round a2"></i><i class="tile round c4 a3"></i><i class="tile c1 sc"></i></div>
+      <div class="window-copy">
+        <p class="w-eyebrow">( 05 ) · THE ECHO</p>
+        <h2 class="w-title"><span class="ln"><span>内容之外，</span></span><span class="ln"><span>还有<em>朋友的回声</em>。</span></span></h2>
+        <p class="w-sub">夜空下，消息只留下形态和时间。</p>
+      </div>
+      <div class="w-stat">
+        <strong class="w-fig">—</strong>
+        <span class="w-fig-label">好友消息 · 待采集 · FRIEND MESSAGES</span>
+        <div class="w-chips" data-slot="g5-chips"><i>文字</i><i>图片</i><i>分享</i><i>表情</i><i>通话 / 语音</i></div>
+      </div>
+    </section>
+
+    <section class="chapter" id="echo" data-wash="night">
+      <div class="chapter-inner">
+        <div class="ch-head" data-reveal>
+          <div class="meta-line"><b>05</b> THE ECHO</div>
+          <h2>九种消息形态，两种边界。</h2>
+        </div>
+        <div class="cols">
+          <div data-reveal style="--i:1">
+            <p class="lead">聊天只读取一次。好友消息只看形态，不看内容；群聊正文从不落盘，只保留群名、消息总量和本人发言条数。带作者或封面证据的分享，才算一张分享卡。</p>
+            <div class="metrics">
+              <div class="metric"><strong data-slot="chat-friend">—</strong><span data-slot="chat-friend-label">好友消息 · 待采集</span></div>
+              <div class="metric"><strong data-slot="chat-call">—</strong><span>通话总时长</span></div>
+              <div class="metric"><strong data-slot="chat-convs">—</strong><span>会话样本</span></div>
+            </div>
+            <div class="share-sample" data-slot="share">
+              <div class="sc" aria-hidden="true"></div>
+              <div class="st"><b>分享卡示例：《示例视频 · 夜色片段》</b><span>好友转发的视频</span><p>好友转发的视频，会以分享卡的形式出现在这里——前提是有作者或封面这样的证据。</p></div>
+            </div>
+            <div class="chips-block" data-slot="contrast">
+              <p class="chips-head">SHARED VS LIKED · 两边不重合的话题</p>
+              <span class="chips" data-slot="contrast-shared">只在分享里 <i>#示例话题八</i><i>#示例话题九</i></span>
+              <span class="chips" data-slot="contrast-liked">只在喜欢里 <i>#示例话题一</i><i>#示例话题四</i></span>
+            </div>
+          </div>
+          <div class="board" data-reveal style="--i:2">
+            <div class="board-head"><span>MESSAGE FORMS</span><small data-slot="chat-head">WAITING FOR CHAT</small></div>
+            <div class="echo-rows" data-slot="echo">
+              <div class="echo-row"><span>文字</span><span class="track"><i class="fill blue" style="--w:68%"></i></span><b>68%</b></div>
+              <div class="echo-row"><span>图片</span><span class="track"><i class="fill" style="--w:17%"></i></span><b>17%</b></div>
+              <div class="echo-row"><span>分享</span><span class="track"><i class="fill" style="--w:9%"></i></span><b>9%</b></div>
+              <div class="echo-row"><span>表情</span><span class="track"><i class="fill" style="--w:4%"></i></span><b>4%</b></div>
+              <div class="echo-row"><span>通话 / 语音</span><span class="track"><i class="fill" style="--w:2%"></i></span><b>2%</b></div>
+            </div>
+            <div class="conv-list" data-slot="convs">
+              <div class="conv"><span class="ava" aria-hidden="true"></span><span class="who"><b>好友 · 示例会话</b><small>好友 · 逐条形态可见</small></span><span class="n">— 条</span></div>
+              <div class="conv"><span class="ava g" aria-hidden="true"></span><span class="who"><b>群聊 · 仅汇总</b><small>群名 + 总量 + 本人条数</small></span><span class="n">— 条</span></div>
+            </div>
+          </div>
+          <div class="board words" data-reveal data-slot="words" style="--i:3">
+            <div class="board-head"><span>WORDS</span><small>说出口的，转发出去的</small></div>
+            <p class="sub">CHAT · 聊天里最常出现的词</p>
+            <div class="mini-lines" data-slot="chat-words">
+              <div class="ml"><span>示例词一</span><span class="track"><i class="fill blue" style="--w:100%"></i></span><b>8</b></div>
+              <div class="ml"><span>示例词二</span><span class="track"><i class="fill" style="--w:75%"></i></span><b>6</b></div>
+              <div class="ml"><span>示例词三</span><span class="track"><i class="fill" style="--w:50%"></i></span><b>4</b></div>
+            </div>
+            <div class="cell-foot" data-slot="chat-words-foot">等读取聊天后再统计，平台的模板消息不计入。</div>
+            <p class="sub">SHARED · 好友分享的视频带着什么话题</p>
+            <div class="mini-lines" data-slot="share-terms">
+              <div class="ml"><span>#示例话题八</span><span class="track"><i class="fill" style="--w:100%"></i></span><b>31</b></div>
+              <div class="ml"><span>#示例话题九</span><span class="track"><i class="fill" style="--w:45%"></i></span><b>14</b></div>
+              <div class="ml"><span>#示例话题十</span><span class="track"><i class="fill" style="--w:39%"></i></span><b>12</b></div>
+            </div>
+            <div class="cell-foot" data-slot="share-terms-foot">等读取聊天后再统计，只算带证据的分享卡。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ( 06 ) 证据 -->
+    <section class="window g-ledger" data-skystate="3" data-tone="dark" id="w-evidence">
+      <span class="w-tag">[ EVIDENCE LEDGER ]</span>
+      <div class="window-copy">
+        <p class="w-eyebrow">( 06 ) · HOW WE KNOW</p>
+        <h2 class="w-title"><span class="ln"><span>故事的边界，</span></span><span class="ln"><span>也是<em>故事的一部分</em>。</span></span></h2>
+        <p class="w-sub">每个数字，都能翻回它的原始账目。</p>
+      </div>
+      <div class="w-ledger">
+        <div class="lg-head"><span>EVIDENCE LEDGER</span><span data-slot="g6-year">2025</span></div>
+        <strong class="w-fig" data-count="97">0<small>%</small></strong>
+        <span class="w-fig-label">带可靠行为时间的记录 · RELIABLE</span>
+        <div class="lg-rows" data-slot="g6-rows">
+          <div class="lr"><span>来源</span><b>备用文件</b></div>
+          <div class="lr"><span>没有行为时间</span><b>1 条</b></div>
+          <div class="lr"><span>没有作品 ID</span><b>1 条</b></div>
+          <div class="lr"><span>有覆盖率的字段</span><b>7 项</b></div>
+          <div class="lr"><span>采集器警告</span><b>0 条</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter" id="evidence" data-wash="night">
+      <div class="chapter-inner">
+        <div class="ch-head" data-reveal>
+          <div class="meta-line"><b>06</b> HOW WE KNOW</div>
+          <h2>台账与边界。</h2>
+        </div>
+        <div class="cols rev">
+          <div class="board" data-reveal style="--i:1">
+            <div class="ratio">
+              <div class="ratio-track"><i></i></div>
+              <div><strong data-slot="reliable">97%</strong><span>可靠行为时间占比</span></div>
+            </div>
+            <div class="evidence-row"><code>WATCH</code><span>观看历史</span><b data-slot="ev-watch">20 条</b></div>
+            <div class="evidence-row"><code>LIKED</code><span>喜欢列表</span><b data-slot="ev-liked">8 条</b></div>
+            <div class="evidence-row"><code>FAVORITE</code><span>收藏列表</span><b data-slot="ev-favorite">6 条</b></div>
+            <div class="evidence-row"><code>CHAT</code><span>聊天消息</span><b data-slot="ev-chat">— 条</b></div>
+            <div class="evidence-row" data-slot="ev-meta"><code>ARCHIVE</code><span>解析 6 个文件 · 忽略 1 个</span><b>JSON / ZIP</b></div>
+            <div class="caveat" id="caveat"><b>CAVEATS / 当前边界</b><br>1 条记录没有可用行为时间，不参与时间轴；没有稳定作品 ID 的记录仍保留在原清单，但不参与交集计算；采集器警告 1 条，原文附在档案里。</div>
+          </div>
+          <div data-reveal style="--i:2">
+            <p class="lead">这一页只写可采集、可解释的字段。没有时间、没有稳定 ID、没有明确来源的内容，会老老实实标成边界，而不是被凑成漂亮的数字。</p>
+            <p class="note"><b>数据来源：</b>观看、喜欢、收藏三份清单，加上聊天消息、会话目录与归档警告。</p>
+            <div data-slot="fields-block">
+              <p class="sub" style="margin-top:24px;color:var(--ash);font:400 9px var(--mono);letter-spacing:.18em">FIELD COVERAGE · 每个字段有多少条记录填了</p>
+              <div class="mini-lines fields" data-slot="fields">
+                <div class="ml"><span>行为时间</span><span class="track"><i class="fill blue" style="--w:54%"></i></span><small>1,632 / 3,003</small><b>54%</b></div>
+                <div class="ml"><span>作品 ID</span><span class="track"><i class="fill" style="--w:100%"></i></span><small>3,003 / 3,003</small><b>100%</b></div>
+                <div class="ml"><span>话题标签</span><span class="track"><i class="fill" style="--w:88%"></i></span><small>2,647 / 3,003</small><b>88%</b></div>
+                <div class="ml"><span>时长</span><span class="track"><i class="fill" style="--w:100%"></i></span><small>3,002 / 3,003</small><b>100%</b></div>
+                <div class="ml"><span>发布时间</span><span class="track"><i class="fill" style="--w:100%"></i></span><small>3,003 / 3,003</small><b>100%</b></div>
+                <div class="ml"><span>点赞数</span><span class="track"><i class="fill" style="--w:100%"></i></span><small>3,003 / 3,003</small><b>100%</b></div>
+                <div class="ml"><span>已看进度</span><span class="track"><i class="fill" style="--w:100%"></i></span><small>1,593 / 1,593</small><b>100%</b></div>
+              </div>
+            </div>
+            <button class="btn btn-blue" style="margin-top:22px" onclick="document.querySelector('#caveat').classList.toggle('open')">查看数据口径 <span class="cir">›</span></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ( 07 ) 签名 -->
+    <section class="window g-colophon" data-skystate="4" data-tone="dark" id="w-signature">
+      <span class="w-tag">[ SEAL &amp; COLOPHON ]</span>
+      <div class="window-copy">
+        <p class="w-eyebrow">( 07 ) · THE SIGNATURE</p>
+        <h2 class="w-title"><span class="ln"><span>信号聚拢，</span></span><span class="ln"><span><em>为这一年落款</em>。</span></span></h2>
+        <p class="w-sub">所有星点，归拢成一枚印章。</p>
+      </div>
+      <div class="w-sig">
+        <i class="ring" aria-hidden="true"></i>
+        <span class="dots" aria-hidden="true"></span>
+        <small data-slot="g7-year">2026 · SIGNATURE</small>
+        <div class="slots"><span><i></i>时候</span><span><i></i>看的是什么</span><span><i></i>留下什么</span></div>
+      </div>
+      <p class="w-sig-note">三个词，要翻到下一页才落下。</p>
+    </section>
+
+    <section class="chapter colophon" id="signature" data-wash="ember">
+      <div class="chapter-inner">
+        <div class="ch-head" data-reveal>
+          <div class="meta-line"><b>07</b> YOUR SIGNATURE</div>
+          <h2>一个正在成形的自己。</h2>
+        </div>
+        <div class="signature">
+          <div data-reveal style="--i:1">
+            <div class="signature-name" data-slot="sig-name">午后 · 长镜 · <em>留到结尾</em></div>
+            <div class="signature-en" data-slot="sig-en">AFTERNOON · LONG TAKES · TO THE END</div>
+            <p class="lead" style="margin-top:22px" data-slot="sig-lead">三个词都从这一年的记录里取：什么时候看、看的是什么、看完留下什么。右边这个名字就是这三个词合起来的读法，不是人格测试，也不是给人下判断。</p>
+            <div class="actions">
+              <button class="btn btn-dark" id="toDashboard" onclick="toWorkspace()">进入持续报告 <span class="cir">→</span></button>
+              <button class="btn btn-blue" onclick="window.scrollTo({top:0,behavior:'smooth'})">再读一遍 <span class="cir">↺</span></button>
+              <button class="btn btn-ghost" onclick="document.querySelector('#evidence').scrollIntoView({behavior:'smooth'})">回到数据口径</button>
+            </div>
+          </div>
+          <div class="seal" data-reveal style="--i:2">
+            <p class="kicker">THE NAME OF THIS VOLUME</p>
+            <h3 class="type-name" data-slot="type-name">午后的<em>片尾常客</em></h3>
+            <div class="type-en" data-slot="type-en">ROLLING CREDITS</div>
+            <p class="type-note" data-slot="type-note">这一年大都在午后展开，光斜过桌面，你把一天里最松快的一段留在这儿。长片子你多半整段看下来，中途很少跳走，等它放完了才起身。这一年花掉的时间，大都落在这种一段一段的内容上。</p>
+            <small><span data-slot="seal-year">2026</span> · <span data-slot="seal-note">SEALED · PARTIAL SAMPLE · LOCAL</span></small>
+          </div>
+        </div>
+        <div class="colophon-foot">
+          <span data-slot="colophon">内容年志 · 交互设计稿 · 数字为演示快照，不构成第二份事实源 · 口径以采集器为准</span>
+          <a href="story-entry.html">回到入口卡 ↗</a><button onclick="window.scrollTo({top:0,behavior:'smooth'})">回到卷首 ↑</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (s, el) => (el || document).querySelector(s);
+
+    /* ---------- framed inside the app: the volume ends in the living report ----------
+       StoryFrame (App) listens for this message; opened on its own, fall back to the app root. */
+    const framed = window.parent !== window;
+    function toWorkspace() {
+      if (framed) parent.postMessage({ type: "trace:open-dashboard" }, location.origin);
+      else location.href = "/";
+    }
+    if (framed) {
+      $("#toWorkspace").hidden = false;
+      addEventListener("keydown", (e) => { if (e.key === "Escape") toWorkspace(); });
+    }
+    const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
+    const motionFull = document.documentElement.classList.contains("motion-full");
+    if (motionFull) $$("a[href='story-entry.html']").forEach((link) => link.setAttribute("href", "story-entry.html?motion=full"));
+    const reduced = !motionFull
+      && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    /* ---------- hero sky: the painting follows the local hour; ?sky=0-4 or the ◐ button overrides it ---------- */
+    const SKIES = ["s0-dawn", "s1-morning", "s2-dusk", "s3-night", "s4-ember"];
+    const SKY_NAMES = ["金晨", "晨白", "紫暮", "墨夜", "余烬"];
+    const hour = new Date().getHours();
+    const forced = /[?&]sky=([0-4])(?!\d)/.exec(location.search);
+    let heroSky = forced ? +forced[1] : hour < 5 ? 3 : hour < 8 ? 0 : hour < 17 ? 1 : hour < 19 ? 2 : hour < 21 ? 4 : 3;
+    const clockEl = $("#clock");
+    const tickClock = () => { const d = new Date(); clockEl.textContent = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} · ${SKY_NAMES[heroSky]}`; };
+    const applySky = () => {
+      $(".sky-state.s0").style.backgroundImage = `url("story-images/sky-${SKIES[heroSky]}.jpg")`;
+      $(".sky-state.s0").classList.toggle("dim", heroSky === 1); // the morning painting is dimmed through #dimcurve; text stays cream like the other four
+      tickClock();
+    };
+    applySky(); setInterval(tickClock, 30000);
+
+    /* ---------- scroll engine: sky grade + parallax ---------- */
+    const windows = $$(".window");
+    const states = $$(".sky-state");
+    let anchors = [], ranges = [];
+    const measure = () => {
+      anchors = windows.map((w) => ({ y: w.offsetTop + w.offsetHeight / 2, state: +w.dataset.skystate }));
+      ranges = $$("main > section").map((s) => ({ top: s.offsetTop, light: s.classList.contains("chapter") || s.dataset.tone === "light" }));
+    };
+    const toneAt = (y) => { let light = false; for (const r of ranges) { if (y >= r.top) light = r.light; else break; } return light; };
+    const ease = (t) => t * t * (3 - 2 * t);
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    let ticking = false;
+    function frame() {
+      ticking = false;
+      const mid = scrollY + innerHeight / 2;
+      let k = 0;
+      while (k < anchors.length - 1 && mid > anchors[k + 1].y) k++;
+      const a = anchors[k], b = anchors[Math.min(k + 1, anchors.length - 1)];
+      const span = Math.max(1, b.y - a.y);
+      const t = ease(Math.max(0, Math.min(1, (mid - a.y) / span)));
+
+      // sky cross-fade
+      const sv = lerp(a.state, b.state, t);
+      states.forEach((el, i) => { el.style.opacity = Math.max(0, 1 - Math.abs(sv - i)).toFixed(3); });
+
+      // tone: nav follows what's under the bar, the rail follows the viewport middle
+      document.body.classList.toggle("nav-light", toneAt(scrollY + 46));
+      document.body.classList.toggle("over-light", toneAt(mid));
+
+      // sky parallax (clamped so `cover` never shows an edge)
+      $("#sky").style.setProperty("--shift", `${Math.max(-70, -scrollY * 0.03).toFixed(1)}px`);
+      roll();
+    }
+    addEventListener("scroll", () => { if (!ticking) { ticking = true; requestAnimationFrame(frame); } }, { passive: true });
+    addEventListener("resize", () => { measure(); frame(); });
+    measure(); frame();
+
+    /* ---------- one chapter = one screen: the sheet scales down when it would overflow the page ---------- */
+    const sheets = $$(".chapter-inner");
+    const fit = (el) => {
+      const cs = getComputedStyle(el.parentElement);
+      const room = el.parentElement.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      el.style.setProperty("--fit", Math.min(1, room / el.offsetHeight).toFixed(3));
+    };
+    const sheetRo = new ResizeObserver((entries) => entries.forEach((e) => fit(e.target)));
+    sheets.forEach((el) => sheetRo.observe(el));
+    addEventListener("resize", () => sheets.forEach(fit));
+
+    /* ---------- reveals + count-ups + section triggers ---------- */
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        en.target.classList.add("in");
+        $$("[data-count]", en.target).forEach(countUp);
+        if (en.target.hasAttribute("data-count")) countUp(en.target);
+        io.unobserve(en.target);
+      });
+    }, { threshold: 0.25 });
+    $$("[data-reveal], .window, .board").forEach((el) => io.observe(el));
+
+    function countUp(el) {
+      if (el.dataset.done) return;
+      el.dataset.done = 1;
+      const end = +el.dataset.count;
+      const keep = $("small", el);
+      if (reduced || !end) { el.childNodes[0].textContent = (+end).toLocaleString("zh-CN"); return; }
+      const t0 = performance.now();
+      (function tick(now) {
+        const p = Math.min(1, (now - t0) / 1100);
+        el.childNodes[0].textContent = Math.round(end * ease(p)).toLocaleString("zh-CN");
+        if (p < 1) requestAnimationFrame(tick);
+      })(t0);
+    }
+
+    /* rail active state */
+    const chapters = $$(".chapter[id]");
+    const railBtns = $$(".rail button");
+    railBtns.forEach((b) => b.addEventListener("click", () => $("#" + b.dataset.target).scrollIntoView({ behavior: "smooth" })));
+    const chIo = new IntersectionObserver((entries) => {
+      const vis = entries.filter((e) => e.isIntersecting).sort((x, y) => y.intersectionRatio - x.intersectionRatio)[0];
+      if (!vis) return;
+      railBtns.forEach((b) => b.classList.toggle("active", b.dataset.target === vis.target.id));
+    }, { threshold: [0.2, 0.5] });
+    chapters.forEach((c) => chIo.observe(c));
+
+    /* ---------- ◐ in the nav: step through the five paintings by hand ---------- */
+    $("#skyBtn").addEventListener("click", () => { heroSky = (heroSky + 1) % 5; applySky(); });
+
+    /* ---------- privacy (nav) ---------- */
+
+    // React Bits Decrypted Text: same random glyph alphabet and 50ms cadence.
+    // https://reactbits.dev/text-animations/decrypted-text
+    // Privacy keeps shuffling indefinitely; no iteration may resolve to the original text.
+    const privacyAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!@#$%^&*()_+";
+    const privacySelector = [
+      ".stream-terms > i", ".card h4", ".card-body p", ".rc h4", ".rc p",
+      '[data-slot="topic-name"]', '[data-slot="topic-meta"]', ".topic-lines .ml > span:first-child",
+      '[data-slot="creator-name"]', '[data-slot="creator-meta"]', ".creator-lines .ml > span:first-child",
+      '[data-slot="len-longest"]', ".music-row .mt", ".heat-row em",
+      ".rw .mask", ".rv", ".share-sample .st > b", ".share-sample .st > span", ".share-sample .st > p",
+      ".conv .who b", ".chips > i", ".words .ml > span:first-child",
+      '[data-slot="sig-name"]', '[data-slot="sig-en"]', '[data-slot="sig-lead"]',
+      '[data-slot="type-name"]', '[data-slot="type-en"]', '[data-slot="type-note"]'
+    ].join(",");
+    const privacyMotion = matchMedia("(prefers-reduced-motion: reduce)");
+    const privacyMeasure = document.createElement("canvas").getContext("2d");
+    const privacySegmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+    let privacyEntries = [], privacyTimer = null, privacyObserver = null;
+
+    function shufflePrivateText(entry) {
+      entry.glyphs.forEach(({ node, original }) => {
+        // Avoid even a one-letter name flashing its original character.
+        const chars = privacyAlphabet.replace(original, "");
+        const index = Math.floor(Math.random() * chars.length);
+        node.textContent = chars[index] === node.textContent ? chars[(index + 1) % chars.length] : chars[index];
+      });
+    }
+    function updatePrivacyAnimation() {
+      clearInterval(privacyTimer);
+      privacyTimer = null;
+      if (!privacyEntries.length || document.hidden || (!motionFull && privacyMotion.matches)) return;
+      privacyTimer = setInterval(() => {
+        privacyEntries.forEach((entry) => { if (entry.visible) shufflePrivateText(entry); });
+      }, 50);
+    }
+    function hidePrivateText() {
+      privacyEntries = $$(privacySelector).map((root) => {
+        const entry = { root, glyphs: [], replacements: [], visible: false, label: root.getAttribute("aria-label") };
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const texts = [];
+        while (walker.nextNode()) texts.push(walker.currentNode);
+        texts.forEach((text) => {
+          if (!text.textContent.trim()) return;
+          const style = getComputedStyle(text.parentElement), size = parseFloat(style.fontSize) || 16;
+          privacyMeasure.font = `${style.fontStyle} ${style.fontWeight} ${size}px ${style.fontFamily}`;
+          const spacing = parseFloat(style.letterSpacing) || 0;
+          const upright = style.writingMode.startsWith("vertical") && style.textOrientation === "upright";
+          const range = upright ? document.createRange() : null;
+          let offset = 0;
+          const run = document.createElement("samp");
+          run.className = "privacy-run";
+          run.setAttribute("aria-hidden", "true");
+          const chars = privacySegmenter ? Array.from(privacySegmenter.segment(text.textContent), (s) => s.segment) : Array.from(text.textContent);
+          chars.forEach((char) => {
+            let advance = privacyMeasure.measureText(char).width + spacing;
+            if (range) {
+              // Upright Latin glyphs can occupy more than 1em in the display font.
+              range.setStart(text, offset);
+              range.setEnd(text, offset + char.length);
+              advance = range.getBoundingClientRect().height;
+            }
+            offset += char.length;
+            if (/^\s+$/u.test(char)) { run.append(char); return; }
+            const node = document.createElement("samp");
+            node.className = "privacy-char";
+            node.style.setProperty("--privacy-width", `${Math.max(.05, advance / size)}em`);
+            run.append(node);
+            entry.glyphs.push({ node, original: char });
+          });
+          entry.replacements.push({ text, run });
+        });
+        // Prepare all glyphs before replacing text; keep originals in memory, never in data attributes or hidden DOM.
+        shufflePrivateText(entry);
+        entry.replacements.forEach(({ text, run }) => text.replaceWith(run));
+        root.classList.add("privacy-text");
+        root.setAttribute("aria-label", "隐私内容已隐藏");
+        return entry;
+      });
+      if (typeof IntersectionObserver === "function") {
+        const byRoot = new Map(privacyEntries.map((entry) => [entry.root, entry]));
+        privacyObserver = new IntersectionObserver((changes) => {
+          changes.forEach(({ target, isIntersecting }) => { byRoot.get(target).visible = isIntersecting; });
+        });
+        privacyEntries.forEach(({ root }) => privacyObserver.observe(root));
+      } else privacyEntries.forEach((entry) => { entry.visible = true; });
+      updatePrivacyAnimation();
+    }
+    function restorePrivateText() {
+      clearInterval(privacyTimer);
+      privacyTimer = null;
+      privacyObserver?.disconnect();
+      privacyObserver = null;
+      privacyEntries.forEach(({ root, replacements, label }) => {
+        replacements.forEach(({ text, run }) => run.replaceWith(text));
+        root.classList.remove("privacy-text");
+        if (label === null) root.removeAttribute("aria-label"); else root.setAttribute("aria-label", label);
+      });
+      privacyEntries = [];
+    }
+    $("#privacy").addEventListener("click", (e) => {
+      const on = document.body.classList.toggle("privacy-on");
+      e.currentTarget.textContent = on ? "关闭隐私模式 ◑" : "开启隐私模式 ◐";
+      e.currentTarget.setAttribute("aria-pressed", String(on));
+      if (on) hidePrivateText(); else restorePrivateText();
+    });
+    document.addEventListener("visibilitychange", updatePrivacyAnimation);
+    privacyMotion.addEventListener("change", updatePrivacyAnimation);
+    addEventListener("pagehide", () => { clearInterval(privacyTimer); privacyTimer = null; });
+    addEventListener("pageshow", updatePrivacyAnimation);
+
+    // the painted gradient stays underneath, so a cover that fails to load never leaves a white hole
+    const cover = (el, url) => { if (!el || !url) return; const prev = getComputedStyle(el).backgroundImage; el.classList.add("real"); el.style.backgroundImage = `url("${String(url).replace(/"/g, "%22")}")${prev && prev !== "none" ? `, ${prev}` : ""}`; el.style.backgroundSize = "cover"; el.style.backgroundPosition = "center"; };
+    const el = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node; };
+
+    /* ---------- chapter gates: the frame (progress segments + bracket tag), the watermark numeral and the "next" line are built here;
+       each gate's figure and chips live in its HTML and are refilled by hydrate ---------- */
+    const gates = windows.filter((w) => !w.classList.contains("hero"));
+    const stagger = (box) => { if (box) [...box.children].forEach((n, i) => n.style.setProperty("--i", i)); };
+    gates.forEach((w, i) => {
+      const n = String(i + 1).padStart(2, "0");
+      const h2 = w.nextElementSibling && w.nextElementSibling.querySelector(".ch-head h2");
+      const label = railBtns[i] ? railBtns[i].querySelector("span").textContent : n;
+      const frame = el("div", "w-frame"), steps = el("span", "w-steps"), bar = el("span");
+      gates.forEach((_, k) => bar.append(el("i", k < i ? "done" : k === i ? "now" : "")));
+      steps.append(bar, el("b", "", `${n} / ${String(gates.length).padStart(2, "0")}`));
+      frame.append(steps, $(".w-tag", w) || el("span", "w-tag"));
+      const foot = el("div", "w-foot"), next = el("span", "w-next");
+      next.append(el("span", "", `NEXT ↓ · ${label}`), el("em", "", h2 ? h2.textContent : ""));
+      foot.append(next, el("span", "scroll-cue", "SCROLL"));
+      const num = el("span", "w-num", n);
+      num.setAttribute("aria-hidden", "true");
+      w.prepend(num, frame);
+      w.append(foot);
+      $$(".w-chips, .w-streams, .w-months, .w-float, .w-cloud, .lg-rows, .slots", w).forEach(stagger);
+    });
+    /* 07 · 26 signal dots: each ends on the ring (r 140) and starts further out, a little ahead in angle, so they swirl in; arrival order is scattered */
+    { const box = $("#w-signature .dots"), N = 26;
+      for (let i = 0; i < N; i++) {
+        const a = i / N * Math.PI * 2 - Math.PI / 2, far = 240 + (i * 53) % 150, dot = el("i");
+        dot.style.setProperty("--x", `${(Math.cos(a) * 140).toFixed(1)}px`); dot.style.setProperty("--y", `${(Math.sin(a) * 140).toFixed(1)}px`);
+        dot.style.setProperty("--sx", `${(Math.cos(a + .7) * far).toFixed(1)}px`); dot.style.setProperty("--sy", `${(Math.sin(a + .7) * far).toFixed(1)}px`);
+        dot.style.setProperty("--i", (i * 7) % N);
+        box.append(dot);
+      } }
+    /* 03 · rings: radius by √count (largest = 150), each centre pulled a little toward its own side so all three share one point; labels sit outside */
+    function drawRings(svg, items) {
+      const NS = "http://www.w3.org/2000/svg", max = Math.max(1, ...items.map((it) => it[1] || 0));
+      const angles = [205, 335, 90], labelAt = [160, 20, 95], C = [260, 240];
+      svg.textContent = "";
+      items.forEach(([label, count], i) => {
+        const r = Math.max(36, Math.round(190 * Math.sqrt((count || 0) / max)));
+        const a = angles[i] * Math.PI / 180, cx = C[0] + 0.48 * r * Math.cos(a), cy = C[1] + 0.48 * r * Math.sin(a);
+        const c = document.createElementNS(NS, "circle");
+        [["cx", cx], ["cy", cy], ["r", r], ["pathLength", 1]].forEach(([k, v]) => c.setAttribute(k, v));
+        c.style.setProperty("--i", i);
+        const la = labelAt[i] * Math.PI / 180, lx = cx + (r + 16) * Math.cos(la), ly = cy + (r + 16) * Math.sin(la);
+        const t = document.createElementNS(NS, "text");
+        [["x", lx], ["y", ly], ["text-anchor", Math.cos(la) < -0.3 ? "end" : Math.cos(la) > 0.3 ? "start" : "middle"], ["dominant-baseline", "middle"]].forEach(([k, v]) => t.setAttribute(k, v));
+        t.textContent = `${label} · ${(count || 0).toLocaleString("zh-CN")}`;
+        t.style.setProperty("--i", i);
+        svg.append(c, t);
+      });
+    }
+    drawRings($('[data-slot="g3-rings"]'), [["看过", 20], ["喜欢", 8], ["收藏", 6]]);
+
+    /* ---------- 02 · calendar: one block per month inside the recorded range, Monday first; a day's tint follows √(count / busiest day)
+       so a few very busy days do not wash out the rest. Cell size comes from the box width: ≥ 24px shows the day numbers, ≥ 18px the weekday row. ---------- */
+    const MONTH_NAMES = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
+    const pad2 = (n) => String(n).padStart(2, "0");
+    function drawCalendar(box, days, range, peakDay) {
+      if (!box) return;
+      box.textContent = "";
+      box.classList.remove("big");
+      if (!range) { box.append(el("p", "cal-empty", "这一卷里的记录没有可靠的行为时间，画不出年历。")); return; }
+      const counts = new Map(days), max = Math.max(1, ...days.map((d) => d[1]));
+      const months = [];
+      for (let y = +range[0].slice(0, 4), m = +range[0].slice(5, 7) - 1, endY = +range[1].slice(0, 4), endM = +range[1].slice(5, 7) - 1; y < endY || (y === endY && m <= endM); ) { months.push([y, m]); if (++m > 11) { m = 0; y += 1; } }
+      const cols = Math.min(months.length, 6), gapM = 26;
+      const cell = Math.max(11, Math.min(30, Math.floor((box.clientWidth - (cols - 1) * gapM) / cols / 7) - 4));
+      box.style.setProperty("--cell", `${cell}px`);
+      box.style.setProperty("--gap", `${cell < 14 ? 3 : 4}px`);
+      box.classList.toggle("big", cell >= 24);
+      let k = 0, lastYear = null;
+      months.forEach(([y, m]) => {
+        const block = el("div", "cal-m"), head = el("h5"), dim = new Date(y, m + 1, 0).getDate();
+        let total = 0;
+        for (let d = 1; d <= dim; d++) total += counts.get(`${y}-${pad2(m + 1)}-${pad2(d)}`) || 0;
+        head.append(el("span", "", `${y !== lastYear ? `${y} 年` : ""}${MONTH_NAMES[m]}`), el("small", "", total ? `${total.toLocaleString("zh-CN")} 条` : "没有记录"));
+        lastYear = y;
+        block.append(head);
+        if (cell >= 18) { const wk = el("div", "cal-wk"); "一二三四五六日".split("").forEach((ch) => wk.append(el("span", "", ch))); block.append(wk); }
+        const grid = el("div", "cal-d");
+        for (let i = (new Date(y, m, 1).getDay() + 6) % 7; i > 0; i--) grid.append(el("i", "pad"));
+        for (let d = 1; d <= dim; d++) {
+          const iso = `${y}-${pad2(m + 1)}-${pad2(d)}`, v = counts.get(iso) || 0, out = iso < range[0] || iso > range[1];
+          const c = el("i", out ? "out" : v ? "on" : "");
+          if (v) c.style.setProperty("--a", (.18 + .82 * Math.sqrt(v / max)).toFixed(2));
+          if (iso === peakDay) c.classList.add("peak");
+          c.style.setProperty("--d", k++);
+          c.title = `${iso} · ${v} 条`;
+          c.append(el("b", "", String(d)));
+          grid.append(c);
+        }
+        block.append(grid);
+        box.append(block);
+      });
+    }
+    /* 02 · clock face: 24 bars out of a base ring, length by count; the quiet night hours (20:00–05:00) get a faint inner arc */
+    function drawClock(svg, hours, peakHour) {
+      if (!svg) return;
+      const NS = "http://www.w3.org/2000/svg", max = Math.max(1, ...hours), C = 150, R0 = 74, R1 = 132;
+      const at = (h, r) => { const a = h / 24 * Math.PI * 2 - Math.PI / 2; return [C + r * Math.cos(a), C + r * Math.sin(a)]; };
+      const mk = (tag, attrs) => { const n = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v)); return n; };
+      svg.textContent = "";
+      const [nx, ny] = at(20, R0 - 16), [mx, my] = at(5, R0 - 16);
+      svg.append(mk("path", { class: "night", d: `M ${nx} ${ny} A ${R0 - 16} ${R0 - 16} 0 0 1 ${mx} ${my}` }));
+      svg.append(mk("circle", { class: "ring", cx: C, cy: C, r: R0 - 6 }));
+      hours.forEach((v, h) => {
+        const [x1, y1] = at(h, R0), [x2, y2] = at(h, R0 + (v ? Math.max(6, (R1 - R0) * v / max) : 3));
+        const line = mk("line", { x1, y1, x2, y2, pathLength: 1, class: h === peakHour ? "hb peak" : v / max >= .7 ? "hb hot" : "hb" });
+        line.style.setProperty("--i", h);
+        svg.append(line);
+      });
+      [0, 6, 12, 18].forEach((h) => { const [x, y] = at(h, R1 + 14); const t = mk("text", { x, y, "text-anchor": "middle", "dominant-baseline": "middle" }); t.textContent = pad2(h); svg.append(t); });
+    }
+    function dayNight(hours) {
+      const all = hours.reduce((s, v) => s + v, 0) || 1, night = hours.reduce((s, v, h) => s + (h >= 20 || h < 5 ? v : 0), 0);
+      $(".dn .day").style.setProperty("--w", `${Math.round((1 - night / all) * 100)}%`);
+      $(".dn .night").style.setProperty("--w", `${Math.round(night / all * 100)}%`);
+      $('[data-slot="dn-day"]').textContent = `${Math.round((1 - night / all) * 100)}%`;
+      $('[data-slot="dn-night"]').textContent = `${Math.round(night / all * 100)}%`;
+    }
+    /* ---------- 01 · the loom: one ribbon from each source stream to every chapter it feeds. Endpoints are measured from the DOM
+       (offsets inside #map, so the sheet's fit-scale does not matter), the stubs take their titles from the chapters themselves,
+       and hovering a stream or a chapter lifts just its ribbons ---------- */
+    const mapBox = $("#map"), loom = $("#loom");
+    function layoutLoom() {
+      if (!mapBox) return;
+      loom.setAttribute("viewBox", `0 0 ${mapBox.clientWidth} ${mapBox.clientHeight}`);
+      loom.textContent = "";
+      const NS = "http://www.w3.org/2000/svg", dot = (x, y, cls) => { const c = document.createElementNS(NS, "circle"); c.setAttribute("cx", x); c.setAttribute("cy", y); c.setAttribute("r", 3.2); if (cls) c.setAttribute("class", cls); loom.append(c); };
+      let i = 0;
+      $$(".dst", mapBox).forEach((dst) => dot(dst.offsetLeft, dst.offsetTop + dst.offsetHeight / 2));
+      $$(".src", mapBox).forEach((src) => {
+        const x1 = src.offsetLeft + src.offsetWidth, y1 = src.offsetTop + src.offsetHeight / 2;
+        if (!src.classList.contains("off")) dot(x1, y1, src.dataset.key);
+        src.dataset.feeds.split(" ").forEach((t) => {
+          const dst = $(`.dst[data-target="${t}"]`, mapBox); if (!dst) return;
+          const x2 = dst.offsetLeft, y2 = dst.offsetTop + dst.offsetHeight / 2, mx = (x1 + x2) / 2;
+          const p = document.createElementNS(NS, "path");
+          p.setAttribute("d", `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`);
+          p.setAttribute("pathLength", 1);
+          p.setAttribute("class", `${src.dataset.key}${src.classList.contains("off") ? " off" : ""}`);
+          p.dataset.to = t;
+          p.style.setProperty("--i", i++);
+          loom.append(p);
+        });
+      });
+    }
+    if (mapBox) {
+      $$(".dst", mapBox).forEach((stub) => { const h2 = $(`#${stub.dataset.target} .ch-head h2`); if (h2) stub.querySelector("em").textContent = h2.textContent.replace(/。$/u, ""); });
+      layoutLoom();
+      new ResizeObserver(layoutLoom).observe(mapBox);
+      if (document.fonts) document.fonts.ready.then(layoutLoom);
+      const lift = (match) => { mapBox.classList.toggle("dim", !!match); $$("path", loom).forEach((p) => p.classList.toggle("hl", !!match && match(p))); };
+      mapBox.addEventListener("mouseover", (e) => { const src = e.target.closest(".src"), dst = e.target.closest(".dst"); lift(src ? (p) => p.classList.contains(src.dataset.key) : dst ? (p) => p.dataset.to === dst.dataset.target : null); });
+      mapBox.addEventListener("mouseleave", () => lift(null));
+    }
+    // demo year: 28 days with records across 2025, the busiest on 05-05 (matches the demo copy above)
+    const demoDays = (() => {
+      const per = [1, 2, 2, 3, 2, 2, 2, 4, 3, 2, 2, 2], out = new Map([["2025-05-05", 9]]);
+      per.forEach((n, m) => { for (let k = 0; k < n; k++) { const iso = `2025-${pad2(m + 1)}-${pad2(3 + (k * 7 + m * 2) % 26)}`; if (!out.has(iso)) out.set(iso, 1 + (k * 3 + m) % 6); } });
+      return [...out].sort((a, b) => a[0].localeCompare(b[0]));
+    })();
+    const demoHours = Array.from({ length: 24 }, (_, i) => (i === 15 ? 100 : Math.round(100 * (.25 + ((i * 17) % 70) / 100))));
+    var calArgs = [demoDays, ["2025-01-03", "2025-12-20"], "2025-05-05"]; // var: hydrate below reassigns it, resize redraws from it
+    drawCalendar($("#calendar"), ...calArgs);
+    addEventListener("resize", () => drawCalendar($("#calendar"), ...calArgs));
+    drawClock($("#clockSvg"), demoHours, 15);
+    dayNight(demoHours);
+
+    /* ---------- 04 · roll: one sticky screen; every scrolled pixel slides the roll ROLL_SPEED pixels left.
+       Each panel is set like the reference screen: one headline across the width — two tags in a line, the way "District Eindhoven"
+       is two of the site's words — and a row of [standing word · cover · caption · standing word] filling the rest. The headline
+       alternates top / bottom from panel to panel, as the video does; the closing panel puts the tally under the first pair. ---------- */
+    const rollSec = $("#roll"), rollStrip = $("#rollStrip"), rollBar = $("#rollBar");
+    const ROLL_SPEED = 1.5;
+    var rollW = 0, rollPanels = [], rollItems = []; // var: frame() already ran once above, so roll() must see these as undefined, not TDZ
+    const rollCanvas = document.createElement("canvas").getContext("2d");
+    const emWidth = (text) => { rollCanvas.font = `300 100px ${getComputedStyle(document.documentElement).getPropertyValue("--serif")}`; return rollCanvas.measureText(text).width / 100; };
+    function buildRoll(words, cards, total) {
+      const N = Math.max(1, words.length);
+      const word = (i) => words[i % N] || { name: "暂无显式话题", count: 0 };
+      // standing words are set upright, so prefer a tag without Latin letters (stacked upright letters read badly)
+      const stand = (i) => { for (let j = 0; j < N; j++) { const w = words[(i + j) % N]; if (w && /^[#一-鿿]+$/.test(w.name)) return w; } return word(i); };
+      const glyphs = (mask, text, d) => Array.from(text).forEach((ch) => { const c = el("span", "ch", ch === " " ? " " : ch); c.style.setProperty("--d", d.n++); mask.append(c); }); // a lone space in an inline-block collapses
+      const headline = (i) => {
+        const node = el("div", "rw"), d = { n: 0 }, ws = N > 1 ? [word(i), word(i + 1)] : [word(i)];
+        ws.forEach((w, j) => { const mask = el("span", "mask"); glyphs(mask, (j ? " " : "") + w.name, d); node.append(mask); if (w.count) node.append(el("small", w === words[0] ? "first" : "", `${w.count} 次`)); });
+        node.dataset.em = emWidth(ws.map((w) => w.name).join(" ")).toFixed(3);
+        rollStrip.append(node);
+        return node;
+      };
+      const vertical = (w) => { const node = el("div", "rv", w.name); rollStrip.append(node); return node; };
+      // the cover under a headline carries one of its two tags: the tag's own card from the data, else a recent card whose title shows the tag, else the next unused recent card
+      const used = new Set(), key = (c) => c.url || c.title;
+      const pick = (k) => {
+        const pair = [word(2 * k), word(2 * k + 1)];
+        const c = pair.map((w) => w.card).find((c) => c && !used.has(key(c)))
+          || cards.find((c) => !used.has(key(c)) && pair.some((w) => (c.title || "").includes(w.name)))
+          || cards.find((c) => !used.has(key(c)));
+        if (c) used.add(key(c));
+        return c;
+      };
+      rollStrip.textContent = "";
+      rollPanels = [];
+      for (let k = 0; k < Math.max(3, cards.length); k++) {
+        const p = { h: headline(2 * k), vl: vertical(stand(2 * k + 2)), c: null, vr: vertical(stand(2 * k + 3)), flip: k % 2 === 1 };
+        const c = pick(k);
+        if (c) {
+          const a = el("a", "rc");
+          if (c.url) { a.href = c.url; a.target = "_blank"; a.rel = "noopener"; } else { a.href = "#"; a.addEventListener("click", (e) => e.preventDefault()); }
+          const cv = el("span", `card-cover c${k % 4 + 1}`); cv.append(el("b", "", String(k + 1).padStart(2, "0"))); cover(cv, c.coverUrl);
+          const h4 = el("h4"); // a #tag inside a caption never breaks across lines
+          (c.title || "未命名内容").split(/(#\S+)/).forEach((part) => { if (!part) return; if (part.startsWith("#")) { const sp = el("span", "", part); sp.style.whiteSpace = "nowrap"; h4.append(sp); } else h4.append(part); });
+          const body = el("div", "rc-body"); body.append(h4, el("p", "", c.author || "未知创作者"), el("span", "open", c.url ? "查看 ↗" : "无链接"));
+          a.append(cv, body); rollStrip.append(a); p.c = a;
+        }
+        rollPanels.push(p);
+      }
+      const end = el("div", "rend"), ml = el("div", "meta-line"); ml.append(el("b", "", "END"), " OF ROLL");
+      // the closing line is told, not tallied: the same few words, returned to again and again
+      const few = words.length > 1 ? `这 ${words.length} 个词条` : "这一个词条";
+      end.append(ml, el("strong", "", words.length ? `这一年，你反复遇到的就是${few}，前前后后一共出现了 ${total.toLocaleString("zh-CN")} 次。` : "这一年的记录里没有反复出现的词条。"), el("small", "", "封面来自原视频，点击可打开抖音 · 继续向下，进入下一章"));
+      rollStrip.append(end);
+      rollPanels.push({ h: headline(0), end, flip: false });
+      rollItems = [...rollStrip.children].map((node) => ({ node, x: 0 }));
+      rollLayout();
+    }
+    function rollLayout() {
+      if (!rollPanels.length) return;
+      const W = innerWidth, vw = W / 100, H = rollStrip.parentElement.clientHeight, rowH = H * .62;
+      rollStrip.style.setProperty("--bh", `${H}px`);
+      // sizes first: the headline fills 84vw, capped at 32% of the body; standing words fill the row height, capped the same way
+      $$(".rw", rollStrip).forEach((n) => { n.style.fontSize = `${Math.min(H * .32, W * .84 / +n.dataset.em).toFixed(1)}px`; });
+      $$(".rv", rollStrip).forEach((n) => { n.style.fontSize = "100px"; n.style.fontSize = `${Math.min(H * .32, rowH / (n.offsetHeight / 100)).toFixed(1)}px`; });
+      // then one panel after another: headline at 4vw, the row spread evenly under (or over) it across the headline's width
+      let x = 0, origin = 0;
+      for (const p of rollPanels) {
+        origin = x;
+        const hw = p.h.offsetWidth, span = hw + 2 * vw, rowY = p.flip ? 0 : H - rowH;
+        p.h.style.left = `${x + 4 * vw}px`;
+        p.h.style.top = p.flip ? `${H - p.h.offsetHeight - .08 * parseFloat(p.h.style.fontSize)}px` : "0px"; // the mask pads .08em below the line
+        if (p.end) { p.end.style.left = `${x + 4 * vw}px`; p.end.style.top = `${H - p.end.offsetHeight}px`; }
+        else {
+          const items = [p.vl, p.c, p.vr].filter(Boolean), total = items.reduce((s, n) => s + n.offsetWidth, 0);
+          const gap = Math.max(3 * vw, (span - total) / (items.length - 1));
+          let ix = x + 2 * vw;
+          for (const n of items) { n.style.left = `${ix}px`; n.style.top = `${rowY}px`; ix += n.offsetWidth + gap; }
+        }
+        x += 4 * vw + hw + 8 * vw;
+      }
+      rollW = Math.max(origin + W, W * 1.5); // the last screen is the closing panel
+      rollStrip.style.width = `${rollW}px`;
+      rollSec.style.height = `${Math.round((rollW - W) / ROLL_SPEED + innerHeight)}px`;
+      rollItems.forEach((it) => { it.x = it.node.offsetLeft; });
+      measure(); frame();
+    }
+    function roll() {
+      if (!rollW) return;
+      const W = innerWidth, top = rollSec.offsetTop, len = Math.max(1, rollSec.offsetHeight - innerHeight);
+      const p = Math.max(0, Math.min(1, (scrollY - top) / len));
+      const x = p * (rollW - W);
+      rollStrip.style.transform = `translate3d(${(-x).toFixed(1)}px,0,0)`;
+      rollBar.style.setProperty("--w", `${(p * 100).toFixed(1)}%`);
+      // entrances play once the page is on screen; whatever is still off to the right (or everything, once the page is left) is re-armed and replays
+      const onStage = scrollY + innerHeight > top + innerHeight * .4 && scrollY < top + rollSec.offsetHeight;
+      for (const it of rollItems) {
+        const left = it.x - x;
+        if (!onStage || left > W) it.node.classList.remove("in");
+        else if (left < W * .92) it.node.classList.add("in");
+      }
+    }
+    addEventListener("resize", rollLayout);
+    document.fonts.ready.then(rollLayout); // words are measured in the display font
+    buildRoll(
+      [["#城市散步", 5], ["#手作", 4], ["#家常菜", 3], ["#摄影", 3], ["#植物", 2], ["#露营", 2], ["#读书", 1], ["#咖啡", 1]].map(([name, count]) => ({ name, count })),
+      [["#城市散步 年末灯火", "示例创作者甲"], ["#家常菜 热气腾腾", "示例创作者丙"], ["秋天的配色 #植物 #摄影", "示例创作者甲"], ["睡前二十页 #读书", "示例创作者乙"]].map(([title, author]) => ({ title, author })),
+      21);
+
+    /* ---------- real data: the app writes one JSON snapshot (localStorage "content-insights.story") before opening this page; without it the demo numbers stay ---------- */
+    (() => {
+      let d = null;
+      try { d = JSON.parse(localStorage.getItem("content-insights.story") || "null"); } catch {}
+      if (!d || d.version !== 1) return;
+      document.documentElement.classList.add("live-data");
+      const S = (name, root) => (root || document).querySelector(`[data-slot="${name}"]`);
+      const txt = (name, value) => { const el = S(name); if (el) el.textContent = value; };
+      const num = (v) => (+v || 0).toLocaleString("zh-CN");
+      const pct = (v) => v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`;
+      const cnt = (name, v) => { const el = S(name); if (!el) return; if (v === null || v === undefined) { delete el.dataset.count; el.childNodes[0].textContent = "—"; return; } el.dataset.count = v; el.childNodes[0].textContent = "0"; };
+      const bar = (row, share, label) => { const fill = row.querySelector(".fill"); if (fill) fill.style.setProperty("--w", `${Math.round(Math.max(0, Math.min(1, share || 0)) * 100)}%`); const b = row.querySelector("b"); if (b && label !== undefined) b.textContent = label; };
+      const clock = (secs) => secs >= 3600 ? `${Math.floor(secs / 3600)} 时 ${Math.round(secs % 3600 / 60)} 分` : secs >= 60 ? `${Math.round(secs / 60)} 分钟` : `${Math.round(secs)} 秒`;
+      const noChatFoot = (counts) => (counts.chat === null ? "备用文件不含聊天" : "当前环境不支持分词");
+      const cn = (year) => String(year).replace(/\d/g, (c) => "〇一二三四五六七八九"[+c]);
+      const c = d.counts;
+      const streams = c.chat === null ? 3 : 4;
+      const sourceLabel = d.source.kind === "archive" ? "备用文件导入" : "本地采集器";
+      const stamp = d.source.updatedAt ? new Date(d.source.updatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : null;
+
+      /* nav + hero */
+      txt("nav-mode", "本地快照");
+      txt("hero-year", cn(d.year));
+      txt("hero-unique", `${num(d.unique)} 个独立内容`);
+      txt("hero-days", `${num(d.activeDays)} 个活跃日`);
+      txt("hero-streams", `${streams} 条数据流`);
+
+      /* 01 sample · the map carries no numbers; it only needs to know whether this snapshot has a chat stream at all */
+      txt("streams-n", streams);
+      txt("range", d.range ? `这一卷记录的是 ${d.range[0]} 到 ${d.range[1]} 这段时间` : "这一卷里的记录没有可靠的行为时间");
+      txt("source", `数字来自${d.source.kind === "archive" ? "导入的备用文件" : "本地采集器"}${stamp ? `，${stamp} 更新` : ""}`);
+      if (c.chat === null) { const src = $('.src[data-key="chat"]'); if (src) { src.classList.add("off"); src.querySelector("p").textContent = "备用文件不含聊天，这一卷里没有这条流。"; layoutLoom(); } }
+      const LX = d.lexicon;
+      const hide = (name) => { const box = S(name); if (box) box.style.display = "none"; };
+
+      /* 02 time · the calendar, the clock face, day / night, and where the times come from */
+      txt("months-label", d.range ? `${d.range[0]} → ${d.range[1]}` : `${d.year} · 没有可靠的行为时间`);
+      const mMax = Math.max(1, ...d.months);
+      const peaks = d.months.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]).slice(0, 2).filter(([v]) => v > 0).map(([, i]) => i);
+      calArgs = [d.days || [], d.range, d.peakDay];
+      drawCalendar($("#calendar"), ...calArgs);
+      drawClock($("#clockSvg"), d.hours, d.peakHour);
+      dayNight(d.hours);
+      { const span = d.range ? Math.round((new Date(`${d.range[1]}T00:00:00`) - new Date(`${d.range[0]}T00:00:00`)) / 864e5) + 1 : 0;
+        txt("cal-sum", d.range ? `从 ${d.range[0].slice(5)} 到 ${d.range[1].slice(5)} 的 ${num(span)} 天里，有 ${num(d.activeDays)} 天留下了记录。` : "没有带可靠时间的记录，年历是空的。");
+        const peakN = (d.days || []).find(([day]) => day === d.peakDay);
+        txt("peak-day", d.peakDay ? `最密集的一天是 ${d.peakDay}${peakN ? `，那天留下了 ${num(peakN[1])} 条记录` : ""}。` : "还没有哪一天特别密集。"); }
+      txt("peak-hour", d.peakHour === null ? "—" : `${String(d.peakHour).padStart(2, "0")}:00`);
+      txt("ts-platform", `${num(d.timeSources.platform_action)} 条`);
+      txt("ts-archive", `${num(d.timeSources.archive_action)} 条`);
+      txt("ts-unknown", `${num(d.timeSources.unknown)} 条`);
+
+      /* 03 kept */
+      cnt("all-three", d.intersection.allThree);
+      txt("x-wl", num(d.intersection.watchLiked));
+      txt("x-wf", num(d.intersection.watchFavorite));
+      txt("x-lf", num(d.intersection.likedFavorite));
+      txt("p-done", pct(d.progress && d.progress.done));
+      txt("p-mid", pct(d.progress && d.progress.mid));
+      txt("p-shallow", pct(d.progress && d.progress.shallow));
+      cnt("k-watch", c.watch); cnt("k-liked", c.liked); cnt("k-fav", c.favorite);
+      txt("k-share", d.unique && d.intersection.allThree ? `，占独立内容的 ${(d.intersection.allThree / d.unique * 100).toFixed(1)}%` : "");
+      txt("k-noid", `${num(d.caveats ? d.caveats.noVideoId : 0)} 条`);
+      const bands = d.progress || {};
+      $$("#depthBar i").forEach((seg) => seg.style.setProperty("--w", `${Math.round((bands[seg.dataset.k] || 0) * 100)}%`));
+      if (!d.recent.length) $(".recent").style.display = "none";
+      $$(".recent .card").forEach((card, i) => {
+        const item = d.recent[i];
+        if (!item) { card.style.display = "none"; return; }
+        card.querySelector("h4").textContent = item.title || "未命名内容";
+        card.querySelector(".card-body p").textContent = item.author || "未知创作者";
+        const kind = card.querySelector(".card-kind"); if (kind) kind.textContent = { liked: "喜欢", favorite: "收藏", watch: "看过" }[item.kind] || "看过";
+        cover(card.querySelector(".card-cover"), item.coverUrl);
+        if (item.url) { card.href = item.url; card.target = "_blank"; card.rel = "noopener"; card.removeAttribute("onclick"); }
+        else card.querySelector(".open").textContent = "无链接";
+      });
+
+      /* 04 mix */
+      if (d.topTopic) { txt("topic-name", `#${d.topTopic.name}`); txt("topic-meta", `这一年出现最多的话题，出现在 ${num(d.topTopic.count)} 条记录里，占 ${pct(d.topTopic.share)}。`); }
+      else { txt("topic-name", "—"); txt("topic-meta", "记录里没有明确的话题标签。"); }
+      // ranked rows rebuilt from data (variable length): label · bar relative to the first row · count
+      const rankLines = (name, items, label) => { const box = S(name); if (!box) return; box.innerHTML = ""; box.style.display = items.length ? "" : "none"; const max = Math.max(1, ...items.map((it) => it.count)); items.forEach((it) => { const row = el("div", "ml"); const track = el("span", "track"); const fill = el("i", "fill"); fill.style.setProperty("--w", `${Math.round(it.count / max * 100)}%`); track.append(fill); row.append(el("span", "", label(it)), track, el("b", "", num(it.count))); box.append(row); }); };
+      rankLines("tags", d.topics.slice(1, 5), (t) => `#${t.name}`);
+      txt("topic-foot", d.topicsCount ? `记录里一共有 ${num(d.topicsCount)} 个不同的话题，按出现次数排序。` : "记录里没有明确的话题标签。");
+      if (d.topCreator) { txt("creator-name", d.topCreator.name); txt("creator-meta", `出现最多的创作者，贡献了 ${num(d.topCreator.unique)} 个不同的作品。`); cover(S("creator-avatar"), d.topCreator.avatarUrl); }
+      else { txt("creator-name", "—"); txt("creator-meta", "记录里没有创作者信息。"); }
+      const creators = d.creators || [];
+      rankLines("creators", creators.slice(1, 5), (c) => c.name);
+      txt("creator-foot", creators.length ? `一共 ${num(d.creatorsCount)} 位创作者，前三位占了 ${pct(creators.slice(0, 3).reduce((sum, c) => sum + c.share, 0))}。` : "记录里没有创作者信息。");
+      const lines = (name, items) => $$(".ml", S(name)).forEach((row, i) => { const it = items && items[i]; bar(row, it ? it.share : 0, it ? pct(it.share) : "—"); });
+      lines("media", d.media);
+      lines("duration", d.durations);
+      const L = d.length || {};
+      txt("len-median", typeof L.medianDuration === "number" ? clock(L.medianDuration) : "—");
+      txt("len-watched", L.seconds ? clock(L.seconds) : "—");
+      txt("len-longest", L.longest ? `最长的一条是《${L.longest.title.length > 20 ? `${L.longest.title.slice(0, 20)}…` : L.longest.title}》，长 ${clock(L.longest.seconds)}。` : "记录里没有时长信息。");
+      const musics = S("musics");
+      if (musics) {
+        musics.innerHTML = "";
+        const list = d.musics && d.musics.length ? d.musics : d.music ? [d.music] : [];
+        if (!list.length) musics.append(el("div", "music-row", "还没有一首音乐重复出现。"));
+        txt("music-foot", d.musicsCount ? `一共 ${num(d.musicsCount)} 首不同的音乐，这里只列出出现两次以上的。` : "记录里没有音乐信息。");
+        list.forEach((m) => { const row = el("div", "music-row"); const eq = el("span", "eq"); for (let i = 0; i < 4; i++) eq.append(el("i")); const t = el("span", "mt"); t.append(el("b", "", `《${m.title}》`), ` — ${m.author || "未知音乐人"}`); row.append(eq, t, el("small", "", `${num(m.count)} 次`)); musics.append(row); });
+      }
+      const big = (n) => n >= 1e8 ? `${(n / 1e8).toFixed(1).replace(/\.0$/, "")} 亿` : n >= 1e4 ? `${(n / 1e4).toFixed(n < 1e5 ? 1 : 0).replace(/\.0$/, "")} 万` : num(n);
+      if (d.heat) { txt("heat-median", big(d.heat.median)); txt("heat-meta", `${num(d.heat.sampled)} 条内容的点赞数中位数——热度只是内容本身的快照。`); txt("heat-hot-title", d.heat.hottest.title); txt("heat-hot", big(d.heat.hottest.count)); txt("heat-cold-title", d.heat.quietest.title); txt("heat-cold", big(d.heat.quietest.count)); }
+      else { txt("heat-median", "—"); txt("heat-meta", "记录里没有点赞数。"); $(".heat-rows").style.display = "none"; }
+      if (d.age) { txt("age-median", `${num(d.age.medianDays)} 天`); txt("age-meta", `内容从发布到被你遇到，中间隔了这么久，取 ${num(d.age.sampled)} 条的中位数。`); $$("i", S("age-bar")).forEach((seg, i) => seg.style.setProperty("--w", `${Math.round((d.age.bands[i] ? d.age.bands[i].share : 0) * 100)}%`)); $$("b", S("age-legend")).forEach((b, i) => { b.textContent = pct(d.age.bands[i] ? d.age.bands[i].share : 0); }); }
+      else { txt("age-median", "—"); txt("age-meta", "记录里没有发布时间。"); S("age-bar").style.display = "none"; S("age-legend").style.display = "none"; }
+      // a compound tag repeats the word it is built on (模型 · 高达模型 · 拼装模型 read as one word three times), so the roll keeps the atoms — 模型 and 高达 — and drops any tag that contains another; an exact repeat (AI / ai) keeps its first spelling
+      const low = (t) => t.name.toLowerCase();
+      const atoms = d.topics.filter((t, i) => !d.topics.some((u, j) => j !== i && low(t).includes(low(u)) && (low(t) !== low(u) || j < i))).slice(0, 8);
+      buildRoll(atoms.map((t) => ({ name: `#${t.name}`, count: t.count, card: t.card || null })), d.recent, atoms.reduce((sum, t) => sum + t.count, 0));
+
+      /* 05 echo */
+      const ch = d.chat;
+      txt("chat-friend", ch ? num(ch.friendMessages) : "—");
+      txt("chat-friend-label", ch ? "好友消息 · 逐条形态" : "好友消息 · 备用文件不含聊天");
+      txt("chat-call", ch && ch.callSeconds > 0 ? clock(ch.callSeconds) : "—");
+      txt("chat-convs", ch ? num(ch.conversations) : "—");
+      txt("chat-head", ch ? `ONE-TIME READ · ${num(ch.friendMessages)} MSGS` : "WAITING FOR CHAT");
+      const share = S("share");
+      if (share) {
+        if (ch && ch.share) {
+          share.querySelector(".st b").textContent = `分享卡：《${ch.share.title || "未命名分享"}》`;
+          share.querySelector(".st span").textContent = ch.share.author ? `好友转发了 ${ch.share.author} 的作品` : "好友转发的视频";
+          cover(share.querySelector(".sc"), ch.share.coverUrl);
+        } else share.style.display = "none";
+      }
+      $$(".echo-row", S("echo")).forEach((row, i) => { const f = ch && ch.forms[i]; bar(row, f ? f.share : 0, f ? pct(f.share) : "—"); });
+      const convs = S("convs");
+      if (convs) {
+        convs.textContent = "";
+        const list = ch ? ch.top : [];
+        const conv = ({ kind, name, avatarUrl, small, n }) => { const row = el("div", "conv"); const ava = el("span", `ava${kind === "group" ? " g" : ""}`); ava.setAttribute("aria-hidden", "true"); cover(ava, avatarUrl); const who = el("span", "who"); who.append(el("b", "", name), el("small", "", small)); row.append(ava, who, el("span", "n", n)); return row; };
+        if (!list.length) convs.append(conv({ kind: "friend", name: ch ? "暂无会话样本" : "好友 · 待采集", small: ch ? "本轮读取没有会话" : "备用文件不含聊天", n: "— 条" }));
+        list.forEach((cv) => convs.append(conv({ kind: cv.kind, name: cv.name, avatarUrl: cv.avatarUrl, small: cv.kind === "group" ? `群聊 · 仅汇总 · 本人 ${num(cv.ownMessageCount)} 条` : "好友 · 逐条形态可见", n: `${num(cv.messageCount)} 条` })));
+      }
+
+      /* 05 · 说出口的词，转发出去的话题 */
+      if (!LX) hide("words");
+      else {
+        rankLines("chat-words", LX.chat ? LX.chat.top.slice(0, 6) : [], (t) => t.name);
+        rankLines("share-terms", LX.shared ? LX.shared.top.slice(0, 6) : [], (t) => `#${t.name}`);
+        txt("chat-words-foot", !LX.chat ? noChatFoot(c) : !LX.chat.total ? "这次读取到的聊天里没有文字消息。"
+          : `${num(LX.chat.total)} 条文字消息${LX.chat.excluded ? `，去掉 ${num(LX.chat.excluded)} 条平台模板后` : ""}，前 12 个词覆盖了 ${pct(LX.chat.coverage)}。`);
+        txt("share-terms-foot", !LX.shared ? "备用文件不含聊天" : !LX.shared.total ? "没有读到带证据的分享卡。"
+          : `${num(LX.shared.total)} 张分享卡里有 ${num(LX.shared.sampled)} 张带话题，前 12 个话题覆盖了 ${pct(LX.shared.coverage)}。`);
+        const ct = LX.contrast;
+        if (!ct || (!ct.sharedOnly.length && !ct.likedOnly.length)) hide("contrast");
+        else {
+          const chips = (slot, label, list) => { const box = S(slot); if (!box) return; box.textContent = label; if (!list.length) box.append(el("i", "", "—")); else list.forEach((name) => box.append(el("i", "", `#${name}`))); };
+          chips("contrast-shared", "只在分享里 ", ct.sharedOnly);
+          chips("contrast-liked", "只在喜欢里 ", ct.likedOnly);
+        }
+      }
+
+      /* 06 evidence */
+      txt("reliable", pct(d.reliableRatio));
+      const track = $(".ratio-track i"); if (track) track.style.setProperty("--w", `${Math.round(d.reliableRatio * 100)}%`);
+      txt("ev-watch", `${num(c.watch)} 条`);
+      txt("ev-liked", `${num(c.liked)} 条`);
+      txt("ev-favorite", `${num(c.favorite)} 条`);
+      txt("ev-chat", c.chat === null ? "— 条" : `${num(c.chat)} 条`);
+      const meta = S("ev-meta");
+      if (meta) {
+        const [code, span, b] = meta.children;
+        if (d.source.kind === "archive") { code.textContent = "ARCHIVE"; span.textContent = `解析 ${d.source.parsedFileCount ?? "—"} 个文件 · 忽略 ${d.source.ignoredFileCount ?? "—"} 个`; b.textContent = "JSON / ZIP"; }
+        else { code.textContent = "COLLECTOR"; span.textContent = `本地采集器${stamp ? ` · 更新于 ${stamp}` : ""}`; b.textContent = d.status === "partial" ? "partial" : "live"; }
+      }
+      const fieldRows = S("fields");
+      if (!d.fields || !d.fields.length) hide("fields-block");
+      else if (fieldRows) {
+        fieldRows.textContent = "";
+        d.fields.forEach((f, i) => {
+          const row = el("div", "ml"), track = el("span", "track"), fill = el("i", i ? "fill" : "fill blue");
+          fill.style.setProperty("--w", `${Math.round(Math.max(0, Math.min(1, f.share || 0)) * 100)}%`);
+          track.append(fill);
+          row.append(el("span", "", f.label), track, el("small", "", `${num(f.count)} / ${num(f.base)}`), el("b", "", pct(f.share)));
+          fieldRows.append(row);
+        });
+      }
+      const caveat = $("#caveat");
+      if (caveat) { caveat.textContent = ""; caveat.append(el("b", "", "CAVEATS / 当前边界"), el("br"), `${num(d.caveats.noTime)} 条记录没有可用行为时间，不参与时间轴；${num(d.caveats.noVideoId)} 条没有稳定作品 ID 的记录仍保留在原清单，但不参与交集计算；${d.caveats.warnings ? `采集器警告 ${num(d.caveats.warnings)} 条，原文见工作台。` : "没有采集器警告。"}${LX && LX.chat && LX.chat.excluded ? `聊天高频词剔除了 ${num(LX.chat.excluded)} 条平台模板（同一文案出现在三个以上会话）；群聊正文不参与。` : ""}`); }
+
+      /* chapter gates: each one teases the chapter after it, in its own arrangement */
+      const fill = (name, value) => { const node = S(name); if (node) node.textContent = value; };
+      const count = (node, v) => { if (!node) return; if (v === null || v === undefined) { delete node.dataset.count; node.childNodes[0].textContent = "—"; } else { node.dataset.count = v; node.childNodes[0].textContent = "0"; } };
+      const chips = (name, list) => { const box = S(name); if (!box) return; box.textContent = ""; list.filter(Boolean).forEach(([k, v, t, ava]) => { const chip = el("i"); if (ava !== undefined) { const a = el("span", "ava"); cover(a, ava); chip.append(a); } chip.append(k ? `${k} ` : ""); if (v !== undefined && v !== null && v !== "") chip.append(el("b", "", v)); if (t) chip.append(` ${t}`); box.append(chip); }); stagger(box); };
+      const md = (iso) => (iso || "").slice(5);
+      /* 01 · four stream cards */
+      { const base = Math.max(1, c.watch + c.liked + c.favorite + (c.chat || 0));
+        fill("g1-total", `一共 ${num(c.events)} 条记录，去重后 ${num(d.unique)} 个内容`);
+        const rows = [["WATCH · 看过", c.watch], ["LIKED · 喜欢", c.liked], ["FAVORITE · 收藏", c.favorite], ["CHAT · 聊天", c.chat]];
+        const max = Math.max(1, ...rows.map((r) => r[1] || 0));
+        const box = S("g1-streams"); box.textContent = "";
+        rows.forEach(([label, v]) => {
+          const st = el("div", "st"), strong = el("strong", "", "0"), bar = el("span", "bar"), i = el("i");
+          count(strong, v); i.style.setProperty("--w", `${v ? Math.max(3, Math.round(v / max * 100)) : 0}%`); bar.append(i);
+          st.append(el("small", "", label), strong, bar, el("em", "", v === null ? "备用文件不含聊天" : `占四条流的 ${pct(v / base)}`));
+          box.append(st);
+        });
+        stagger(box); }
+      /* 02 · peak hour + twelve months */
+      fill("g2-hour", d.peakHour === null ? "—" : `${String(d.peakHour).padStart(2, "0")}:00`);
+      { const box = S("g2-months"); box.textContent = "";
+        d.months.forEach((v, i) => { const mo = el("div", peaks.includes(i) ? "mo peak" : "mo"); mo.style.setProperty("--h", `${v ? Math.max(4, Math.round(v / mMax * 100)) : 2}%`); mo.append(el("i"), el("b", "", String(i + 1))); box.append(mo); });
+        stagger(box); }
+      chips("g2-chips", [["活跃", num(d.activeDays), "天"], ["最密集的一天", d.peakDay || "—"], d.range ? ["从", md(d.range[0]), `到 ${md(d.range[1])}`] : ["没有可靠的行为时间"]]);
+      /* 03 · three rings + the triple intersection */
+      { const X = d.intersection;
+        drawRings(S("g3-rings"), [["看过", c.watch], ["喜欢", c.liked], ["收藏", c.favorite]]);
+        count($("#w-kept .w-fig"), X.allThree);
+        chips("g3-chips", [["看过 × 喜欢", num(X.watchLiked)], ["看过 × 收藏", num(X.watchFavorite)], ["看完的", pct(d.progress && d.progress.done)]]); }
+      /* 04 · word wall */
+      { const words = atoms.slice(0, 8), top = words[0] ? words[0].count : 1, box = S("g4-cloud"); box.textContent = "";
+        words.forEach((t) => { const wd = el("span", "wd"); wd.style.setProperty("--s", Math.max(.28, t.count / top).toFixed(2)); wd.append(el("b", "", `#${t.name}`), el("small", "", num(t.count))); box.append(wd); });
+        if (!words.length) box.append(el("span", "wd", "记录里还没有明确的话题标签"));
+        stagger(box);
+        chips("g4-chips", [d.topCreator ? [d.topCreator.name, num(d.topCreator.unique), "个作品", d.topCreator.avatarUrl] : null, d.creatorsCount ? ["一共", num(d.creatorsCount), "位创作者"] : null, d.media && d.media[0] ? [d.media[0].label, pct(d.media[0].share)] : null]); }
+      /* 05 · floating faces and the shared cover, the message forms as chips */
+      { const w = $("#w-echo"), faces = $$(".w-float .round", w), sc = $(".w-float .sc", w);
+        if (ch) {
+          faces.forEach((t, i) => { const cv = ch.top[i]; if (cv) cover(t, cv.avatarUrl); else t.style.display = "none"; });
+          if (ch.share && ch.share.coverUrl) cover(sc, ch.share.coverUrl); else sc.style.display = "none";
+          count($(".w-fig", w), ch.friendMessages);
+          $(".w-fig-label", w).textContent = "好友发来的消息 · FRIEND MESSAGES";
+          chips("g5-chips", [...ch.forms.map((f) => [f.label, num(f.count)]), ["会话", num(ch.conversations)]]);
+        } else {
+          [...faces, sc].forEach((t) => { t.style.display = "none"; });
+          count($(".w-fig", w), null);
+          $(".w-fig-label", w).textContent = "好友消息 · 备用文件不含聊天";
+          chips("g5-chips", [["文字"], ["图片"], ["分享"], ["表情"], ["通话 / 语音"]]);
+        } }
+      /* 06 · ledger */
+      fill("g6-year", String(d.year));
+      count($("#w-evidence .w-fig"), Math.round(d.reliableRatio * 100));
+      { const box = S("g6-rows"); box.textContent = "";
+        [["来源", sourceLabel], ["没有行为时间", `${num(d.caveats.noTime)} 条`], ["没有作品 ID", `${num(d.caveats.noVideoId)} 条`], ["有覆盖率的字段", `${num((d.fields || []).length)} 项`], ["采集器警告", `${num(d.caveats.warnings)} 条`]]
+          .forEach(([k, v]) => { const r = el("div", "lr"); r.append(el("span", "", k), el("b", "", v)); box.append(r); });
+        stagger(box); }
+      /* 07 · the seal is only promised here: the year and three empty slots; the words wait for the chapter */
+      fill("g7-year", `${d.year} · SIGNATURE`);
+
+      /* 07 signature */
+      const sig = S("sig-name");
+      // the signature is three words joined by "·"; the last one carries the italic
+      if (sig) { const parts = (d.profile.title || "正在成形的自己").split("·").map((w) => w.trim()).filter(Boolean); sig.textContent = ""; if (parts.length > 1) sig.append(`${parts.slice(0, -1).join(" · ")} · `, el("em", "", parts[parts.length - 1])); else sig.append(parts[0] || "正在成形的自己"); }
+      txt("sig-en", d.profile.english || "TRACE · SIGNATURE");
+      // the combined name reads "<时候前缀>的<名字>"; the name itself carries the italic
+      const type = S("type-name");
+      if (type && d.profile.name) { const n = d.profile.name, k = n.lastIndexOf("的"); type.textContent = ""; if (k > 0 && k < n.length - 1) type.append(n.slice(0, k + 1), el("em", "", n.slice(k + 1))); else type.append(n); }
+      if (d.profile.nameEnglish) txt("type-en", d.profile.nameEnglish);
+      if (d.profile.reading) txt("type-note", d.profile.reading);
+      txt("seal-year", d.year);
+      txt("seal-note", d.status === "partial" ? "SEALED · PARTIAL SAMPLE · LOCAL" : "SEALED · LOCAL SAMPLE");
+      txt("colophon", `内容年志 · 数字来自本地快照（${sourceLabel}${stamp ? ` · ${stamp}` : ""}）· 不构成第二份事实源 · 口径以采集器为准`);
+    })();
+
+    /* ---------- arrival from the entry card ---------- */
+    if (document.documentElement.classList.contains("from-card")) {
+      try { history.replaceState(null, "", motionFull ? `${location.pathname}?motion=full` : location.pathname); } catch {}
+      requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.add("arrived")));
+    }
+  </script>
+</body>
+</html>

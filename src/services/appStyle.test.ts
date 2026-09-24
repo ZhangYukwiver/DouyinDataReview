@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyAppStyle, buildStoryEntryUrl, loadAppStyle, saveAppStyle } from "./appStyle";
+import { applyAppStyle, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle } from "./appStyle";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const data = new Map(Object.entries(initial));
@@ -26,6 +26,8 @@ describe("app style", () => {
     saveAppStyle("archive", storage);
     expect(loadAppStyle(storage)).toBe("archive");
     expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "garbage" }))).toBe("trace");
+    saveAppStyle("poster", storage);
+    expect(loadAppStyle(storage)).toBe("poster");
   });
 
   it("survives a storage that throws", () => {
@@ -45,6 +47,21 @@ describe("app style", () => {
     expect(doc.nodes.size).toBe(1);
     expect([...doc.nodes.values()][0]?.href).toContain("fonts.googleapis.com");
     expect(() => applyAppStyle("trace", undefined)).not.toThrow();
+  });
+
+  it("loads the poster fonts on their own link, once", () => {
+    const doc = fakeDocument();
+    applyAppStyle("poster", doc);
+    applyAppStyle("poster", doc);
+    applyAppStyle("trace", doc);
+    expect(doc.documentElement.dataset.style).toBe("trace");
+    expect([...doc.nodes.keys()]).toEqual(["content-insights-poster-fonts", "content-insights-trace-fonts"]);
+    expect(doc.nodes.get("content-insights-poster-fonts")?.href).toContain("family=Anton");
+  });
+
+  it("points the poster style straight at its story page", () => {
+    expect(buildPosterStoryUrl()).toBe("/story/story-poster.html");
+    expect(buildPosterStoryUrl({ motion: "full" })).toBe("/story/story-poster.html?motion=full");
   });
 
   it("builds the entry card url with counts and omits chat when unknown", () => {

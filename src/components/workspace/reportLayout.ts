@@ -47,11 +47,12 @@ export interface ReportGapShape {
   width: number;
 }
 
-/** Build the rounded skyline used to fill the trailing waterfall gaps. */
+/** Build the rounded skyline used to fill the trailing waterfall gaps; radius 0 cuts square corners (poster style). */
 export function buildReportGapShape(
   bottoms: ReadonlyArray<number>,
   height: number,
   columnWidth: number,
+  radius = 14,
 ): ReportGapShape | null {
   const gaps = reportTrailingGaps(bottoms, height, 40);
   if (!gaps.length || Math.max(...gaps.map((gap) => gap.height)) < 90) return null;
@@ -82,7 +83,7 @@ export function buildReportGapShape(
     points.push([x0 - left, value - top], [x1 - left, value - top]);
   });
   points.push([right - left, height - top], [0, height - top]);
-  return { focus, height: height - top, left, path: roundedPath(points, 14), top, width: right - left };
+  return { focus, height: height - top, left, path: roundedPath(points, radius), top, width: right - left };
 }
 
 /** Round polygon corners without drawing through short skyline steps. */

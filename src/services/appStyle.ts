@@ -1,17 +1,21 @@
-export type AppStyle = "archive" | "trace";
+export type AppStyle = "archive" | "trace" | "poster";
 
 // 整体风格：采集器页、持续报告与报告本体共用同一个选择。默认内容年志。
 export const DEFAULT_APP_STYLE: AppStyle = "trace";
 export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: string }> = [
   { key: "trace", label: "内容年志", detail: "纸面年志 · 穿卡入口" },
   { key: "archive", label: "档案馆", detail: "深色档案 · 应用内分页翻阅" },
+  { key: "poster", label: "海报", detail: "黑橙新闻纸 · 硬切长卷" },
 ];
 
 // 键名沿用“报告风格”时期的，用户之前保存的选择继续有效。
 const STORAGE_KEY = "content-insights.report-style";
-const FONTS_ID = "content-insights-trace-fonts";
-// 与 public/story 两页同一组字体；只有选了内容年志才会去取。
-const TRACE_FONTS_URL = "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600;700&display=swap";
+// 各风格与自己的故事页同一组字体；选到哪套才去取哪套，取过一次不再重复。
+const FONTS: Partial<Record<AppStyle, string>> = {
+  trace: "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600;700&display=swap",
+  poster: "https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap",
+};
+const STORED: ReadonlySet<string> = new Set(APP_STYLES.map((item) => item.key));
 
 interface StyleStorage {
   getItem(key: string): string | null;
@@ -19,10 +23,11 @@ interface StyleStorage {
 }
 
 // Native has no localStorage and private browsing may throw; both fall back to the default style.
-// 只有显式选过档案馆才回档案馆，其余情况（没选过 / 存了旧值）都用默认的内容年志。
+// 显式选过的风格照用，其余情况（没选过 / 存了旧值）都用默认的内容年志。
 export function loadAppStyle(storage: StyleStorage | undefined = globalThis.localStorage): AppStyle {
   try {
-    return storage?.getItem(STORAGE_KEY) === "archive" ? "archive" : DEFAULT_APP_STYLE;
+    const stored = storage?.getItem(STORAGE_KEY) ?? "";
+    return STORED.has(stored) ? stored as AppStyle : DEFAULT_APP_STYLE;
   } catch {
     return DEFAULT_APP_STYLE;
   }
@@ -47,11 +52,13 @@ interface StyleDocument {
 export function applyAppStyle(style: AppStyle, doc: StyleDocument | undefined = globalThis.document as StyleDocument | undefined): void {
   if (!doc) return;
   doc.documentElement.dataset.style = style;
-  if (style !== "trace" || doc.getElementById(FONTS_ID)) return;
+  const href = FONTS[style];
+  const id = `content-insights-${style}-fonts`;
+  if (!href || doc.getElementById(id)) return;
   const link = doc.createElement("link");
-  link.id = FONTS_ID;
+  link.id = id;
   link.rel = "stylesheet";
-  link.href = TRACE_FONTS_URL;
+  link.href = href;
   doc.head.appendChild(link);
 }
 
@@ -77,4 +84,9 @@ export function buildStoryEntryUrl(
   if (counts.chat !== null) params.set("chat", String(counts.chat));
   if (options.motion === "full") params.set("motion", "full");
   return `/story/story-entry.html?${params.toString()}`;
+}
+
+// 海报风格没有入口卡：故事页自己就是封面，数字全从 localStorage 的快照里读。
+export function buildPosterStoryUrl(options: StoryEntryOptions = {}): string {
+  return `/story/story-poster.html${options.motion === "full" ? "?motion=full" : ""}`;
 }
