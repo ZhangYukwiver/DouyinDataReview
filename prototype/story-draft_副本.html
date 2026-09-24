@@ -4,7 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TRACE · 内容年志 — 故事页设计稿</title>
-  <script>if (/[?&]from=card/.test(location.search)) document.documentElement.classList.add("from-card");</script>
+  <script>
+    const storyMotionFull = new URLSearchParams(location.search).get("motion") === "full";
+    if (storyMotionFull) document.documentElement.classList.add("motion-full");
+    if (/[?&]from=card/.test(location.search)) document.documentElement.classList.add("from-card");
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -815,7 +819,12 @@
       .roll-stage { height: 100vh; }
     }
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+      html:not(.motion-full) { scroll-behavior: auto !important; }
+      html:not(.motion-full) *, html:not(.motion-full) *::before, html:not(.motion-full) *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
     }
   </style>
 </head>
@@ -1364,7 +1373,10 @@
       addEventListener("keydown", (e) => { if (e.key === "Escape") toWorkspace(); });
     }
     const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
-    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const motionFull = document.documentElement.classList.contains("motion-full");
+    if (motionFull) $$("a[href='story-entry.html']").forEach((link) => link.setAttribute("href", "story-entry.html?motion=full"));
+    const reduced = !motionFull
+      && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     /* ---------- hero sky: the painting follows the local hour; ?sky=0-4 or the ◐ button overrides it ---------- */
     const SKIES = ["s0-dawn", "s1-morning", "s2-dusk", "s3-night", "s4-ember"];
@@ -1502,7 +1514,7 @@
     function updatePrivacyAnimation() {
       clearInterval(privacyTimer);
       privacyTimer = null;
-      if (!privacyEntries.length || document.hidden || privacyMotion.matches) return;
+      if (!privacyEntries.length || document.hidden || (!motionFull && privacyMotion.matches)) return;
       privacyTimer = setInterval(() => {
         privacyEntries.forEach((entry) => { if (entry.visible) shufflePrivateText(entry); });
       }, 50);
@@ -2123,7 +2135,7 @@
 
     /* ---------- arrival from the entry card ---------- */
     if (document.documentElement.classList.contains("from-card")) {
-      try { history.replaceState(null, "", location.pathname); } catch {}
+      try { history.replaceState(null, "", motionFull ? `${location.pathname}?motion=full` : location.pathname); } catch {}
       requestAnimationFrame(() => requestAnimationFrame(() => document.documentElement.classList.add("arrived")));
     }
   </script>

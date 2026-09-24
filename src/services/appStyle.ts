@@ -60,9 +60,19 @@ export interface StoryEntryCounts {
   chat: number | null;
 }
 
+export interface StoryEntryOptions {
+  /** The in-app reading surface is an explicitly interactive experience. */
+  motion?: "full";
+}
+
 // The entry card reads these query params; the story page behind it reads the aggregated snapshot from localStorage.
-export function buildStoryEntryUrl(counts: StoryEntryCounts, year = new Date().getFullYear()): string {
+export function buildStoryEntryUrl(
+  counts: StoryEntryCounts,
+  year = new Date().getFullYear(),
+  options: StoryEntryOptions = {},
+): string {
   const params = new URLSearchParams({ watch: String(counts.watch), liked: String(counts.liked), favorite: String(counts.favorite), year: String(year) });
   if (counts.chat !== null) params.set("chat", String(counts.chat));
+  if (options.motion === "full") params.set("motion", "full");
   return `/story/story-entry.html?${params.toString()}`;
 }
