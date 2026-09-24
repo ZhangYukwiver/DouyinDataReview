@@ -223,6 +223,9 @@ function AppContent() {
   const [storySrc, setStorySrc] = useState<string | null>(null);
   // 采集进行中，报告与内容库用这次采集开始前的快照；采集结束（busy 落下）再换成新数据
   const [frozenSnapshot, setFrozenSnapshot] = useState<CollectorSnapshot | null>(null);
+  // 内容年志开着时读的是打开那一刻写好的数据，外层先不拉整份快照（见 pollCollector），关掉时补一次
+  const storyOpenRef = useRef(false);
+  const storySnapshotStaleRef = useRef(false);
   const importRequest = useRef(0);
   const pollRequest = useRef(0);
   const statusPollAbortRef = useRef<AbortController | null>(null);
@@ -333,6 +336,14 @@ function AppContent() {
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
+
+  useEffect(() => {
+    storyOpenRef.current = storySrc !== null;
+    if (storySrc !== null || !storySnapshotStaleRef.current || !collectorToken) return;
+    storySnapshotStaleRef.current = false;
+    void refreshCollectorSnapshot(collectorUrl, collectorToken).catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storySrc]);
 
   useEffect(() => {
     if (Platform.OS !== "web" || typeof document === "undefined") return undefined;
@@ -499,9 +510,13 @@ function AppContent() {
           chatCollectionInFlightRef.current = true;
           chatPollRequestRef.current = requestId;
         }
-        // 读取是边读边存的，计数或时间一变就把新快照取回来，不用等整轮结束
+        // 读取是边读边存的，计数或时间一变就把新快照取回来，不用等整轮结束。内容年志开着时例外：
+        // 每次都是几 MB 的解析和重算，会让同一主线程上的年志一卡几百毫秒，等它关掉再补
         const nextVersion = JSON.stringify([status.updatedAt, status.counts]);
-        if (snapshotVersion !== nextVersion) {
+        if (snapshotVersion !== nextVersion && storyOpenRef.current) {
+          storySnapshotStaleRef.current = true; // 关掉年志时那一次补拉会带上这个版本
+          snapshotVersion = nextVersion;
+        } else if (snapshotVersion !== nextVersion) {
           if (!await refreshCollectorSnapshot(baseUrl, token, requestId)) return;
           snapshotVersion = nextVersion;
         }

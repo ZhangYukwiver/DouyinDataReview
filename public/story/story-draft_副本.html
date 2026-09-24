@@ -79,9 +79,11 @@
 
     /* painted sky (即梦生成，同一组云的五个时辰) — only behind the hero, picked by the local hour in the script;
        every window after the hero keeps the gradient skies above */
-    .sky-state { background-size: cover; background-repeat: no-repeat; background-position: center calc(50% + var(--shift, 0px)); animation: skydrift 52s ease-in-out infinite alternate; transform-origin: 50% 60%; }
+    .sky-state { background-size: cover; background-repeat: no-repeat; background-position: center; translate: 0 var(--shift, 0px); animation: skydrift 52s ease-in-out infinite alternate; transform-origin: 50% 60%; }
     .sky-state:nth-child(2n) { animation-duration: 64s; }
     @keyframes skydrift { to { transform: scale(1.05) translateY(-0.8%); } }
+    /* while a sheet of paper fills the screen the sky only shows at 20%: the drift and the birds wait, and a page being read stops redrawing */
+    #sky.still .sky-state, #sky.still .bird { animation-play-state: paused; }
 
     /* painted birds crossing the upper sky */
     .bird { position: absolute; width: 26px; height: 12px; opacity: 0; animation: fly 34s linear infinite; }
@@ -411,8 +413,9 @@
     .cal-m h5 small { color: var(--fog); font: 400 9px var(--mono); letter-spacing: .04em; }
     .cal-wk { display: grid; grid-template-columns: repeat(7, var(--cell)); gap: var(--gap); color: var(--fog); font: 8px var(--mono); text-align: center; }
     .cal-d { display: grid; grid-template-columns: repeat(7, var(--cell)); grid-auto-rows: var(--cell); gap: var(--gap); }
-    .cal-d i { position: relative; border-radius: 4px; background: rgba(44,44,44,.07); opacity: 0; transform: scale(.4); transition: opacity .5s ease calc(var(--d) * 5ms), transform .5s cubic-bezier(.2,.7,.2,1) calc(var(--d) * 5ms); }
-    .in .cal-d i { opacity: 1; transform: none; }
+    /* the day cells pop in one after another (popCalendar releases them 5ms apart) */
+    .cal-d i { position: relative; border-radius: 4px; background: rgba(44,44,44,.07); opacity: 0; transform: scale(.4); transition: opacity .5s ease, transform .5s cubic-bezier(.2,.7,.2,1); }
+    .cal-d i.pop { opacity: 1; transform: none; }
     .cal-d .pad { visibility: hidden; }
     .cal-d i.out { background: transparent; box-shadow: inset 0 0 0 1px rgba(44,44,44,.07); }
     .cal-d i.on { background: rgba(65,161,207, var(--a)); }
@@ -531,7 +534,7 @@
     .card h4 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     .card .open { margin-top: auto; padding-top: 12px; }
     .card.in:hover { transform: translateY(-3px); }
-    .card-kind { position: absolute; right: 10px; top: 10px; padding: 3px 7px; border-radius: 4px; color: var(--cerulean); background: rgba(255,255,255,.78); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); font: 400 9px var(--mono); font-style: normal; letter-spacing: .1em; }
+    .card-kind { position: absolute; right: 10px; top: 10px; padding: 3px 7px; border-radius: 4px; color: var(--cerulean); background: rgba(255,255,255,.78); font: 400 9px var(--mono); font-style: normal; letter-spacing: .1em; }
     body.privacy-on .card-cover, body.privacy-on .avatar, body.privacy-on .ava, body.privacy-on .sc, body.privacy-on .w-float .tile, body.privacy-on .w-chips .ava { filter: blur(12px) saturate(.4); }
     .privacy-text { user-select: none; }
     .privacy-run { display: contents; font: inherit; }
@@ -728,10 +731,14 @@
     .colophon-foot a { color: var(--charcoal); text-decoration: none; font-size: 11px; }
     .colophon-foot a:hover { color: var(--blue); }
 
-    /* ============ glass — paper lets the sky through; cards are three tiers of frosted glass ============ */
-    .chapter { background: rgba(254,255,252,.80); backdrop-filter: blur(26px) saturate(1.12); -webkit-backdrop-filter: blur(26px) saturate(1.12); border-color: rgba(255,255,255,.7); }
-    /* watercolour wash in the chapter's own sky colours — this is what the glass has to show through */
-    .chapter::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; filter: blur(34px); background:
+    /* ============ glass — paper lets the sky through; cards are three tiers of frosted glass ============
+       No live backdrop-filter on the paper or the cards inside it: what sits behind them is already soft (gradient skies, the wash), so the
+       blur showed nothing, yet every one became its own GPU pass each frame — the roll stalled ~600ms per swipe on an M1. The nav and the
+       few chips and cards on the sky windows keep theirs: they frost the watermark numeral and the page behind the nav. */
+    .chapter { background: rgba(254,255,252,.80); border-color: rgba(255,255,255,.7); }
+    /* watercolour wash in the chapter's own sky colours — this is what the glass has to show through. The gradients are soft enough
+       unblurred; a blur(34px) here ended up on its own compositor layer and re-blurred a full screen every frame. */
+    .chapter::before { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; background:
       radial-gradient(40% 36% at 76% 44%, var(--w1), transparent 72%),
       radial-gradient(34% 30% at 20% 80%, var(--w2), transparent 72%),
       radial-gradient(26% 24% at 52% 16%, var(--w3), transparent 74%),
@@ -742,19 +749,31 @@
     .chapter[data-wash="night"] { --w1: rgba(96,124,168,.6);   --w2: rgba(150,176,210,.6);  --w3: rgba(29,41,64,.34); }
     .chapter[data-wash="ember"] { --w1: rgba(204,128,54,.55);  --w2: rgba(150,80,56,.48);   --w3: rgba(226,150,66,.36); }
     /* tier A · primary boards */
-    .board, .seal { background: linear-gradient(150deg, rgba(255,255,255,.64), rgba(255,255,255,.36)); border-color: rgba(255,255,255,.82); box-shadow: 0 0 0 1px rgba(222,226,222,.55), inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(255,255,255,.35), rgba(0,0,0,.06) 0 6px 18px; backdrop-filter: blur(20px) saturate(1.25); -webkit-backdrop-filter: blur(20px) saturate(1.25); }
+    .board, .seal { --g: linear-gradient(150deg, rgba(255,255,255,.64), rgba(255,255,255,.36)); background: var(--g); border-color: rgba(255,255,255,.82); box-shadow: 0 0 0 1px rgba(222,226,222,.55), inset 0 1px 0 rgba(255,255,255,.95), inset 0 -1px 0 rgba(255,255,255,.35), rgba(0,0,0,.06) 0 6px 18px; }
     /* tier B · bento cells, content cards, share card */
-    .bento-cell, .card, .share-sample { background: linear-gradient(150deg, rgba(255,255,255,.5), rgba(255,255,255,.24)); border-color: rgba(255,255,255,.74); box-shadow: 0 0 0 1px rgba(222,226,222,.5), inset 0 1px 0 rgba(255,255,255,.9), rgba(0,0,0,.05) 0 4px 12px; backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2); }
+    .bento-cell, .card, .share-sample { --g: linear-gradient(150deg, rgba(255,255,255,.5), rgba(255,255,255,.24)); background: var(--g); border-color: rgba(255,255,255,.74); box-shadow: 0 0 0 1px rgba(222,226,222,.5), inset 0 1px 0 rgba(255,255,255,.9), rgba(0,0,0,.05) 0 4px 12px; }
     /* tier C · small tiles, pills, notes */
-    .pm, .music-line, .caveat, .tag, .dst { background: linear-gradient(150deg, rgba(255,255,255,.34), rgba(255,255,255,.12)); border-color: rgba(255,255,255,.66); box-shadow: 0 0 0 1px rgba(222,226,222,.42), inset 0 1px 0 rgba(255,255,255,.8); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+    .pm, .music-line, .caveat, .tag, .dst { --g: linear-gradient(150deg, rgba(255,255,255,.34), rgba(255,255,255,.12)); background: var(--g); border-color: rgba(255,255,255,.66); box-shadow: 0 0 0 1px rgba(222,226,222,.42), inset 0 1px 0 rgba(255,255,255,.8); }
+    /* Inside the translucent paper, the frosted glass laid a second copy of the paper and its wash over the first, which is what kept the
+       cards bright over a dark sky. The top-level cards now carry that copy as their bottom layers: the wash re-drawn in the card's own
+       coordinates (washCopy sets --pw/--ph: the sheet, --px/--py: the card on it), painted once instead of a GPU pass every frame.
+       A card inside a card copied its parent's surface instead: --pg drawn at the parent's size and offset (--qw/--qh, --qx/--qy). */
+    .copy { background: var(--g), var(--copy); background-origin: border-box; --copy:
+      radial-gradient(calc(var(--pw) * .40) calc(var(--ph) * .36) at calc(var(--pw) * .76 - var(--px)) calc(var(--ph) * .44 - var(--py)), var(--w1), transparent 72%),
+      radial-gradient(calc(var(--pw) * .34) calc(var(--ph) * .30) at calc(var(--pw) * .20 - var(--px)) calc(var(--ph) * .80 - var(--py)), var(--w2), transparent 72%),
+      radial-gradient(calc(var(--pw) * .26) calc(var(--ph) * .24) at calc(var(--pw) * .52 - var(--px)) calc(var(--ph) * .16 - var(--py)), var(--w3), transparent 74%),
+      radial-gradient(calc(var(--pw) * .22) calc(var(--ph) * .20) at calc(var(--pw) * .40 - var(--px)) calc(var(--ph) * .56 - var(--py)), var(--w2), transparent 72%),
+      linear-gradient(rgba(254,255,252,.8), rgba(254,255,252,.8)); }
+    .copy-in { background: var(--g), var(--pg) calc(-1 * var(--qx)) calc(-1 * var(--qy)) / var(--qw) var(--qh) no-repeat; background-origin: border-box; }
     .caveat { border-left-color: var(--blue); }
     /* the one saturated surface stays saturated, but it is glass too */
-    .bento-cell.cerulean { background: linear-gradient(150deg, rgba(0,129,192,.92), rgba(0,129,192,.72)); border-color: rgba(255,255,255,.42); box-shadow: 0 0 0 1px rgba(0,129,192,.45), inset 0 1px 0 rgba(255,255,255,.4), rgba(0,80,120,.18) 0 8px 22px; }
+    .bento-cell.cerulean { --g: linear-gradient(150deg, rgba(0,129,192,.92), rgba(0,129,192,.72)); background: var(--g); border-color: rgba(255,255,255,.42); box-shadow: 0 0 0 1px rgba(0,129,192,.45), inset 0 1px 0 rgba(255,255,255,.4), rgba(0,80,120,.18) 0 8px 22px; }
+    .bento-cell.cerulean.copy { background: var(--g), var(--copy); }
     /* inner hairlines and tracks read through the glass */
     .track, .ratio-track { background: rgba(44,44,44,.09); }
     .key-row, .echo-row, .conv, .evidence-row { border-bottom-color: rgba(44,44,44,.08); }
     .board-foot, .conv-list, .ratio, .strip-head, .cal-legend, .tag-line, .recent { border-color: rgba(44,44,44,.12); }
-    .card-cover b { background: rgba(255,255,255,.78); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    .card-cover b { background: rgba(255,255,255,.78); }
     .card:hover, .tag:hover { border-color: rgba(65,161,207,.8); }
 
     @media (max-width: 1240px) {
@@ -1399,9 +1418,11 @@
     let anchors = [], ranges = [];
     const measure = () => {
       anchors = windows.map((w) => ({ y: w.offsetTop + w.offsetHeight / 2, state: +w.dataset.skystate }));
-      ranges = $$("main > section").map((s) => ({ top: s.offsetTop, light: s.classList.contains("chapter") || s.dataset.tone === "light" }));
+      ranges = $$("main > section").map((s) => ({ top: s.offsetTop, light: s.classList.contains("chapter") || s.dataset.tone === "light", paper: s.matches(".chapter, .roll") }));
     };
     const toneAt = (y) => { let light = false; for (const r of ranges) { if (y >= r.top) light = r.light; else break; } return light; };
+    const paperAt = (y) => { let paper = false; for (const r of ranges) { if (y >= r.top) paper = r.paper; else break; } return paper; };
+    let skyStill = null;
     const ease = (t) => t * t * (3 - 2 * t);
     const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -1422,9 +1443,13 @@
       // tone: nav follows what's under the bar, the rail follows the viewport middle
       document.body.classList.toggle("nav-light", toneAt(scrollY + 46));
       document.body.classList.toggle("over-light", toneAt(mid));
+      // windows are at least a screen tall, so paper at both edges means paper all the way
+      const still = paperAt(scrollY) && paperAt(scrollY + innerHeight - 1);
+      if (still !== skyStill) $("#sky").classList.toggle("still", skyStill = still);
 
-      // sky parallax (clamped so `cover` never shows an edge)
-      $("#sky").style.setProperty("--shift", `${Math.max(-70, -scrollY * 0.03).toFixed(1)}px`);
+      // sky parallax: a translate the compositor applies (moving the background-position repainted five full-screen skies every frame),
+      // clamped to the 6% the layers overhang the viewport so no edge shows (at -70px a dark strip opened along the bottom)
+      $("#sky").style.setProperty("--shift", `${Math.max(1 - innerHeight * 0.06, -scrollY * 0.03).toFixed(1)}px`);
       roll();
     }
     addEventListener("scroll", () => { if (!ticking) { ticking = true; requestAnimationFrame(frame); } }, { passive: true });
@@ -1437,7 +1462,32 @@
       const cs = getComputedStyle(el.parentElement);
       const room = el.parentElement.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
       el.style.setProperty("--fit", Math.min(1, room / el.offsetHeight).toFixed(3));
+      washCopy(el);
     };
+    /* where each top-level card sits on its sheet, for its copy of the paper (.copy); layout offsets, so entrance transforms do not count */
+    const GLASS = ".board, .seal, .bento-cell, .card, .share-sample, .pm, .music-line, .caveat, .tag, .dst";
+    function washCopy(inner) {
+      const ch = inner.parentElement, k = parseFloat(inner.style.getPropertyValue("--fit")) || 1;
+      const cx = inner.offsetWidth / 2, cy = inner.offsetHeight / 2; // the fit scale pivots on the sheet's centre
+      ch.style.setProperty("--pw", `${(ch.clientWidth / k).toFixed(1)}px`);
+      ch.style.setProperty("--ph", `${(ch.clientHeight / k).toFixed(1)}px`);
+      const at = (el, root) => { let x = 0, y = 0; for (let n = el; n && n !== root; n = n.offsetParent) { x += n.offsetLeft; y += n.offsetTop; if (n.offsetParent && n.offsetParent !== root) { x += n.offsetParent.clientLeft; y += n.offsetParent.clientTop; } } return [x, y]; };
+      $$(GLASS, inner).forEach((g) => {
+        const parent = g.parentElement.closest(GLASS);
+        if (parent) { // the parent card's own surface, not the paper
+          const [x, y] = at(g, parent);
+          g.classList.add("copy-in");
+          g.style.setProperty("--pg", getComputedStyle(parent).getPropertyValue("--g"));
+          g.style.setProperty("--qx", `${x}px`); g.style.setProperty("--qy", `${y}px`);
+          g.style.setProperty("--qw", `${parent.offsetWidth}px`); g.style.setProperty("--qh", `${parent.offsetHeight}px`);
+          return;
+        }
+        const [x, y] = at(g, inner);
+        g.classList.add("copy");
+        g.style.setProperty("--px", `${((inner.offsetLeft + cx) / k - cx + x).toFixed(1)}px`);
+        g.style.setProperty("--py", `${((inner.offsetTop + cy) / k - cy + y).toFixed(1)}px`);
+      });
+    }
     const sheetRo = new ResizeObserver((entries) => entries.forEach((e) => fit(e.target)));
     sheets.forEach((el) => sheetRo.observe(el));
     addEventListener("resize", () => sheets.forEach(fit));
@@ -1449,6 +1499,7 @@
         en.target.classList.add("in");
         $$("[data-count]", en.target).forEach(countUp);
         if (en.target.hasAttribute("data-count")) countUp(en.target);
+        popCalendar(en.target);
         io.unobserve(en.target);
       });
     }, { threshold: 0.25 });
@@ -1666,7 +1717,8 @@
       box.style.setProperty("--cell", `${cell}px`);
       box.style.setProperty("--gap", `${cell < 14 ? 3 : 4}px`);
       box.classList.toggle("big", cell >= 24);
-      let k = 0, lastYear = null;
+      const shown = !!box.closest(".in"); // redrawn after its entrance (resize): the cells are simply there
+      let lastYear = null;
       months.forEach(([y, m]) => {
         const block = el("div", "cal-m"), head = el("h5"), dim = new Date(y, m + 1, 0).getDate();
         let total = 0;
@@ -1682,7 +1734,7 @@
           const c = el("i", out ? "out" : v ? "on" : "");
           if (v) c.style.setProperty("--a", (.18 + .82 * Math.sqrt(v / max)).toFixed(2));
           if (iso === peakDay) c.classList.add("peak");
-          c.style.setProperty("--d", k++);
+          if (shown) c.classList.add("pop");
           c.title = `${iso} · ${v} 条`;
           c.append(el("b", "", String(d)));
           grid.append(c);
@@ -1690,6 +1742,16 @@
         block.append(grid);
         box.append(block);
       });
+    }
+    /* each day cell pops 5ms after the one before it. As ~370 delayed CSS transitions they all sat on their own compositor
+       layers from the first frame (a ~300ms hitch on arrival); released in the same rhythm, only the cells mid-pop are layered */
+    function popCalendar(root) {
+      const cells = $$(".cal-d i:not(.pad):not(.pop)", root), t0 = performance.now();
+      let k = 0;
+      if (cells.length) (function step(now) {
+        for (const n = Math.min(cells.length, Math.floor((now - t0) / 5) + 1); k < n; k++) cells[k].classList.add("pop");
+        if (k < cells.length) requestAnimationFrame(step);
+      })(t0);
     }
     /* 02 · clock face: 24 bars out of a base ring, length by count; the quiet night hours (20:00–05:00) get a faint inner arc */
     function drawClock(svg, hours, peakHour) {
