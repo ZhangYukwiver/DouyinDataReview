@@ -1,3 +1,5 @@
+import type { ChatConversationSummary, ChatMessage } from "./chatRecords";
+
 export const PERSONAL_RECORD_TYPES = [
   { id: "watch_history", label: "观看历史" },
   { id: "liked_videos", label: "点赞列表" },
@@ -62,6 +64,12 @@ export interface PersonalArchiveData {
   parsedFileCount: number;
   ignoredFileCount: number;
   warnings: string[];
+  // 只有本应用「导出数据」存的文件才带下面这几项
+  updatedAt?: string | null;
+  chatMessages?: ChatMessage[];
+  chatConversations?: ChatConversationSummary[];
+  // 记录出自采集器，编号和本机一致，才能并入本机记录；官方档案的编号是另一套，并进去会重复计数
+  fromCollector?: boolean;
 }
 
 export function createEmptyPersonalRecords(): PersonalRecordCollection {

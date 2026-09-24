@@ -545,6 +545,12 @@ function parseSnapshot(value: unknown): CollectorSnapshot {
   };
 }
 
+// 「导出数据」存下的就是界面那份快照，只是没带 schemaVersion；按采集器同一套规则原样读回
+export function parseExportedSnapshot(value: unknown): CollectorSnapshot | null {
+  if (!isObject(value) || typeof value.exportedAt !== "string") return null;
+  return parseSnapshot({ ...value, schemaVersion: 2 });
+}
+
 function parseStatus(value: unknown): CollectorStatus {
   if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务状态无效。");
   const validStates: CollectorState[] = [
@@ -680,11 +686,12 @@ async function requestJson(
   path: string,
   options: RequestInit = {},
   token?: string,
+  timeoutMs = 10_000,
 ): Promise<unknown> {
   const controller = new AbortController();
   const abort = () => controller.abort();
   options.signal?.addEventListener("abort", abort, { once: true });
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     options.signal?.throwIfAborted();
     const response = await fetch(`${normalizeCollectorBaseUrl(baseUrl)}${path}`, {
@@ -706,7 +713,7 @@ async function requestJson(
           ? "自动获取配对码仅支持当前电脑，请输入采集器显示的配对码。"
         : errorCode === "not_paired"
           ? "连接已过期，请重新配对。"
-          : errorCode === "download_start_failed" && isObject(payload) && typeof payload.message === "string"
+          : ["download_start_failed", "import_busy", "import_failed"].includes(errorCode) && isObject(payload) && typeof payload.message === "string"
             ? payload.message
           : `采集服务请求失败（${response.status}）。`;
       throw new LocalCollectorError(errorCode, message);
@@ -954,4 +961,25 @@ export async function switchCollectorAccount(baseUrl: string, token: string): Pr
 
 export async function clearCollectorRecords(baseUrl: string, token: string): Promise<CollectorSnapshot> {
   return parseSnapshot(await requestJson(baseUrl, "/v1/records", { method: "DELETE" }, token));
+}
+
+export interface CollectorImportResult {
+  snapshot: CollectorSnapshot;
+  added: { watch_history: number; liked_videos: number; favorite_videos: number; chat_messages: number };
+}
+
+// 把导出文件并进采集器的本地记录；十几 MB 的上传加上先停聊天接收，给足一分钟
+export async function importCollectorRecords(
+  baseUrl: string,
+  token: string,
+  data: Pick<CollectorSnapshot, "records" | "chatMessages" | "chatConversations">,
+): Promise<CollectorImportResult> {
+  const value = await requestJson(baseUrl, "/v1/records/import", { method: "POST", body: JSON.stringify(data) }, token, 60_000);
+  if (!isObject(value) || !isObject(value.added)) throw new LocalCollectorError("invalid_response", "采集服务没有返回并入结果。");
+  const added = value.added;
+  const count = (key: keyof CollectorImportResult["added"]) => parseCount(added[key]) ?? 0;
+  return {
+    snapshot: parseSnapshot(value.snapshot),
+    added: { watch_history: count("watch_history"), liked_videos: count("liked_videos"), favorite_videos: count("favorite_videos"), chat_messages: count("chat_messages") },
+  };
 }

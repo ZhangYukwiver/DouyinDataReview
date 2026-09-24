@@ -91,8 +91,9 @@ export function useTween(active: boolean, duration = 900): number {
     if (instant || !active) return undefined;
     let frame = 0;
     const start = performance.now();
+    // rAF 给的帧时间可能早于这里的 start，不夹住的话负进度会让动画先往反方向跳一下
     const tick = (now: number) => {
-      const p = Math.min(1, (now - start) / duration);
+      const p = Math.min(1, Math.max(0, (now - start) / duration));
       setT(1 - (1 - p) ** 3);
       if (p < 1) frame = requestAnimationFrame(tick);
     };
@@ -122,7 +123,7 @@ export function useCountUp(value: number, duration = 800): number {
     const start = performance.now();
     let frame = 0;
     const tick = (now: number) => {
-      const p = Math.min(1, (now - start) / duration);
+      const p = Math.min(1, Math.max(0, (now - start) / duration));
       const next = begin + (value - begin) * (1 - (1 - p) ** 3);
       current.current = next;
       setShown(next);

@@ -11,6 +11,7 @@ import {
   getCollectorVideoDownload,
   isChatReceiving,
   normalizeCollectorBaseUrl,
+  parseExportedSnapshot,
   parseLaunchPairingCode,
   pairCollector,
   startCollectorSync,
@@ -159,6 +160,25 @@ describe("normalizeCollectorBaseUrl", () => {
     expect(() => normalizeCollectorBaseUrl("http://example.com:4765")).toThrowError(LocalCollectorError);
     expect(() => normalizeCollectorBaseUrl("https://example.com:4765")).toThrowError(LocalCollectorError);
     expect(() => normalizeCollectorBaseUrl("https://user:pass@example.com")).toThrowError(LocalCollectorError);
+  });
+});
+
+describe("parseExportedSnapshot", () => {
+  it("reads an exported data file back without merging repeat views or dropping chat", () => {
+    const view = (id: string, occurredAt: string) => ({ id, videoId: "7000000000000000001", title: "同一个视频", occurredAt, occurredAtSource: "platform_action" });
+    const snapshot = parseExportedSnapshot({
+      exportedAt: "2026-09-24T07:35:43.741Z",
+      source: "collector",
+      updatedAt: "2026-09-24T07:34:25.120Z",
+      warnings: [],
+      records: { watch_history: [view("w1", "2026-09-01T00:00:00.000Z"), view("w2", "2026-09-02T00:00:00.000Z")], liked_videos: [], favorite_videos: [] },
+      chatConversations: [],
+      chatMessages: [{ id: "m1", conversationId: "c1", senderId: "u1", sentAt: "2026-09-02T00:00:00.000Z", type: "text", text: "你好" }],
+    });
+    expect(snapshot?.records.watch_history.map((record) => record.id)).toEqual(["w1", "w2"]);
+    expect(snapshot?.chatMessages.map((message) => message.text)).toEqual(["你好"]);
+    expect(snapshot?.updatedAt).toBe("2026-09-24T07:34:25.120Z");
+    expect(parseExportedSnapshot({ watch_history: [] })).toBeNull();
   });
 });
 

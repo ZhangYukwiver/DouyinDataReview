@@ -16,7 +16,7 @@ import {
 import { DirectHistoryError } from "./directHistory.mjs";
 import { createEmptyRecords } from "./normalizer.mjs";
 import { createEndpointProgress } from "./progress.mjs";
-import { normalizeDirectSyncState } from "./store.mjs";
+import { CollectorStore, normalizeDirectSyncState } from "./store.mjs";
 import { VideoDownloadError } from "./videoDownloader.mjs";
 
 function emptySnapshot() {
@@ -54,6 +54,46 @@ function fakeResponse(pathname, payload) {
     json: () => typeof payload === "function" ? payload() : Promise.resolve(payload),
   };
 }
+
+describe("importRecords", () => {
+  it("only adds what the collector lacks, keeps local copies on overlap, and refuses while a read runs", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "dy-import-"));
+    try {
+      const store = new CollectorStore(directory);
+      const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: directory, store });
+      const watch = (videoId, title, occurredAt) => ({ id: `watch_history:${videoId}:${occurredAt}`, videoId, title, occurredAt, occurredAtSource: "platform_action" });
+      const liked = (videoId, title) => ({ id: `liked_videos:${videoId}`, videoId, title, occurredAt: null, occurredAtSource: "unknown" });
+      const message = (id, sentAt) => ({ id, conversationId: "c1", senderId: "u1", sentAt, type: "text", text: id });
+      // 本机记录和真实运行一样先过一遍存盘规范化
+      await store.save({ watch_history: [watch("7000000000000000001", "本机", "2026-09-02T00:00:00.000Z")], liked_videos: [liked("7000000000000000011", "本机喜欢")], favorite_videos: [] }, [], {
+        chatMessages: [message("m1", "2026-09-02T00:00:00.000Z")],
+      });
+      collector.snapshot = await store.load();
+      const result = await collector.importRecords({
+        records: {
+          watch_history: [
+            watch("7000000000000000001", "文件里的旧标题", "2026-09-02T00:00:00.000Z"),
+            watch("7000000000000000002", "更早", "2026-09-01T00:00:00.000Z"),
+            watch("7000000000000000003", "更晚", "2026-09-03T00:00:00.000Z"),
+          ],
+          liked_videos: [liked("7000000000000000011", "文件"), liked("7000000000000000012", "文件新增")],
+          favorite_videos: [null],
+        },
+        chatMessages: [message("m1", "2026-09-02T00:00:00.000Z"), message("m2", "2026-09-03T00:00:00.000Z")],
+        chatConversations: [{ id: "c1", kind: "private", messageCount: 2, ownMessageCount: 0 }],
+      });
+      expect(result.added).toEqual({ watch_history: 2, liked_videos: 1, favorite_videos: 0, chat_messages: 1 });
+      const saved = await new CollectorStore(directory).load();
+      expect(saved.records.watch_history.map((item) => item.title)).toEqual(["更晚", "本机", "更早"]);
+      expect(saved.records.liked_videos.map((item) => item.title)).toEqual(["本机喜欢", "文件新增"]);
+      expect(saved.chatMessages.map((item) => item.id)).toEqual(["m2", "m1"]);
+      collector.syncPromise = new Promise(() => undefined);
+      await expect(collector.importRecords({})).rejects.toMatchObject({ status: 409, code: "import_busy" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("collector browser page selection", () => {
   it("opens a normal tab instead of navigating Comet's internal welcome page", async () => {
