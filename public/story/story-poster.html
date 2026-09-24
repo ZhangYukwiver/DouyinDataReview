@@ -873,7 +873,7 @@ CH.push({
 #count .ct-ts svg{display:block;width:100%;height:calc(var(--u) * 4.2)}
 #count .ct-ts rect{fill:var(--fg);transform-box:fill-box;transform-origin:50% 100%;transform:scaleY(0);transition:transform .45s var(--ease) calc(var(--i) * 3ms)}
 #count .ct-ts rect.b{fill:var(--acc)}
-#count .ct-ts rect.u{fill:none;stroke:var(--fg);stroke-width:1.5}
+#count .ct-ts rect.u{fill:none;stroke:var(--fg);stroke-width:1.5;vector-effect:non-scaling-stroke}
 #count .ct-layer.in .ct-ts rect{transform:none}
 #count .ct-legend{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:var(--rule) solid var(--fg);border-bottom:var(--rule) solid var(--fg);margin-top:calc(var(--u) * .8)}
 #count .ct-legend>div{display:flex;align-items:center;gap:calc(var(--u) * .8);padding:calc(var(--u) * .7) calc(var(--u) * 1);min-width:0}
@@ -1234,14 +1234,15 @@ CH.push({
       return;
     }
 
-    // ---- the window: the calendar year of the data, or the 12 months up to the latest day ----
+    // ---- the window: the months the records cover, 12 at most (a collector only reaches back a few months,
+    //      and months that haven't happened yet shouldn't get an empty slot) ----
     const first = days[0][0], last = days[days.length - 1][0];
-    const fy = +first.slice(0, 4), ly = +last.slice(0, 4), lm = +last.slice(5, 7) - 1;
-    const start = fy === ly ? Date.UTC(ly, 0, 1) : Date.UTC(ly, lm - 11, 1);
-    const end = fy === ly ? Date.UTC(ly + 1, 0, 1) : Date.UTC(ly, lm + 1, 1);
+    const fy = +first.slice(0, 4), fm = +first.slice(5, 7) - 1, ly = +last.slice(0, 4), lm = +last.slice(5, 7) - 1;
+    const M = Math.max(1, Math.min(12, (ly - fy) * 12 + lm - fm + 1));
+    const start = Date.UTC(ly, lm - M + 1, 1), end = Date.UTC(ly, lm + 1, 1);
     const N = Math.round((end - start) / DAY);
     const s0 = new Date(start);
-    const spans = Array.from({ length: 12 }, (_, k) => {
+    const spans = Array.from({ length: M }, (_, k) => {
       const a = Date.UTC(s0.getUTCFullYear(), s0.getUTCMonth() + k, 1), b = Date.UTC(s0.getUTCFullYear(), s0.getUTCMonth() + k + 1, 1);
       const da = new Date(a);
       return { a: Math.round((a - start) / DAY), b: Math.round((b - start) / DAY), m: da.getUTCMonth(), y: da.getUTCFullYear() };
@@ -1252,7 +1253,8 @@ CH.push({
     const peakIso = D.peakDay && inWin.some((x) => x.iso === D.peakDay) ? D.peakDay : inWin.slice().sort((a, b) => b.c - a.c || a.iso.localeCompare(b.iso))[0].iso;
     const peak = inWin.find((x) => x.iso === peakIso);
 
-    const sameYear = spans[0].y === spans[11].y;
+    const sameYear = spans[0].y === spans[M - 1].y;
+    if (M < 12) $(".tm-title .tm-nw", el).textContent = `${["一", "两", "三", "四", "五", "六", "七", "八", "九", "十", "十一"][M - 1]}个月，`;
     const dot = (iso) => iso.replace(/-/g, ".");
     range.textContent = D.range ? `${dot(D.range[0])} — ${dot(D.range[1])}` : `${dot(first)} — ${dot(last)}`;
 
@@ -1266,10 +1268,10 @@ CH.push({
     const code = $(".tm-code", el), mon = $(".tm-mon", el), pil = $(".tm-pil", el);
     code.append(svg);
     const pct = (v) => `${(v / N * 100).toFixed(4)}%`;
-    for (let k = 1; k < 12; k++) { code.append(H("i", { class: "tm-gl", style: { left: pct(spans[k].a) } })); pil.append(H("i", { class: "tm-gl", style: { left: pct(spans[k].a) } })); }
+    for (let k = 1; k < M; k++) { code.append(H("i", { class: "tm-gl", style: { left: pct(spans[k].a) } })); pil.append(H("i", { class: "tm-gl", style: { left: pct(spans[k].a) } })); }
 
-    // ---- month labels + pillars (months[] is per calendar month) ----
-    const monthVals = spans.map((s) => Number(D.months[s.m]) || 0);
+    // ---- month labels + pillars: summed from the same days as the barcode, so the two always agree ----
+    const monthVals = spans.map((s) => inWin.reduce((sum, x) => (x.i >= s.a && x.i < s.b ? sum + x.c : sum), 0));
     const maxMonth = Math.max(...monthVals);
     const pkMonth = maxMonth > 0 ? monthVals.indexOf(maxMonth) : -1;
     const cells = spans.map((s, k) => {
@@ -1302,14 +1304,14 @@ CH.push({
     let shown = -1;
     onProgress(el, (p, vis) => {
       const t = vis * 0.15 + p * 0.85;
-      const m = Math.max(1, Math.min(12, 1 + Math.floor(t / 0.6 * 12)));
+      const m = Math.max(1, Math.min(M, 1 + Math.floor(t / 0.6 * M)));
       if (m === shown) return;
       shown = m;
       el.style.setProperty("--m", m);
       el.style.setProperty("--cut", (spans[m - 1].b / N).toFixed(4));
       num.textContent = fmt.n(cum[m - 1]);
-      run.textContent = `PRINT ${String(m).padStart(2, "0")} / 12`;
-      cells.forEach((c, k) => c.classList.toggle("cur", m < 12 && k === m - 1));
+      run.textContent = `PRINT ${String(m).padStart(2, "0")} / ${String(M).padStart(2, "0")}`;
+      cells.forEach((c, k) => c.classList.toggle("cur", m < M && k === m - 1));
     });
     $(".tm", el).dataset.on = "0.66";
   },
@@ -1462,6 +1464,11 @@ CH.push({
 #kept .kp-all{margin-top:calc(var(--u)*1.2);font:700 max(15px,calc(var(--u)*1.15))/1.5 var(--body);word-break:keep-all;visibility:hidden}
 #kept .kp-all.in{visibility:visible;animation:kept-blink .45s steps(1,end) 2}
 #kept .kp-all .slab{line-height:1.6}
+#kept .kp-rest{position:absolute;left:var(--gut);top:34px;width:calc(var(--B) - var(--gut) - var(--ci) * var(--cg) - var(--u) * 3);container-type:inline-size;color:var(--paper);visibility:hidden}
+#kept .kp-rest.in{visibility:visible;animation:kept-blink .45s steps(1,end) 2}
+#kept .kp-rest b{display:block;font-size:min(calc(var(--u) * 9),24cqw);line-height:.86;letter-spacing:-.02em}
+#kept .kp-rest p{margin-top:calc(var(--u) * .9);font-size:max(16px,calc(var(--u) * 1.9));line-height:1.3;word-break:keep-all}
+@container (max-width:200px){#kept .kp-rest>*{display:none}}
 #kept .kp-empty{position:relative;flex:none;width:var(--B);padding:0 var(--gut) calc(var(--u)*3);color:var(--paper)}
 #kept .kp-empty p{font:900 calc(var(--u)*4.2)/1.2 var(--cjk);letter-spacing:-.02em;word-break:keep-all}
 @keyframes kept-blink{50%{visibility:hidden}}
@@ -1490,6 +1497,7 @@ CH.push({
 #kept-depth .kd-v{position:absolute;top:50%;translate:0 -50%;font-size:min(calc(var(--u)*11), calc((var(--stage-h) - var(--u) * 15 - 120px) / 3 * .78));line-height:.86;letter-spacing:-.02em;white-space:nowrap;visibility:hidden}
 #kept-depth .kd-v.in{visibility:visible}
 #kept-depth .kd-v.inside{left:calc(var(--u)*1.4);color:var(--ink)}
+#kept-depth .kd-row.c .kd-v.inside{color:var(--paper);background:var(--ink);padding:.03em .12em .07em}
 #kept-depth .kd-v.outside{left:calc(var(--s) * 100% + var(--u) * 1.4);color:var(--paper)}
 #kept-depth .kd-empty{flex:1;display:flex;flex-direction:column;justify-content:space-between;padding:calc(var(--u)*3) var(--gut) calc(var(--u)*2);border-top:var(--rule) solid var(--fg)}
 #kept-depth .kd-empty p{font:900 calc(var(--u)*4.4)/1.25 var(--cjk);letter-spacing:-.02em;word-break:keep-all}
@@ -1561,7 +1569,7 @@ CH.push({
     const grid = (label, stampClass, total, inside, both, bothOut, r, delay, sentence, zero) => {
       const row = H("div", { class: "kp-row", style: { "--r": r } });
       row.append(H("div", { class: "kp-lab" }, H("span", { class: ["stamp", stampClass] }, label), H("b", { class: "display" }, fmt.n(total)), H("p", null, total ? sentence : zero)));
-      if (!total) { row.style.setProperty("--r", 1); rows.append(row); return; }
+      if (!total) { row.style.setProperty("--r", 1); rows.append(row); return 0; }
       // a non-zero count never rounds away to 0 cells
       const q = (v) => (v > 0 ? Math.max(1, Math.round(v / unit)) : 0);
       const cells = Math.ceil(total / unit), ins = Math.min(cells, q(inside));
@@ -1577,11 +1585,17 @@ CH.push({
       row.style.setProperty("--ci", ci);
       row.append(g);
       rows.append(row);
+      return ci;
     };
-    grid("LIKED", "sig", liked, wl, all, lf - all, R.liked, 0,
+    const ciL = grid("LIKED", "sig", liked, wl, all, lf - all, R.liked, 0,
       `喜欢的 ${fmt.n(liked)} 条里，有 ${fmt.n(wl)} 条也看过。`, "这一年没有点过喜欢。");
-    grid("SAVED", "", fav, wf, all, lf - all, R.fav, 0.3,
+    const ciF = grid("SAVED", "", fav, wf, all, lf - all, R.fav, 0.3,
       `收藏的 ${fmt.n(fav)} 条里，有 ${fmt.n(wf)} 条也看过。`, "这一年没有收藏过内容。");
+    // the part of the ink block the grids don't reach is what was only watched: say how much that is
+    const rest = Math.max(0, watch - (wl + wf - all));
+    if (rest > 0 && (liked || fav)) rows.append(H("div", { class: "kp-rest", dataset: { at: "0.66" }, style: { "--ci": Math.max(ciL, ciF) } },
+      H("b", { class: "display", dataset: { count: rest, fmt: "n", dur: 900 } }),
+      H("p", { class: "cjk" }, "条只是看过，", H("br"), "没点喜欢，也没收藏。")));
     const allP = $(".kp-all", el);
     if (liked && fav) {
       if (all) allP.append(H("span", { class: "slab" }, `看过、点了喜欢、又收藏了的，一共 ${fmt.n(all)} 条。`));
@@ -1658,7 +1672,12 @@ CH.push({
     if (n < 4) box.append(H("div", { class: "kr-fill fx-wipe", style: { "--from": n + 1, "--span": 4 - n, "--d": `${n * 120}ms` } },
       H("span", { class: "stamp sig" }, `${String(n).padStart(2, "0")} / 04`),
       H("p", null, n === 1 ? ["这份记录里最近能找到的，", H("br"), "只有这一条。"] : n === 2 ? ["最近能找到的，", H("br"), "只有这\u00a02\u00a0条。"] : ["最近的", H("br"), "就这\u00a03\u00a0条。"])));
-    for (const c of cards) mq.append(H("span", null, c.title), H("b"));
+    const short = (t) => {
+      const line = String(t || "").split("\n").map((x) => x.replace(/#\S+/g, "").trim()).find(Boolean) || String(t || "").trim();
+      const a = Array.from(line);
+      return a.length > 24 ? `${a.slice(0, 23).join("")}…` : line;
+    };
+    for (const c of cards) mq.append(H("span", null, short(c.title)), H("b"));
   },
 });
 </script>
@@ -1793,6 +1812,7 @@ CH.push({
 #taste-who .tw-code-k{display:flex;gap:3px;font:700 max(10px,calc(var(--u)*.8))/1 var(--mono);letter-spacing:.1em}
 #taste-who .tw-code-k span{flex:var(--s) 1 0;min-width:0;white-space:nowrap;overflow:visible}
 #taste-who .tw-code-k span.sig{color:var(--sig)}
+#taste-who .tw-code-k span.rest{text-align:right}
 #taste-who .tw-code.fx-wipe{transition-duration:1.1s}
 
 /* ---------- 04C · soundtrack catalogue ---------- */
@@ -1953,13 +1973,14 @@ CH.push({
     const code = $(".tw-code", el), key = $(".tw-code-k", el);
     code.classList.add("fx-wipe");
     cs.forEach((c, i) => code.append(H("i", { class: ["tw-seg", i < 3 && "hd"], style: { "--s": (c.share || 0).toFixed(4) } })));
-    cs.forEach((c, i) => key.append(H("span", { class: i < 3 ? "sig" : null, style: { "--s": (c.share || 0).toFixed(4) } }, String(i + 1).padStart(2, "0"))));
+    if (cs.some((c) => (c.share || 0) < 0.02)) key.append(H("span", { style: { "--s": headShare.toFixed(4) } }, `TOP ${cs.length}`));
+    else cs.forEach((c, i) => key.append(H("span", { class: i < 3 ? "sig" : null, style: { "--s": (c.share || 0).toFixed(4) } }, String(i + 1).padStart(2, "0"))));
     if (restN > 0 && restShare > 0.001) {
       const n = Math.min(restN, 400);
       const svg = S("svg", { viewBox: `0 0 ${n * 2} 10`, preserveAspectRatio: "none", "shape-rendering": "crispEdges", "aria-hidden": "true" });
       for (let j = 0; j < n; j++) svg.append(S("rect", { x: j * 2, y: 0, width: 1, height: 10, fill: "var(--ink)" }));
       code.append(H("i", { class: "tw-seg rest", style: { "--s": restShare.toFixed(4) } }, svg));
-      key.append(H("span", { style: { "--s": restShare.toFixed(4) } }, `OTHERS ×${fmt.n(restN)}`));
+      key.append(H("span", { class: "rest", style: { "--s": restShare.toFixed(4) } }, `OTHERS ×${fmt.n(restN)}`));
     }
     onReveal(el, () => $$("[data-count]", el).forEach(countUp));
   },
@@ -2230,6 +2251,7 @@ CH.push({
 #form-age .fa-mk .t{font:900 max(13px,calc(var(--u)*1.3))/1.2 var(--cjk);padding:.25em .45em;background:var(--sig)}
 #form-age .fa-mk i{display:block;width:4px;height:calc(var(--u)*6.6);background:var(--sig);margin-bottom:calc(var(--u)*-5.4)}
 #form-age .fa-mk.r i{margin-left:auto}
+#form-age .fa-cells .old{stroke:var(--ink);stroke-width:1.5;vector-effect:non-scaling-stroke}
 #form-age .fa-cells{display:block;width:100%;height:calc(var(--u)*5.4);clip-path:inset(0 100% 0 0);transition:clip-path 1s steps(24,end) .15s}
 #form-age.in .fa-cells{clip-path:inset(0 0 0 0)}
 #form-age .fa-scale{position:relative;height:calc(var(--u)*2.4);border-top:var(--rule) solid var(--ink)}
@@ -2489,7 +2511,7 @@ CH.push({
     for (let i = 0; i < N; i++) {
       const d = i * step;
       const band = d <= 7 ? 0 : d <= 90 ? 1 : 2;
-      svg.append(S("rect", { x: i * 10, y: band === 2 ? 5 : 0, width: 6, height: band === 2 ? 5 : 10, fill: band === 0 ? "var(--sig)" : "var(--ink)" }));
+      svg.append(S("rect", { x: i * 10, y: band === 2 ? 5 : 0, width: 6, height: band === 2 ? 5 : 10, fill: band === 0 ? "var(--sig)" : band === 1 ? "var(--ink)" : "var(--white)", class: band === 2 ? "old" : null }));
     }
     const px = (d) => Math.min(1, (d / step + 0.3) / N);
     const marks = H("div", { class: "fa-marks" }, H("div", { class: ["fa-mk", px(m) > 0.6 && "r"], style: { left: `${(px(m) * 100).toFixed(3)}%` } }, H("span", { class: "t" }, m > 0 ? `第 ${fmt.n(m)} 天` : "发布当天"), H("i", null)));
@@ -2609,6 +2631,9 @@ CH.push({
 #echo .ec-dur b.zero{color:transparent;-webkit-text-stroke:3px var(--paper)}
 #echo .ec-dur span{font:900 calc(var(--u) * 4.6)/1 var(--cjk);margin-right:calc(var(--u) * .8)}
 #echo .ec-call .ec-lede{max-width:34em}
+#echo .ec-nocall{flex:1;min-height:0;display:flex;align-items:stretch;gap:calc(var(--u) * 2.4);padding-top:calc(var(--u) * 1.4)}
+#echo .ec-nocall .ec-dur{align-self:flex-end}
+#echo .ec-nocall .ec-void{flex:1;min-width:0;min-height:0}
 #echo .ec-box{grid-column:8 / 13;margin:0 0 calc(var(--u) * -1.3);padding:calc(var(--u) * 1.5) calc(var(--u) * 1.6) calc(var(--u) * 1.6);display:grid;grid-template-rows:auto auto auto minmax(0, 1fr);gap:calc(var(--u) * .9);min-height:0}
 #echo .ec-cnt{display:flex;align-items:baseline;gap:calc(var(--u) * .5);border-bottom:var(--rule) solid var(--ink);padding:calc(var(--u) * .9) 0 calc(var(--u) * .6)}
 #echo .ec-cnt b{font:400 min(calc(var(--u) * 11), calc(var(--u) * 20 / var(--emw, 1)))/.87 var(--display);letter-spacing:-.02em}
@@ -2802,8 +2827,9 @@ CH.push({
     for (const [v, u] of parts) dur.append(H("b", { class: secs || calls ? null : "zero", dataset: { count: v, fmt: "n" } }), H("span", null, u));
     const call = H("div", { class: "ec-call" },
       H("h2", { class: "ec-h ec-rise", dataset: { split: true } }, "电话里聊了多久"),
-      dur,
-      H("p", { class: "ec-lede" }, nb(callText)));
+      // no calls at all: the zero alone leaves most of the column empty, so the rest is hatched like the other empty slots
+      ...(secs || calls ? [dur, H("p", { class: "ec-lede" }, nb(callText))]
+        : [H("div", { class: "ec-nocall" }, dur, H("div", { class: "ec-void ec-hatch" }, H("span", { class: "ec-note" }, nb(callText))))]));
 
     const sh = chat.share;
     const has = sh && (sh.title || sh.coverUrl);
@@ -2981,9 +3007,10 @@ CH.push({
       const who = (h) => ranked.filter((s) => s.f.halfAt === h);
       const names = (list) => list.map((s) => s.short).join("和");
       const termOf = (list) => (list.every((s) => s.term === list[0].term) ? list[0].term : "词");
-      const tag = H("em", null, "标橙的");
-      if (lo === hi) conc = ranked.length > 1 ? [nb(`每一栏都差不多，前 ${lo} 个${termOf(ranked)}就占了一半，`), tag, "就是这几个。"] : [nb(`${names(ranked)}里，前 ${lo} 个${termOf(ranked)}就占了一半，`), tag, "就是这几个。"];
-      else conc = [nb(`${names(who(lo))}最集中，前 ${lo} 个${termOf(who(lo))}就占了一半；${names(who(hi))}最分散，要数到第 ${hi} 个。`), tag, "就是这几个。"];
+      const marked = ranked.some((s) => s.f.halfAt <= s.f.top.length);
+      const tail = marked ? [H("em", null, "标橙的"), "就是这几个。"] : ["墙上摆出来的这些，加起来都还不到一半。"];
+      if (lo === hi) conc = ranked.length > 1 ? [nb(`每一栏都差不多，前 ${lo} 个${termOf(ranked)}就占了一半，`), ...tail] : [nb(`${names(ranked)}里，前 ${lo} 个${termOf(ranked)}就占了一半，`), ...tail];
+      else conc = [nb(`${names(who(lo))}最集中，前 ${lo} 个${termOf(who(lo))}就占了一半；${names(who(hi))}最分散，要数到第 ${hi} 个。`), ...tail];
     }
     const present = streams.filter((s) => s.f && s.f.top.length).map((s) => s.zh);
     cap.append(
@@ -3003,7 +3030,8 @@ CH.push({
       let wall;
       if (f && f.top.length) {
         const max = Math.max(1, ...f.top.map((t) => t.count));
-        const half = f.halfAt == null ? f.top.length : f.halfAt;
+        // halfAt past the wall means every word shown is still short of half: then nothing gets the orange
+        const half = f.halfAt != null && f.halfAt <= f.top.length ? f.halfAt : 0;
         wall = H("div", { class: "bd-mq", dataset: { marquee: true, scrub: scrub[i], reverse: i % 2 ? true : null } },
           f.top.map((t, r) => H("span", { class: ["wd", r === 0 && "r1", r < half ? "hi" : "lo"], style: { "--k": Math.max(0.3, t.count / max).toFixed(3), "--r": r } },
             H("b", { class: "t", "data-private": s.priv ? "" : null }, t.name),
@@ -3031,11 +3059,10 @@ CH.push({
     }
     let lede;
     if (C) {
-      const lq = liked.sampled >= liked.total ? `${n(liked.sampled)} 条` : `带话题的 ${n(liked.sampled)} 条`;
-      const sq = shared.sampled >= shared.total ? `${n(shared.sampled)} 条` : `带话题的 ${n(shared.sampled)} 条`;
+      const q = (f, who) => `${who}${f.sampled >= f.total ? "" : "、带话题"}的有 ${n(f.sampled)} 条`;
       const tail = !C.likedOnly.length && !C.sharedOnly.length ? (C.both.length ? "两边常见的话题几乎是同一批。" : "两边都没挑出常见的话题。")
         : !C.both.length ? "两边常见的话题几乎不重合。" : "有两边都常见的，也有只在一边出现的。";
-      lede = `拿点过喜欢的 ${lq}和聊天里转过的 ${sq}比一比话题，${tail}`;
+      lede = `${q(liked, "点过喜欢")}，${q(shared, "聊天里转过")}，拿这两边比一比话题：${tail}`;
     } else lede = `这一页本来要拿点过喜欢的视频和聊天里转过的视频比一比话题，${liked.top.length ? "现在只有喜欢这一边。" : "现在两边都凑不齐。"}`;
 
     const nc = (t) => Array.from(t).reduce((sum, c) => sum + (/[\x00-\x7f]/.test(c) ? 0.56 : 1), 0) + 0.3;
@@ -3383,7 +3410,7 @@ CH.push({
 #sign-end .se-yearbox{container-type:size;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:calc(var(--u)*2)}
 #sign-end .se-yslot{container-type:size;min-height:0;position:relative;pointer-events:none}
 #sign-end .se-sig{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:10px;padding:calc(var(--u)*1.2) 0}
-#sign-end .se-sn{writing-mode:vertical-rl;font-size:min(calc((100cqh - var(--u)*2.4 - 40px) / (var(--sn, 5) * .97 + .1)), calc(var(--u)*6.4));line-height:1;letter-spacing:-.03em;white-space:nowrap}
+#sign-end .se-sn{writing-mode:vertical-rl;font-size:min(calc((100cqh - var(--u)*2.4 - 72px) / (var(--sn, 5) * .97 + .1)), calc(var(--u)*6.4));line-height:1;letter-spacing:-.03em;white-space:nowrap}
 #sign-end .se-sk{writing-mode:vertical-rl;padding:7px 4px 6px}
 #sign-end .se-yw{position:absolute;left:-.02em;bottom:calc(var(--u)*1.2);font-size:min(calc(100cqw / 1.9), calc((100cqh - var(--u)*2.4) / .92))}
 #sign-end .se-y{display:block;font-size:1em;line-height:.92;letter-spacing:-.02em;white-space:nowrap}

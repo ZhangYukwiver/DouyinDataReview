@@ -138,7 +138,8 @@ const poster: WorkspacePalette = {
   vennFavorite: "#FF4A1C",
   shadow: "none",
   heat: ["#E9E5DA", "#D6D1C4", "#A9A396", "#5E5A52", "#0A0A0A", "#FF4A1C"],
-  slices: ["#0A0A0A", "#FF4A1C", "#5E5A52", "#BDB8AB", "#FF9A7E", "#2A2A2A"],
+  // 第五片原来是浅橙，饼图里看着发粉；海报只用墨黑 / 信号橙 / 灰纸
+  slices: ["#0A0A0A", "#FF4A1C", "#5E5A52", "#BDB8AB", "#E4E0D4", "#2A2A2A"],
   avatars: ["#0A0A0A", "#FF4A1C", "#2A2A2A", "#5E5A52", "#FF6A42", "#3A3A3A"],
   // 封面缺图时的底：只用新闻纸 / 纯白 / 灰纸 / 信号橙，出血编号一律墨黑印在上面
   tints: ["#F1EEE6", "#FFFFFF", "#E4E0D4", "#FF4A1C", "#F1EEE6", "#FFFFFF"],

@@ -238,7 +238,8 @@ const blocks: string[] = [
   rule(sel("d-mosaic dark"), `${ink(PAPER)};border-color:${INK}!important`),
   rule(sel("d-event"), "border-bottom:2px solid var(--pf)!important"),
   rule(sel("d-ititle"), heavy(14, 1.3, "0")),
-  rule(sel("d-swarm"), `background-color:${SIG}!important;cursor:default!important`),
+  // 群点停画后留下的空位：不再是一块像空卡片的实心橙，改成海报里"这里本来就空着"的斜线底
+  rule(sel("d-swarm"), `background-color:${PAPER}!important;background-image:repeating-linear-gradient(-45deg,${INK} 0 2px,transparent 2px 13px)!important;cursor:default!important`),
   rule(sel("d-swarm", " canvas"), "display:none!important"),
   rule(sel("d-swarmhint"), "display:none!important"),
   rule(`${P} [data-testid="report-tile-swarm"] svg path`, `stroke:${INK}!important;stroke-width:3px!important`),
@@ -249,7 +250,16 @@ const blocks: string[] = [
   rule(["completion", "concentration"].map((key) => `${P} [data-testid="report-tile-${key}"] svg circle`).join(","), "stroke-width:10px!important"),
   rule(`${P} [data-testid="report-tile-radar"] svg path`, "stroke-width:1.6px!important"),
   rule(`${P} [data-testid="report-tile-radar"] svg path:last-of-type`, `fill:${SIG}!important;fill-opacity:1!important;stroke:${INK}!important;stroke-width:2.5px!important`),
-  rule(`${P} [data-testid="report-tile-venn"] svg circle`, "stroke-width:3px!important;stroke-opacity:1!important"),
+  // 半透明的橙叠在纸上会发粉：韦恩只留 3px 实线圈
+  rule(`${P} [data-testid="report-tile-venn"] svg circle`, "stroke-width:3px!important;stroke-opacity:1!important;fill-opacity:0!important"),
+  // 相关矩阵同理：强弱不用透明度，改成实心 / 斜线 / 描边三档，正相关橙、负相关黑
+  rule(sel("d-mcell"), "opacity:1!important"),
+  rule(sel("d-mcell pos s3"), `background-color:${SIG}!important`),
+  rule(sel("d-mcell neg s3"), `background-color:${INK}!important`),
+  rule(sel("d-mcell pos s2"), `background-color:${PAPER}!important;background-image:repeating-linear-gradient(-45deg,${SIG} 0 3px,transparent 3px 7px)!important`),
+  rule(sel("d-mcell neg s2"), `background-color:${PAPER}!important;background-image:repeating-linear-gradient(-45deg,${INK} 0 3px,transparent 3px 7px)!important`),
+  rule(sel("d-mcell pos s1"), `background-color:${PAPER}!important;box-shadow:inset 0 0 0 2px ${SIG}!important`),
+  rule(sel("d-mcell neg s1"), `background-color:${PAPER}!important;box-shadow:inset 0 0 0 2px ${INK}!important`),
 
   // ---------- 聊天 ----------
   rule(sel("c-bar"), "border-bottom-width:0!important"),

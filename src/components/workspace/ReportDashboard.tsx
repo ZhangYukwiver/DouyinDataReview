@@ -878,6 +878,7 @@ function Matrix({ labels, matrix }: { labels: string[]; matrix: Array<Array<numb
           <Text numberOfLines={1} style={styles.matrixLabel}>{labels[rowIndex]}</Text>
           {row.map((value, columnIndex) => (
             <View
+              {...ws("d-mcell", rowIndex !== columnIndex && value !== null && `${value >= 0 ? "pos" : "neg"} s${Math.abs(value) >= 0.67 ? 3 : Math.abs(value) >= 0.34 ? 2 : 1}`)}
               key={columnIndex}
               style={[styles.matrixCell, rowIndex === columnIndex && styles.matrixCellSelf, {
                 backgroundColor: rowIndex === columnIndex
@@ -897,8 +898,8 @@ function Matrix({ labels, matrix }: { labels: string[]; matrix: Array<Array<numb
         {labels.map((label) => <Text key={label} numberOfLines={1} style={styles.matrixTick}>{label.slice(0, 2)}</Text>)}
       </View>
       <View style={styles.legendInline}>
-        <View style={[styles.legendSwatch, { backgroundColor: alpha(GOLD, 0.8) }]} /><Text style={styles.legendLabel}>正相关</Text>
-        <View style={[styles.legendSwatch, { backgroundColor: alpha(TEAL, 0.8) }]} /><Text style={styles.legendLabel}>负相关</Text>
+        <View {...ws("d-mcell", "pos s3")} style={[styles.legendSwatch, { backgroundColor: alpha(GOLD, 0.8) }]} /><Text style={styles.legendLabel}>正相关</Text>
+        <View {...ws("d-mcell", "neg s3")} style={[styles.legendSwatch, { backgroundColor: alpha(TEAL, 0.8) }]} /><Text style={styles.legendLabel}>负相关</Text>
       </View>
     </View>
   );
