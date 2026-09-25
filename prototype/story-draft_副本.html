@@ -87,8 +87,9 @@ t-d,.tr-d{font-family:"Noto Serif SC","Songti SC","STSong",serif;font-variation-
 
 /* ============ the sky: fixed paintings that cross-fade by scene (opacity only) ============ */
 #sky{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:var(--night)}
-#sky .l{position:absolute;inset:-4%;background-size:cover;background-position:center 46%;background-repeat:no-repeat;opacity:0;transition:opacity 1.6s ease;will-change:opacity}
-#sky .l.on{opacity:1}
+/* a layer that is not showing is not painted at all (nine full-screen paintings would blow the GPU tile budget); it hides only after its fade-out */
+#sky .l{position:absolute;inset:-4%;background-size:cover;background-position:center 46%;background-repeat:no-repeat;opacity:0;visibility:hidden;transition:opacity 1.6s ease,visibility 0s linear 1.6s}
+#sky .l.on{opacity:1;visibility:visible;transition:opacity 1.6s ease,visibility 0s}
 #sky .l[data-k="white"]{background:var(--white)}
 #sky .l[data-k="deep"]{background:radial-gradient(90% 60% at 50% 40%,#152033 0%,#070a12 70%)}
 #sky::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(7,10,18,.42) 0%,rgba(7,10,18,.08) 30%,rgba(7,10,18,.18) 62%,rgba(7,10,18,.72) 100%);transition:opacity 1.6s ease}
@@ -102,6 +103,8 @@ html.arrive #veil{opacity:1;transition:none}
 /* ============ scenes ============ */
 .scene{position:relative;height:var(--len,100vh);--p:0;--vis:0;--out:0}
 .stage{position:sticky;top:0;height:100vh;overflow:clip}
+/* scenes more than a screen away are not painted (their fixed washes and big promoted layers would still be rasterized) */
+.scene.off,.scene.off *{visibility:hidden!important}
 .pad{padding:var(--safe) var(--gut) clamp(28px,5vh,64px)}
 
 /* ============ split text + one-shot reveal presets ============ */
@@ -513,7 +516,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       if (el.hasAttribute("data-label")) chapter = el;
       if (!el.classList.contains("scene")) continue;
       scenes.push({
-        el, chapter: chapter || el, p: -1, vis: -1, out: -1, step: -1, css: sceneReadsProgress(el),
+        el, chapter: chapter || el, off: false, p: -1, vis: -1, out: -1, step: -1, css: sceneReadsProgress(el),
         steps: Number(el.dataset.steps || 0),
         at: $$("[data-at]", el).map((node) => ({ node, at: Number(node.dataset.at) || 0 })),
         on: $$("[data-on]", el).map((node) => ({ node, range: parseRange(node.dataset.on), state: null })),
@@ -613,6 +616,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       if (changed) { const fns = progressFns.get(s.el); if (fns) for (const fn of fns) { try { fn(p, vis, out, s.el); } catch (error) { console.error("[onProgress]", error); } } }
       if (!now && r.top <= vh * 0.5 && r.bottom > vh * 0.5) { now = s.chapter; skyScene = s; }
       if (r.bottom > 0 && r.top < vh) visible.add(s.el);
+      const off = !(r.bottom > -vh && r.top < vh * 2);
+      if (off !== s.off) { s.off = off; s.el.classList.toggle("off", off); }
     }
     scrubMarquees(y, visible);
     // data-sky="auto": the chapter drives the sky itself through __TRACE.setSky (e.g. hour by hour)
@@ -1907,7 +1912,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 
 /* the numeral: an odometer for the hour, inside the disc */
 #time .tm-numwrap{position:absolute;left:var(--cx);bottom:calc(100% - var(--cy) + var(--R) * .14 + 22px);transform:translateX(-50%);display:block;font-size:min(34vw,54vh);color:var(--cream)}
-#time .tm-roll{position:relative;height:.74em;width:1.22em}
+#time .tm-roll{position:relative;height:.74em;width:1.22em;clip-path:inset(-.1em -.8em 0 -.8em)}
 #time .tm-roll .num{position:absolute;left:0;right:0;bottom:0;display:block;text-align:center;font-size:1em;line-height:.74;letter-spacing:-.06em;padding-right:.06em;will-change:transform,opacity}
 #time .tm-unit{position:absolute;left:100%;bottom:.06em;font-size:.16em;line-height:1;opacity:.8;white-space:nowrap;transition:transform .5s var(--ease)}
 #time .tm-numwrap.one .tm-unit{transform:translateX(-1.9em)}
@@ -2124,8 +2129,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
         if (f0 !== shownFloor) { shownFloor = f0; a.textContent = String(f0); b.textContent = String(Math.min(23, f0 + 1)); }
         const one = Math.round(hf) < 10;
         if (one !== single) { single = one; numwrap.classList.toggle("one", one); }
-        a.style.transform = `translateY(${(-fr * 22).toFixed(2)}%)`; a.style.opacity = clamp01(1 - fr * 2).toFixed(3);
-        b.style.transform = `translateY(${((1 - fr) * 22).toFixed(2)}%)`; b.style.opacity = clamp01(fr * 2 - 1).toFixed(3);
+        a.style.transform = `translateY(${(-fr * 115).toFixed(2)}%)`; a.style.opacity = clamp01(1 - fr * 0.7).toFixed(3);
+        b.style.transform = `translateY(${((1 - fr) * 115).toFixed(2)}%)`; b.style.opacity = clamp01(0.3 + fr * 0.7).toFixed(3);
         const h = Math.min(23, Math.round(hf));
         setHour(h);
         const isPkNow = pk != null && h === pk;
@@ -5383,7 +5388,7 @@ CH.push({
       $(".wp-stage", el).append(H("div", { class: "wp-sr" }, nb(say), M.length ? `两边都常见：${M.join("、")}。` : "", L.length ? `喜欢这边：${L.join("、")}。` : "", R.length ? `转发这边：${R.join("、")}。` : ""));
 
       // ---------- geometry ----------
-      let VW = 0, VH = 0, DPR = 1, mobile = false, RL = 0, RS = 0, CX = 0, CY = 0, neb = null;
+      let VW = 0, VH = 0, DPR = 1, mobile = false, RL = 0, RS = 0, CX = 0, CY = 0, neb = null, wM = 0, wL = 0, wR = 0;
       function nebula(R, rgb, seed, faint) {
         const pad = R * 0.3, S = Math.ceil((R + pad) * 2);
         const c = document.createElement("canvas");
@@ -5444,6 +5449,9 @@ CH.push({
         };
         const size = (mobile ? clamp(VW * 0.05, 15, 20) : clamp(VW * 0.017, 16, 26)) * (mode === "single" ? 1.6 : 1);
         [...lWords, ...rWords].forEach((w) => w.el.style.setProperty("--fs", `${size}px`));
+        // widest word in each column: the side columns stand clear of the fused words in the lens (real tags run long)
+        const widest = (list) => list.reduce((m, el) => Math.max(m, el.offsetWidth), 0);
+        wM = widest(mWords.map((w) => w.a)); wL = widest(lWords.map((w) => w.el)); wR = widest(rWords.map((w) => w.el));
         const lens = centers(1);
         flash.style.setProperty("--fx", `${(lens.lx / VW) * 100}%`);
         flash.style.setProperty("--fy", `${(lens.ly / VH) * 100}%`);
@@ -5521,8 +5529,11 @@ CH.push({
           col(lWords, g.xl, g.yl - RL * (mode === "single" ? 0.05 : 0.42), 1);
           col(rWords, g.xr, g.yr + RS * 0.42, 1);
         } else {
-          col(lWords, g.xl - RL * (mode === "single" ? 0.05 : 0.46), g.yl, 1);
-          col(rWords, g.xr + RS * 0.46, g.yr, 1);
+          let xL = g.xl - RL * (mode === "single" ? 0.05 : 0.46), xR = g.xr + RS * 0.46;
+          if (mode === "merge" && M.length) { const gapX = 28; xL = Math.min(xL, g.lx - wM / 2 - gapX - wL / 2); xR = Math.max(xR, g.lx + wM / 2 + gapX + wR / 2); }
+          const edge = Math.max(20, VW * 0.042);
+          col(lWords, Math.max(xL, edge + wL / 2), g.yl, 1);
+          col(rWords, Math.min(xR, VW - edge - wR / 2), g.yr, 1);
         }
         // shared words: one copy rides in each cloud, then both copies meet in the lens and fuse
         const mt = seg(p, 0.3, 0.58);
@@ -5536,8 +5547,10 @@ CH.push({
           const sc = 0.7 + 0.3 * e;
           w.a.style.transform = `translate3d(${lerp(sx, tx, e).toFixed(1)}px,${lerp(sy, ty, e).toFixed(1)}px,0) translate(-50%,-50%) scale(${sc.toFixed(3)})`;
           w.b.style.transform = `translate3d(${lerp(rx, tx, e).toFixed(1)}px,${lerp(ry, ty, e).toFixed(1)}px,0) translate(-50%,-50%) scale(${sc.toFixed(3)})`;
-          w.a.style.opacity = (wa * (0.62 + 0.38 * e)).toFixed(3);
-          w.b.style.opacity = (wa * 0.62 * (1 - ss(0.85, 1, e))).toFixed(3);
+          // the copies surface while they travel, so they never sit on top of a side column's words
+          const born = ss(0.12, 0.5, e);
+          w.a.style.opacity = (wa * born * (0.62 + 0.38 * e)).toFixed(3);
+          w.b.style.opacity = (wa * born * 0.62 * (1 - ss(0.85, 1, e))).toFixed(3);
         });
         const isLit = p >= 0.57;
         if (isLit !== lit) { lit = isLit; mWords.forEach((w) => w.a.classList.toggle("lit", isLit)); }
