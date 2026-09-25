@@ -53,12 +53,15 @@ const display = (size: number, line = 0.88) => `font-family:${DISPLAY}!important
 const box = (width = 3) => `border:${width}px solid var(--pf)!important;border-radius:0!important`;
 const notDisabled = ':not([aria-disabled="true"])';
 
+/** 采集器页只有一套自己的样式，全局规则跳过它。 */
+const NOT_SETUP = ':not([data-testid="setup-workspace"] *)';
+
 const blocks: string[] = [
   // ---------- 底子：零圆角零阴影，墨黑与新闻纸 ----------
   rule(P, `--pf:${INK};--pb:${PAPER};--ph:${SIG};--pa:${SIG};--ws-swarm:off`),
-  rule(`${P} *`, "border-radius:0!important;box-shadow:none!important;text-shadow:none!important"),
-  rule(`${P} ::selection`, `background:${SIG};color:${INK}`),
-  rule(`${P} :focus-visible`, `outline:3px solid ${SIG}!important;outline-offset:2px!important`),
+  rule(`${P} *${NOT_SETUP}`, "border-radius:0!important;box-shadow:none!important;text-shadow:none!important"),
+  rule(`${P} ${NOT_SETUP}::selection`, `background:${SIG};color:${INK}`),
+  rule(`${P} :focus-visible${NOT_SETUP}`, `outline:3px solid ${SIG}!important;outline-offset:2px!important`),
   rule(sel("g-ink"), INK_GROUND),
   rule(sel("g-sig"), SIG_GROUND),
   rule(sel("g-white"), WHITE_GROUND),
@@ -100,54 +103,6 @@ const blocks: string[] = [
   rule(`${P} [data-hover="lift"]:hover,${P} [data-hover="card"]:hover,${P} [data-hover="raise"]:hover`, "transform:none!important;box-shadow:none!important"),
   rule(`${P} [data-hover="lift"]:hover`, `outline:3px solid ${SIG}!important;outline-offset:-3px!important`),
   rule(`${P} [data-hover="tint"]:hover`, "background-color:var(--ws-surface-muted)!important"),
-
-  // ---------- 采集器页 ----------
-  rule(sel("s-top"), "border-bottom-width:0!important"),
-  rule(sel("s-mark"), `background-color:${SIG}!important;border-width:0!important;--ws-accent:${INK}`),
-  rule(sel("s-brand"), `${heavy(17, 1, ".02em")};color:${PAPER}!important`),
-  rule(sel("s-brandmeta"), "font-size:9px!important;margin-top:5px!important;padding:4px 6px 3px!important"),
-  rule(sel("s-status"), `font-family:${MONO}!important;font-size:11px!important;letter-spacing:.06em!important;color:${PAPER}!important`),
-  rule(sel("s-enter"), "min-height:42px!important;padding-left:16px!important;padding-right:16px!important"),
-  rule(sel("s-layout"), `${box()};background-color:${PAPER}!important;max-width:1440px!important`),
-  "@media (min-width:900px){" + rule(sel("s-intro"), "width:400px!important;border-right:3px solid #0A0A0A!important;padding:30px!important") + "}",
-  rule(sel("s-title"), `${heavy(44)};margin-top:22px!important;color:${INK}!important`),
-  rule(sel("s-lead"), `font-family:${CJK}!important;font-weight:500!important;font-size:13px!important;line-height:1.75!important;color:${INK}!important;margin-top:18px!important`),
-  rule(sel("s-seal"), "width:auto!important;height:auto!important;align-self:stretch!important;align-items:flex-start!important;justify-content:flex-start!important;padding:18px 18px 16px!important;margin-top:30px!important;border-width:0!important"),
-  rule(sel("s-sealtext"), `font-family:${MONO}!important;font-weight:700!important;font-size:11px!important;letter-spacing:.14em!important;color:${PAPER}!important;margin-top:14px!important`),
-  rule(sel("s-year"), `${display(128, 0.84)};color:${SIG}!important;margin-top:12px!important;margin-bottom:-6px!important`),
-  rule(sel("s-steplabel"), `${heavy(13, 1.3, ".01em")}`),
-  rule(sel("s-stepindex"), `${box()};width:30px!important;height:30px!important;background-color:transparent!important`),
-  rule(sel("s-stepindex on"), "background-color:var(--pf)!important"),
-  rule(sel("s-opt"), `${box()};background-color:transparent!important;min-height:58px!important`),
-  rule(`${sel("s-opt on")},${sel("s-opt", ":hover")}`, `background-color:${INK}!important;border-color:${INK}!important;${ink(PAPER, "#A9A396")}`),
-  rule(sel("s-optlabel"), heavy(14, 1.2, "0")),
-  rule(sel("s-head"), "padding-bottom:18px!important;border-bottom:3px solid #0A0A0A!important"),
-  rule(sel("s-optitle"), `${heavy(38)};margin-top:14px!important`),
-  rule(sel("s-ready"), `${box()};padding:7px 10px!important;background-color:transparent!important`),
-  rule(sel("s-ready on"), `background-color:${SIG}!important;border-color:${INK}!important;${ink(INK)}`),
-  rule(sel("s-ready", " div[dir]"), "font-weight:700!important"),
-  rule(sel("s-ready on", ' [data-ws~="dot"]'), `background-color:${INK}!important`),
-  rule(sel("s-icon"), `${box()};background-color:${WHITE}!important`),
-  rule(sel("s-cardtitle"), heavy(16, 1.2, "0")),
-  rule(sel("s-cardtitle big"), `${heavy(28, 1.05)};margin-top:12px!important`),
-  rule(sel("s-input"), `border:3px solid ${INK}!important;background-color:${WHITE}!important;font-family:${MONO}!important;height:46px!important`),
-  rule(sel("s-input", " input"), `font-family:${MONO}!important`),
-  rule(sel("s-action"), "border-left-width:0!important;padding:22px!important"),
-  rule(sel("s-actionvalue"), `${heavy(44)};margin-top:14px!important`),
-  rule(sel("s-counts"), `${box()};background-color:${WHITE}!important;margin-top:18px!important`),
-  rule(sel("s-count"), `border-right:3px solid ${INK}!important;min-height:104px!important;align-items:flex-end!important;padding:14px!important`),
-  rule(sel("s-count", ":last-child"), "border-right-width:0!important"),
-  rule(sel("s-countvalue"), display(58)),
-  rule(sel("s-countlabel"), `font-family:${CJK}!important;font-weight:700!important;font-size:12px!important;margin-top:6px!important;color:${INK}!important`),
-  rule(sel("s-actions"), "gap:0!important;margin-top:16px!important"),
-  rule(sel("s-actions", ` > [data-ws~="btn"] + [data-ws~="btn"]`), "border-left-width:0!important"),
-  rule(sel("s-auto"), `${box()};background-color:${WHITE}!important`),
-  rule(sel("s-switch"), `border:2px solid ${INK}!important;width:29px!important;height:17px!important;padding:0!important;background-color:${PAPER}!important`),
-  rule(sel("s-switch on"), `background-color:${SIG}!important`),
-  rule(sel("s-switch", " > div"), `background-color:${INK}!important`),
-  rule(sel("s-error"), `${INK_GROUND};border-left:10px solid ${SIG}!important`),
-  rule(sel("s-foot"), "border-top-width:0!important"),
-  rule(sel("s-progress"), `${box()};background-color:${WHITE}!important`),
 
   // ---------- 工作台外壳：墨黑侧栏、贴条顶栏 ----------
   rule(`${P} [data-testid="content-workspace"]`, "padding:0!important"),
@@ -312,11 +267,6 @@ const blocks: string[] = [
   rule(sel("e-badge"), "padding:4px 6px 3px!important"),
 
   // ---------- 窄屏：大字收一档，别把顶栏标题挤成省略号 ----------
-  "@media (max-width:899px){" + [
-    rule(sel("s-title"), "font-size:34px!important"),
-    rule(sel("s-optitle"), "font-size:30px!important"),
-    rule(sel("s-actionvalue"), "font-size:34px!important"),
-  ].join("") + "}",
   "@media (max-width:719px){" + [
     rule(sel("w-top"), "min-height:72px!important;padding-top:10px!important;padding-bottom:10px!important"),
     rule(sel("w-title"), "font-size:22px!important;margin-top:6px!important"),
@@ -326,7 +276,6 @@ const blocks: string[] = [
     rule(sel("w-htitle"), "font-size:36px!important"),
     rule(sel("w-hcount"), "font-size:72px!important"),
   ].join("") + "}",
-  "@media (max-width:559px){" + rule(sel("s-title"), "font-size:30px!important") + rule(sel("s-countvalue"), "font-size:44px!important") + "}",
 
   // 列表项、选项、页签按下时同样一记信号橙；放最后，压过前面各自的悬停色
   rule(sel("w-nav,s-opt,c-filter,c-conv,e-tab,w-row,d-event", `${notDisabled}:active`), `background-color:${SIG}!important;opacity:1!important;${ink(INK)}`),

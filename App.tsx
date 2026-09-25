@@ -315,7 +315,7 @@ function AppContent() {
     }
   }
 
-  // 整体风格：主题 CSS 变量挂在 <html data-style> 上，采集器页、内容库与持续报告一起换。
+  // 整体风格：主题 CSS 变量挂在 <html data-style> 上，内容库与持续报告一起换；采集器页固定一套浅色样式，不跟着换。
   // 用 layout effect 是为了在首帧绘制前就把变量表和 data-style 挂上，否则第一帧没有颜色。
   useLayoutEffect(() => {
     if (Platform.OS !== "web" || typeof document === "undefined") return;

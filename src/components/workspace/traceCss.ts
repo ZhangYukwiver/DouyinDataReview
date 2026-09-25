@@ -69,6 +69,9 @@ const LINE = 'content:"";display:block;flex:none;width:40px;height:1px;backgroun
 const pill = (border: string, bg = "transparent") => `border:1px solid ${border}!important;border-radius:50px!important;background-color:${bg}!important;background-image:none!important;box-shadow:none!important`;
 const notDisabled = ':not([aria-disabled="true"])';
 
+/** 采集器页只有一套自己的样式，全局规则跳过它。 */
+const NOT_SETUP = ':not([data-testid="setup-workspace"] *)';
+
 const blocks: string[] = [
   // ---------- 底：墨夜油画，固定一层，按区域压暗 ----------
   rule(T, `background-color:${DEEP}!important;color-scheme:dark;--ws-swarm:on`),
@@ -88,10 +91,10 @@ const blocks: string[] = [
   ].join(";")),
   "@keyframes tc-breathe{from{opacity:.55}to{opacity:1}}",
   "@keyframes tc-halo{from{opacity:.6}to{opacity:1}}",
-  rule(`${T} ::selection`, `background:rgba(238,164,78,.35);color:${CREAM}`),
-  rule(`${T} :focus-visible`, `outline:2px solid ${BLUE}!important;outline-offset:3px!important`),
-  rule(`${T} input,${T} textarea`, `caret-color:${AMBER}`),
-  rule(`${T} input::placeholder,${T} textarea::placeholder`, "color:rgba(222,226,222,.45)!important"),
+  rule(`${T} ${NOT_SETUP}::selection`, `background:rgba(238,164,78,.35);color:${CREAM}`),
+  rule(`${T} :focus-visible${NOT_SETUP}`, `outline:2px solid ${BLUE}!important;outline-offset:3px!important`),
+  rule(`${T} input${NOT_SETUP},${T} textarea${NOT_SETUP}`, `caret-color:${AMBER}`),
+  rule(`${T} input${NOT_SETUP}::placeholder,${T} textarea${NOT_SETUP}::placeholder`, "color:rgba(222,226,222,.45)!important"),
 
   // ---------- 字：眉题、戳、等宽小字 ----------
   rule(sel("mono"), "letter-spacing:.08em!important"),
@@ -102,7 +105,7 @@ const blocks: string[] = [
   // 眉题一律带 40px 细线；徽标、话题、封面角标这类小戳不带
   rule(sel("stamp,stamp-sig", "::before"), LINE),
   rule([
-    sel("s-brandmeta", "::before"), sel("c-badge", "::before"), sel("e-badge", "::before"),
+    sel("c-badge", "::before"), sel("e-badge", "::before"),
     sel("w-row", ' [data-ws~="stamp-sig"]::before'), sel("w-cover", ' [data-ws~="stamp"]::before'),
     sel("d-tile", ' [data-ws~="stamp-sig"]::before'), sel("stamp-bar", ' [data-ws~="stamp"]::before'),
     sel("w-card", ' [data-ws~="stamp"]::before'),
@@ -140,66 +143,6 @@ const blocks: string[] = [
   // 记录格子外框是方的，光只落在封面上（见 w-cover）
   rule(`${T} [data-hover="card"]:hover`, "box-shadow:none!important"),
   rule(`${T} [data-hover="tint"]:hover`, "background-color:rgba(246,241,228,.06)!important"),
-
-  // ---------- 采集器页：胶囊导航 + 入口卡式的大标题 + 一张大玻璃卡 ----------
-  rule(sel("s-top"), `${glass({ edge: 0.2, base: 0.4, radius: 50 })};background-image:none!important;background-color:rgba(255,255,255,.06)!important;box-shadow:rgba(0,0,0,.25) 0 2px 12px!important;height:60px!important;margin:18px 20px 0!important;padding-left:14px!important;padding-right:10px!important`),
-  rule(sel("s-mark"), `border-color:rgba(246,241,228,.4)!important;background-color:transparent!important;${tone(CREAM)}`),
-  rule(sel("s-brand"), `font-family:${SANS}!important;font-weight:600!important;font-size:14px!important;letter-spacing:.02em!important;color:${CREAM}!important`),
-  rule(sel("s-brandmeta"), `font-size:8.5px!important;letter-spacing:.22em!important;color:${CREAM}!important;opacity:.72;margin-top:3px!important`),
-  rule(sel("s-status"), `${mono(9.5, ".14em")};text-transform:none;color:rgba(246,241,228,.8)!important`),
-  rule(sel("s-enter"), "min-height:40px!important;padding-left:16px!important;padding-right:10px!important"),
-  rule(sel("btn s-enter"), `${pill("rgba(246,241,228,.35)")};${tone(CREAM)}`),
-  rule(sel("btn s-enter", `${notDisabled}:hover`), "background-color:rgba(246,241,228,.09)!important"),
-  // 圆圈箭头
-  rule(sel("btn-sig s-enter", " svg"), "box-sizing:content-box;padding:3px;border:1px solid currentColor;border-radius:50%;width:12px!important;height:12px!important"),
-  rule(sel("s-layout"), "background-color:transparent!important;border-width:0!important;box-shadow:none!important;overflow:visible!important;max-width:1320px!important;gap:28px"),
-  rule(sel("s-intro"), "border-right-width:0!important"),
-  "@media (min-width:900px){" + rule(sel("s-intro"), "width:420px!important;padding:34px 18px 34px 12px!important") + "}",
-  rule(sel("s-title"), `${serif(46, 1.16)};margin-top:22px!important`),
-  rule(sel("s-lead"), `font-size:13px!important;line-height:1.85!important;color:${CREAM}!important;opacity:.78;margin-top:18px!important;max-width:380px`),
-  // 印章换成一张小入口卡：玻璃、呼吸的琥珀光晕、底部一个巨大的斜体年份
-  rule(sel("s-seal"), `${glass()};position:relative;width:228px!important;height:300px!important;border-radius:24px!important;align-self:center!important;align-items:flex-start!important;justify-content:flex-start!important;padding:24px!important;margin-top:40px!important;overflow:visible!important;${tone(CREAM)}`),
-  rule(sel("s-seal", "::after"), `content:"";position:absolute;inset:0;border-radius:24px;pointer-events:none;box-shadow:${HALO},0 0 0 1px rgba(254,255,252,.22);animation:tc-halo 5s ease-in-out infinite alternate`),
-  rule(sel("s-seal", "::before"), `content:"";position:absolute;left:50%;top:44%;width:150px;height:150px;margin:-75px 0 0 -75px;border-radius:50%;pointer-events:none;background:radial-gradient(circle,rgba(238,164,78,.34) 0%,rgba(238,164,78,0) 60%),${dots("rgba(246,241,228,.42)", 7, 1)};-webkit-mask-image:radial-gradient(circle,#000 0%,rgba(0,0,0,.6) 45%,transparent 70%);mask-image:radial-gradient(circle,#000 0%,rgba(0,0,0,.6) 45%,transparent 70%)`),
-  rule(sel("s-seal", " svg"), "width:22px!important;height:22px!important;opacity:.85"),
-  rule(sel("s-sealtext"), `${mono(9, ".3em")};color:${CREAM}!important;opacity:.85;margin-top:16px!important`),
-  rule(sel("s-year"), `${figure(92)};position:absolute;left:20px;bottom:14px;margin:0!important`),
-  rule(sel("s-steplabel"), `font-family:${SANS}!important;font-weight:600!important;font-size:12px!important;letter-spacing:.04em!important;color:${CREAM}!important`),
-  rule(sel("s-stepindex"), `${pill("rgba(246,241,228,.35)")};border-radius:50%!important`),
-  rule(sel("s-stepindex on"), `border-color:${AMBER}!important;background-color:rgba(238,164,78,.14)!important;box-shadow:0 0 18px -2px rgba(238,164,78,.7)!important;--ws-button-text:${AMBER}`),
-  rule(sel("s-opt"), `${glass({ edge: 0.2, base: 0.36, radius: 18 })};min-height:64px!important`),
-  rule(sel("s-opt on"), `border-color:${AMBER}!important;background-image:linear-gradient(168deg,rgba(238,164,78,.26),rgba(238,164,78,.06))!important;box-shadow:${INNER},0 0 34px -8px rgba(238,164,78,.7)!important`),
-  rule(sel("s-opt on", ' [data-ws~="s-optlabel"]'), `color:${AMBER}!important`),
-  rule(sel("s-optlabel"), `font-family:${SERIF}!important;font-weight:400!important;font-size:15px!important;letter-spacing:.02em!important;color:${CREAM}!important`),
-  rule(sel("s-ops"), `${glass({ halo: true })};padding:36px!important`),
-  rule(sel("s-head"), "padding-bottom:22px!important;border-bottom:1px solid rgba(254,255,252,.14)!important"),
-  rule(sel("s-optitle"), `${serif(40, 1.1)};margin-top:16px!important`),
-  rule(sel("s-ready"), `${pill("rgba(246,241,228,.3)")};padding:8px 14px!important`),
-  rule(sel("s-ready on"), `border-color:${AMBER}!important;background-color:rgba(238,164,78,.12)!important;box-shadow:0 0 22px -6px rgba(238,164,78,.7)!important;${tone(AMBER)}`),
-  rule(sel("s-icon"), `${pill("rgba(246,241,228,.32)")};border-radius:50%!important;${tone(AMBER)}`),
-  rule(sel("s-cardtitle"), `font-family:${SANS}!important;font-weight:600!important;font-size:13px!important;letter-spacing:.02em!important;color:${CREAM}!important`),
-  rule(sel("s-cardtitle big"), `${serif(30, 1.15)};margin-top:12px!important`),
-  rule(sel("s-input"), `${pill("rgba(254,255,252,.22)", "rgba(7,10,18,.5)")};height:46px!important;padding-left:18px!important;padding-right:18px!important;font-family:${MONO}!important;font-size:13px!important;color:${CREAM}!important`),
-  rule(sel("s-input", " input"), `font-family:${MONO}!important;font-size:13px!important;color:${CREAM}!important`),
-  // 连接面板：玻璃里嵌一块更沉的夜色，铺一层琥珀网点
-  rule(sel("s-action"), `${dusk(0.18, 22)};background:${dots("rgba(238,164,78,.2)", 9, 0.9)},radial-gradient(90% 80% at 85% 0%,rgba(238,164,78,.16),transparent 70%),rgba(7,10,18,.5)!important;border-left-width:1px!important;padding:24px!important`),
-  rule(sel("s-actionvalue"), `${figure(40, { weight: 300, line: 1.1, glow: 0.4 })};letter-spacing:-.01em!important;margin-top:12px!important`),
-  rule(sel("s-counts"), "background-color:transparent!important;border-width:0!important;border-top:1px solid rgba(254,255,252,.14)!important;border-bottom:1px solid rgba(254,255,252,.14)!important;border-radius:0!important;margin-top:18px!important;overflow:visible!important"),
-  rule(sel("s-count"), "flex-direction:column!important;align-items:flex-start!important;justify-content:flex-end!important;gap:14px!important;min-height:132px!important;padding:18px 18px 16px!important;border-right-color:rgba(254,255,252,.12)!important"),
-  rule(sel("s-count", ":last-child"), "border-right-width:0!important"),
-  rule(sel("s-count", " svg"), "opacity:.9"),
-  rule(sel("s-countvalue"), `${figure(58)};font-size:clamp(40px,4vw,58px)!important`),
-  rule(sel("s-countlabel"), `${mono(9, ".22em")};color:rgba(222,226,222,.7)!important;margin-top:10px!important`),
-  rule(sel("s-actions"), "gap:10px!important;margin-top:18px!important"),
-  rule(sel("s-auto"), `${glass({ edge: 0.16, base: 0.34, radius: 20 })};padding:14px 16px!important`),
-  rule(sel("s-switch"), `${pill("rgba(246,241,228,.35)", "rgba(7,10,18,.5)")};width:36px!important;height:20px!important;padding:2px!important`),
-  rule(sel("s-switch on"), `border-color:${AMBER}!important;background-color:rgba(238,164,78,.35)!important;box-shadow:0 0 14px -2px rgba(238,164,78,.7)!important`),
-  rule(sel("s-switch", " > div"), `width:14px!important;height:14px!important;border-radius:50%!important;background-color:${CREAM}!important`),
-  rule(sel("s-switch on", " > div"), "transform:translateX(16px)!important"),
-  rule(sel("s-error"), `${dusk(0.2, 18)};border-color:rgba(232,130,111,.5)!important`),
-  rule(sel("s-foot"), "justify-content:center!important;background-color:rgba(7,10,18,.42)!important;border-top-color:rgba(254,255,252,.12)!important"),
-  rule(sel("s-foot", ' > [data-ws~="btn"]'), "flex:0 0 auto!important;min-width:220px!important;padding-left:22px!important;padding-right:22px!important"),
-  rule(sel("s-progress"), glass({ edge: 0.2, base: 0.4, radius: 18 })),
 
   // ---------- 工作台外壳：舞台透明，侧栏是一张竖着的玻璃卡 ----------
   rule(sel("w-stage"), "background-color:transparent!important;border-width:0!important;box-shadow:none!important;border-radius:0!important"),
@@ -348,15 +291,6 @@ const blocks: string[] = [
   rule(sel("e-section"), serif(21, 1.25, "0")),
 
   // ---------- 窄屏：巨物收一档，别把标题挤成省略号 ----------
-  "@media (max-width:899px){" + [
-    rule(sel("s-top"), "height:auto!important;border-radius:28px!important;margin:12px 12px 0!important;padding-top:10px!important;padding-bottom:10px!important"),
-    rule(sel("s-title"), "font-size:34px!important"),
-    rule(sel("s-ops"), "padding:22px!important"),
-    rule(sel("s-optitle"), "font-size:30px!important"),
-    rule(sel("s-countvalue"), "font-size:46px!important"),
-    rule(sel("s-seal"), "width:200px!important;height:264px!important"),
-    rule(sel("s-year"), "font-size:78px!important"),
-  ].join("") + "}",
   "@media (max-width:719px){" + [
     rule(sel("w-top"), "min-height:70px!important;padding-top:10px!important;padding-bottom:10px!important"),
     rule(sel("w-title"), "font-size:22px!important;margin-top:4px!important;max-width:none!important;flex-shrink:1"),
@@ -370,8 +304,7 @@ const blocks: string[] = [
     rule(sel("c-list"), "margin:0!important;border-radius:0!important;border-width:0!important"),
     rule(sel("w-bignum"), "font-size:92px!important"),
   ].join("") + "}",
-  "@media (max-width:559px){" + rule(sel("s-title"), "font-size:30px!important") + rule(sel("s-countvalue"), "font-size:40px!important") + rule(sel("s-count"), "min-height:104px!important") + "}",
-  "@media (prefers-reduced-motion:reduce){" + rule(`${T} #root::before,${sel("s-seal", "::after")}`, "animation:none!important") + "}",
+  "@media (prefers-reduced-motion:reduce){" + rule(`${T} #root::before`, "animation:none!important") + "}",
 ];
 
 export const traceCss = blocks.join("\n");
