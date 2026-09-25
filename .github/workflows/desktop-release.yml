@@ -153,5 +153,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --draft --title "$GITHUB_REF_NAME" --generate-notes
+          gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --draft --title "$GITHUB_REF_NAME" --notes-file .github/release-notes.md --generate-notes
           gh release edit "$GITHUB_REF_NAME" --draft=false --latest
