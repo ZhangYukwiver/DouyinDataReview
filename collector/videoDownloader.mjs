@@ -587,6 +587,40 @@ export async function downloadDouyinVideo({
   return { ...parsed, ...downloaded };
 }
 
+/** Playback streams straight from the CDN, so only the media URL and its cookies are kept. */
+export async function resolveDouyinStream({ context, sourceUrl, signal, pageTimeoutMs, mediaWaitMs } = {}) {
+  const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal });
+  signal?.throwIfAborted();
+  return {
+    url: parsed.media.url,
+    referer: parsed.canonicalUrl || "https://www.douyin.com/",
+    cookie: await fetchCookieHeader(context, parsed.media.url),
+  };
+}
+
+/** Forward one (range) request to the allowed media host; the caller pipes the body. */
+export async function fetchMediaStream({ url, referer, cookie, range, signal }) {
+  if (!isAllowedMediaUrl(url)) {
+    throw new VideoDownloadError("invalid_media_url", "抖音媒体地址不在允许范围内。", { retryable: false });
+  }
+  const response = await fetch(url, {
+    redirect: "follow",
+    signal,
+    headers: {
+      Accept: "video/mp4,video/*;q=0.9,*/*;q=0.8",
+      "Accept-Encoding": "identity",
+      Referer: referer,
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...(range ? { Range: range } : {}),
+    },
+  });
+  if (!response.ok || !response.body || !isAllowedMediaUrl(response.url || url)) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new VideoDownloadError("media_http_error", `抖音媒体地址返回 HTTP ${response.status}。`);
+  }
+  return response;
+}
+
 export const videoDownloadLimits = Object.freeze({
   maxSourceUrlLength: MAX_SOURCE_URL_LENGTH,
   maxMediaBytes: MAX_MEDIA_BYTES,

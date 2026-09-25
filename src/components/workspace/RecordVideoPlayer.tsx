@@ -7,7 +7,8 @@ import { buildVideoFeed, createVideoCommentsSession, createVideoWheelGesture, wa
 import { LocalCollectorError } from "../../services/localCollector";
 import "./RecordVideoPlayer.css";
 
-export type RecordVideoLoader = (record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void) => Promise<Blob>;
+/** Resolves to a stream URL that stays valid until `signal` aborts. */
+export type RecordVideoLoader = (record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void) => Promise<string>;
 const count = (value?: number | null) => value == null ? "—" : value >= 10000 ? `${(value / 10000).toFixed(1).replace(/\.0$/u, "")}万` : value.toLocaleString("zh-CN");
 const time = (value: number) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
 const date = (value?: string | null) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString("zh-CN") : "";
@@ -110,9 +111,10 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
             event.stopPropagation();
           }}>
           {active.coverUrl ? <div className="rv-ambient" style={{ backgroundImage: `url(${JSON.stringify(active.coverUrl)})` }} aria-hidden="true" /> : null}
-          <Playback key={active.id} record={active} onLoadVideo={onLoadVideo} muted={muted} onToggleMute={() => setMuted((value) => !value)}
-            commentsOpen={commentsOpen} onToggleComments={toggleComments} onOpenRecord={onOpenRecord}
-            commentsConnection={commentsConnection} position={`${index + 1} / ${feed.length}`} onClose={onClose} />
+          {/* The next video mounts hidden so it is resolved and buffering before the switch; anything else unmounts and is released. */}
+          {feed.slice(index, index + 2).map((item, offset) => <Playback key={item.id} active={offset === 0} record={item} onLoadVideo={onLoadVideo}
+            muted={muted} onToggleMute={() => setMuted((value) => !value)} commentsOpen={commentsOpen} onToggleComments={toggleComments} onOpenRecord={onOpenRecord}
+            commentsConnection={commentsConnection} position={`${index + offset + 1} / ${feed.length}`} onClose={onClose} />)}
           <nav className="rv-navigation" aria-label="切换视频">
             <button className="rv-icon-button" aria-label="上一个视频" disabled={index === 0} onClick={() => move(-1)}><ChevronUp color="#fff" size={24} /></button>
             <button className="rv-icon-button" aria-label="下一个视频" disabled={index === feed.length - 1} onClick={() => move(1)}><ChevronDown color="#fff" size={24} /></button>
@@ -124,8 +126,8 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
   </Modal>;
 }
 
-function Playback({ record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, commentsConnection, position, onClose, onOpenRecord }: {
-  record: PersonalVideoRecord; onLoadVideo: RecordVideoLoader; muted: boolean; onToggleMute: () => void;
+function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, commentsConnection, position, onClose, onOpenRecord }: {
+  active: boolean; record: PersonalVideoRecord; onLoadVideo: RecordVideoLoader; muted: boolean; onToggleMute: () => void;
   commentsOpen: boolean; onToggleComments: () => void; commentsConnection: ExploreConnection | null;
   position: string; onClose: () => void; onOpenRecord?: (url: string) => Promise<void>;
 }) {
@@ -142,7 +144,6 @@ function Playback({ record, onLoadVideo, muted, onToggleMute, commentsOpen, onTo
   loaderRef.current = onLoadVideo;
   useEffect(() => {
     const controller = new AbortController();
-    let objectUrl: string | null = null;
     const video = videoRef.current;
     const timeout = setTimeout(() => {
       setError("视频准备超时，请重试或切换下一个视频。");
@@ -152,31 +153,34 @@ function Playback({ record, onLoadVideo, muted, onToggleMute, commentsOpen, onTo
     setLoadingMessage("正在准备视频…");
     void (async () => {
       try {
-        const blob = await waitForCollector(() => loaderRef.current(record, controller.signal, (message) => {
+        const url = await waitForCollector(() => loaderRef.current(record, controller.signal, (message) => {
           if (!controller.signal.aborted) setLoadingMessage(message);
         }), controller.signal);
         if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
         setLoadingMessage("正在载入画面…");
-        setSrc(objectUrl);
+        setSrc(url);
       } catch (cause) {
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "视频暂时无法播放，请稍后重试。");
       } finally { clearTimeout(timeout); }
     })();
     return () => {
-      clearTimeout(timeout); controller.abort(); video?.pause();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      // Aborting releases the collector job; detaching the source stops the browser buffering it.
+      clearTimeout(timeout); controller.abort();
+      if (video) { video.pause(); video.removeAttribute("src"); video.load(); }
     };
   }, [record.id, record.url, attempt]);
   useEffect(() => {
-    if (src) void videoRef.current?.play().catch(() => {});
-  }, [src]);
+    const video = videoRef.current;
+    if (!video || !src) return;
+    if (active) void video.play().catch(() => {});
+    else { video.pause(); video.currentTime = 0; }
+  }, [src, active]);
   useEffect(() => { if (error) videoRef.current?.pause(); }, [error]);
   useEffect(() => {
-    if (!src || readyToPlay || error) return;
+    if (!active || !src || readyToPlay || error) return;
     const timeout = setTimeout(() => setError("视频画面加载超时，请重试或切换下一个视频。"), 15_000);
     return () => clearTimeout(timeout);
-  }, [src, readyToPlay, error]);
+  }, [active, src, readyToPlay, error]);
   const toggle = () => {
     const video = videoRef.current;
     if (!src || !readyToPlay || error || !video) return;
@@ -185,11 +189,11 @@ function Playback({ record, onLoadVideo, muted, onToggleMute, commentsOpen, onTo
   };
 
   return <>
-    <div className="rv-stage" data-testid="video-feed-stage" data-loading={!readyToPlay && !error} onKeyDown={(event) => {
+    <div className="rv-stage" style={active ? undefined : { display: "none" }} data-testid={active ? "video-feed-stage" : undefined} data-loading={!readyToPlay && !error} onKeyDown={(event) => {
       if (event.code === "Space" && !(event.target as Element).closest("button,input,a")) { event.preventDefault(); toggle(); }
     }}>
       <video ref={videoRef} aria-label={`${record.title}，视频播放`} src={src ?? undefined} poster={record.coverUrl ?? undefined}
-        autoPlay loop playsInline muted={muted} preload="auto" onClick={toggle} tabIndex={0}
+        loop playsInline muted={muted} preload="auto" onClick={toggle} tabIndex={0}
         onLoadedData={() => setReadyToPlay(true)}
         onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
         onTimeUpdate={() => setElapsed(videoRef.current?.currentTime ?? 0)}
@@ -236,7 +240,7 @@ function Playback({ record, onLoadVideo, muted, onToggleMute, commentsOpen, onTo
           onChange={(event) => { if (videoRef.current) { videoRef.current.currentTime = Number(event.target.value); setElapsed(Number(event.target.value)); } }} />
       </div>
     </div>
-    {commentsOpen ? <VideoComments record={record} connection={commentsConnection} ready={Boolean(src || error)} onClose={onToggleComments} onOpenRecord={onOpenRecord} /> : null}
+    {active && commentsOpen ? <VideoComments record={record} connection={commentsConnection} ready={Boolean(src || error)} onClose={onToggleComments} onOpenRecord={onOpenRecord} /> : null}
   </>;
 }
 

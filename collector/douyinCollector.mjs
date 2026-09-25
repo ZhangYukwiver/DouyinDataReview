@@ -1,6 +1,6 @@
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { rm } from "node:fs/promises";
 
 import { chromium } from "playwright-core";
@@ -38,6 +38,7 @@ import {
 import { normalizeDirectSyncState } from "./store.mjs";
 import {
   downloadDouyinVideo,
+  resolveDouyinStream,
   normalizeDouyinVideoUrl,
   VideoDownloadError,
 } from "./videoDownloader.mjs";
@@ -1046,10 +1047,6 @@ export class DouyinCollector {
   }
 
   scheduleVideoDownloadFileCleanup(job) {
-    if (job?.playback) {
-      void rm(path.join(this.dataDirectory, "downloads", `playback-${job.id}`), { recursive: true, force: true }).catch(() => undefined);
-      return;
-    }
     if (typeof job?.filePath !== "string" || !job.filePath) return;
     const downloadsDirectory = path.resolve(this.dataDirectory, "downloads");
     const resolved = path.resolve(job.filePath);
@@ -1105,6 +1102,7 @@ export class DouyinCollector {
       updatedAt: job.updatedAt,
       startedAt: job.startedAt,
       completedAt: job.completedAt,
+      ...(job.playback ? { streamKey: job.streamKey } : {}),
     };
   }
 
@@ -1123,6 +1121,7 @@ export class DouyinCollector {
     const job = {
       id: randomUUID(),
       playback,
+      ...(playback ? { streamKey: randomBytes(24).toString("base64url") } : {}),
       sourceUrl: normalizedSourceUrl,
       status: "queued",
       fileName: null,
@@ -1159,6 +1158,18 @@ export class DouyinCollector {
       this.retireVideoDownloadJob(job);
     }
     return true;
+  }
+
+  /** The player's <video> cannot send the session header, so each playback job carries its own key. */
+  playbackStream(jobId, key) {
+    const job = this.videoDownloadJobs.get(jobId);
+    const expected = Buffer.from(job?.stream ? job.streamKey : "");
+    const given = Buffer.from(String(key ?? ""));
+    if (!expected.length || given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+    // Playing can outlast the orphan timer; the player's DELETE or retention pruning ends it now.
+    clearTimeout(job.releaseTimer);
+    this.touchVideoDownloadJob(job);
+    return job.stream;
   }
 
   getVideoDownloadJob(jobId) {
@@ -1220,18 +1231,20 @@ export class DouyinCollector {
       ownsContext = context !== existingContext;
       operation.statusRevisionAfterLaunch = this.statusRevision;
       controller.signal.throwIfAborted();
-      const result = await downloadDouyinVideo({
+      // Playback only resolves the media address; the bytes are streamed to the player, never saved.
+      if (job.playback) job.stream = await resolveDouyinStream({ context, sourceUrl: job.sourceUrl, signal: controller.signal });
+      const result = job.playback ? {} : await downloadDouyinVideo({
         context,
         sourceUrl: job.sourceUrl,
-        outputDirectory: path.join(this.dataDirectory, "downloads", ...(job.playback ? [`playback-${job.id}`] : [])),
+        outputDirectory: path.join(this.dataDirectory, "downloads"),
         signal: controller.signal,
         onProgress: (bytes) => this.touchVideoDownloadJob(job, { bytes }),
       });
       this.touchVideoDownloadJob(job, {
         status: "complete",
-        fileName: result.fileName,
-        filePath: result.filePath,
-        bytes: result.bytes,
+        fileName: result.fileName ?? null,
+        filePath: result.filePath ?? null,
+        bytes: result.bytes ?? null,
         completedAt: new Date().toISOString(),
         errorCode: null,
         error: null,

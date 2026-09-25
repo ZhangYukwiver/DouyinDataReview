@@ -395,20 +395,21 @@ describe("video download jobs", () => {
     expect(collector.getVideoDownloadJob(job.id)).toBeNull();
   });
 
-  it("removes only the released playback directory after the file has been read", async () => {
-    const dataDirectory = await mkdtemp(path.join(tmpdir(), "playback-release-"));
-    try {
-      const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory, store: {} });
-      const playbackDir = path.join(dataDirectory, "downloads", "playback-owned");
-      await mkdir(playbackDir, { recursive: true });
-      await writeFile(path.join(playbackDir, "video.mp4"), "temporary");
-      const manualFile = path.join(dataDirectory, "downloads", "saved.mp4");
-      await writeFile(manualFile, "saved");
-      collector.videoDownloadJobs.set("owned", { id: "owned", playback: true, status: "complete" });
-      collector.releaseVideoPlayback("owned");
-      await vi.waitFor(async () => { await expect(access(playbackDir)).rejects.toThrow(); });
-      await expect(access(manualFile)).resolves.toBeUndefined();
-    } finally { await rm(dataDirectory, { recursive: true, force: true }); }
+  it("hands out a resolved playback stream only for its key and only until release", () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.ensureBrowser = vi.fn(async () => { throw new Error("no browser in tests"); });
+    const job = collector.startVideoDownload("https://www.douyin.com/video/1234567890", { playback: true });
+    expect(job.streamKey).toHaveLength(32);
+    expect(collector.playbackStream(job.id, job.streamKey)).toBeNull();
+    const stream = { url: "https://v3-web.douyinvod.com/a.mp4", referer: "https://www.douyin.com/video/1234567890", cookie: "" };
+    collector.videoDownloadJobs.get(job.id).stream = stream;
+    expect(collector.playbackStream(job.id, "wrong")).toBeNull();
+    expect(collector.playbackStream(job.id, undefined)).toBeNull();
+    expect(collector.playbackStream(job.id, job.streamKey)).toBe(stream);
+    collector.videoDownloadJobs.get(job.id).status = "complete";
+    collector.releaseVideoPlayback(job.id);
+    expect(collector.playbackStream(job.id, job.streamKey)).toBeNull();
+    expect(collector.startVideoDownload("https://www.douyin.com/video/1234567891")).not.toHaveProperty("streamKey");
   });
   it("validates the source before creating a queued job", () => {
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
