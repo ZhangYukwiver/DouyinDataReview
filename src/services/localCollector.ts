@@ -75,6 +75,8 @@ export interface VideoDownloadJob {
   updatedAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  /** Playback jobs only: grants the <video> element its stream without the session token. */
+  streamKey?: string;
 }
 
 export interface VideoDownloadFile {
@@ -678,6 +680,7 @@ function parseVideoDownloadJob(value: unknown): VideoDownloadJob {
     updatedAt,
     startedAt: optionalString(value.startedAt),
     completedAt: optionalString(value.completedAt),
+    ...(typeof value.streamKey === "string" ? { streamKey: value.streamKey } : {}),
   };
 }
 
@@ -859,24 +862,26 @@ export async function fetchCollectorVideoFile(
   }
 }
 
-/** Reuse the collector's authenticated media pipeline without saving a browser download. */
+/** Resolve a playback job to a stream URL; the job lives until `signal` aborts, nothing is saved. */
 export async function loadCollectorVideo(
   baseUrl: string,
   token: string,
   url: string,
   signal: AbortSignal,
   onProgress?: (message: string) => void,
-): Promise<Blob> {
+): Promise<string> {
   const deadline = Date.now() + 90_000;
   let job: VideoDownloadJob | undefined;
+  const release = () => {
+    if (job) void requestJson(baseUrl, `/v1/downloads/${encodeURIComponent(job.id)}`, { method: "DELETE" }, token).catch(() => {});
+  };
   try {
     signal.throwIfAborted();
     // Receive the bounded creation response even after a switch, so its job can be cancelled.
     job = await startCollectorVideoDownload(baseUrl, token, url, undefined, true);
     while (job.status === "queued" || job.status === "running") {
       signal.throwIfAborted();
-      onProgress?.(job.status === "queued" ? "正在等待视频准备…" : job.bytes
-        ? `正在加载视频 · ${(job.bytes / 1024 / 1024).toFixed(1)} MB` : "正在读取视频资源…");
+      onProgress?.(job.status === "queued" ? "正在等待视频准备…" : "正在读取视频资源…");
       if (Date.now() >= deadline) throw new LocalCollectorError("timeout", "视频准备超时，请稍后重试。");
       await new Promise<void>((resolve, reject) => {
         const abort = () => {
@@ -893,21 +898,15 @@ export async function loadCollectorVideo(
       job = await getCollectorVideoDownload(baseUrl, token, job.id, signal);
     }
     signal.throwIfAborted();
-    if (job.status !== "complete") {
+    if (job.status !== "complete" || !job.streamKey) {
       throw new LocalCollectorError(job.errorCode ?? "playback_failed", job.error ?? "视频暂时无法播放，请稍后重试。");
     }
-    onProgress?.("正在载入视频文件…");
-    const file = await fetchCollectorVideoFile(baseUrl, token, job.id, Math.max(1, deadline - Date.now()), signal);
-    signal.throwIfAborted();
-    return file.blob;
+    signal.addEventListener("abort", release, { once: true });
+    return `${normalizeCollectorBaseUrl(baseUrl)}/v1/downloads/${encodeURIComponent(job.id)}/stream?key=${encodeURIComponent(job.streamKey)}`;
   } catch (error) {
+    release();
     signal.throwIfAborted();
     throw error;
-  } finally {
-    if (job) {
-      // The browser owns its Blob now; release playback files and cancel unfinished work.
-      void requestJson(baseUrl, `/v1/downloads/${encodeURIComponent(job.id)}`, { method: "DELETE" }, token).catch(() => {});
-    }
   }
 }
 

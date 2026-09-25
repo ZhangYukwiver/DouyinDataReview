@@ -41,7 +41,7 @@ const archive = {
   white: "#EFE6D8",
   black: "#0A0B0B",
   scrim: "rgba(10,11,11,0.72)",
-  // 实心主按钮（采集器页的“连接采集器 / 打开报告”）
+  // 实心主按钮
   button: "#EFE6D8",
   buttonText: "#0A0B0B",
   // “已连接 / 读取中”这类活的信号色
@@ -155,12 +155,11 @@ const poster: WorkspacePalette = {
 const archiveFonts = {
   serif: "Georgia, 'Songti SC', 'STSong', 'SimSun', serif",
   didot: "Didot, 'Bodoni 72', Georgia, 'Songti SC', serif",
-  // 内容库各页正文：档案馆整页衬线；采集器页正文：系统无衬线（与 RN-web 的 System 栈一致）
+  // 内容库各页正文：档案馆整页衬线
   body: "Georgia, 'Songti SC', 'STSong', 'SimSun', serif",
   sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-  // 眉题 / 小标签：年志用等宽；档案馆里内容库沿用衬线、采集器页沿用无衬线，各自与改版前一致
+  // 眉题 / 小标签：年志用等宽；档案馆里内容库沿用衬线
   mono: "Georgia, 'Songti SC', 'STSong', 'SimSun', serif",
-  setupMono: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
 };
 const traceFonts: typeof archiveFonts = {
   serif: "Fraunces, 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif",
@@ -168,7 +167,6 @@ const traceFonts: typeof archiveFonts = {
   body: "Inter, 'PingFang SC', 'Helvetica Neue', sans-serif",
   sans: "Inter, 'PingFang SC', 'Helvetica Neue', sans-serif",
   mono: "'SFMono-Regular', ui-monospace, 'Roboto Mono', monospace",
-  setupMono: "'SFMono-Regular', ui-monospace, 'Roboto Mono', monospace",
 };
 
 const posterFonts: typeof archiveFonts = {
@@ -177,7 +175,6 @@ const posterFonts: typeof archiveFonts = {
   body: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
   sans: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
   mono: "'JetBrains Mono', ui-monospace, 'Roboto Mono', monospace",
-  setupMono: "'JetBrains Mono', ui-monospace, 'Roboto Mono', monospace",
 };
 
 // 档案页面是直角的；年志跟入口卡：卡片 24、按钮是胶囊
@@ -204,8 +201,8 @@ function colorTokens(palette: WorkspacePalette): WorkspacePalette {
 export const workspaceColors = colorTokens(archive);
 
 export const workspaceFonts: Record<keyof typeof archiveFonts, string | undefined> = web
-  ? { serif: "var(--ws-font-serif)", didot: "var(--ws-font-didot)", body: "var(--ws-font-body)", sans: "var(--ws-font-sans)", mono: "var(--ws-font-mono)", setupMono: "var(--ws-font-setup-mono)" }
-  : { serif: undefined, didot: undefined, body: undefined, sans: undefined, mono: undefined, setupMono: undefined };
+  ? { serif: "var(--ws-font-serif)", didot: "var(--ws-font-didot)", body: "var(--ws-font-body)", sans: "var(--ws-font-sans)", mono: "var(--ws-font-mono)" }
+  : { serif: undefined, didot: undefined, body: undefined, sans: undefined, mono: undefined };
 
 export const workspaceRadii: Record<keyof typeof archiveRadii, number | string> = web
   ? { small: "var(--ws-radius-small)", medium: "var(--ws-radius-medium)", large: "var(--ws-radius-large)", pill: "var(--ws-radius-pill)" }

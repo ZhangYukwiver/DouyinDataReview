@@ -39,30 +39,26 @@ describe("video playback loading", () => {
   };
   const jobResponse = (status: string, extra = {}) => new Response(JSON.stringify({ job: { ...job, status, ...extra } }));
 
-  it("waits for media preparation and returns playable bytes with header-only authentication", async () => {
+  it("returns a keyed stream URL and keeps the job until the player closes", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jobResponse("queued"))
-      .mockResolvedValueOnce(jobResponse("running"))
-      .mockResolvedValueOnce(jobResponse("complete"))
-      .mockResolvedValueOnce(new Response("video bytes", { headers: { "Content-Type": "video/mp4" } }))
+      .mockResolvedValueOnce(jobResponse("queued", { streamKey: "k" }))
+      .mockResolvedValueOnce(jobResponse("running", { streamKey: "k" }))
+      .mockResolvedValueOnce(jobResponse("complete", { streamKey: "stream key" }))
       .mockResolvedValueOnce(new Response('{"ok":true}'));
     vi.stubGlobal("fetch", fetchMock);
     const progress = vi.fn();
-    const pending = loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, new AbortController().signal, progress);
+    const controller = new AbortController();
+    const pending = loadCollectorVideo(baseUrl, "session-secret", job.sourceUrl, controller.signal, progress);
     await vi.advanceTimersByTimeAsync(1_600);
-    const blob = await pending;
-    expect(blob.type).toBe("video/mp4");
-    expect(await blob.text()).toBe("video bytes");
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      `${baseUrl}/v1/downloads`, `${baseUrl}/v1/downloads/${job.id}`,
-      `${baseUrl}/v1/downloads/${job.id}`, `${baseUrl}/v1/downloads/${job.id}/file`,
-      `${baseUrl}/v1/downloads/${job.id}`,
-    ]);
+    await expect(pending).resolves.toBe(`${baseUrl}/v1/downloads/${job.id}/stream?key=stream%20key`);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toMatchObject({ playback: true });
-    expect(fetchMock.mock.lastCall?.[1].method).toBe("DELETE");
-    expect(progress.mock.calls.map(([message]) => message)).toEqual(["正在等待视频准备…", "正在读取视频资源…", "正在载入视频文件…"]);
+    expect(progress.mock.calls.map(([message]) => message)).toEqual(["正在等待视频准备…", "正在读取视频资源…"]);
     expect(fetchMock.mock.calls.every(([, init]) => init.headers.Authorization === "Bearer session-secret")).toBe(true);
+    controller.abort();
+    expect(fetchMock.mock.lastCall?.[0]).toBe(`${baseUrl}/v1/downloads/${job.id}`);
+    expect(fetchMock.mock.lastCall?.[1].method).toBe("DELETE");
   });
 
   it("stops polling immediately when the player closes", async () => {

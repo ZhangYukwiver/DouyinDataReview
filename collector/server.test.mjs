@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ExplorerBridge } from "./explorerBridge.mjs";
 import { startCollectorServer } from "./server.mjs";
 
 const temporaryDirectories = [];
@@ -14,6 +15,26 @@ afterEach(async () => {
 });
 
 describe("collector server runtime", () => {
+  it("keeps explore tabs such as open comments for a playback job, but not for a saved download", async () => {
+    const close = vi.spyOn(ExplorerBridge.prototype, "close");
+    try {
+      const dataDirectory = await mkdtemp(path.join(tmpdir(), "playback-explore-"));
+      temporaryDirectories.push(dataDirectory);
+      const runtime = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath });
+      runtimes.push(runtime);
+      const paired = await fetch(`${runtime.baseUrl}/v1/pair`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: runtime.getPairingCode() }),
+      }).then((response) => response.json());
+      const post = (body) => fetch(`${runtime.baseUrl}/v1/downloads`, {
+        method: "POST", headers: { Authorization: `Bearer ${paired.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      expect((await post({ url: "https://www.douyin.com/video/1234567890", playback: true })).status).toBe(202);
+      expect(close).not.toHaveBeenCalled();
+      await post({ url: "https://www.douyin.com/video/1234567891" });
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally { close.mockRestore(); }
+  });
+
   it("keeps a chat failure out of the record-reading state and still accepts a direct read", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "chat-independent-"));
     temporaryDirectories.push(dataDirectory);
@@ -152,5 +173,10 @@ describe("collector server runtime", () => {
     const release = await fetch(releaseUrl, { method: "DELETE", headers: { Authorization: `Bearer ${payload.token}` } });
     expect(release.status).toBe(200);
     await expect(release.json()).resolves.toEqual({ ok: true });
+
+    // <video> sends no session header: a stream is gated by its per-job key alone.
+    const stream = await fetch(`${releaseUrl}/stream?key=guess`);
+    expect(stream.status).toBe(404);
+    await expect(stream.json()).resolves.toEqual({ error: "download_job_not_found" });
   });
 });

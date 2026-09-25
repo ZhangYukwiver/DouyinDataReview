@@ -1,6 +1,6 @@
 export type AppStyle = "archive" | "trace" | "poster";
 
-// 整体风格：采集器页、持续报告与报告本体共用同一个选择。默认内容年志。
+// 整体风格：持续报告与报告本体共用同一个选择（采集器页只有一套样式，不跟它走）。默认内容年志。
 export const DEFAULT_APP_STYLE: AppStyle = "trace";
 export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: string }> = [
   { key: "trace", label: "内容年志", detail: "墨夜玻璃 · 穿卡入口" },

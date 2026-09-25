@@ -20,7 +20,7 @@ const CONTENT_TYPES = new Map([
 const STORY_CSP = "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'self'; img-src 'self' data: https:; media-src 'self'; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com";
 
 const SECURITY_HEADERS = {
-  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; img-src 'self' data: https:; media-src 'self' https: blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:*; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; img-src 'self' data: https:; media-src 'self' https: blob: http://127.0.0.1:* http://localhost:*; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",

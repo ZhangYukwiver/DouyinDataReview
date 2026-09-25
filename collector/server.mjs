@@ -6,6 +6,8 @@ import { createServer } from "node:http";
 import { homedir, networkInterfaces } from "node:os";
 import path from "node:path";
 import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright-core";
@@ -14,6 +16,7 @@ import { DouyinCollector } from "./douyinCollector.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
 import { CollectorStore } from "./store.mjs";
+import { fetchMediaStream } from "./videoDownloader.mjs";
 
 const DEFAULT_PORT = 4765;
 const MAX_BODY_BYTES = 4 * 1024;
@@ -213,6 +216,26 @@ async function sendVideoFile(response, filePath, fileName) {
   stream.pipe(response);
 }
 
+async function proxyMediaStream(request, response, stream) {
+  const controller = new AbortController();
+  response.once("close", () => controller.abort());
+  const range = request.headers.range;
+  try {
+    const upstream = await fetchMediaStream({ ...stream, range: /^bytes=\d*-\d*$/u.test(range ?? "") ? range : undefined, signal: controller.signal });
+    const type = upstream.headers.get("content-type") ?? "";
+    response.writeHead(upstream.status, Object.fromEntries([
+      ["Content-Type", /^(?:video|audio)\//iu.test(type) ? type : "video/mp4"],
+      ["Accept-Ranges", "bytes"],
+      ["Content-Length", upstream.headers.get("content-length")],
+      ["Content-Range", upstream.headers.get("content-range")],
+    ].filter(([, value]) => value)));
+    await pipeline(Readable.fromWeb(upstream.body), response);
+  } catch {
+    if (!response.headersSent) sendJson(response, 502, { error: "media_unavailable" });
+    else response.destroy();
+  }
+}
+
 async function readJsonBody(request, limit = MAX_BODY_BYTES) {
   const chunks = [];
   let size = 0;
@@ -326,6 +349,14 @@ export async function startCollectorServer({
       return;
     }
 
+    const streamMatch = request.method === "GET" ? url.pathname.match(/^\/v1\/downloads\/([0-9a-f-]{20,})\/stream$/iu) : null;
+    if (streamMatch) {
+      const stream = collector.playbackStream(streamMatch[1], url.searchParams.get("key"));
+      if (stream) await proxyMediaStream(request, response, stream);
+      else sendJson(response, 404, { error: "download_job_not_found" });
+      return;
+    }
+
     if (!pairing.authorize(request.headers.authorization)) {
       sendJson(response, 401, { error: "not_paired" });
       return;
@@ -337,7 +368,8 @@ export async function startCollectorServer({
         return;
       }
       // Release only the adapter's tabs before invoking an original workflow.
-      await explorer.close();
+      // Downloads decide after reading the body: playback only opens its own tab, so open comments survive a prefetch.
+      if (url.pathname !== "/v1/downloads") await explorer.close();
     }
 
     if (request.method === "POST" && ["/v1/explore/read", "/v1/explore/interact", "/v1/explore/video", "/v1/explore/close"].includes(url.pathname)) {
@@ -368,6 +400,7 @@ export async function startCollectorServer({
     } else if (request.method === "POST" && url.pathname === "/v1/downloads") {
       try {
         const body = await readJsonBody(request);
+        if (body?.playback !== true) await explorer.close();
         const job = collector.startVideoDownload(body?.url, { playback: body?.playback === true });
         sendJson(response, 202, { job });
       } catch (error) {
