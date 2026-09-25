@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildWeeklyReport,
@@ -31,7 +33,10 @@ function snapshot({ day, views, clones, stars = 6, downloads = 10, referrersAvai
 
 describe("GitHub traffic monitor", () => {
   it("resolves a platform-specific local data directory", () => {
-    expect(resolveDataDirectory("C:\\tmp\\douyin-ops")).toBe("C:\\tmp\\douyin-ops");
+    const explicitDirectory = process.platform === "win32"
+      ? "C:\\tmp\\douyin-ops"
+      : path.join(os.tmpdir(), "douyin-ops");
+    expect(resolveDataDirectory(explicitDirectory)).toBe(path.resolve(explicitDirectory));
   });
 
   it("splits a 14-day series into current and previous windows", () => {
