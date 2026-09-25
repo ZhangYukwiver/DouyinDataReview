@@ -2,7 +2,7 @@
   "expo": {
     "name": "内容数据工作台",
     "slug": "douyin-content-insights",
-    "version": "0.1.10",
+    "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "contentinsights",

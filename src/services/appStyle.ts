@@ -4,7 +4,7 @@ export type AppStyle = "archive" | "trace" | "poster";
 export const DEFAULT_APP_STYLE: AppStyle = "trace";
 export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: string }> = [
   { key: "trace", label: "内容年志", detail: "墨夜玻璃 · 穿卡入口" },
-  { key: "archive", label: "档案馆", detail: "深色档案 · 应用内分页翻阅" },
+  { key: "archive", label: "档案馆", detail: "黑橙卷宗 · 点击翻页" },
   { key: "poster", label: "海报", detail: "黑橙新闻纸 · 硬切长卷" },
 ];
 
@@ -15,6 +15,8 @@ const FONTS: Partial<Record<AppStyle, string>> = {
   // 年志的巨大数字用 Fraunces 200 斜体，所以正斜两套都取整段字重（可变字体，一个文件）
   trace: "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=Inter:wght@300;400;500;600;700&display=swap",
   poster: "https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap",
+  // 档案馆：Archivo 压窄黑体做数字、宋体 900 做标题、Space Mono 打字机戳
+  archive: "https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Noto+Sans+SC:wght@400;500;700;900&family=Noto+Serif+SC:wght@700;900&family=Space+Mono:wght@400;700&display=swap",
 };
 const STORED: ReadonlySet<string> = new Set(APP_STYLES.map((item) => item.key));
 
@@ -90,4 +92,9 @@ export function buildStoryEntryUrl(
 // 海报风格没有入口卡：故事页自己就是封面，数字全从 localStorage 的快照里读。
 export function buildPosterStoryUrl(options: StoryEntryOptions = {}): string {
   return `/story/story-poster.html${options.motion === "full" ? "?motion=full" : ""}`;
+}
+
+// 档案馆（web）同样是 /story 下的静态页，一页一屏、点击翻页；native 仍走应用内的分页报告。
+export function buildArchiveStoryUrl(options: StoryEntryOptions = {}): string {
+  return `/story/story-archive.html${options.motion === "full" ? "?motion=full" : ""}`;
 }

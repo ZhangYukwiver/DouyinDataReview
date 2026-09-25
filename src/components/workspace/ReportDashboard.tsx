@@ -33,7 +33,7 @@ export interface ReportDashboardProps {
   privacy: boolean;
   /** 可用内容宽度，决定瀑布列数。 */
   width: number;
-  /** 海报风格：尾部空当按直角切，不做圆角天际线。 */
+  /** 海报 / 档案馆：尾部空当按直角切，不做圆角天际线。 */
   square?: boolean;
 }
 
@@ -878,7 +878,7 @@ function Matrix({ labels, matrix }: { labels: string[]; matrix: Array<Array<numb
           <Text numberOfLines={1} style={styles.matrixLabel}>{labels[rowIndex]}</Text>
           {row.map((value, columnIndex) => (
             <View
-              {...ws("d-mcell", rowIndex !== columnIndex && value !== null && `${value >= 0 ? "pos" : "neg"} s${Math.abs(value) >= 0.67 ? 3 : Math.abs(value) >= 0.34 ? 2 : 1}`)}
+              {...ws("d-mcell", rowIndex === columnIndex ? "self" : value === null ? "nil" : `${value >= 0 ? "pos" : "neg"} s${Math.abs(value) >= 0.67 ? 3 : Math.abs(value) >= 0.34 ? 2 : 1}`)}
               key={columnIndex}
               style={[styles.matrixCell, rowIndex === columnIndex && styles.matrixCellSelf, {
                 backgroundColor: rowIndex === columnIndex
@@ -995,7 +995,7 @@ function Cell({ label, value }: { label: string; value: number }) {
 }
 
 function Empty({ text }: { text: string }) {
-  return <Text style={styles.empty}>{text}</Text>;
+  return <Text {...ws("d-empty")} style={styles.empty}>{text}</Text>;
 }
 
 function arcPath(cx: number, cy: number, radius: number, inner: number, from: number, to: number): string {

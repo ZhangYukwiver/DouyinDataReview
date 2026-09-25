@@ -9,6 +9,7 @@
 })();
 </script>
 <meta charset="utf-8">
+<script src="story-glide.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TRACE · 内容年志</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -680,13 +681,16 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   function goTo(id) {
     const el = typeof id === "string" ? document.getElementById(id) : id;
     if (!el) return;
-    window.scrollTo({ top: el.getBoundingClientRect().top + scrollY, behavior: REDUCED ? "auto" : "smooth" });
+    scrollToY(el.getBoundingClientRect().top + scrollY);
   }
+  // 粘滞滚动装上以后，所有跳转都交给它，免得和浏览器自带的平滑滚动互相抢
+  let glide = null;
+  function scrollToY(y) { if (glide) glide.to(y); else window.scrollTo({ top: y, behavior: REDUCED ? "auto" : "smooth" }); }
   function toWorkspace() {
     if (FRAMED) {
       const target = location.origin && location.origin !== "null" ? location.origin : "*";
       try { window.parent.postMessage({ type: "trace:open-dashboard" }, target); } catch (error) { console.error("[toWorkspace]", error); }
-    } else window.scrollTo({ top: 0, behavior: REDUCED ? "auto" : "smooth" });
+    } else scrollToY(0);
   }
   function buildNav() {
     const idx = document.getElementById("navIdx");
@@ -754,6 +758,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     }
     update();
     addEventListener("scroll", update, { passive: true });
+    if (!REDUCED && window.StoryGlide) glide = window.StoryGlide.install({ scenes: () => scenes.map((s) => s.el) });
     addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { remeasureMarquees(); update(); }, 120); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { remeasureMarquees(); update(); });
     addEventListener("load", () => { remeasureMarquees(); update(); });
@@ -769,7 +774,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   Object.assign(window, {
     D: data, LIVE: live, DEMO, FRAMED, REDUCED,
     H, S, $, $$, fmt, CH, cover, split, countUp, reveal, onReveal, onProgress, goTo, togglePrivacy, toWorkspace,
-    __TRACE: { boot, update, remeasureMarquees, scenes, setSky, whiteout, serifDigits },
+    __TRACE: { boot, update, remeasureMarquees, scenes, get glide() { return glide; }, setSky, whiteout, serifDigits },
   });
 })();
 </script>
@@ -795,7 +800,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 
 
 <!-- ===== ch-00-arrive.html ===== -->
-<section class="scene" id="arrive" data-label="00 抵达" data-sky="auto" style="--len:180vh">
+<section class="scene" id="arrive" data-label="00 抵达" data-sky="auto" data-play="6.5" data-hold="0.8" style="--len:180vh">
   <div class="stage ar-stage">
     <!-- beyond the window: the year, waiting behind the clouds -->
     <div class="ar-year" aria-hidden="true"><div class="ar-yr3"><span class="ar-yh num it"></span><span class="ar-ys num it"></span></div></div>
@@ -1183,7 +1188,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 
 
 <!-- ===== ch-01-count.html ===== -->
-<section class="scene" id="count" data-label="01 样本" data-sky="night" style="--len:260vh">
+<section class="scene" id="count" data-label="01 样本" data-sky="night" data-play="7" data-hold="1.8" style="--len:260vh">
   <div class="stage">
     <div class="ct-cam">
       <div class="ct-big" aria-hidden="true"><span class="ct-bign num it"></span></div>
@@ -1196,7 +1201,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     <p class="ct-fine"></p>
   </div>
 </section>
-<section class="scene" id="count-deck" data-sky="blue" style="--len:230vh">
+<section class="scene" id="count-deck" data-sky="blue" data-play="4.8" style="--len:230vh">
   <div class="stage">
     <div class="cd-gwrap"><article class="cd-gate glass glow"></article></div>
     <div class="cd-cap"></div>
@@ -1797,7 +1802,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 
 
 <!-- ===== ch-02-time.html ===== -->
-<section class="scene" id="time" data-label="02 时间" data-sky="auto" style="--len:430vh">
+<section class="scene" id="time" data-label="02 时间" data-sky="auto" data-play="12" data-hold="1.6" style="--len:430vh">
   <div class="stage tm-stage">
     <div class="tm-rig">
       <div class="tm-glow" aria-hidden="true"></div>
@@ -1832,7 +1837,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   </div>
 </section>
 
-<section class="scene" id="time-cal" data-sky="blue" style="--len:240vh">
+<section class="scene" id="time-cal" data-sky="blue" data-play="6" style="--len:240vh">
   <div class="stage tc-stage">
     <div class="tc-foot" data-on="0.58-2">
       <span class="num it tc-giant-n" aria-hidden="true"></span>
@@ -2150,10 +2155,12 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
           wash.style.opacity = (wo * 0.92).toFixed(3);
         }
         __TRACE.whiteout(vis > 0 && out < 1 && wo > 0.55, "time");
-        // outro: the dial sinks below the horizon as the year's calendar comes up
-        const o = smooth((p - 0.95) / 0.05);
+        // outro: the dial sinks below the horizon as the year's calendar comes up (while the scene scrolls away,
+        // so the frame the page rests on at the end of the scene still has the whole dial)
+        const o = smooth(out / 0.4);
         const sink = o > 0 ? `translateY(${(o * 18).toFixed(2)}vh)` : "";
-        if (sink !== lastSink) { lastSink = sink; rig.style.transform = sink; }
+        // …and dims as it goes, so the stage's lower edge never cuts a bright numeral in half on the way out
+        if (sink !== lastSink) { lastSink = sink; rig.style.transform = sink; rig.style.opacity = o > 0 ? (1 - 0.85 * o).toFixed(3) : ""; }
         if (vis >= 0.5 && out < 0.5) __TRACE.setSky(SKY_OF(h));
       });
     },
@@ -2364,7 +2371,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 
 
 <!-- ===== ch-03-kept.html ===== -->
-<section class="scene" id="kept" data-label="03 留下" data-sky="dusk" style="--len:430vh">
+<section class="scene" id="kept" data-label="03 留下" data-sky="dusk" data-play="14" data-hold="2" style="--len:430vh">
   <div class="stage kp-stage">
     <div class="kp-shade seam-t" aria-hidden="true"></div>
     <div class="kp-rig"></div>
@@ -2377,7 +2384,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   </div>
 </section>
 
-<section class="scene" id="kept-depth" data-sky="dusk" style="--len:250vh">
+<section class="scene" id="kept-depth" data-sky="dusk" data-play="6" style="--len:250vh">
   <div class="stage kd-stage">
     <div class="kd-shade" aria-hidden="true"></div>
     <div class="kd-copy"></div>
@@ -2394,7 +2401,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   </div>
 </section>
 
-<section class="scene" id="kept-deal" data-sky="dusk" style="--len:200vh">
+<section class="scene" id="kept-deal" data-sky="dusk" data-play="5" style="--len:200vh">
   <div class="stage kl-stage">
     <div class="kl-shade" aria-hidden="true"></div>
     <header class="kl-head"></header>
@@ -2649,17 +2656,17 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     const apply = (p) => {
       lastP = p;
       const m = MOBILE.matches ? MOB : DESK;
-      // the title plate is gone (0.015–0.06) before the cards have really left their corners (0.03–0.14):
+      // the title plate is gone (0.015–0.06) before the cards have really left their corners (0.03–0.12):
       // at rest the cards frame the title without touching it, so nothing ever crosses it while it can still be read
-      const a = io(seg(p, 0.03, 0.14)), b = io(seg(p, 0.15, 0.3));
+      const a = io(seg(p, 0.03, 0.12)), b = io(seg(p, 0.12, 0.24));
       cards.forEach((card, i) => {
         card.style.transform = cardTf(mixPose(mixPose(m.k0[i], m.k1[i], a), K2[i], b));
         // a card that starts off-screen keeps its number and name dark until it is fully in view (a cropped "21" would read as a real number)
-        card.style.setProperty("--nv", m.k0[i].hide ? f(seg(p, 0.08, 0.14), 3) : "1");
+        card.style.setProperty("--nv", m.k0[i].hide ? f(seg(p, 0.07, 0.12), 3) : "1");
       });
       rig.style.transform = rigTf(mixPose(RIG0, m.rig, b));
-      rig.style.setProperty("--st", f(io(seg(p, 0.16, 0.24)), 3));
-      rig.style.setProperty("--lit", f(seg(p, 0.27, 0.33), 3));
+      rig.style.setProperty("--st", f(io(seg(p, 0.13, 0.2)), 3));
+      rig.style.setProperty("--lit", f(seg(p, 0.22, 0.27), 3));
       const h = seg(p, 0.015, 0.06);
       head.style.opacity = f(1 - h, 3);
       head.style.setProperty("--hy", f(-4 * h, 2));
@@ -2674,7 +2681,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
         capEls.forEach((cap, k) => cap.classList.toggle("on", k === s));
         cards.forEach((card, i) => card.classList.toggle("dim", s >= 0 && !pairs[s].who.includes(i)));
       }
-      const io2 = p >= 0.27 && p < 0.36;
+      const io2 = p >= 0.22 && p < 0.36;
       if (io2 !== introOn) { introOn = io2; intro.classList.toggle("on", io2); }
     };
     onProgress(el, apply);
@@ -2784,7 +2791,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 
 
 <!-- ===== ch-04-taste.html ===== -->
-<section class="scene" id="taste" data-label="04 口味" data-sky="ember" style="--len:500vh">
+<section class="scene" id="taste" data-label="04 口味" data-sky="ember" data-hold="1.8" style="--len:500vh">
   <div class="stage tp-stage">
     <i class="tp-shade" aria-hidden="true"></i>
     <i class="tp-cone" aria-hidden="true"><i class="tp-cone-dots halftone"></i></i>
@@ -2808,7 +2815,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   </div>
 </section>
 
-<section class="scene" id="taste-who" data-sky="ember" style="--len:190vh">
+<section class="scene" id="taste-who" data-sky="ember" data-play="4.5" style="--len:190vh">
   <div class="stage tpc-stage">
     <i class="tpc-shade" aria-hidden="true"></i>
     <div class="tpc-sunw" aria-hidden="true" data-at="0"><i class="tpc-sun"><i class="halftone"></i></i><i class="tpc-core"></i><i class="tpc-ring"></i></div>
@@ -3097,6 +3104,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
       const INTRO = 1.7, OUTRO = 1.5, VI = 30, VM = 30, VO = 44;
       const RI = INTRO * VI, RM = (N - 1) * VM, RO = (OUTRO + 0.3) * VO, RANGE = RI + RM + RO;
       el.style.setProperty("--len", `${Math.round(100 + RANGE)}vh`);
+      el.dataset.play = Math.max(4, RANGE * 0.035).toFixed(1); // played on its own: ~1 s per name, ~3 s on the brightest
       const stepAt = (p) => { const t = p * RANGE; return t < RI ? -INTRO + t / VI : t < RI + RM ? (t - RI) / VM : N - 1 + (t - RI - RM) / VO; };
 
       // receded names hang around the brightest one, each on the side it rested on; deeper = smaller and dimmer.
@@ -3396,7 +3404,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
 
 <!-- ===== ch-05-form.html ===== -->
 <!-- ============ 05 形态 · 白昼里的形状 — the book's only daylight ============ -->
-<section class="scene" id="form" data-label="05 形态" data-sky="morning" style="--len:220vh">
+<section class="scene" id="form" data-label="05 形态" data-sky="morning" data-play="5" style="--len:220vh">
   <div class="stage">
     <i class="fm-wash" aria-hidden="true"></i>
     <header class="fm-head">
@@ -3413,7 +3421,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
   </div>
 </section>
 
-<section class="scene" id="form-len" data-sky="morning" style="--len:290vh">
+<section class="scene" id="form-len" data-sky="morning" data-play="7.5" style="--len:290vh">
   <div class="stage">
     <i class="fm-wash" aria-hidden="true"></i>
     <p class="eyebrow fl-eb">05 · LENGTH — 一共看了多久</p>
@@ -3430,7 +3438,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
   </div>
 </section>
 
-<section class="scene" id="form-heat" data-sky="white" style="--len:220vh">
+<section class="scene" id="form-heat" data-sky="white" data-play="6" style="--len:220vh">
   <div class="stage">
     <i class="fm-wash" aria-hidden="true"></i>
     <i class="fm-paper" aria-hidden="true"></i>
@@ -3444,7 +3452,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
   </div>
 </section>
 
-<section class="scene" id="form-age" data-sky="morning" style="--len:210vh">
+<section class="scene" id="form-age" data-sky="morning" data-play="6.5" style="--len:210vh">
   <div class="stage">
     <i class="fm-wash" aria-hidden="true"></i>
     <i class="fm-paper" aria-hidden="true"></i>
@@ -3530,7 +3538,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
 #form-len .fl-grp{display:inline-flex;align-items:baseline}
 #form-len .fl-u{font:300 .19em/1 var(--serif);letter-spacing:0;margin:0 .22em 0 .08em}
 #form-len .fl-grp:last-child .fl-u{margin-right:0}
-#form-len .fl-lede{position:absolute;z-index:3;left:var(--gut);top:calc(var(--safe) + 9vh + var(--F) * .8 * 1.1);max-width:min(40em,62vw);font:400 clamp(14px,1.12vw,18px)/1.85 var(--sans);color:rgba(31,31,41,.88);text-shadow:0 0 14px rgba(255,255,255,.9),0 0 3px rgba(255,255,255,.8);opacity:calc(clamp(0,calc((var(--p) - .05) / .12),1) - var(--m) * 2.4)}
+#form-len .fl-lede{position:absolute;z-index:3;left:var(--gut);top:calc(var(--safe) + 9vh + var(--F) * .8 * 1.1);max-width:min(40em,62vw);font:400 clamp(14px,1.12vw,18px)/1.85 var(--sans);color:rgba(31,31,41,.88);text-shadow:0 0 14px rgba(255,255,255,.9),0 0 3px rgba(255,255,255,.8);opacity:calc(clamp(0,calc((var(--vis) - .55) / .35),1) - var(--m) * 2.4)}
 #form-len .fl-lede b{font:300 1.3em/1 var(--serif);color:var(--ink)}
 #form-len .fl-solo .fl-lede{opacity:var(--a)}
 #form-len .fl-ruler{position:absolute;z-index:2;left:0;right:0;top:46vh;height:36vh;opacity:var(--r)}
@@ -3555,8 +3563,9 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
 #form-len .fl-say{position:absolute;z-index:3;left:var(--gut);bottom:clamp(22px,5vh,54px);max-width:min(46em,72vw);font:300 clamp(15px,1.3vw,21px)/1.6 var(--serif);color:var(--ink);text-shadow:0 0 14px rgba(255,255,255,.9);opacity:clamp(0,calc((var(--p) - .6) / .07),1);transform:translateY(calc((1 - clamp(0,calc((var(--p) - .6) / .07),1)) * 14px))}
 #form-len .fl-vig,#form-len .fl-white{position:fixed;inset:0;z-index:6;pointer-events:none;opacity:0}
 #form-len .fl-vig{background:radial-gradient(closest-side at 50% 50%,rgba(255,255,255,0) 30%,rgba(255,255,255,.8) 78%,#fff 100%);transform:scale(1.4)}
-#form-len.fm-whiteout .fl-vig{opacity:clamp(0,calc((var(--p) - .88) / .06),1)}
-#form-len.fm-whiteout .fl-white{opacity:clamp(0,calc((var(--p) - .93) / .06),1)}
+/* the white-out runs while the scene scrolls away (--out), so the page never comes to rest on a blank white screen */
+#form-len.fm-whiteout .fl-vig{opacity:clamp(0,calc(var(--out) / .14),1)}
+#form-len.fm-whiteout .fl-white{opacity:clamp(0,calc((var(--out) - .06) / .16),1)}
 #form-len .fl-norul .fl-ruler{display:none}
 @media (max-width:760px){
   #form-len .fl-big{flex-direction:column;align-items:flex-start;font-size:var(--F2);line-height:.84}
@@ -3704,6 +3713,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
         // quiet silhouettes: the three shapes exist, the records just did not say which one each item was
         el.classList.add("fm-empty-mode");
         el.style.setProperty("--len", nothing ? "100vh" : "130vh");
+        delete el.dataset.play;
         floor.classList.add("fm-empty-mode");
         floor.style.setProperty("--f2", "0.62");
         [["视频", .62], ["图文", .62], ["直播", .62]].forEach(([label, f], i) => {
@@ -3797,6 +3807,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
       if (!hasRuler) {
         stage.classList.add("fl-solo", "fl-norul");
         el.style.setProperty("--len", el.classList.contains("fm-whiteout") ? "180vh" : "140vh");
+        el.dataset.play = "4"; // only the total to show: a shorter play
         say.remove();
         return;
       }
@@ -4019,7 +4030,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
         return p[0] === "<" ? `${who}不到 1%` : `${who}占 ${p}`;
       });
       $(".fa-say", el).textContent = bits.length ? nb(`${bits.join("，")}。`) : "";
-      if (!bands.length) { $(".fa-tunnel", el).remove(); $(".fa-cap", el).remove(); el.style.setProperty("--len", "130vh"); return; }
+      if (!bands.length) { $(".fa-tunnel", el).remove(); $(".fa-cap", el).remove(); el.style.setProperty("--len", "130vh"); delete el.dataset.play; return; }
 
       // world: the camera looks down a tube of radius 1; each band is a stretch of wall 1.5 deep, nearest first.
       // a point at depth d in front of the camera lands K/d px from the centre; dots on a band's wall are spaced so
@@ -4141,7 +4152,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
 
 
 <!-- ===== ch-06-echo.html ===== -->
-<section class="scene" id="echo" data-label="06 回声" data-sky="blue" style="--len:290vh">
+<section class="scene" id="echo" data-label="06 回声" data-sky="blue" data-play="8" style="--len:290vh">
   <div class="stage ec-stage">
     <div class="ec-dark" aria-hidden="true"></div>
     <div class="ec-field" aria-hidden="true"></div>
@@ -4157,7 +4168,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
     <p class="mono ec-cue"><span>SCROLL · 回声一圈圈荡开</span> <i class="cue">↓</i></p>
   </div>
 </section>
-<section class="scene" id="echo-orbit" data-sky="blue" style="--len:180vh">
+<section class="scene" id="echo-orbit" data-sky="blue" data-play="5" style="--len:180vh">
   <div class="stage eo-stage">
     <div class="eo-dark" aria-hidden="true"></div>
     <div class="eo-space"></div>
@@ -4168,7 +4179,7 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
     </header>
   </div>
 </section>
-<section class="scene" id="echo-pass" data-sky="blue" style="--len:190vh">
+<section class="scene" id="echo-pass" data-sky="blue" data-play="4" style="--len:190vh">
   <div class="stage ep-stage">
     <div class="ep-dark seam-t" aria-hidden="true"></div>
     <div class="ep-ghost num it" aria-hidden="true"></div>
@@ -4423,7 +4434,7 @@ CH.push({
       H("h3", null, "传回来的都是些什么"),
       H("p", null, nb(formsText)),
       ...(friend && lead && lead.count ? [H("p", null, "一圈是一种消息，圈越粗越亮，这种消息越多；虚线的圈表示这一年里一条也没有。")] : []));
-    $(".ec-forms", el).dataset.on = "0.46-0.7";
+    $(".ec-forms", el).dataset.on = "0.42-0.7";
 
     // calls: how long the phone was on
     const secs = Math.max(0, Math.round(chat.callSeconds || 0));
@@ -4662,7 +4673,7 @@ CH.push({
     <div class="wd-sr"></div>
   </div>
 </section>
-<section class="scene" id="words-pair" data-sky="deep" style="--len:230vh">
+<section class="scene" id="words-pair" data-sky="deep" data-play="5" style="--len:230vh">
   <div class="stage wp-stage">
     <canvas class="wp-cv" aria-hidden="true"></canvas>
     <div class="wp-flash" aria-hidden="true"></div>
@@ -4882,12 +4893,14 @@ CH.push({
       // ---------- timeline: open → push through the numeral → five holds with flights between ----------
       const TL = [];
       const seq = (kind, w, k) => TL.push({ kind, w, k });
+      // played on its own at ~2.6 s a unit: a field holds ~2 s (long enough for its card), a flight takes ~0.7 s
       seq("open", 0.5); seq("push", 0.5);
-      fields.forEach((fd, k) => { seq("hold", fd.empty ? 0.3 : 0.58, k); if (k < fields.length - 1) seq("move", fd.empty || fields[k + 1].empty ? 0.24 : 0.32, k); });
+      fields.forEach((fd, k) => { seq("hold", fd.empty ? 0.36 : 0.8, k); if (k < fields.length - 1) seq("move", fd.empty || fields[k + 1].empty ? 0.22 : 0.26, k); });
       seq("tail", 0.18);
       let T = 0;
       for (const s of TL) { s.a = T; T += s.w; s.b = T; }
       el.style.setProperty("--len", `${Math.round((T + 1) * 100)}vh`);
+      el.dataset.play = (T * 2.6).toFixed(1);
       const openSeg = TL[0], pushSeg = TL[1];
 
       // ---------- geometry (on resize only) ----------
@@ -5093,8 +5106,8 @@ CH.push({
           return { x: lerp(a.x, b.x, e), y: lerp(a.y, b.y, e), z: lerp(a.z, b.z, e), r: Math.sin(Math.PI * t) * 0.055 * (s.k % 2 ? 1 : -1) };
         }
         const a = holdPose(fields.length - 1, 1);
-        // the exit: a last slow push while the whole field dims back into the night
-        return { x: a.x, y: a.y, z: a.z + F * 0.04 * eio(t), r: 0, fade: 1 - 0.85 * eio(t) };
+        // the exit: a last slow push; the field dims back into the night only as the scene scrolls away (see draw)
+        return { x: a.x, y: a.y, z: a.z + F * 0.04 * eio(t), r: 0 };
       }
 
       // ---------- drawing ----------
@@ -5288,7 +5301,7 @@ CH.push({
         ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
         ctx.clearRect(-M, -M, VW + 2 * M, VH + 2 * M);
         cam.style.transform = c.r ? `rotate(${c.r.toFixed(4)}rad)` : "";
-        const fade = c.fade == null ? 1 : c.fade;
+        const fade = (c.fade == null ? 1 : c.fade) * (1 - 0.85 * eio(clamp(exitK / 0.5)));
         if (fade !== lastFade) { lastFade = fade; cam.style.opacity = fade < 1 ? fade.toFixed(3) : ""; hud.style.visibility = fade < 0.3 ? "hidden" : ""; }
         const order = fields.slice().sort((a, b) => b.A.z - a.A.z);
         for (const fd of order) if (fd.A.z > 0) drawField(fd, c, time);
@@ -5299,7 +5312,7 @@ CH.push({
       }
 
       // ---------- loop: only while the scene is on screen ----------
-      let tp = 0, sp = 0, raf = 0, visible = false, lastT = 0, lastDraw = 0;
+      let tp = 0, sp = 0, raf = 0, visible = false, lastT = 0, lastDraw = 0, exitK = 0;
       function frame(now) {
         raf = 0;
         if (!visible) return;
@@ -5319,6 +5332,7 @@ CH.push({
       }
       onProgress(el, (p, vis, out) => {
         tp = p * T;
+        exitK = out;
         visible = vis > 0 && out < 1;
         if (visible) kick(false); else { if (raf) cancelAnimationFrame(raf); raf = 0; sp = tp; }
       });
@@ -5599,7 +5613,7 @@ CH.push({
   </div>
 </section>
 <!-- data-sky="auto": mix while the lights are up, deep once the amber bloom has taken the middle of the screen (see apply) -->
-<section class="scene" id="proof-time" data-sky="auto" style="--len:230vh">
+<section class="scene" id="proof-time" data-sky="auto" data-play="5" style="--len:230vh">
   <div class="stage pt-stage">
     <div class="pt-dim" aria-hidden="true"></div>
     <div class="pt-beams" aria-hidden="true"></div>
@@ -5734,7 +5748,8 @@ CH.push({
 #proof-note .pn-dim{position:absolute;inset:0;pointer-events:none;background:radial-gradient(70% 55% at 26% 42%,rgba(21,32,51,.28) 0%,rgba(7,10,18,0) 70%),linear-gradient(180deg,rgba(7,10,18,0) 52%,rgba(7,10,18,.55) 100%)}
 #proof-note .pn-spot{position:absolute;left:calc(var(--gut) - 8vw);top:0;width:min(72vw,1100px);height:clamp(160px,26vh,280px);margin-top:calc(clamp(160px,26vh,280px) / -2);border-radius:50%;background:radial-gradient(closest-side,rgba(255,236,204,.16) 0%,rgba(238,164,78,.09) 55%,rgba(238,164,78,0) 100%);opacity:0;transform-origin:0 50%;will-change:transform,opacity;pointer-events:none}
 #proof-note .pn-spot-ht{position:absolute;inset:0;border-radius:50%;--ht:8px;--ht-r:22%;-webkit-mask-image:radial-gradient(closest-side,rgba(0,0,0,.8) 0%,transparent 100%);mask-image:radial-gradient(closest-side,rgba(0,0,0,.8) 0%,transparent 100%);opacity:.26}
-#proof-note .pn-head{position:absolute;left:var(--gut);top:var(--safe);z-index:6;opacity:0;will-change:opacity}
+#proof-note .pn-head{position:absolute;left:var(--gut);top:var(--safe);z-index:6;opacity:0;will-change:opacity;transition:opacity .9s ease}
+#proof-note:not(.pn-live) .pn-head{opacity:0!important;transition:none}
 #proof-note .pn-head .eyebrow{margin-bottom:12px}
 #proof-note .pn-h{font-size:clamp(30px,3.6vw,60px);text-shadow:0 2px 24px rgba(7,10,18,.6)}
 #proof-note .pn-list{position:absolute;left:var(--gut);top:calc(var(--safe) + clamp(96px,15vh,150px));z-index:3;width:min(62vw,980px);display:flex;flex-direction:column;gap:var(--pn-gap,clamp(14px,3vh,34px));transform-origin:0 0;will-change:transform,opacity}
@@ -5856,6 +5871,7 @@ CH.push({
       const items = [title, ...rows, sum];
       rowsEl.append(...items);
       el.style.setProperty("--len", `${Math.round(100 + 26 * (items.length - 0.5))}vh`);
+      el.dataset.play = (1.15 * (items.length - 0.5) + 0.6).toFixed(1); // played on its own: ~1.2 s under the lamp per row
 
       // geometry is read once per resize; the scroll callback only writes
       let G = null, lastP = 0;
@@ -6071,12 +6087,13 @@ CH.push({
         };
       };
       const L = lis.length, M = sts.length;
+      el.dataset.play = Math.max(7, 2.4 + 2.9 * L).toFixed(1); // played on its own: ~2 s under the lamp per line
       const apply = (p, vis) => {
         lastP = p; lastV = vis;
         el.classList.toggle("pn-live", vis >= 0.999);
         if (!G) return;
-        // 1 · the title rises out of the night the moment the scene takes the screen
-        head.style.opacity = (seg(p, 0.002, 0.03) * (G.lift ? 1 - seg(p, 0.5, 0.54) : 1)).toFixed(3);
+        // 1 · the title rises out of the night the moment the scene takes the screen (a CSS fade on .pn-live)
+        head.style.opacity = (G.lift ? 1 - seg(p, 0.5, 0.54) : 1).toFixed(3);
         // 2 · the confession, one line at a time under the lamp
         const idx = Math.min(L - 1, Math.floor(seg(p, 0.05, 0.5) * L + (p >= 0.05 ? 0.0001 : -1)));
         lis.forEach((li, i) => { li.classList.toggle("seen", i <= idx); li.classList.toggle("on", i === idx); });
@@ -6112,7 +6129,7 @@ CH.push({
 
 
 <!-- ===== ch-09-sign.html ===== -->
-<section class="scene" id="sign" data-label="09 落款" data-sky="dawn" style="--len:220vh">
+<section class="scene" id="sign" data-label="09 落款" data-sky="dawn" data-play="5" style="--len:220vh">
   <div class="stage sg-stage">
     <i class="sg-shade" aria-hidden="true"></i>
     <div class="sg-rig"></div>
@@ -6123,7 +6140,7 @@ CH.push({
   </div>
 </section>
 
-<section class="scene" id="sign-card" data-sky="dawn" style="--len:340vh">
+<section class="scene" id="sign-card" data-sky="dawn" data-play="9" style="--len:340vh">
   <div class="stage sgc-stage">
     <i class="sgc-shade" aria-hidden="true"></i>
     <i class="sgc-vig" aria-hidden="true"></i>
@@ -6144,8 +6161,8 @@ CH.push({
       <p class="sgc-fine fx-fade" data-at="0.72"></p>
     </div>
     <div class="sgc-info">
-      <p class="sgc-en mono fx-fade" data-at="0.03"></p>
-      <p class="sgc-read fx-fade" data-at="0.07"></p>
+      <p class="sgc-en mono fx-fade" data-at="0"></p>
+      <p class="sgc-read fx-fade" data-at="0" style="--d:260ms"></p>
     </div>
     <div class="sgc-fly"></div>
   </div>
@@ -6295,11 +6312,12 @@ CH.push({
     const K = lines.length === 3 ? [0, 0.74, 1] : lines.length > 1 ? lines.map((_, i) => i / (lines.length - 1)) : [0];
     const rows = lines.map((w, i) => {
       const k = K[i];
-      const tag = signed || i === 0 ? H("span", { class: "sg-tag fx-fade", dataset: { at: String(0.05 + i * 0.07) } },
+      const tag = signed || i === 0 ? H("span", { class: "sg-tag fx-fade", dataset: { at: String(0.04 + i * 0.08) } },
         H("b", null, signed ? `${String(i + 1).padStart(2, "0")} · ${tags[i] || "WORD"}` : "UNSIGNED"),
         H("span", null, signed ? (en.length === zh.length ? en[i] : "") : "FOR NOW")) : null;
       const row = H("div", { class: "sg-line", dataset: { i: String(i), side: k > 0.6 ? "l" : "r" }, style: { "--c": String(Math.max(1, han(w))), "--k": String(k) } },
-        H("span", { class: "sg-word serif fx-rise", dataset: { split: true, at: String(0.02 + i * 0.07) }, style: { "--stagger": "70ms" } }, w),
+        // the first word is already rising as the scene lands (it rests there a moment before playing), the others follow
+        H("span", { class: "sg-word serif fx-rise", dataset: { split: true, at: String(i * 0.08) }, style: { "--stagger": "70ms" } }, w),
         tag);
       return row;
     });
@@ -6321,14 +6339,15 @@ CH.push({
       shade1.style.opacity = (1 - (out || 0)).toFixed(3);
       const a = eout(seg(p, 0, 0.58));
       rig.style.transform = `translateZ(${(-320 * (1 - a)).toFixed(1)}px) rotateY(${(26 - 23 * a).toFixed(2)}deg) rotateX(${(6 * (1 - a)).toFixed(2)}deg)`;
-      // the last word leaves right at the end, so the name (next scene) takes over with no empty sky in between
+      // the words fly past the camera while the scene scrolls away (out), one after another, so the page rests on all
+      // three at the end of the scene and the name (next scene) is already coming up underneath as the last one leaves
       rows.forEach((row, i) => {
-        const t = seg(p, 0.62 + i * 0.1, 0.84 + i * 0.08);
+        const t = seg(out || 0, i * 0.1, 0.24 + i * 0.1);
         const e = ein(t);
         row.style.transform = e ? `translateZ(${(e * 980).toFixed(1)}px)` : "";
         row.style.opacity = (1 - seg(t, 0.3, 0.9)).toFixed(3);
       });
-      head.style.opacity = (1 - seg(p, 0.58, 0.7)).toFixed(3);
+      head.style.opacity = (1 - seg(out || 0, 0, 0.2)).toFixed(3);
       // let the name's letters finish rising before its stage slides in, so it arrives already formed
       if (p >= 0.9 && !nameUp) { const n = document.querySelector("#sign-card .sgc-cream"); if (n) { nameUp = true; if (!n.classList.contains("in")) reveal(n); } }
     };
@@ -6405,7 +6424,7 @@ CH.push({
       onclick: () => { priv.setAttribute("aria-pressed", String(togglePrivacy())); } },
       H("i", { class: "sgc-pd", "aria-hidden": "true" }), "隐私模式");
     const again = H("button", { class: "pill sgc-again", type: "button",
-      onclick: () => window.scrollTo({ top: 0, behavior: REDUCED ? "auto" : "smooth" }) },
+      onclick: () => goTo(document.body) },
       "从头再看", H("span", { class: "cir", "aria-hidden": "true" }, "↑"));
     act.append(goWs, priv, again);
     const syncPriv = () => priv.setAttribute("aria-pressed", String(document.body.classList.contains("privacy-on")));

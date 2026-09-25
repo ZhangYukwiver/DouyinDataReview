@@ -7,13 +7,15 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const target = path.join(root, "public", "story");
-// story-poster.html：海报风格的报告本体（自带封面，不走入口卡）
-const PAGES = ["story-entry.html", "story-draft_副本.html", "story-poster.html"];
+// story-poster.html：海报风格的报告本体（自带封面，不走入口卡）；story-archive.html：档案馆，一页一屏点击翻页
+const PAGES = ["story-entry.html", "story-draft_副本.html", "story-poster.html", "story-archive.html"];
+// 长卷共用的粘滞滚动 + 自动播放
+const SCRIPTS = ["story-glide.js"];
 const IMAGE = /^(sky-s\d-[a-z]+|entry-night|entry-mix)\.jpg$|^entry-textures\.js$/u;
 
 rmSync(target, { recursive: true, force: true });
 mkdirSync(path.join(target, "story-images"), { recursive: true });
-for (const page of PAGES) copyFileSync(path.join(root, "prototype", page), path.join(target, page));
+for (const page of [...PAGES, ...SCRIPTS]) copyFileSync(path.join(root, "prototype", page), path.join(target, page));
 const images = readdirSync(path.join(root, "jimeng", "story-images")).filter((name) => IMAGE.test(name));
 for (const name of images) copyFileSync(path.join(root, "jimeng", "story-images", name), path.join(target, "story-images", name));
 console.log(`synced ${PAGES.length} pages + ${images.length} assets -> public/story`);
