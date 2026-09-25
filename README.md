@@ -21,7 +21,7 @@
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
 
-<p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/v0.1.9/poster-2025-demo.mp4">▶ 播放海报风格年度回顾演示（MP4）</a></p>
+<p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/v0.1.10/poster-2025-demo.mp4">▶ 播放海报风格年度回顾演示（MP4）</a></p>
 
 <p align="center"><sub>海报风格的年度回顾，从封面一路滚到落款。视频和截图都是合成示例数据；这是可切换的其中一种视觉风格。</sub></p>
 
