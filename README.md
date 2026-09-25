@@ -17,7 +17,7 @@
   </p>
 </div>
 
-<p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/v0.1.10/poster-2025-demo.mp4">▶ 直接查看演示视频（MP4）</a></p>
+https://github.com/user-attachments/assets/f1f3efef-ad55-4f9c-9240-90a4d468b80c
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
 
