@@ -15,12 +15,12 @@
   </p>
 </div>
 
-> [!NOTE]
-> 本机需要已安装 Chrome、Edge、Brave 或 Chromium 中的任意一个（Windows 自带的 Edge 即可；macOS 上也能自动识别 Comet）。工具只读取你本人登录账号在网页端当前可见的记录；增量读取走的是抖音未公开承诺的私有接口，可能失效或触发账号风控，只用于本机个人账号。详见[采集原理与边界](#采集原理与边界)。
-
 https://github.com/user-attachments/assets/f1f3efef-ad55-4f9c-9240-90a4d468b80c
 
 <p align="center"><sub>海报风格的年度回顾，从封面一路滚到落款。本文视频和截图都是合成示例数据。</sub></p>
+
+> [!NOTE]
+> 本机需要已安装 Chrome、Edge、Brave 或 Chromium 中的任意一个（Windows 自带的 Edge 即可；macOS 上也能自动识别 Comet）。工具只读取你本人登录账号在网页端当前可见的记录；增量读取走的是抖音未公开承诺的私有接口，可能失效或触发账号风控，只用于本机个人账号。详见[采集原理与边界](#采集原理与边界)。
 
 ## 主要功能
 
