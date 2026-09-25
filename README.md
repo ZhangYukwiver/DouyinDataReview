@@ -17,11 +17,9 @@
   </p>
 </div>
 
-<p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="docs/promotion/poster-2025-cover.jpg" alt="海报风格内容年志演示封面" width="800" /></a></p>
+<p align="center"><video src="https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/v0.1.10/poster-2025-demo.mp4" controls muted playsinline preload="metadata" width="800">你的浏览器不支持内嵌视频，请打开<a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/v0.1.10/poster-2025-demo.mp4">视频文件</a>。</video></p>
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
-
-<p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/v0.1.10/poster-2025-demo.mp4">▶ 播放海报风格年度回顾演示（MP4）</a></p>
 
 <p align="center"><sub>海报风格的年度回顾，从封面一路滚到落款。视频和截图都是合成示例数据；这是可切换的其中一种视觉风格。</sub></p>
 
