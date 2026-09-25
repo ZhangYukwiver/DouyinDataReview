@@ -63,6 +63,7 @@ function baseState(currentVersion) {
     message: "应用已就绪。",
     error: null,
     checkedAt: null,
+    manualDownload: false,
   };
 }
 
@@ -83,6 +84,10 @@ export function createAppUpdateController(options = {}) {
     currentVersion = "0.0.0",
     emit = () => undefined,
     beforeInstall = async () => undefined,
+    // When set, "download" opens the release page instead of letting the
+    // updater install. macOS needs this: ad-hoc signed builds are rejected by
+    // Squirrel.Mac because each build's designated requirement is its own cdhash.
+    openDownloadPage = null,
     schedule = (callback, delay) => setTimeout(callback, delay),
     clearSchedule = (timer) => clearTimeout(timer),
     initialDelayMs = DEFAULT_INITIAL_DELAY_MS,
@@ -90,7 +95,8 @@ export function createAppUpdateController(options = {}) {
     now = () => new Date(),
   } = options;
 
-  let state = baseState(currentVersion);
+  const manualDownload = typeof openDownloadPage === "function";
+  let state = { ...baseState(currentVersion), manualDownload };
   let checkPromise = null;
   let installInFlight = false;
   let timer = null;
@@ -145,7 +151,9 @@ export function createAppUpdateController(options = {}) {
     publish({
       ...details,
       phase: "available",
-      message: details.version ? `发现新版本 v${details.version}，可以下载。` : "发现新版本，可以下载。",
+      message: manualDownload
+        ? `发现新版本${details.version ? ` v${details.version}` : ""}，去发布页下载安装包替换旧版。`
+        : details.version ? `发现新版本 v${details.version}，可以下载。` : "发现新版本，可以下载。",
       error: null,
       progress: 0,
       bytesPerSecond: null,
@@ -237,6 +245,10 @@ export function createAppUpdateController(options = {}) {
   async function download() {
     if (disposed || !supported || !updater || typeof updater.downloadUpdate !== "function") return state;
     if (state.phase !== "available") return state;
+    if (manualDownload) {
+      openDownloadPage(state.version);
+      return state;
+    }
     publish({ phase: "downloading", message: "正在下载更新。", error: null, progress: 0 });
     try {
       await updater.downloadUpdate();

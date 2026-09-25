@@ -27,6 +27,7 @@ export interface DesktopUpdateState {
   message: string;
   error: string | null;
   checkedAt: string | null;
+  manualDownload: boolean;
 }
 
 interface DesktopRuntimeBridge {
@@ -80,6 +81,7 @@ function parseDesktopUpdateState(value: unknown): DesktopUpdateState | null {
     message: candidate.message,
     error: nullableString("error"),
     checkedAt: nullableString("checkedAt"),
+    manualDownload: candidate.manualDownload === true,
   };
 }
 
