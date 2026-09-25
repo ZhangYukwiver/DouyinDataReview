@@ -339,7 +339,7 @@ function AppUpdatePanel({
   const checking = state.phase === "checking";
   const downloading = state.phase === "downloading";
   const action = state.phase === "available"
-    ? { label: "下载更新", icon: Download, onPress: onDownload, disabled: false }
+    ? { label: state.manualDownload ? "去下载" : "下载更新", icon: Download, onPress: onDownload, disabled: false }
     : state.phase === "downloaded"
       ? { label: busy ? "采集完成后安装" : "重启并安装", icon: RefreshCw, onPress: onInstall, disabled: busy }
       : state.phase === "unsupported"

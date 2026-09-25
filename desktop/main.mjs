@@ -146,6 +146,9 @@ async function launch() {
       if (state.phase === "error") updateInstallRequested = false;
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("desktop:app-update-state", state);
     },
+    openDownloadPage: process.platform === "darwin"
+      ? () => openExternalUrl("https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest")
+      : null,
     beforeInstall: async () => {
       // The updater schedules app.quit() only after it has accepted the
       // downloaded installer. Stop the local services from before-quit so a

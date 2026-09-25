@@ -108,6 +108,21 @@ describe("desktop app updater", () => {
     expect(controller.getState().phase).toBe("downloading");
   });
 
+  it("opens the release page instead of downloading when manual download is set", async () => {
+    const updater = new FakeUpdater();
+    const openDownloadPage = vi.fn();
+    const { controller } = controllerFor(updater, { platform: "darwin", openDownloadPage });
+    expect(controller.getState().manualDownload).toBe(true);
+
+    updater.emit("update-available", { version: "1.3.0" });
+    expect(controller.getState().message).toContain("发布页");
+    await controller.download();
+
+    expect(openDownloadPage).toHaveBeenCalledWith("1.3.0");
+    expect(updater.downloadUpdate).not.toHaveBeenCalled();
+    expect(controller.getState().phase).toBe("available");
+  });
+
   it("does not call the updater in development or on unsupported platforms", async () => {
     const updater = new FakeUpdater();
     const development = createAppUpdateController({ updater, isPackaged: false, platform: "win32" });
