@@ -3,6 +3,7 @@
 <head>
 <script>if (new URLSearchParams(location.search).get("motion") === "full") document.documentElement.classList.add("motion-full");</script>
 <meta charset="utf-8">
+<script src="story-glide.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>内容年志 · 海报</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -522,13 +523,16 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   function goTo(id) {
     const el = typeof id === "string" ? document.getElementById(id) : id;
     if (!el) return;
-    window.scrollTo({ top: el.getBoundingClientRect().top + scrollY, behavior: REDUCED ? "auto" : "smooth" });
+    scrollToY(el.getBoundingClientRect().top + scrollY);
   }
+  // 粘滞滚动装上以后，所有跳转都交给它，免得和浏览器自带的平滑滚动互相抢
+  let glide = null;
+  function scrollToY(y) { if (glide) glide.to(y); else window.scrollTo({ top: y, behavior: REDUCED ? "auto" : "smooth" }); }
   function toWorkspace() {
     if (FRAMED) {
       const target = location.origin && location.origin !== "null" ? location.origin : "*";
       try { window.parent.postMessage({ type: "trace:open-dashboard" }, target); } catch (error) { console.error("[toWorkspace]", error); }
-    } else window.scrollTo({ top: 0, behavior: REDUCED ? "auto" : "smooth" });
+    } else scrollToY(0);
   }
   function buildNav() {
     const idx = document.getElementById("navIdx");
@@ -594,6 +598,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     }
     update();
     addEventListener("scroll", update, { passive: true });
+    // 封面的标题、导语、年份约 1.5 秒落定，#cover 上的 data-hold 让它完整停一会儿再自己撕页
+    if (!REDUCED && window.StoryGlide) glide = window.StoryGlide.install({ scenes: () => scenes.map((s) => s.el) });
     addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { remeasureMarquees(); update(); }, 120); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { remeasureMarquees(); update(); });
     addEventListener("load", () => { remeasureMarquees(); update(); });
@@ -607,7 +613,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   Object.assign(window, {
     D: data, LIVE: live, DEMO, FRAMED, REDUCED,
     H, S, $, $$, fmt, CH, cover, split, countUp, reveal, onReveal, onProgress, goTo, togglePrivacy, toWorkspace,
-    __POSTER: { boot, update, remeasureMarquees, scenes },
+    __POSTER: { boot, update, remeasureMarquees, scenes, get glide() { return glide; } },
   });
 })();
 </script>
@@ -626,7 +632,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 <main id="main">
 
 <!-- ===== ch-00-cover.html ===== -->
-<section class="scene bg-paper" id="cover" data-label="00 封面" style="--len:240vh">
+<section class="scene bg-paper" id="cover" data-label="00 封面" data-play="5" style="--len:240vh" data-hold="2.6">
   <div class="stage">
     <div class="cv-under">
       <div class="cv-u-head"><span class="stamp sig">FIG. 00 — B</span><span class="stamp ghost">RECORDS</span></div>
@@ -801,7 +807,7 @@ CH.push({
 </script>
 
 <!-- ===== ch-01-count.html ===== -->
-<section class="scene bg-ink" id="count" data-label="01 样本" style="--len:520vh">
+<section class="scene bg-ink" id="count" data-label="01 样本" data-play="14" style="--len:520vh">
   <div class="stage">
     <div class="ct-layers"></div>
   </div>
@@ -1066,7 +1072,7 @@ CH.push({
 </script>
 
 <!-- ===== ch-02-time.html ===== -->
-<section class="scene bg-ink" id="time" data-label="02 时间" style="--len:460vh">
+<section class="scene bg-ink" id="time" data-label="02 时间" data-play="10" style="--len:460vh">
   <div class="stage">
     <div class="tm">
       <div class="tm-head">
@@ -1094,7 +1100,7 @@ CH.push({
     </div>
   </div>
 </section>
-<section class="scene bg-sig" id="time-hour" style="--len:260vh">
+<section class="scene bg-sig" id="time-hour" data-play="6" style="--len:260vh">
   <div class="stage">
     <div class="th">
       <div class="th-head">
@@ -1364,7 +1370,7 @@ CH.push({
 </script>
 
 <!-- ===== ch-03-kept.html ===== -->
-<section class="scene bg-paper" id="kept" data-label="03 留下" style="--len:340vh">
+<section class="scene bg-paper" id="kept" data-label="03 留下" data-play="8" style="--len:340vh">
   <div class="stage">
     <div class="kp">
       <div class="kp-ink"></div>
@@ -1389,7 +1395,7 @@ CH.push({
     </div>
   </div>
 </section>
-<section class="scene bg-ink" id="kept-depth" style="--len:240vh">
+<section class="scene bg-ink" id="kept-depth" data-play="4.5" style="--len:240vh">
   <div class="stage">
     <div class="kd">
       <div class="kd-head">
@@ -1407,7 +1413,7 @@ CH.push({
     </div>
   </div>
 </section>
-<section class="scene bg-sig" id="kept-recent" style="--len:150vh">
+<section class="scene bg-sig" id="kept-recent" data-play="3" style="--len:150vh">
   <div class="stage">
     <div class="kr">
       <div class="kr-head">
@@ -1466,9 +1472,10 @@ CH.push({
 #kept .kp-all .slab{line-height:1.6}
 #kept .kp-rest{position:absolute;left:var(--gut);top:34px;width:calc(var(--B) - var(--gut) - var(--ci) * var(--cg) - var(--u) * 3);container-type:inline-size;color:var(--paper);visibility:hidden}
 #kept .kp-rest.in{visibility:visible;animation:kept-blink .45s steps(1,end) 2}
-#kept .kp-rest b{display:block;font-size:min(calc(var(--u) * 9),24cqw);line-height:.86;letter-spacing:-.02em}
-#kept .kp-rest p{margin-top:calc(var(--u) * .9);font-size:max(16px,calc(var(--u) * 1.9));line-height:1.3;word-break:keep-all}
-@container (max-width:200px){#kept .kp-rest>*{display:none}}
+#kept .kp-rest b{display:block;font-size:min(calc(var(--u) * 9),30cqw);line-height:.86;letter-spacing:-.02em}
+#kept .kp-rest p{margin-top:calc(var(--u) * .9);font-size:max(13px,min(calc(var(--u) * 1.9),13cqw));line-height:1.3;word-break:keep-all}
+/* 黑块里剩下的地方太窄时，数字和这句话一起不放（只放数字会看不懂） */
+@container (max-width:110px){#kept .kp-rest>b,#kept .kp-rest>p{display:none}}
 #kept .kp-empty{position:relative;flex:none;width:var(--B);padding:0 var(--gut) calc(var(--u)*3);color:var(--paper)}
 #kept .kp-empty p{font:900 calc(var(--u)*4.2)/1.2 var(--cjk);letter-spacing:-.02em;word-break:keep-all}
 @keyframes kept-blink{50%{visibility:hidden}}
@@ -1913,6 +1920,8 @@ CH.push({
     if (travel > 0) {
       list.style.setProperty("--travel", travel.toFixed(2));
       el.style.setProperty("--len", `calc(100vh + ${(travel * 1.45).toFixed(1)} * var(--u))`);
+      // 自己播的时候每一级台阶停一秒左右，名字和次数来得及看
+      el.dataset.play = (1.6 + topics.length * 0.95).toFixed(1);
     }
     const num = $(".tt-ctr-n", el);
     let cur = 0;
@@ -2035,7 +2044,7 @@ CH.push({
     </div>
   </div>
 </section>
-<section class="scene bg-paper" id="form-len" style="--len:240vh">
+<section class="scene bg-paper" id="form-len" data-play="6.5" style="--len:240vh">
   <div class="stage">
     <div class="fl">
       <header class="fl-head">
@@ -2369,9 +2378,10 @@ CH.push({
       const lonT = lon.url ? H("a", { href: lon.url, target: "_blank", rel: "noopener", "data-private": "" }, short(lon.title)) : H("span", { class: "fl-lon-t", "data-private": "" }, short(lon.title));
       const lonRow = H("div", { class: "fl-lon" }, lonT, H("span", { class: "fl-mk-t" }, `最长的一条有 ${fmt.dur(max)}`));
       ruler.append(marks, track, scale, lonRow);
+      // 播放头先走到中位数，在那儿停一拍（标签亮起），再一路走到最长的那一条
       onProgress(el, (p) => {
-        const a = 0.42, b = 0.84;
-        const ph = med == null ? Math.min(1, p / b) : p < a ? (p / a) * mp : mp + Math.min(1, (p - a) / (b - a)) * (1 - mp);
+        const a = 0.3, hold = 0.5, b = 0.84;
+        const ph = med == null ? Math.min(1, p / b) : p < a ? (p / a) * mp : p < hold ? mp : mp + Math.min(1, (p - hold) / (b - hold)) * (1 - mp);
         ruler.style.setProperty("--ph", ph.toFixed(4));
         if (mk) mk.classList.toggle("hit", ph >= mp - 0.002 && p > 0.02);
         lonRow.classList.toggle("hit", ph >= 0.999);
@@ -2533,7 +2543,7 @@ CH.push({
 </script>
 
 <!-- ===== ch-06-echo.html ===== -->
-<section class="scene bg-ink" id="echo" data-label="06 回声" style="--len:440vh">
+<section class="scene bg-ink" id="echo" data-label="06 回声" data-play="12" style="--len:440vh">
   <div class="stage">
     <div class="ec-deck"></div>
   </div>
@@ -2853,7 +2863,7 @@ CH.push({
 </script>
 
 <!-- ===== ch-07-words.html ===== -->
-<section class="scene bg-ink" id="words" data-label="07 词场" data-steps="2" style="--len:300vh">
+<section class="scene bg-ink" id="words" data-label="07 词场" data-steps="2" data-play="7" style="--len:300vh">
   <div class="stage">
     <div class="wd-wall">
       <header class="wd-hd">
@@ -2867,7 +2877,7 @@ CH.push({
     </div>
   </div>
 </section>
-<section class="scene bg-sig" id="words-vs" style="--len:260vh">
+<section class="scene bg-sig" id="words-vs" data-play="5.5" style="--len:260vh">
   <div class="stage">
     <div class="vs"></div>
   </div>
@@ -3098,7 +3108,7 @@ CH.push({
 </script>
 
 <!-- ===== ch-08-proof.html ===== -->
-<section class="scene bg-paper" id="proof" data-label="08 证据" style="--len:260vh">
+<section class="scene bg-paper" id="proof" data-label="08 证据" data-play="6.5" style="--len:260vh">
   <div class="stage">
     <div class="pf">
       <header class="pf-head">
@@ -3331,7 +3341,7 @@ CH.push({
 </script>
 
 <!-- ===== ch-09-sign.html ===== -->
-<section class="scene bg-ink" id="sign" data-label="09 落款" style="--len:340vh">
+<section class="scene bg-ink" id="sign" data-label="09 落款" data-play="11" style="--len:340vh">
   <div class="stage">
     <div class="sg-words"></div>
     <div class="sg-final bg-sig">
@@ -3556,7 +3566,7 @@ CH.push({
     const ITEMS = [
       { tag: "button", t: "进入持续报告", a: "→", d: FRAMED ? "回到工作台，报告会随着新的采集接着更新。" : "在应用里打开时，这一格会带你去工作台。", on: () => toWorkspace() },
       { tag: "button", t: "隐私模式", a: priv, d: "名字、标题、头像都换成方块，截图更放心。", on: () => togglePrivacy(), priv: true },
-      { tag: "button", t: "从头再看", a: "↑", d: "回到封面，从第一章重新看一遍。", on: () => window.scrollTo({ top: 0, behavior: REDUCED ? "auto" : "smooth" }) },
+      { tag: "button", t: "从头再看", a: "↑", d: "回到封面，从第一章重新看一遍。", on: () => goTo(document.body) },
     ];
     let privBtn = null;
     for (const it of ITEMS) {

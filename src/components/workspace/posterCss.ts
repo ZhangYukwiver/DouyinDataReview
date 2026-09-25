@@ -193,11 +193,8 @@ const blocks: string[] = [
   rule(sel("d-mosaic dark"), `${ink(PAPER)};border-color:${INK}!important`),
   rule(sel("d-event"), "border-bottom:2px solid var(--pf)!important"),
   rule(sel("d-ititle"), heavy(14, 1.3, "0")),
-  // 群点停画后留下的空位：不再是一块像空卡片的实心橙，改成海报里"这里本来就空着"的斜线底
-  rule(sel("d-swarm"), `background-color:${PAPER}!important;background-image:repeating-linear-gradient(-45deg,${INK} 0 2px,transparent 2px 13px)!important;cursor:default!important`),
-  rule(sel("d-swarm", " canvas"), "display:none!important"),
-  rule(sel("d-swarmhint"), "display:none!important"),
-  rule(`${P} [data-testid="report-tile-swarm"] svg path`, `stroke:${INK}!important;stroke-width:3px!important`),
+  // 群点在海报里停画，剩下的补位块只是一块空白斜线框，看着像没加载出来的组件：整块不要
+  rule(`${P} [data-testid="report-tile-swarm"]`, "display:none!important"),
   // 曲线：实心橙色面积 + 3px 墨线；峰值点改墨黑方块感的实心点
   rule(["hours", "months", "tail"].map((key) => `${P} [data-testid="report-tile-${key}"] svg path:not([fill="none"])`).join(","), `fill:${SIG}!important;fill-opacity:1!important`),
   rule(["hours", "months", "tail", "daynight"].map((key) => `${P} [data-testid="report-tile-${key}"] svg path[fill="none"]`).join(","), `stroke:${INK}!important;stroke-width:3px!important`),
