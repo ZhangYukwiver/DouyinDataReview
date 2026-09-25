@@ -1,13 +1,15 @@
 <div align="center">
   <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="build/icon.png" alt="内容数据工作台" width="160" /></a>
-  <h1>DouyinDataReview</h1>
-  <p><strong>抖音这一年，留在自己电脑上</strong></p>
-  <p>DouyinDataReview 是一个<strong>完全本地</strong>的抖音数据回顾工具。<br>
-  它可以把你的观看、喜欢、收藏和聊天记录读到本机离线查看，也可以<strong>实时</strong>接收并回复好友消息、看好友在线状态和续火花看板，还可以生成一份持续报告和一份年度回顾，并在探索工作台里搜索用户与内容。</p>
+  <h1>DouyinDataReview | 内容数据工作台</h1>
+  <p><strong>把抖音这一年，留在自己的电脑上</strong></p>
+  <p>一个面向开发者和个人用户的<strong>本地优先</strong>抖音数据回顾工作台。<br>
+  它把观看、喜欢、收藏和聊天记录带到本机离线查看，生成可交互的持续报告与年度回顾，也支持聊天实时接收、探索工作台和桌面安装包。</p>
   <p>不接外部 AI：标题、作者、封面、Cookie 和报告都不会发送到任何外部分析服务。</p>
   <p>问题反馈与交流请联系 QQ 940537208，或加入 QQ 群 DDDouyin（群号 1124211302），见<a href="#交流与反馈">交流与反馈</a>。</p>
   <p>
     <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="https://img.shields.io/github/v/release/ZhangYukwiver/DouyinDataReview?style=flat-square&label=Release" alt="Release" /></a>
+    <a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square" alt="MIT License" /></a>
+    <a href="https://github.com/ZhangYukwiver/DouyinDataReview/actions/workflows/desktop-release.yml"><img src="https://img.shields.io/github/actions/workflow/status/ZhangYukwiver/DouyinDataReview/desktop-release.yml?branch=main&style=flat-square&label=build" alt="Build status" /></a>
     <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers"><img src="https://img.shields.io/github/stars/ZhangYukwiver/DouyinDataReview?style=flat-square" alt="Stars" /></a>
     <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases"><img src="https://img.shields.io/github/downloads/ZhangYukwiver/DouyinDataReview/total?style=flat-square" alt="Downloads" /></a>
     <a href="https://github.com/ZhangYukwiver/DouyinDataReview/network/members"><img src="https://img.shields.io/github/forks/ZhangYukwiver/DouyinDataReview?style=flat-square" alt="Forks" /></a>
@@ -15,9 +17,15 @@
   </p>
 </div>
 
-https://github.com/user-attachments/assets/f1f3efef-ad55-4f9c-9240-90a4d468b80c
+<p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="docs/promotion/poster-2025-cover.jpg" alt="海报风格内容年志演示封面" width="800" /></a></p>
 
-<p align="center"><sub>海报风格的年度回顾，从封面一路滚到落款。本文视频和截图都是合成示例数据。</sub></p>
+<p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
+
+<p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/v0.1.9/poster-2025-demo.mp4">▶ 播放海报风格年度回顾演示（MP4）</a></p>
+
+<p align="center"><sub>海报风格的年度回顾，从封面一路滚到落款。视频和截图都是合成示例数据；这是可切换的其中一种视觉风格。</sub></p>
+
+> **先看什么？** 想安装，直接打开[最新 Release](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest)；想了解实现，查看[面向开发者](#面向开发者)；想比较另一种视觉风格，继续看下面的[年度回顾](#年度回顾)。
 
 > [!NOTE]
 > 本机需要已安装 Chrome、Edge、Brave 或 Chromium 中的任意一个（Windows 自带的 Edge 即可；macOS 上也能自动识别 Comet）。工具只读取你本人登录账号在网页端当前可见的记录；增量读取走的是抖音未公开承诺的私有接口，可能失效或触发账号风控，只用于本机个人账号。详见[采集原理与边界](#采集原理与边界)。
@@ -36,7 +44,7 @@ https://github.com/user-attachments/assets/f1f3efef-ad55-4f9c-9240-90a4d468b80c
 在「连接与采集」页的「整体风格」里挑一种，再点「打开报告」。风格同时决定采集器页和工作台的样子。
 
 - **内容年志**（默认）：先看到一张入口卡，写着观看、喜欢、收藏、聊天各有多少条；点卡片穿过去，是一卷十章的夜色长卷，天色随章节在五个时辰的油画之间变换。
-- **海报**：墨黑、新闻纸配信号橙的展览海报，十章硬切长卷，就是上面那段视频。
+- **海报**：墨黑、新闻纸配信号橙的展览海报，十章硬切长卷，就是上面演示视频中的一种视觉风格。
 
 <table>
   <tr><td><img src="docs/screenshots/story-entry.jpg" alt="内容年志 · 入口卡" width="400"/></td><td><img src="docs/screenshots/trace-arrive.jpg" alt="内容年志 · 抵达" width="400"/></td></tr>

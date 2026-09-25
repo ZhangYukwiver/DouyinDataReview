@@ -33,5 +33,8 @@ npm-debug.log*
 /scripts/shoot-report-pages.mjs
 /visual-baseline/reference-*.jpg
 
+# Local GitHub traffic snapshots and generated weekly reports.
+/ops-data/
+
 # AI 生成的图标草稿与提示词
 /output/

@@ -1,0 +1,23 @@
+{
+  "active": "poster-2025",
+  "variants": [
+    {
+      "id": "poster-2025",
+      "label": "海报风格内容年志",
+      "placement": "README 首屏演示视频与封面",
+      "source": "attached video: mmexport1790315962629.mp4",
+      "publishedAt": null,
+      "observationDays": 7,
+      "notes": "桌面演示，合成示例数据；无音频流。"
+    },
+    {
+      "id": "trace-2025",
+      "label": "内容年志长卷",
+      "placement": "后续 README 截图实验",
+      "source": "docs/screenshots/trace-arrive.jpg",
+      "publishedAt": null,
+      "observationDays": 7,
+      "notes": "保留为后续视觉变体，不与 poster 口径混写。"
+    }
+  ]
+}

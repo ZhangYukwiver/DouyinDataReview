@@ -14,6 +14,9 @@
     "app:mac": "npm run build:icons && osacompile -s -o '抖音年度回顾.app' scripts/macos-launcher.applescript && plutil -replace CFBundleIdentifier -string local.douyin.annual-recap '抖音年度回顾.app/Contents/Info.plist' && plutil -replace NSDocumentsFolderUsageDescription -string '读取同目录中的本地应用代码与年度回顾数据。' '抖音年度回顾.app/Contents/Info.plist' && cp build/icon.icns '抖音年度回顾.app/Contents/Resources/applet.icns' && plutil -remove CFBundleIconName '抖音年度回顾.app/Contents/Info.plist' && codesign --force --deep --sign - '抖音年度回顾.app'",
     "build:icons": "node scripts/build-icons.mjs",
     "watch:process": "node scripts/process-watchdog.mjs",
+    "ops:traffic": "node scripts/ops/github-traffic.mjs",
+    "ops:traffic:report": "node scripts/ops/github-traffic-report.mjs",
+    "ops:schedule": "node scripts/ops/install-schedule.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check:story-frames": "node scripts/story-visual-regression.mjs",
@@ -23,7 +26,8 @@
     "desktop:pack": "npm run build:web && npm run direct:setup && electron-builder --win dir --publish never",
     "desktop:build": "npm run build:web && npm run direct:setup && electron-builder --win nsis --publish never",
     "sync:story": "node scripts/sync-story.mjs",
-    "desktop:build:mac": "npm run build:web && npm run direct:setup && electron-builder --mac --publish never"
+    "desktop:build:mac": "npm run build:web && npm run direct:setup && electron-builder --mac --publish never",
+    "test:ops": "vitest run scripts/ops/github-traffic.test.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.8",
