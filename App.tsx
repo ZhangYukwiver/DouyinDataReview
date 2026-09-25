@@ -79,7 +79,7 @@ import {
 import { shouldAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { createSyncRecovery } from "./src/services/syncRecovery";
-import { applyAppStyle, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
@@ -1340,8 +1340,8 @@ function AppContent() {
       }
     : null;
 
-  // 内容年志与海报都把报告做成 /story 下的静态页，以 iframe 盖在工作台上；只有档案馆走应用内分页报告
-  const storyMode = (appStyle === "trace" || appStyle === "poster") && Platform.OS === "web";
+  // web 上三种风格的报告都是 /story 下的静态页，以 iframe 盖在工作台上；native 仍走应用内分页报告
+  const storyMode = Platform.OS === "web";
 
   function enterWorkspace() {
     if (storyMode) {
@@ -1361,7 +1361,7 @@ function AppContent() {
         archive: source === "archive" && selectedArchive?.data ? { parsedFileCount: selectedArchive.data.parsedFileCount, ignoredFileCount: selectedArchive.data.ignoredFileCount } : null,
       });
       writeStoryData(story);
-      setStorySrc(appStyle === "poster" ? buildPosterStoryUrl({ motion: "full" }) : buildStoryEntryUrl({
+      setStorySrc(appStyle === "poster" ? buildPosterStoryUrl({ motion: "full" }) : appStyle === "archive" ? buildArchiveStoryUrl({ motion: "full" }) : buildStoryEntryUrl({
         watch: workspaceRecords.watch_history.length,
         liked: workspaceRecords.liked_videos.length,
         favorite: workspaceRecords.favorite_videos.length,

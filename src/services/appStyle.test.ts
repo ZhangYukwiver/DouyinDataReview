@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { APP_STYLES, applyAppStyle, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle } from "./appStyle";
+import { APP_STYLES, applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle } from "./appStyle";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const data = new Map(Object.entries(initial));
@@ -40,12 +40,12 @@ describe("app style", () => {
     const doc = fakeDocument();
     applyAppStyle("archive", doc);
     expect(doc.documentElement.dataset.style).toBe("archive");
-    expect(doc.nodes.size).toBe(0);
+    expect(doc.nodes.get("content-insights-archive-fonts")?.href).toContain("family=Space+Mono");
     applyAppStyle("trace", doc);
     applyAppStyle("trace", doc);
     expect(doc.documentElement.dataset.style).toBe("trace");
-    expect(doc.nodes.size).toBe(1);
-    expect([...doc.nodes.values()][0]?.href).toContain("fonts.googleapis.com");
+    expect(doc.nodes.size).toBe(2);
+    expect(doc.nodes.get("content-insights-trace-fonts")?.href).toContain("fonts.googleapis.com");
     expect(() => applyAppStyle("trace", undefined)).not.toThrow();
   });
 
@@ -66,6 +66,11 @@ describe("app style", () => {
     expect(doc.documentElement.dataset.style).toBe("trace");
     expect([...doc.nodes.keys()]).toEqual(["content-insights-poster-fonts", "content-insights-trace-fonts"]);
     expect(doc.nodes.get("content-insights-poster-fonts")?.href).toContain("family=Anton");
+  });
+
+  it("points the archive style at its paged story page", () => {
+    expect(buildArchiveStoryUrl()).toBe("/story/story-archive.html");
+    expect(buildArchiveStoryUrl({ motion: "full" })).toBe("/story/story-archive.html?motion=full");
   });
 
   it("points the poster style straight at its story page", () => {

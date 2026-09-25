@@ -161,7 +161,7 @@ export function ContentWorkspace({
   const mobile = width < 720;
   // 年志与海报的报告都是 /story 下的静态页，工作台不铺档案馆的纸纹
   const trace = appStyle !== "archive";
-  const replayLabel = appStyle === "poster" ? "重看年度海报" : trace ? "重读内容年志" : "重看内容故事";
+  const replayLabel = appStyle === "poster" ? "重看年度海报" : trace ? "重读内容年志" : "重翻年度档案";
   const reportView = isReportView(activeView);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // 持续报告首次打开时自动收起；用户仍可用左上角按钮临时展开。
@@ -368,7 +368,7 @@ export function ContentWorkspace({
         ) : activeView === "summary" ? (
           model.status === "empty"
             ? <SummaryEmpty />
-            : <ReportDashboard mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} square={appStyle === "poster"} width={mainWidth} />
+            : <ReportDashboard mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} square={appStyle !== "trace"} width={mainWidth} />
         ) : activeView === "highlights" ? (
           livingReport
             ? <LivingHighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={livingReport} />
@@ -397,12 +397,12 @@ export function ContentWorkspace({
 
       {Platform.OS === "web" && !trace ? (
         <>
-          <View pointerEvents="none" style={styles.paperGrain}>
+          <View {...ws("w-grain")} pointerEvents="none" style={styles.paperGrain}>
             <Image resizeMode="repeat" source={require("./assets/paper-grain.png")} style={styles.paperGrainImg} />
           </View>
-          <View pointerEvents="none" style={styles.paperTint} />
+          <View {...ws("w-tint")} pointerEvents="none" style={styles.paperTint} />
           {!mobile ? (
-            <View pointerEvents="none" style={styles.paperTint}>
+            <View {...ws("w-corners")} pointerEvents="none" style={styles.paperTint}>
               {[styles.cornerTL, styles.cornerTR, styles.cornerBL, styles.cornerBR].map((corner, index) => (
                 <View key={index} style={[styles.corner, corner]} />
               ))}
@@ -795,7 +795,7 @@ function RecordTile({
             </View>
           )}
           <View style={styles.tileTopMeta}>
-            <View style={[styles.typeBadge, { backgroundColor: accent }]} />
+            <View {...ws("w-type")} style={[styles.typeBadge, { backgroundColor: accent }]} />
             {record.durationSeconds ? <Text {...ws("stamp")} style={styles.durationBadge}>{formatDuration(record.durationSeconds)}</Text> : null}
           </View>
           <View {...ws("w-tilebar")} style={styles.tileBottomMeta}>
@@ -995,7 +995,7 @@ function LivingChangeCard({
           </Pressable>
         );
       })}
-      {chapter.notice ? <Text style={styles.panelNotice}>{chapter.notice}</Text> : null}
+      {chapter.notice ? <Text {...ws("w-notice")} style={styles.panelNotice}>{chapter.notice}</Text> : null}
     </View>
   );
 }
@@ -1122,7 +1122,7 @@ function HighlightCard({
 
   return (
     <Pressable
-      {...fx({ reveal: inView, i: index + 1, hover: "card", ws: "w-card" })}
+      {...fx({ reveal: inView, i: index + 1, hover: "card", ws: item ? "w-card" : "w-card void" })}
       ref={cardRef}
       accessibilityLabel={`${label}：${title}${canOpen ? "，打开抖音视频" : ""}`}
       accessibilityRole={canOpen ? "link" : undefined}
@@ -1178,7 +1178,7 @@ function SummaryEmpty() {
 }
 
 function PanelNotice({ text }: { text: string }) {
-  return <Text style={styles.panelNotice}>{text}</Text>;
+  return <Text {...ws("w-notice")} style={styles.panelNotice}>{text}</Text>;
 }
 
 function formatCompactNumber(value: number): string {
