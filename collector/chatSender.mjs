@@ -30,14 +30,15 @@ export function validateChatSend(input) {
 }
 
 // The three helpers below run inside the page.
-function openConversation(id) {
+export function openConversation(id) {
   const store = globalThis.conversationStore;
   const item = store?.conversationMap?.get(id) ?? store?.strangerConversationMap?.get(id);
-  if (!item) return "missing";
-  if (item.type !== 1) return "group";
-  if (store.curConversationId === id) return "ok";
+  if (!item) return { state: "missing" };
+  // Groups use the same composer; type 1 is a one-to-one chat.
+  const group = item.type !== 1;
+  if (store.curConversationId === id) return { state: "ok", group };
   store.setCurConversation(item);
-  return store.curConversationId === id ? "switched" : "failed";
+  return { state: store.curConversationId === id ? "switched" : "failed", group };
 }
 
 function ownMessages(id) {
@@ -66,9 +67,8 @@ function editorText(element) {
 const rejected = (message) => ({ outcome: "rejected", message });
 
 export async function sendChatText(page, { conversationId, text }, { timeoutMs = 20_000, settleMs = 3_000, pollMs = 250, switchMs = 800 } = {}) {
-  const opened = await page.evaluate(openConversation, conversationId);
+  const { state: opened, group } = await page.evaluate(openConversation, conversationId);
   if (opened === "missing") throw new ChatSendError("conversation_unavailable", "抖音网页里暂时找不到这个会话，请稍后再试。", 410);
-  if (opened === "group") throw new ChatSendError("invalid_request", "群聊暂不支持发送。", 400);
   if (opened === "failed") throw new ChatSendError("control_unavailable", "没能打开这个会话，请稍后再试。");
   // The old conversation's composer lingers until the site re-renders.
   if (opened === "switched") await delay(switchMs);
@@ -109,7 +109,7 @@ export async function sendChatText(page, { conversationId, text }, { timeoutMs =
     const own = await page.evaluate(ownMessages, conversationId).catch(() => null);
     sent = own?.findLast((message) => !known.has(message.clientId) && message.text?.trim() === text.trim()) ?? sent;
     if (sent && DELIVERED.has(sent.status) && /^[1-9]\d*$/u.test(sent.serverId)) {
-      return { outcome: "confirmed", message: "已发送", chatMessage: sentChatMessage(conversationId, text, sent) };
+      return { outcome: "confirmed", message: "已发送", chatMessage: sentChatMessage(conversationId, text, sent, group) };
     }
     if (sent?.status === -3) return rejected("这条消息没通过抖音审核，只有你自己能看到。");
     if (sent?.status === -2) return rejected(sent.check || "抖音没有接收这条消息。");
@@ -124,12 +124,13 @@ export async function sendChatText(page, { conversationId, text }, { timeoutMs =
   return { outcome: "unknown", message: "还没确认到发送结果，先在手机上看一眼，再决定要不要重发。" };
 }
 
-function sentChatMessage(conversationId, text, sent) {
+// A group message is typed as such so the store keeps its rule of never saving group text.
+function sentChatMessage(conversationId, text, sent, group) {
   return normalizeChatPayload({ msgs: [{
     server_id: sent.serverId,
     sender_uid: sent.sender || null,
     type_code: 7,
     created_at: sent.sentAt ?? Date.now(),
     content_json: { text, aweType: 700 },
-  }] }, { conversationId, conversationType: 1 }).messages[0] ?? null;
+  }] }, { conversationId, conversationType: group ? 2 : 1 }).messages[0] ?? null;
 }

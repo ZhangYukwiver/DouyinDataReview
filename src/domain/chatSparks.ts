@@ -5,15 +5,48 @@ export type SparkDay = "both" | "mine" | "theirs" | "one" | "none";
 
 export interface Spark {
   id: string;
-  /** done：今天已续上；pending：连到昨天、今天还没续；broken：最近 7 天内断掉。 */
-  state: "done" | "pending" | "broken";
+  /** done：今天已续上；pending：连到昨天、今天还没续；broken：最近 7 天内断掉；recover：抖音显示重燃中或快消失了。 */
+  state: "done" | "pending" | "broken" | "recover";
   /** 连续互发的天数；broken 时是断掉之前那一段。 */
   days: number;
   /** broken 时没接上的那一天（本地日期 YYYY-MM-DD）。 */
   brokeOn: string | null;
   today: SparkDay;
-  /** 最近 14 天，最早的在前。 */
+  /** 最近 14 天，最早的在前；只有抖音数据、本机没有消息时为空。 */
   recent: SparkDay[];
+  /** 抖音自己显示的字样（如「892」「重燃中 2/3」）；有它就说明天数来自抖音，不是估算。 */
+  official?: string;
+}
+
+/** 抖音网页给每个会话存的火花：按天切的时间窗（秒），state 1 亮着、2 今天还没续（灰）、3 重燃中或快消失、4 没了。 */
+export interface OfficialStreak {
+  conversationId: string;
+  windows: Array<{ start: number; end: number; days: number; state: number; text: string }>;
+}
+
+// 有抖音自己的数据时以它为准（好友和群都有）；本机估算只补上还没点亮的那些。
+export function mergeOfficialSparks(estimated: Spark[], official: readonly OfficialStreak[] | null, now: Date = new Date()): Spark[] {
+  if (!official) return estimated;
+  const seconds = now.getTime() / 1000;
+  const local = new Map(estimated.map((spark) => [spark.id, spark]));
+  const merged: Spark[] = [];
+  for (const streak of official) {
+    const current = streak.windows.find((window) => window.start <= seconds && seconds < window.end);
+    if (!current || ![1, 2, 3].includes(current.state)) continue;
+    const mine = local.get(streak.conversationId);
+    local.delete(streak.conversationId);
+    merged.push({
+      id: streak.conversationId,
+      state: current.state === 1 ? "done" : current.state === 2 ? "pending" : "recover",
+      days: current.days,
+      brokeOn: null,
+      today: mine?.today ?? "none",
+      recent: mine?.recent ?? [],
+      official: current.text || String(current.days),
+    });
+  }
+  for (const spark of local.values()) if (spark.state !== "broken" && spark.days < SPARK_LIT_DAYS) merged.push(spark);
+  return merged.sort((left, right) => right.days - left.days || left.id.localeCompare(right.id));
 }
 
 // ponytail: 抖音没公开火花算法，这里按第三方整理的说法估算——同一天双方都发过消息算一天、

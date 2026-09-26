@@ -366,6 +366,7 @@ export function ContentWorkspace({
             onToggleReception={onToggleChatReception ?? onOpenSettings}
             onCollectHistory={onCollectChatHistory}
             sendConnection={commentsConnection}
+            videoRecords={records}
             conversations={chatConversations}
             messages={chatMessages}
             mobile={mobile}

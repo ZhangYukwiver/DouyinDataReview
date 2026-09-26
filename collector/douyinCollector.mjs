@@ -53,6 +53,7 @@ import {
 } from "./videoDownloader.mjs";
 import { observeChatSockets } from "./chatRealtime.mjs";
 import { ChatSendError, sendChatText, validateChatSend } from "./chatSender.mjs";
+import { loadChatMessages, readChatStreaks } from "./chatViewer.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
 const CHAT_URL = "https://www.douyin.com/chat?isPopup=1";
@@ -1606,6 +1607,28 @@ export class DouyinCollector {
     } finally {
       if (this.chatSendPromise === result) this.chatSendPromise = null;
     }
+  }
+
+  // Group messages and official streaks are read live from the chat page and never stored.
+  chatPageForReading() {
+    const observation = this.chat;
+    if (!this.isChatReceiving() || observation.stopping || !observation.page || observation.page.isClosed()) throw new ChatSendError("not_receiving", "先开始接收消息，才能看群消息和抖音上的火花。");
+    if (!observation.historyReady) throw new ChatSendError("collector_busy", "正在整理聊天历史，整理完就能看。");
+    return observation.page;
+  }
+
+  async readChatMessages(input) {
+    const page = this.chatPageForReading();
+    if (input?.older !== true) return loadChatMessages(page, { conversationId: input?.conversationId });
+    // Paging older opens the conversation and scrolls the site's list, so it shares the send lock.
+    if (this.chatSendPromise) throw new ChatSendError("collector_busy", "正在发消息，发完再加载更早的消息。");
+    const work = loadChatMessages(page, { conversationId: input.conversationId, older: true });
+    this.chatSendPromise = work;
+    try { return await work; } finally { if (this.chatSendPromise === work) this.chatSendPromise = null; }
+  }
+
+  async readChatStreaks() {
+    return { streaks: await readChatStreaks(this.chatPageForReading()) };
   }
 
   isManualObserving() {
