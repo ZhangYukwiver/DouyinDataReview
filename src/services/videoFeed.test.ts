@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PersonalVideoRecord } from "../domain/personalRecords";
-import { closeExplore, readExplore, type ExplorePage } from "./explorer";
+import { closeExplore, interactExplore, readExplore, type ExplorePage } from "./explorer";
 import { LocalCollectorError } from "./localCollector";
-import { buildVideoFeed, createVideoCommentsSession, createVideoWheelGesture, waitForCollector } from "./videoFeed";
+import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, waitForCollector } from "./videoFeed";
 
-vi.mock("./explorer", () => ({ readExplore: vi.fn(), closeExplore: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("./explorer", () => ({ readExplore: vi.fn(), interactExplore: vi.fn(), closeExplore: vi.fn().mockResolvedValue(undefined) }));
 const connection = { baseUrl: "http://127.0.0.1:4765", token: "test-token" };
 const record: PersonalVideoRecord = { id: "record-1", title: "作品", author: "作者", occurredAt: null, url: "https://www.douyin.com/video/123456789", mediaType: "video" };
 const page: ExplorePage = { sessionId: "owned-comments", kind: "comments", items: [], profile: null, video: null, hasMore: true, limited: false };
@@ -134,5 +134,28 @@ describe("shared collector contention", () => {
     await rejected;
     await vi.advanceTimersByTimeAsync(2000);
     expect(operation).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("posting from the player", () => {
+  it("comments through the tab the comments were read from", async () => {
+    vi.mocked(readExplore).mockResolvedValue(page);
+    vi.mocked(interactExplore).mockResolvedValue({ outcome: "confirmed", message: "回复已发送" });
+    const session = createVideoCommentsSession(connection, record);
+    await expect(session.comment("好")).rejects.toThrow("评论还没加载好");
+    await session.read();
+    await session.comment("好", "7685745937210311461");
+    expect(vi.mocked(interactExplore).mock.calls[0]![1]).toMatchObject({ sessionId: "owned-comments", action: "comment", text: "好", replyTo: "7685745937210311461" });
+  });
+  it("shares through its own list tab and releases it on close", async () => {
+    vi.mocked(readExplore).mockResolvedValue({ ...page, sessionId: "owned-share", kind: "sharees" });
+    vi.mocked(interactExplore).mockResolvedValue({ outcome: "confirmed", message: "已分享" });
+    const session = createVideoShareSession(connection, record);
+    await session.read();
+    await session.share("102530395613");
+    expect(readExplore).toHaveBeenCalledWith(connection, { kind: "sharees", id: "123456789" });
+    expect(vi.mocked(interactExplore).mock.calls[0]![1]).toMatchObject({ sessionId: "owned-share", action: "share", targetId: "102530395613" });
+    session.close();
+    expect(closeExplore).toHaveBeenCalledWith(connection, ["owned-share"]);
   });
 });

@@ -16,7 +16,7 @@
 .rv-heading { flex: 1; font-size: 16px; font-weight: 700; }
 .rv-heading span { margin-left: 12px; color: #ffffff9c; font-size: 12px; font-weight: 400; }
 .rv-position { font-variant-numeric: tabular-nums; font-size: 12px; color: #ddd; }
-.rv-actions { position: absolute; right: 12px; bottom: 194px; display: flex; flex-direction: column; align-items: center; gap: 19px; text-shadow: 0 1px 6px #0009; }
+.rv-actions { position: absolute; right: 12px; bottom: clamp(96px, calc(100% - 470px), 194px); display: flex; flex-direction: column; align-items: center; gap: 19px; text-shadow: 0 1px 6px #0009; }
 .rv-avatar { display: flex; justify-content: center; align-items: center; width: 44px; height: 44px; border: 2px solid white; border-radius: 50%; background: #444; overflow: hidden; }
 .rv-avatar img, .rv-comment-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .rv-stat { display: flex; flex-direction: column; align-items: center; min-width: 44px; gap: 3px; padding: 0; background: transparent; }
@@ -73,6 +73,50 @@
 .rv-more { width: 100%; min-height: 40px; gap: 5px; padding: 8px; background: transparent; color: #c4c4cd !important; font-size: 12px !important; }
 .rv-more:hover:not(:disabled) { color: white !important; background: #ffffff06; }
 .rv-comments-footer { padding: 10px 12px; border-top: 1px solid #ffffff10; font-size: 12px; color: #929298; }
+.rv-emoji { display: inline-block; width: 1.3em; height: 1.3em; margin: 0 1px; vertical-align: -.3em; object-fit: contain; }
+.rv-comment-meta { display: flex; align-items: center; gap: 14px; }
+.rv-reply-action { min-height: 22px; padding: 0; background: transparent; color: #9a9aa4 !important; font-size: 11px !important; }
+.rv-reply-action:hover { color: #fff !important; }
+.rv-composer { position: relative; }
+.rv-composer-target { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 8px 4px; color: #a8a8b2; font-size: 12px; }
+.rv-composer-target span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-composer-target button { width: 22px; height: 22px; padding: 0; border-radius: 50%; background: transparent; }
+.rv-composer-box { display: flex; align-items: flex-end; gap: 2px; padding: 5px 5px 5px 12px; border: 1px solid transparent; border-radius: 12px; background: #2a2a31; }
+.rv-composer-box:focus-within { border-color: #ffffff26; }
+.rv-composer-box textarea { flex: 1; min-width: 0; min-height: 30px; max-height: 110px; field-sizing: content; resize: none; padding: 5px 0; border: 0; outline: none; background: transparent; color: #f0f0f3; font: inherit; font-size: 13px; line-height: 20px; user-select: text; }
+.rv-composer-box textarea::placeholder { color: #7e7e88; }
+.rv-composer-icon { width: 30px; height: 30px; padding: 0; border-radius: 8px; background: transparent; }
+.rv-composer-icon:hover:not(:disabled) { background: #ffffff10; }
+.rv-composer-send { flex-shrink: 0; width: 30px; height: 30px; padding: 0; border-radius: 50%; background: #fe2c55; }
+.rv-spinner-small { width: 14px; height: 14px; }
+.rv-composer-notice { margin: 8px 4px 0; font-size: 12px; line-height: 1.6; }
+.rv-composer-notice.rv-error { color: #ff7a8f; }
+.rv-composer-notice.rv-warn { color: #f3c46d; }
+.rv-emoji-panel { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; max-height: 224px; overflow-y: auto; overscroll-behavior: contain; padding: 8px; border-radius: 12px; background: #26262d; box-shadow: 0 10px 40px #000a; scrollbar-width: thin; scrollbar-color: #494950 transparent; }
+.rv-emoji-panel button { aspect-ratio: 1; padding: 4px; border-radius: 6px; background: transparent; }
+.rv-emoji-panel button:hover { background: #ffffff14; }
+.rv-emoji-panel img { width: 100%; height: 100%; object-fit: contain; }
+.rv-share { position: absolute; right: 66px; bottom: 96px; z-index: 3; display: flex; flex-direction: column; width: min(300px, calc(100% - 78px)); max-height: min(470px, calc(100% - 150px)); overflow: hidden; border-radius: 12px; background: #25252c; box-shadow: 0 16px 60px #000c; animation: rv-pop .16s ease-out; }
+.rv-share-search { display: flex; align-items: center; gap: 7px; height: 34px; margin: 12px 12px 4px; padding: 0 10px; border-radius: 8px; background: #33333b; }
+.rv-share-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: #f0f0f3; font: inherit; font-size: 13px; user-select: text; }
+.rv-share-search input::placeholder { color: #85858f; }
+.rv-share-title { margin: 8px 14px 4px; color: #85858f; font-size: 12px; }
+.rv-share-list { flex: 1; min-height: 80px; overflow-y: auto; overscroll-behavior: contain; padding: 0 6px 6px; scrollbar-width: thin; scrollbar-color: #494950 transparent; }
+.rv-share-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; }
+.rv-share-row:hover { background: #ffffff0a; }
+.rv-share-avatar { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 38px; height: 38px; overflow: hidden; border-radius: 50%; background: #3a3a43; color: #ccc; font-size: 14px; }
+.rv-share-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.rv-share-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ececf0; font-size: 13px; }
+.rv-share-button { flex-shrink: 0; min-width: 62px; height: 30px; padding: 0 12px; border-radius: 6px; background: #fe2c55; font-size: 12px !important; font-weight: 600 !important; }
+.rv-backdrop .rv-share-button:disabled { opacity: 1; }
+.rv-share-muted { background: #3a3a43; color: #b8b8c1 !important; }
+.rv-share-status { margin: 0; padding: 8px 14px; border-top: 1px solid #ffffff0d; color: #c8c8d0; font-size: 12px; line-height: 1.5; }
+.rv-share-notice { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0; padding: 24px 12px; text-align: center; color: #a4a4af; font-size: 12px; line-height: 1.6; }
+.rv-share-notice p { margin: 0; }
+.rv-share-footer { padding: 10px 12px 12px; border-top: 1px solid #ffffff0d; }
+.rv-share-copy { width: 100%; height: 34px; gap: 6px; border-radius: 8px; background: #33333b; font-size: 13px !important; }
+.rv-share-copy:hover:not(:disabled) { background: #3d3d46; }
+@keyframes rv-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
 @keyframes rv-spin { to { transform: rotate(360deg); } }
 @keyframes rv-enter { from { opacity: .5; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 760px) {
