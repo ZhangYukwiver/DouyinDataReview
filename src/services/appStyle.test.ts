@@ -40,7 +40,7 @@ describe("app style", () => {
     const doc = fakeDocument();
     applyAppStyle("archive", doc);
     expect(doc.documentElement.dataset.style).toBe("archive");
-    expect(doc.nodes.get("content-insights-archive-fonts")?.href).toContain("family=Space+Mono");
+    expect(doc.nodes.get("content-insights-archive-fonts")?.href).toContain("family=Cormorant+Garamond");
     applyAppStyle("trace", doc);
     applyAppStyle("trace", doc);
     expect(doc.documentElement.dataset.style).toBe("trace");

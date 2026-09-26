@@ -58,7 +58,7 @@ const NOT_SETUP = ':not([data-testid="setup-workspace"] *)';
 
 const blocks: string[] = [
   // ---------- 底子：零圆角零阴影，墨黑与新闻纸 ----------
-  rule(P, `--pf:${INK};--pb:${PAPER};--ph:${SIG};--pa:${SIG};--ws-swarm:off`),
+  rule(P, `--pf:${INK};--pb:${PAPER};--ph:${SIG};--pa:${SIG};--ws-swarm:on`),
   rule(`${P} *${NOT_SETUP}`, "border-radius:0!important;box-shadow:none!important;text-shadow:none!important"),
   rule(`${P} ${NOT_SETUP}::selection`, `background:${SIG};color:${INK}`),
   rule(`${P} :focus-visible${NOT_SETUP}`, `outline:3px solid ${SIG}!important;outline-offset:2px!important`),
@@ -193,8 +193,10 @@ const blocks: string[] = [
   rule(sel("d-mosaic dark"), `${ink(PAPER)};border-color:${INK}!important`),
   rule(sel("d-event"), "border-bottom:2px solid var(--pf)!important"),
   rule(sel("d-ititle"), heavy(14, 1.3, "0")),
-  // 群点在海报里停画，剩下的补位块只是一块空白斜线框，看着像没加载出来的组件：整块不要
-  rule(`${P} [data-testid="report-tile-swarm"]`, "display:none!important"),
+  // 补位块：新闻纸底上一群橙芯墨边的群点绕着转，点一下散开；轮廓 3px 墨线，提示用 mono 戳
+  rule(sel("d-swarm"), `background-color:${PAPER}!important`),
+  rule(sel("d-swarmhint"), `font-family:${MONO}!important;font-weight:700!important;font-size:10px!important;letter-spacing:.12em!important;color:${INK}!important;opacity:1!important`),
+  rule(`${P} [data-testid="report-tile-swarm"] svg path`, `stroke:${INK}!important;stroke-width:3px!important`),
   // 曲线：实心橙色面积 + 3px 墨线；峰值点改墨黑方块感的实心点
   rule(["hours", "months", "tail"].map((key) => `${P} [data-testid="report-tile-${key}"] svg path:not([fill="none"])`).join(","), `fill:${SIG}!important;fill-opacity:1!important`),
   rule(["hours", "months", "tail", "daynight"].map((key) => `${P} [data-testid="report-tile-${key}"] svg path[fill="none"]`).join(","), `stroke:${INK}!important;stroke-width:3px!important`),

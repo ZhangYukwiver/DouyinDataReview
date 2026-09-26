@@ -557,7 +557,7 @@ function StyleOption({ detail, kind, label, on, onPress, size }: { detail: strin
   );
 }
 
-// 三种报告风格的小样：内容年志是墨夜里一张斜插的卡，档案馆是黑底橙色卷宗，海报是新闻纸上的黑块大标题
+// 三种报告风格的小样：内容年志是墨夜里一张斜插的卡，档案馆是暗室里的金色星图，海报是新闻纸上的黑块大标题
 function StylePreview({ h, kind, w }: { h: number; kind: AppStyle; w: number }) {
   const art = useMemo(() => {
     const frame = roughShape(w, h, `pv-${kind}`, { inset: 1.5, amp: 0.7 });
@@ -573,12 +573,16 @@ function StylePreview({ h, kind, w }: { h: number; kind: AppStyle; w: number }) 
       ] };
     }
     if (kind === "archive") {
-      return { bg: "#1B1713", frame, border, parts: [
-        <Path key="tab" d={block(0.16, 0.2, 0.26, 0.16, "pv-a-tab")} fill="#E8772E" />,
-        <Path key="page" d={block(0.24, 0.16, 0.52, 0.34, "pv-a-page")} fill="#F2E7D2" />,
-        <Path key="body" d={block(0.16, 0.34, 0.68, 0.5, "pv-a-body")} fill="#E8772E" />,
-        <Path key="label" d={roughLine(w * 0.28, h * 0.56, w * 0.6, h * 0.56, "pv-a-label", { amp: 0.3 })} fill="none" stroke="#1B1713" strokeWidth={1.2} />,
-        <Path key="corner" d={`M${w * 0.84} ${h * 0.7}L${w * 0.84} ${h * 0.84}L${w * 0.7} ${h * 0.84}Z`} fill="#F2E7D2" />,
+      // 暗室里一张星图：金色刻度圈、一颗四角星、左边一行细金字
+      const cx = w * 0.64, cy = h * 0.5, r = Math.min(w, h) * 0.3;
+      const star = (x: number, y: number, s: number) => `M${x} ${y - s}C${x + s * 0.09} ${y - s * 0.16} ${x + s * 0.16} ${y - s * 0.09} ${x + s} ${y}C${x + s * 0.16} ${y + s * 0.09} ${x + s * 0.09} ${y + s * 0.16} ${x} ${y + s}C${x - s * 0.09} ${y + s * 0.16} ${x - s * 0.16} ${y + s * 0.09} ${x - s} ${y}C${x - s * 0.16} ${y - s * 0.09} ${x - s * 0.09} ${y - s * 0.16} ${x} ${y - s}Z`;
+      return { bg: "#15181A", frame, border, parts: [
+        <Circle key="ring" cx={cx} cy={cy} fill="none" r={r} stroke="#C59861" strokeWidth={0.9} />,
+        <Circle key="dots" cx={cx} cy={cy} fill="none" r={r * 0.62} stroke="#6E8C8F" strokeDasharray="0.6 2.2" strokeLinecap="round" strokeWidth={1} />,
+        <Path key="star" d={star(cx - r * 0.3, cy - r * 0.34, r * 0.34)} fill="#E3C8A6" />,
+        <Path key="t1" d={roughLine(w * 0.12, h * 0.36, w * 0.36, h * 0.36, "pv-a-t1", { amp: 0.2 })} fill="none" stroke="#E3C8A6" strokeWidth={1.6} />,
+        <Path key="t2" d={roughLine(w * 0.12, h * 0.5, w * 0.3, h * 0.5, "pv-a-t2", { amp: 0.2 })} fill="none" stroke="rgba(207,193,176,.55)" strokeWidth={0.9} />,
+        <Path key="t3" d={roughLine(w * 0.12, h * 0.62, w * 0.26, h * 0.62, "pv-a-t3", { amp: 0.2 })} fill="none" stroke="rgba(207,193,176,.55)" strokeWidth={0.9} />,
       ] };
     }
     return { bg: "#EFE6D4", frame, border, parts: [

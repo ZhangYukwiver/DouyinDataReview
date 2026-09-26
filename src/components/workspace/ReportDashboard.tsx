@@ -353,7 +353,7 @@ function useSwarm(ref: React.RefObject<View | null>, focusX: number, focusY: num
     let edgeColor = "#9ab";
     let coreColor = "#456";
     let styleKey = "";
-    // 海报风格把这块空当印成实心色块（posterCss 里 --ws-swarm:off），群点不画
+    // 某个风格要停掉群点时在它的版式层里写 --ws-swarm:off
     let paused = false;
     const readColors = () => {
       const computed = window.getComputedStyle(node);
@@ -715,7 +715,7 @@ function Mosaic({ items }: { items: Array<{ label: string; value: number }> }) {
             const step = max === min ? 3 : 1 + Math.round((item.value - min) / (max - min) * (heatColors.length - 2));
             return (
               <View
-                {...ws("d-mosaic", step === heatColors.length - 2 && "dark")}
+                {...ws("d-mosaic", step === heatColors.length - 1 ? "hi" : step === heatColors.length - 2 && "dark")}
                 key={`${item.label}:${index}`}
                 style={[styles.mosaicCell, {
                   flexGrow: Math.max(0.4, weight),
