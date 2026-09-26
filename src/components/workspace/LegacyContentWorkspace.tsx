@@ -30,6 +30,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Play,
+  Radio,
   RefreshCw,
   Search,
   Settings2,
@@ -62,7 +63,7 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "summary" | "highlights" | "chat" | "explore";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore";
 
 export interface ContentWorkspaceProps {
   explore?: React.ReactNode;
@@ -107,6 +108,7 @@ type IconComponent = React.ComponentType<{
 const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent; accent: string }> = [
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
+  { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
   { id: "favorite_videos", label: "收藏", icon: Bookmark, accent: color.amber },
   { id: "chat", label: "聊天", icon: MessageCircle, accent: color.cyan },
@@ -184,9 +186,15 @@ export function ContentWorkspace({
     () => buildReportModel(records, chatMessages, report, chatConversations),
     [chatConversations, chatMessages, records, report],
   );
+  // 直播记录存在观看历史里（mediaType live），侧栏单独一栏，观看历史只列视频，免得一条出现两次
+  const [watchedVideos, watchedLives] = useMemo(() => [
+    records.watch_history.filter((record) => record.mediaType !== "live"),
+    records.watch_history.filter((record) => record.mediaType === "live"),
+  ], [records.watch_history]);
   const counts: Record<WorkspaceViewKey, number> = {
     explore: 0,
-    watch_history: records.watch_history.length,
+    watch_history: watchedVideos.length,
+    live: watchedLives.length,
     liked_videos: records.liked_videos.length,
     favorite_videos: records.favorite_videos.length,
     chat: countChatMessages(chatMessages, chatConversations),
@@ -377,7 +385,8 @@ export function ContentWorkspace({
               : <HighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={report} />
         ) : (
           <RecordsGallery
-            activeType={activeView}
+            activeType={activeView === "live" ? "watch_history" : activeView}
+            label={currentNav.label}
             downloadStates={downloadStates}
             mobile={mobile}
             onDownloadRecord={onDownloadRecord}
@@ -387,7 +396,7 @@ export function ContentWorkspace({
             onOpenRecord={onOpenRecord}
             onOpenSettings={onOpenSettings}
             privacy={privacy}
-            records={records[activeView]}
+            records={activeView === "live" ? watchedLives : activeView === "watch_history" ? watchedVideos : records[activeView]}
             sourceLabel={sourceLabel}
             status={status}
             width={mainWidth}
@@ -526,6 +535,7 @@ function NavButton({
 
 function RecordsGallery({
   activeType,
+  label,
   downloadStates,
   mobile,
   onDownloadRecord,
@@ -541,6 +551,7 @@ function RecordsGallery({
   width,
 }: {
   activeType: PersonalRecordType;
+  label: string;
   downloadStates: Record<string, RecordDownloadState>;
   mobile: boolean;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
@@ -564,10 +575,11 @@ function RecordsGallery({
     onBatchDownloadActiveChange?.(batchRecords !== null);
     return () => onBatchDownloadActiveChange?.(false);
   }, [batchRecords, onBatchDownloadActiveChange]);
-  useEffect(() => { setSelecting(false); setSelected(new Set()); }, [activeType, privacy]);
-  useEffect(() => { setPlayingRecord(null); }, [activeType, privacy]);
+  useEffect(() => { setSelecting(false); setSelected(new Set()); }, [label, privacy]);
+  useEffect(() => { setPlayingRecord(null); }, [label, privacy]);
   const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
-  const label = ({ watch_history: "观看历史", liked_videos: "喜欢", favorite_videos: "收藏" })[activeType];
+  // 最后一行不满时 flex:1 会把卡片拉宽，限成一列宽（12 是 gridRow 的 gap）
+  const cellStyle = Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null;
   const sortedRecords = useMemo(() => records, [records]);
   const candidates = useMemo(() => uniqueDownloadVideos(records), [records]);
   const chosen = candidates.filter((record) => selected.has(videoDownloadKey(record)!));
@@ -666,9 +678,10 @@ function RecordsGallery({
       numColumns={layout === "grid" ? columns : 1}
       renderItem={({ item }) => layout === "grid"
         ? <RecordTile
+            cellStyle={cellStyle}
             selection={selectionFor(item)}
             downloadState={downloadStates[item.id] ?? "idle"}
-            onDownloadRecord={onDownloadRecord}
+            onDownloadRecord={item.mediaType === "live" ? undefined : onDownloadRecord}
             onPlayRecord={onLoadVideo && item.mediaType !== "image" && item.mediaType !== "live" ? setPlayingRecord : undefined}
             onOpenRecord={onOpenRecord}
             privacy={privacy}
@@ -695,6 +708,7 @@ function SelectionMark({ selection }: { selection: RecordSelection }) {
 }
 
 function RecordTile({
+  cellStyle,
   selection,
   downloadState,
   onDownloadRecord,
@@ -704,6 +718,7 @@ function RecordTile({
   privacy,
   onOpenRecord,
 }: {
+  cellStyle?: object | null;
   selection?: RecordSelection;
   downloadState: RecordDownloadState;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
@@ -765,7 +780,7 @@ function RecordTile({
             onMouseLeave: () => setHovered(false),
           } as Record<string, unknown>)
         : {})}
-      style={styles.tile}
+      style={[styles.tile, cellStyle]}
     >
       <Pressable
         accessibilityLabel={selection ? `${selection.disabled && !selection.checked ? "不可选择" : "选择视频"}：${record.title}` : `${privacy ? "已隐藏内容" : record.title}${record.url ? "，打开抖音视频" : ""}`}

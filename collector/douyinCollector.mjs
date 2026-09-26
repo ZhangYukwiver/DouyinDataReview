@@ -16,9 +16,18 @@ import {
   fetchDirectHistoryPage,
   invalidateDirectHistoryTemplate,
   loadDirectHistoryTemplate,
+  scrollHiddenListPage,
   validateDirectHistoryUrl,
 } from "./directHistory.mjs";
-import { CollectorAdapterError, RecordAccumulator, createEmptyRecords, matchDouyinEndpoint, mergeRecords, normalizeRecord } from "./normalizer.mjs";
+import {
+  CollectorAdapterError,
+  RecordAccumulator,
+  createEmptyRecords,
+  matchDouyinEndpoint,
+  mergeRecords,
+  normalizeDouyinResponse,
+  normalizeRecord,
+} from "./normalizer.mjs";
 import {
   ChatAdapterError,
   ChatConversationAccumulator,
@@ -472,6 +481,37 @@ function mergeRecordList(type, existingRecords, fetchedRecords) {
     const rightTime = right.occurredAt ? Date.parse(right.occurredAt) : 0;
     return rightTime - leftTime;
   });
+}
+
+// 观看历史的「直播」分栏没有可直接调用的接口，只能在页面里点开它、拦页面自己发的请求
+async function collectLiveHistoryRecords(context) {
+  const endpoint = { kind: "live_history", pathname: "/webcast/feed/" };
+  const isLiveHistory = (response) => matchDouyinEndpoint(response.url())?.kind === endpoint.kind;
+  const page = await context.newPage();
+  try {
+    const payloads = [];
+    page.on("response", (response) => {
+      if (isLiveHistory(response)) payloads.push(response.json().catch(() => null));
+    });
+    // 分栏上次停在「直播」的话，打开页面就会发请求，所以打开前先开始等
+    const firstResponse = page.waitForResponse(isLiveHistory, { timeout: 60_000 });
+    firstResponse.catch(() => undefined);
+    await page.goto(`${SELF_PROFILE_URL}?showTab=record`, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await page.getByRole("tab", { name: "直播", exact: true }).first().click({ timeout: 15_000 });
+    await firstResponse;
+    // ponytail: 滚到没有新响应为止，封顶 50 页；实际一般一页就到底
+    let seen;
+    do {
+      seen = payloads.length;
+      await page.evaluate(scrollHiddenListPage).catch(() => undefined);
+      await delay(2_000);
+    } while (payloads.length > seen && payloads.length < 50);
+    return (await Promise.all(payloads)).flatMap((payload) => (
+      payload ? normalizeDouyinResponse(endpoint, payload).records : []
+    ));
+  } finally {
+    await page.close().catch(() => undefined);
+  }
 }
 
 function finalizeDirectType(type, incremental, existingRecords, fetchedRecords, knownIds, rejectedIds) {
@@ -2839,13 +2879,28 @@ export class DouyinCollector {
         }
         await persistCompletedType(type, phaseIndex === phases.length - 1);
       }
+      // 直播记录只是观看历史的附加分栏：改版、读不到都不影响上面已经存好的视频记录
+      this.updateStatus({ phase: "watch_history", message: "正在读取看过的直播" });
+      const liveRecords = await collectLiveHistoryRecords(context).catch(() => []);
+      this.assertSyncActive(runId);
+      const withLive = mergeRecordList("watch_history", stagedRecords.watch_history, liveRecords);
+      const liveAdded = withLive.length - stagedRecords.watch_history.length;
+      // 没有新增也要写回：已有的直播记录可能刚补上封面、改了昵称
+      if (liveRecords.length > 0) {
+        stagedRecords.watch_history = withLive;
+        this.snapshot = await this.store.save(stagedRecords, this.snapshot.warnings, {
+          directSync,
+          chatMessages: this.snapshot.chatMessages,
+          chatConversations: this.snapshot.chatConversations,
+        });
+      }
       const newCounts = Object.fromEntries(REQUIRED_TYPES.map((type) => [type, newIds.get(type).size]));
       this.updateStatus({
         state: "complete",
         phase: null,
         progress: null,
         message: allIncremental
-          ? `已读取新增记录（观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}）`
+          ? `已读取新增记录（观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}${liveAdded > 0 ? `、直播 ${liveAdded}` : ""}）`
           : `已读取并合并全部可见记录（观看 ${stagedRecords.watch_history.length}、点赞 ${stagedRecords.liked_videos.length}、收藏 ${stagedRecords.favorite_videos.length}）`,
         counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
         updatedAt: this.snapshot.updatedAt,
