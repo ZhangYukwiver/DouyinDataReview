@@ -8,8 +8,8 @@ import { traceCss } from "./traceCss";
 
 /**
  * 三套整体风格共用一份 token 名：
- * - 档案馆：native 仍是暖金 + 冷青 + 近黑纸面（与 ReportWorkspace 十二章同源）；
- *   web 上换成卷宗色（新闻纸 / 墨黑 / 信号橙 / 灰纸 / 锈褐，与 /story/story-archive.html 同一套），见 archiveWeb
+ * - 档案馆：暖金 + 冷青 + 近黑纸面（与 ReportWorkspace 十二章同源）；web 上同一套颜色，
+ *   只把弱化字提亮到能读、字体换成宋体 + Cormorant 古典衬线数字，见 archiveWeb
  * - 内容年志：入口卡的墨夜 / 玻璃 / 奶油字 / 信号蓝 / 琥珀光（prototype/story-entry.html）
  * - 海报：墨黑 / 新闻纸 / 信号橙
  * web 上每个 token 是 CSS 变量，<html data-style> 一换整套界面跟着换（见 ensureThemeStyles / applyAppStyle）；
@@ -154,50 +154,13 @@ const poster: WorkspacePalette = {
   tints: ["#F1EEE6", "#FFFFFF", "#E4E0D4", "#FF4A1C", "#F1EEE6", "#FFFFFF"],
 };
 
-// 档案馆（只在 web）：与 /story/story-archive.html 同一套卷宗色。native 看不到这组值，仍用上面的 archive。
+// 档案馆（只在 web）：就是上面这套近黑纸面 + 暖金 + 冷青（主题色块、热力、饼图照旧用 slices / heat / tints）。
+// 只改两处能不能读的：弱化字 #7C7266 在纸面上只有 3.8:1，提到 #A09383（各层纸面上都 ≥5:1）；
+// 砖红 #B4664F 做报错字不到 4.5:1，提一档。native 看不到这组值，仍用上面的 archive。
 const archiveWeb: WorkspacePalette = {
-  canvas: "#F2EEE6",
-  sidebar: "#E9E4D9",
-  surface: "#F2EEE6",
-  surfaceRaised: "#FFFFFF",
-  surfaceMuted: "#E0DACE",
-  border: "#0A0A0A",
-  borderSoft: "#A9A397",
-  frame: "#0A0A0A",
-  text: "#0A0A0A",
-  textSecondary: "#2A2723",
-  textMuted: "#6E6960",
-  accent: "#FF4A1D",
-  accentPressed: "#E03A10",
-  accentAction: "#FF4A1D",
-  accentSoft: "#E9E4D9",
-  figure: "#0A0A0A",
-  cyan: "#0A0A0A",
-  cyanSoft: "#E0DACE",
-  green: "#0A0A0A",
-  greenSoft: "#E0DACE",
-  amber: "#FF4A1D",
-  amberSoft: "#E9E4D9",
-  danger: "#B3001B",
-  dangerSoft: "#F3D8CF",
-  white: "#FFFFFF",
-  black: "#0A0A0A",
-  scrim: "rgba(10,10,10,0.84)",
-  button: "#0A0A0A",
-  buttonText: "#F2EEE6",
-  signal: "#FF4A1D",
-  // 漏斗从灰纸一级级压到墨黑，最后一档信号橙
-  funnel0: "#A9A397",
-  funnel1: "#6E6960",
-  vennWatch: "#0A0A0A",
-  vennFavorite: "#A9A397",
-  shadow: "none",
-  heat: ["#E0DACE", "#CFC9BD", "#A9A397", "#6E6960", "#0A0A0A", "#FF4A1D"],
-  // 饼图：墨黑、信号橙、灰纸、深灰、锈褐，不用任何半透明的橙
-  slices: ["#0A0A0A", "#FF4A1D", "#A9A397", "#6E6960", "#3D1408", "#E0DACE"],
-  avatars: ["#0A0A0A", "#FF4A1D", "#3D1408", "#6E6960", "#2A2723", "#A9A397"],
-  // 封面缺图时的底：新闻纸 / 灰纸 / 信号橙 / 纯白，上面贴一张写着编号的文件标签
-  tints: ["#F2EEE6", "#FF4A1D", "#A9A397", "#E0DACE", "#FFFFFF", "#CFC9BD"],
+  ...archive,
+  textMuted: "#A09383",
+  danger: "#C47A62",
 };
 
 const archiveFonts = {
@@ -225,13 +188,14 @@ const posterFonts: typeof archiveFonts = {
   mono: "'JetBrains Mono', ui-monospace, 'Roboto Mono', monospace",
 };
 
-// 档案馆（web）：宋体 900 标题、Archivo 压窄数字、Noto Sans SC 正文、Space Mono 戳（字体链接见 appStyle 的 FONTS.archive）
+// 档案馆（web）：整页宋体（Noto Serif SC），数字和英文眉题用细而大的古典衬线 Cormorant Garamond
+// （字体链接见 appStyle 的 FONTS.archive）。按钮、对话框里的操作字仍是系统无衬线。
 const archiveWebFonts: typeof archiveFonts = {
   serif: "'Noto Serif SC', 'Songti SC', 'STSong', serif",
-  didot: "Archivo, 'Noto Sans SC', 'PingFang SC', sans-serif",
-  body: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
-  sans: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
-  mono: "'Space Mono', 'Noto Sans SC', 'PingFang SC', monospace",
+  didot: "'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif",
+  body: "'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif",
+  sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  mono: "'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif",
 };
 
 // 档案页面是直角的；年志跟入口卡：卡片 24、按钮是胶囊
