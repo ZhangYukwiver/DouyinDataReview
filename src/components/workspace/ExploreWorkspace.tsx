@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Heart, MessageC
 import { closeExplore, interactExplore, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo } from "../../services/explorer";
 import { loadCollectorVideo } from "../../services/localCollector";
 import { RecordVideoPlayer } from "./RecordVideoPlayer";
+import { renderEmojiText } from "./emojiText";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
 
@@ -205,7 +206,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
         <View {...ws("e-box")} style={styles.composer}><TextInput accessibilityLabel="评论内容" multiline value={commentText} onChangeText={setCommentText} maxLength={500} editable={!busy} placeholder="说说你的想法…" placeholderTextColor={color.textMuted} style={styles.commentInput} /><View style={styles.between}><Text style={styles.muted}>{commentText.length}/500</Text><Button label={pending.includes(pendingKey("comment")) ? "发送结果待核验" : "发表评论"} primary disabled={busy || !commentText.trim() || pending.includes(pendingKey("comment"))} onPress={() => setIntent({ action: "comment", label: "发表评论", text: commentText.trim() })} /></View></View>
         {comments ? <>{(comments.items as ExploreComment[]).map((comment) => <View key={comment.id} style={styles.comment}>
           <Pressable accessibilityRole="button" accessibilityLabel={`查看评论作者：${comment.name}`} disabled={busy || !comment.author} onPress={() => comment.author && openProfile(comment.author)}><Avatar user={comment.author} size={32} /></Pressable>
-          <View style={styles.commentBody}><Text style={styles.commentName}>{comment.name}</Text><Text style={styles.bio}>{comment.text}</Text><Text style={styles.muted}>{date(comment.publishedAt)} · {count(comment.likes)} 赞{comment.replies ? ` · ${comment.replies} 条回复（原页查看）` : ""}</Text></View>
+          <View style={styles.commentBody}><Text style={styles.commentName}>{comment.name}</Text><Text style={styles.bio}>{renderEmojiText(comment.text)}</Text><Text style={styles.muted}>{date(comment.publishedAt)} · {count(comment.likes)} 赞{comment.replies ? ` · ${comment.replies} 条回复（原页查看）` : ""}</Text></View>
         </View>)}{!comments.items.length ? <Text style={styles.emptyText}>暂时没有评论。</Text> : null}{moreButton(comments, { kind: "comments", id: video.videoId! }, "comments")}</> : <View style={styles.commentEmpty}><MessageCircle size={24} color={color.textMuted} /><Text style={styles.muted}>点击“读取评论”查看大家的讨论</Text></View>}
       </View>
     </View> : null}

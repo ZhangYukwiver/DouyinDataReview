@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ChatMessage } from "./chatRecords";
-import { buildSparks, shiftDay, sparkDayKey } from "./chatSparks";
+import { buildSparks, mergeOfficialSparks, shiftDay, sparkDayKey } from "./chatSparks";
 
 // 本地时间 9 月 17 日晚上 9 点
 const now = new Date(2026, 8, 17, 21, 0);
@@ -73,5 +73,28 @@ describe("buildSparks", () => {
       { id: "long", messages: both(0, 1, 2, 3) },
     ], "me", now);
     expect(sparks.map((item) => [item.id, item.days])).toEqual([["long", 4], ["short", 1]]);
+  });
+});
+
+describe("sparks from Douyin itself", () => {
+  const now = new Date("2026-09-26T12:00:00+08:00");
+  const day = (state: number, days: number, text: string) => ({ start: now.getTime() / 1000 - 3_600, end: now.getTime() / 1000 + 3_600, days, state, text });
+  it("uses the site's numbers for friends and groups and keeps only unlit local estimates", () => {
+    const estimated = buildSparks([
+      { id: "0:1:1:2", messages: [] },
+    ], "1", now);
+    const localOnly = { id: "0:1:1:3", state: "pending" as const, days: 2, brokeOn: null, today: "none" as const, recent: [] };
+    const litLocal = { id: "0:1:1:4", state: "pending" as const, days: 9, brokeOn: null, today: "mine" as const, recent: [] };
+    const merged = mergeOfficialSparks([...estimated, localOnly, litLocal], [
+      { conversationId: "7091970798369407526", windows: [day(2, 892, "892")] },
+      { conversationId: "7329103166266475045", windows: [day(3, 789, "重燃中 2/3")] },
+      { conversationId: "0:1:1:5", windows: [day(4, 0, "")] },
+    ], now);
+    expect(merged.map((spark) => [spark.id, spark.state, spark.days, spark.official])).toEqual([
+      ["7091970798369407526", "pending", 892, "892"],
+      ["7329103166266475045", "recover", 789, "重燃中 2/3"],
+      ["0:1:1:3", "pending", 2, undefined],
+    ]);
+    expect(mergeOfficialSparks([localOnly], null, now)).toEqual([localOnly]);
   });
 });

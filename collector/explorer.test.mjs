@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { DouyinExplorer, ingestExploreReplies, ingestExploreResponse, isExploreApiUrl, normalizeExploreComment, normalizeExploreUser, normalizeExploreVideo, validateExploreRequest } from "./explorer.mjs";
+import { DouyinExplorer, ingestExploreReplies, ingestExploreResponse, isExploreApiUrl, normalizeExploreComment, normalizeExploreUser, normalizeExploreVideo, normalizeSharee, validateExploreRequest } from "./explorer.mjs";
 
 const author = { sec_uid: "test-public-author", nickname: "离线测试作者", follower_count: 0, follow_status: 0 };
 const aweme = (id) => ({ aweme_id: id, desc: "离线测试作品", author, create_time: 1788912000, user_digged: 0, collect_status: 1, statistics: { digg_count: 0 } });
@@ -291,5 +291,59 @@ describe("single user-directed interactions", () => {
     const explorer = interactionExplorer(interactionPage(true));
     await explorer.interact(action);
     await expect(explorer.interact({ ...action, desired: false })).rejects.toMatchObject({ code: "invalid_request" });
+  });
+});
+
+const videoUrl = "https://www.douyin.com/video/12345678901234567";
+function videoExplorer(kind, page) {
+  const explorer = new DouyinExplorer(vi.fn());
+  explorer.sessions.set("video-tab", { kind, key: "video-tab", id: "12345678901234567", page, url: videoUrl });
+  return explorer;
+}
+// readShareBoard answers come from `states` (label is only set for a row fully in view).
+function sharePage(states) {
+  const button = { count: async () => 1, click: vi.fn(async () => {}) };
+  return { button, isClosed: () => false, url: () => videoUrl,
+    locator: (selector) => selector.includes('[data-userid="') ? button : { first: () => ({ isVisible: async () => true }) },
+    evaluate: vi.fn(async () => states.shift()) };
+}
+const ME = "607350412292247";
+describe("commenting and sharing like the site", () => {
+  it("keeps share targets to numeric ids and trusted https avatars", () => {
+    expect(normalizeSharee({ id: "7640775996219654705", name: " 小群 ", avatar: "http://p3-aweme-im-img.byteimg.com/a.webp", group: true }))
+      .toEqual({ id: "7640775996219654705", name: "小群", avatar: "https://p3-aweme-im-img.byteimg.com/a.webp", group: true, shared: false });
+    expect(normalizeSharee({ id: '1"]', name: "x" })).toBeNull();
+    expect(normalizeSharee({ id: "123", name: "", avatar: "https://example.org/a.png", shared: true })).toMatchObject({ name: "抖音用户", avatar: null, group: null, shared: true });
+    expect(validateExploreRequest({ kind: "sharees", id: "12345678901234567" })).toMatchObject({ kind: "sharees" });
+  });
+  it("refuses a reply whose comment left the page before typing anything", async () => {
+    const page = { isClosed: () => false, url: () => videoUrl, keyboard: { press: vi.fn(), insertText: vi.fn() }, locator: () => ({ locator: () => ({ count: async () => 0 }) }) };
+    await expect(videoExplorer("comments", page).interact({ sessionId: "video-tab", requestId: "reply-to-a-missing-comment", action: "comment", text: "好", replyTo: "7685745937210311461" }))
+      .resolves.toMatchObject({ outcome: "rejected" });
+    expect(page.keyboard.insertText).not.toHaveBeenCalled();
+  });
+  it("never shares twice and reports the site's own result", async () => {
+    const shared = sharePage([{ me: ME, label: "捎句话", shared: true }]);
+    await expect(videoExplorer("sharees", shared).interact({ sessionId: "video-tab", requestId: "share-to-a-shared-friend", action: "share", targetId: "102530395613" }))
+      .resolves.toMatchObject({ outcome: "confirmed" });
+    expect(shared.button.click).not.toHaveBeenCalled();
+    for (const [after, outcome] of [[{ me: ME, label: "捎句话", shared: true }, "confirmed"], [{ me: ME, label: "分享", shared: false }, "rejected"]]) {
+      const page = sharePage([{ me: ME, label: "分享", shared: null }, after]);
+      await expect(videoExplorer("sharees", page).interact({ sessionId: "video-tab", requestId: `share-ends-${outcome}`, action: "share", targetId: "102530395613" }))
+        .resolves.toMatchObject({ outcome });
+      expect(page.button.click).toHaveBeenCalledTimes(1);
+    }
+  });
+});
+
+describe("sharing never reaches past the visible rows", () => {
+  it("refuses yourself, a row out of view, or an unknown account without clicking", async () => {
+    const cases = [[ME, { me: ME, label: "分享", shared: null }], ["102530395613", { me: ME, label: null, shared: null }], ["102530395613", { me: "", label: "分享", shared: null }]];
+    for (const [index, [targetId, state]] of cases.entries()) {
+      const page = sharePage([state]);
+      await expect(videoExplorer("sharees", page).interact({ sessionId: "video-tab", requestId: `share-refused-case-${index}`, action: "share", targetId }))
+        .resolves.toMatchObject({ outcome: "rejected" });
+      expect(page.button.click).not.toHaveBeenCalled();
+    }
   });
 });

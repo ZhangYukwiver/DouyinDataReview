@@ -441,3 +441,60 @@ describe("RecordAccumulator", () => {
     expect(records[1]?.title).toBe("同一次观看的新元数据");
   });
 });
+
+describe("live history", () => {
+  const url = "https://www.douyin.com/webcast/feed/?source_key=drawer_hot_live_history&max_time=0";
+  const payload = {
+    status_code: 0,
+    extra: { has_more: false, max_time_str: "1787925896450000" },
+    data: [
+      { type: 11, placeholder: { type: 2, msg: "更早看过" }, latest_watch_time: 0 },
+      {
+        type: 12,
+        latest_watch_time: 1789481964251000,
+        latest_watch_time_str: "1789481964251000",
+        UserLiveRecord: {
+          user_id_str: "1013",
+          nickname: "主播甲",
+          avatar: { url_list: ["https://p3.douyinpic.com/aweme/100x100/a.jpeg", "https://evil.example/a.jpeg"] },
+        },
+        user_info: { web_rid: "584923819885", user_canceled: false },
+      },
+      {
+        type: 12,
+        latest_watch_time_str: "1787925896450000",
+        UserLiveRecord: { user_id_str: "7622", nickname: "已注销" },
+        user_info: { user_canceled: true },
+      },
+    ],
+  };
+
+  it("reads the record tab's live list but not the homepage live feed", () => {
+    expect(matchDouyinEndpoint(url)).toEqual({ kind: "live_history", pathname: "/webcast/feed/" });
+    expect(matchDouyinEndpoint("https://www.douyin.com/webcast/feed/?source_key=web_homepage_hot_web_live_cell")).toBeNull();
+  });
+
+  it("turns each anchor into a live watch record and files it under watch history", () => {
+    const endpoint = matchDouyinEndpoint(url);
+    const result = normalizeDouyinResponse(endpoint, payload);
+    expect(result.pagination).toEqual({ hasMore: false, cursor: "1787925896450000" });
+    expect(result.records).toEqual([{
+      id: "watch_history:live-1013:2026-09-15T14:19:24.251Z",
+      title: "主播甲的直播",
+      author: "主播甲",
+      occurredAt: "2026-09-15T14:19:24.251Z",
+      url: "https://live.douyin.com/584923819885",
+      videoId: "live-1013",
+      authorId: "1013",
+      occurredAtSource: "platform_action",
+      mediaType: "live",
+      authorAvatarUrl: "https://p3.douyinpic.com/aweme/100x100/a.jpeg",
+      coverUrl: "https://p3.douyinpic.com/aweme/720x720/a.jpeg",
+    }]);
+
+    const accumulator = new RecordAccumulator();
+    accumulator.addResponse(endpoint, payload);
+    expect(accumulator.snapshot().records.watch_history.map((record) => [record.id, record.mediaType]))
+      .toEqual([["watch_history:live-1013:2026-09-15T14:19:24.251Z", "live"]]);
+  });
+});

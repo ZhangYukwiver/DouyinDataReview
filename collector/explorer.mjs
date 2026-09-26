@@ -39,6 +39,63 @@ export function normalizeExploreComment(raw) {
     replyToName: text(raw.reply_to_username, 200) || null,
     publishedAt: date && date < 4_102_444_800 ? new Date(date * 1000).toISOString() : null };
 }
+export function normalizeSharee(raw) {
+  const id = String(raw?.id ?? "");
+  if (!/^\d{1,30}$/u.test(id)) return null;
+  // Group avatars come as http:// byteimg links; the image host serves the same file over https.
+  const avatar = typeof raw.avatar === "string" ? raw.avatar.replace(/^http:\/\//u, "https://") : null;
+  return { id, name: text(raw.name, 100) || "抖音用户", avatar: image(avatar), group: typeof raw.group === "boolean" ? raw.group : null, shared: raw.shared === true };
+}
+
+const COMMENT_EDITOR = '.public-DraftEditor-content[contenteditable="true"]';
+const SHARE_BOARD = '[data-e2e="video-share-container"]';
+// Runs in the page. Only the rows the board rendered when it opened are offered. Bringing any
+// other row into view (scrolling the list) makes the site create a conversation with that person
+// and drop a notice into it, so the list is never scrolled. The signed-in account is itself one
+// of the rows and is always left out. Names come from the board's list, results from its store.
+function readShareBoard(targetId) {
+  const board = document.querySelector('[data-e2e="video-share-container"]');
+  const rendered = board ? [...board.querySelectorAll("[data-userid]")] : [];
+  if (!rendered.length) return null;
+  // Rendered is not enough: a click on a row half outside the list's visible area scrolls it in first.
+  let scroller = rendered[0].parentElement;
+  while (scroller && scroller !== board && !(scroller.scrollHeight > scroller.clientHeight + 2 && /auto|scroll/u.test(getComputedStyle(scroller).overflowY))) scroller = scroller.parentElement;
+  const view = scroller && scroller !== board ? scroller.getBoundingClientRect() : null;
+  const rows = rendered.filter((row) => {
+    const rect = row.getBoundingClientRect();
+    return rect.height > 0 && (!view || (rect.top >= view.top - 1 && rect.bottom <= view.bottom + 1));
+  });
+  if (!rows.length) return null;
+  const me = String(globalThis.userInfoStore?.curLoginUserInfo?.uid ?? "");
+  let list = null, shareMap = null;
+  const key = Object.keys(rows[0]).find((name) => name.startsWith("__reactFiber"));
+  for (let fiber = key ? rows[0][key] : null; fiber && !list; fiber = fiber.return) {
+    const props = fiber.memoizedProps;
+    shareMap ??= props?.shareStore?.shareMap ?? null;
+    if (Array.isArray(props?.value?.mixedList)) list = props.value.mixedList;
+  }
+  const sharedOf = (id) => shareMap?.user?.[id] ?? shareMap?.group?.[id] ?? null;
+  if (targetId) {
+    const button = rows.find((row) => row.dataset.userid === targetId);
+    return { me, label: button ? button.textContent.trim() : null, shared: sharedOf(targetId) };
+  }
+  const byId = new Map((list ?? []).map((item) => [String(item?.uid ?? ""), item]));
+  return rows.map((button) => {
+    const id = button.dataset.userid ?? "";
+    const item = byId.get(id);
+    return { id, name: item?.remark_name || item?.nickname || button.parentElement?.querySelector("span")?.textContent || "",
+      avatar: item?.avatar_thumb?.url_list?.[0] ?? button.parentElement?.querySelector("img")?.src ?? null, group: item ? item.type === 2 : null, shared: sharedOf(id) === true };
+  }).filter((person) => person.id && person.id !== me);
+}
+function isCommentPublish(response, awemeId, content, replyTo) {
+  const url = new URL(response.url());
+  if (!isExploreApiUrl(url) || !/\/comment\/publish\/?$/u.test(url.pathname)) return false;
+  const raw = response.request().postData() ?? "";
+  let body;
+  try { body = raw.startsWith("{") ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw)); } catch { return false; }
+  const [parent, nested] = [body.reply_id, body.reply_to_reply_id].map((value) => value == null || String(value) === "0" ? "" : String(value));
+  return String(body.aweme_id) === awemeId && body.text === content && (replyTo ? [parent, nested].includes(replyTo) : !parent);
+}
 
 // The first response each kind depends on; an empty body there is Douyin's risk control, not a missing login.
 const PRIMARY_RESPONSE = { users: /\/(?:discover\/search|search\/user)\/$/u, videos: /\/search\/(?:item|single)\/$/u,
@@ -50,12 +107,12 @@ export function isExploreApiUrl(url) {
 }
 
 export function validateExploreRequest(input) {
-  if (!input || !["users", "videos", "profile", "detail", "comments", "replies"].includes(input.kind)) throw new ExploreError("invalid_request", "请选择搜索用户或内容。", 400);
+  if (!input || !["users", "videos", "profile", "detail", "comments", "replies", "sharees"].includes(input.kind)) throw new ExploreError("invalid_request", "请选择搜索用户或内容。", 400);
   const query = text(input.query, 100);
   const id = text(input.id, 200);
   if (["users", "videos"].includes(input.kind) && (!query || String(input.query).trim().length > 100)) throw new ExploreError("invalid_request", "搜索词需为 1–100 个字符。", 400);
   if (input.kind === "profile" && !/^[\w-]{8,200}$/u.test(id)) throw new ExploreError("invalid_request", "用户标识无效。", 400);
-  if (["detail", "comments", "replies"].includes(input.kind) && !/^\d{5,30}$/u.test(id)) throw new ExploreError("invalid_request", "请输入有效的作品 ID。", 400);
+  if (["detail", "comments", "replies", "sharees"].includes(input.kind) && !/^\d{5,30}$/u.test(id)) throw new ExploreError("invalid_request", "请输入有效的作品 ID。", 400);
   if (input.kind === "replies" && (!/^\d{5,30}$/u.test(input.commentId ?? "") || typeof input.sessionId !== "string" || !input.sessionId))
     throw new ExploreError("invalid_request", "请从已加载的评论展开回复。", 400);
   return { kind: input.kind, query, id, ...(input.kind === "replies" ? { commentId: input.commentId } : {}) };
@@ -152,7 +209,7 @@ export class DouyinExplorer {
       if (request.resourceType() === "document" && url.hostname === "rmc.bytedance.com" && url.pathname.startsWith("/verifycenter/captcha/"))
         session.error = verificationError();
     });
-    page.on("response", (response) => {
+    if (input.kind !== "sharees") page.on("response", (response) => {
       void (async () => {
         const url = new URL(response.url());
         if (!isExploreApiUrl(url)) return;
@@ -169,7 +226,7 @@ export class DouyinExplorer {
         ingestExploreResponse(session, url.pathname, await response.json().catch(() => null));
       })().catch(() => {});
     });
-    const target = input.kind === "profile" ? `/user/${input.id}` : ["detail", "comments"].includes(input.kind)
+    const target = input.kind === "profile" ? `/user/${input.id}` : ["detail", "comments", "sharees"].includes(input.kind)
       ? `/video/${input.id}` : `/search/${encodeURIComponent(input.query)}?type=${input.kind === "users" ? "user" : "video"}`;
     session.url = `https://www.douyin.com${target}`;
     await this.navigate(session, operation);
@@ -255,6 +312,7 @@ export class DouyinExplorer {
         await this.navigate(session, operation);
       }
     }
+    if (session.kind === "sharees") return this.readSharees(session, operation);
     const before = session.revision;
     if (pagination && session.hasMore !== false && session.items.size < 500) {
       await session.page.evaluate((kind) => {
@@ -285,6 +343,38 @@ export class DouyinExplorer {
     if (await pageNeedsVerification(session.page))
       throw verificationError();
     throw new ExploreError("page_unavailable", "暂未读到抖音页面数据，请检查打开的抖音浏览器是否需要登录或验证，然后重试。");
+  }
+  // The site's share board opens on hover; a hidden board keeps its rows mounted but invisible.
+  async openShareBoard(session) {
+    const { page } = session;
+    const row = page.locator(`${SHARE_BOARD} [data-userid]`).first();
+    if (await row.isVisible().catch(() => false)) return;
+    const icon = page.locator('[data-e2e="video-share-icon-container"], [data-e2e="video-player-share"]').filter({ visible: true }).first();
+    await icon.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+    await icon.hover({ timeout: 3000 }).catch(() => {});
+    await row.waitFor({ state: "visible", timeout: 6000 }).catch(() => {});
+  }
+  async readSharees(session, operation) {
+    const deadline = Date.now() + 25000;
+    // Groups join the list only once the site's chat store has loaded conversations (about 6s in);
+    // an account with no chats never gets there, so stop waiting for it after a while.
+    const chatsDeadline = Date.now() + 15000;
+    const chatsLoaded = () => session.page.evaluate(() => (globalThis.conversationStore?.conversationMap?.size ?? 0) > 0).catch(() => false);
+    while (Date.now() < deadline && !session.page.isClosed()) {
+      operation.signal.throwIfAborted();
+      if (await pageNeedsVerification(session.page)) throw verificationError();
+      if (!await chatsLoaded() && Date.now() < chatsDeadline) { await delay(500, undefined, { signal: operation.signal }); continue; }
+      await this.openShareBoard(session);
+      const people = await session.page.evaluate(readShareBoard, null).catch(() => null);
+      if (people?.length) {
+        session.items = new Map(people.map(normalizeSharee).filter(Boolean).slice(0, 500).map((person) => [person.id, person]));
+        session.hasMore = false;
+        session.received = true;
+        return this.snapshot(session);
+      }
+      await delay(500, undefined, { signal: operation.signal });
+    }
+    throw new ExploreError("page_unavailable", "暂时没读到可以分享的朋友，请确认抖音已登录，稍后再试。");
   }
   async readReplies({ sessionId, id, commentId }, operation) {
     const session = this.sessions.get(sessionId);
@@ -318,9 +408,9 @@ export class DouyinExplorer {
     throw new ExploreError("page_not_loaded", "没有读到新的回复，已加载的内容仍保留，请稍后重试。");
   }
   async interact(input) {
-    if (!input || !/^[\w-]{16,80}$/u.test(input.requestId ?? "") || !["like", "collect", "follow", "comment"].includes(input.action))
+    if (!input || !/^[\w-]{16,80}$/u.test(input.requestId ?? "") || !["like", "collect", "follow", "comment", "share"].includes(input.action))
       throw new ExploreError("invalid_request", "互动请求无效。", 400);
-    const fingerprint = JSON.stringify([input.sessionId, input.action, input.desired, input.text]);
+    const fingerprint = JSON.stringify([input.sessionId, input.action, input.desired, input.text, input.replyTo, input.targetId]);
     const previous = this.actions.get(input.requestId);
     if (previous) {
       if (previous.fingerprint !== fingerprint) throw new ExploreError("invalid_request", "请重新确认本次操作。", 400);
@@ -329,38 +419,90 @@ export class DouyinExplorer {
     if (this.actions.size >= 1000) throw new ExploreError("action_limit", "本次会话操作数量已达上限，请重启采集器。");
     const session = this.sessions.get(input.sessionId);
     if (!session || session.page.isClosed()) throw new ExploreError("session_expired", "请重新打开作品或用户资料。", 410);
-    if (input.action === "follow" ? session.kind !== "profile" : session.kind !== "detail") throw new ExploreError("invalid_request", "操作与当前页面不匹配。", 400);
-    if (input.action === "comment" ? !text(input.text, 501) || input.text.length > 500 : typeof input.desired !== "boolean")
+    // Every video tab (detail, comments, share list) is the same /video/<id> page.
+    const kinds = { follow: ["profile"], comment: ["detail", "comments"], share: ["detail", "comments", "sharees"] }[input.action] ?? ["detail"];
+    if (!kinds.includes(session.kind)) throw new ExploreError("invalid_request", "操作与当前页面不匹配。", 400);
+    // The site's comment box has no line breaks: Enter and Shift+Enter both send.
+    const content = typeof input.text === "string" ? input.text.replace(/\s+/gu, " ").trim() : "";
+    if (input.action === "comment" ? !content || content.length > 500 || (input.replyTo != null && !/^\d{5,30}$/u.test(input.replyTo))
+      : input.action === "share" ? !/^\d{1,30}$/u.test(input.targetId ?? "") : typeof input.desired !== "boolean")
       throw new ExploreError("invalid_request", "评论需为 1–500 字，或请选择目标状态。", 400);
     const currentUrl = new URL(session.page.url());
     if (currentUrl.origin !== "https://www.douyin.com" || currentUrl.pathname !== new URL(session.url).pathname)
       throw new ExploreError("page_changed", "抖音页面已切换，请重新打开目标后操作。");
     // Store an outcome before dispatch. A timed-out click is never auto-retried.
-    const action = { fingerprint, result: { outcome: "unknown", message: "操作结果待核验，请查看抖音原页后刷新。" } };
+    const action = { fingerprint, result: { outcome: "unknown", message: input.action === "comment" ? "没等到抖音的确认，评论可能已经发出去了，先刷新评论看看再决定要不要重发。"
+      : input.action === "share" ? "没等到抖音的确认，可能已经分享出去了，先去聊天里看看再决定要不要重发。" : "操作结果待核验，请查看抖音原页后刷新。" } };
     this.actions.set(input.requestId, action);
     let dispatched = false;
     try {
       if (input.action === "comment") {
-        const editor = session.page.locator('[data-e2e="comment-input"] [contenteditable="true"], [data-e2e="comment-input"][contenteditable="true"], .comment-input-inner-container [contenteditable="true"], .public-DraftEditor-content[contenteditable="true"], textarea[placeholder*="评论"]');
-        if (await editor.count() === 0) {
-          const prompt = session.page.getByText("留下你的精彩评论吧", { exact: true });
-          if (await prompt.count() === 1) await prompt.click({ timeout: 3000 });
+        const { page } = session;
+        let scope = page.locator("#comment-input-container");
+        if (input.replyTo) {
+          // The innermost item owning this id; its first reply control is its own, nested replies come after it.
+          scope = page.locator(`[id="tooltip_${input.replyTo}"]`).locator('xpath=ancestor::*[@data-e2e="comment-item"][1]');
+          if (await scope.count() !== 1) throw new ExploreError("comment_unavailable", "这条评论已不在当前页面，请刷新评论后再回复。");
+          const toggle = scope.locator(".comment-item-stats-container").first().getByText(/^回复(?:中)?$/u);
+          if (await toggle.count() !== 1) throw new ExploreError("control_unavailable", "没找到这条评论的回复入口，请在抖音原页回复。");
+          if ((await toggle.textContent())?.trim() === "回复") await toggle.click({ timeout: 3000 });
+        } else if (await scope.locator(COMMENT_EDITOR).count() === 0) {
+          await scope.getByText("留下你的精彩评论吧", { exact: true }).click({ timeout: 3000 }).catch(() => {});
         }
-        const submit = session.page.locator('[data-e2e="comment-post"], .comment-input-inner-container button:has-text("发布"), .comment-input-inner-container button:has-text("发送")');
-        if (await editor.count() !== 1 || await submit.count() !== 1) throw new ExploreError("control_unavailable", "未找到明确的评论输入框和发送按钮，请在原页评论。");
-        await editor.fill(input.text.trim(), { timeout: 3000 });
-        const acknowledgement = session.page.waitForResponse((response) => {
-          const url = new URL(response.url());
-          const raw = response.request().postData() ?? "";
-          let body;
-          try { body = raw.startsWith("{") ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw)); } catch { return false; }
-          return url.hostname === "www.douyin.com" && url.pathname.endsWith("/comment/publish/") && String(body.aweme_id) === session.id && body.text === input.text.trim();
-        }, { timeout: 8000 }).then((response) => response.json()).catch(() => null);
+        const editor = scope.locator(COMMENT_EDITOR).first();
+        await editor.waitFor({ state: "visible", timeout: 4000 }).catch(() => {});
+        if (await editor.count() === 0) throw new ExploreError("control_unavailable", "没找到评论输入框，请在抖音原页评论。");
+        await editor.click({ timeout: 3000 });
+        await page.keyboard.press("ControlOrMeta+A");
+        await page.keyboard.press("Backspace");
+        await page.keyboard.insertText(content);
+        if ((await editor.innerText()).replace(/​/gu, "").trim() !== content) {
+          await page.keyboard.press("ControlOrMeta+A").then(() => page.keyboard.press("Backspace")).catch(() => {});
+          throw new ExploreError("control_unavailable", "评论框里的文字和要发的不一致，已经停下没发，请在抖音原页评论。");
+        }
+        const acknowledgement = page.waitForResponse((response) => isCommentPublish(response, session.id, content, input.replyTo), { timeout: 10000 })
+          .then((response) => response.json()).catch(() => null);
         dispatched = true;
-        await submit.click({ timeout: 3000 });
+        await page.keyboard.press("Enter");
         const ack = await acknowledgement;
-        if (ack?.status_code === 0 && ack.comment?.cid) action.result = { outcome: "confirmed", message: "评论已发送", comment: normalizeExploreComment(ack.comment) };
-        else if (ack && ack.status_code !== 0) action.result = { outcome: "rejected", message: "抖音未接受这条评论，请查看原页提示。" };
+        if (ack?.status_code === 0 && ack.comment?.cid) action.result = { outcome: "confirmed", message: input.replyTo ? "回复已发送" : "评论已发送", comment: normalizeExploreComment(ack.comment) };
+        else if (ack && ack.status_code !== 0) {
+          const reason = text(ack.status_msg, 80);
+          action.result = { outcome: "rejected", message: reason ? `抖音没收下这条评论：${reason}` : "抖音没收下这条评论，请稍后再试。" };
+        }
+      } else if (input.action === "share") {
+        const { page } = session;
+        const id = input.targetId;
+        await this.openShareBoard(session);
+        let state = await page.evaluate(readShareBoard, id).catch(() => null);
+        if (!state) throw new ExploreError("control_unavailable", "分享面板没有打开，请在抖音原页分享。");
+        if (state.shared === false) {
+          // A failure earlier in this tab leaves its flag behind; start clean so the next result is unambiguous.
+          await this.navigate(session);
+          await this.openShareBoard(session);
+          state = await page.evaluate(readShareBoard, id).catch(() => null);
+        }
+        if (state?.shared === true || state?.label === "捎句话") {
+          action.result = { outcome: "confirmed", value: true, message: "已经分享过了" };
+          return action.result;
+        }
+        // Never scroll the list to find someone (see readShareBoard); refuse the signed-in account itself.
+        if (!state?.me) throw new ExploreError("control_unavailable", "认不出现在登录的是哪个账号，这次没分享，请稍后再试。");
+        if (state.me === id) throw new ExploreError("invalid_request", "不能分享给自己。", 400);
+        // state.label is only set for a row fully in view (readShareBoard), so the click never scrolls the list.
+        const button = page.locator(`${SHARE_BOARD} [data-userid="${id}"]`);
+        if (state.label !== "分享" || await button.count() !== 1)
+          throw new ExploreError("control_unavailable", "TA 不在抖音分享面板最上面那几位里。为了不让抖音顺手给别人建会话，这次没分享。");
+        dispatched = true;
+        await button.click({ timeout: 3000 });
+        // The site flips the button to 捎句话 on success and records false on failure (its toast says 分享失败).
+        const deadline = Date.now() + 15000;
+        while (Date.now() < deadline && !page.isClosed()) {
+          const current = await page.evaluate(readShareBoard, id).catch(() => null);
+          if (current?.shared === true || current?.label === "捎句话") { action.result = { outcome: "confirmed", value: true, message: "已分享" }; break; }
+          if (current?.shared === false) { action.result = { outcome: "rejected", message: "抖音提示分享失败，请稍后再试。" }; break; }
+          await delay(300);
+        }
       } else {
         const selector = input.action === "follow" ? '[data-e2e="user-info-follow"]' : `[data-e2e="video-player-${input.action === "like" ? "digg" : "collect"}"]`;
         const button = session.page.locator(selector);

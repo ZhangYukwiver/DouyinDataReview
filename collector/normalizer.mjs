@@ -45,6 +45,12 @@ export function matchDouyinEndpoint(value) {
   try {
     const url = new URL(value);
     if (!["www.douyin.com", "www-hj.douyin.com"].includes(url.hostname)) return null;
+    // 观看历史的「直播」分栏；同一路径也给首页直播推荐用，只认这个 source_key
+    if (url.pathname === "/webcast/feed/") {
+      return url.searchParams.get("source_key") === "drawer_hot_live_history"
+        ? { kind: "live_history", pathname: url.pathname }
+        : null;
+    }
     const kind = ENDPOINT_BY_PATH.get(url.pathname);
     return kind ? { kind, pathname: url.pathname } : null;
   } catch {
@@ -395,6 +401,38 @@ export function normalizeAweme(item, recordType, historyDates) {
   return result;
 }
 
+// 直播观看记录：每位主播只有一条「最近一次观看时间」（微秒），没有直播间标题和观看时长。
+// 按观看历史存、id 带时间，所以隔几天再看同一位主播会攒出新的一条。
+function normalizeLiveRecord(item) {
+  const live = firstObject(item, "UserLiveRecord");
+  const user = firstObject(item, "user_info");
+  const anchorId = firstString(live?.user_id_str);
+  // 微秒和毫秒除以 1000 后 normalizeTimestamp 都能认对
+  const watchedAt = normalizeTimestamp(Number(item.latest_watch_time_str ?? item.latest_watch_time) / 1000);
+  if (!anchorId || !watchedAt || user?.user_canceled === true) return null;
+  const videoId = `live-${anchorId}`;
+  const author = firstString(live.nickname);
+  const webRid = firstString(user?.web_rid, item.web_rid);
+  const result = {
+    id: watchHistoryEventId(videoId, watchedAt, "platform_action"),
+    title: author ? `${author}的直播` : "看过的直播",
+    author,
+    occurredAt: watchedAt,
+    url: webRid && /^\d{1,30}$/u.test(webRid) ? `https://live.douyin.com/${webRid}` : null,
+    videoId,
+    authorId: anchorId,
+    occurredAtSource: "platform_action",
+    mediaType: "live",
+  };
+  const avatar = firstUrlFromObject(live.avatar);
+  if (avatar) {
+    result.authorAvatarUrl = avatar;
+    // 直播没有封面，拿主播头像顶上；图床按路径里的尺寸出图，100x100 撑满卡片会糊
+    result.coverUrl = avatar.replace("/100x100/", "/720x720/");
+  }
+  return result;
+}
+
 function normalizeOptionalString(value, limit = MAX_STRING_LENGTH) {
   return cleanString(value, limit);
 }
@@ -611,7 +649,7 @@ function statusCode(payload) {
 }
 
 export function normalizeDouyinResponse(endpoint, payload) {
-  if (!endpoint || !ENDPOINT_BY_PATH.has(endpoint.pathname)) {
+  if (!endpoint || (endpoint.kind !== "live_history" && !ENDPOINT_BY_PATH.has(endpoint.pathname))) {
     throw new CollectorAdapterError("unsupported_endpoint", "采集器收到了不支持的抖音响应。");
   }
   if (!isObject(payload)) {
@@ -638,6 +676,25 @@ export function normalizeDouyinResponse(endpoint, payload) {
       pagination = { ...pagination, hasMore: false };
     }
     return { records: [], folders, pagination };
+  }
+
+  if (endpoint.kind === "live_history") {
+    if (!Array.isArray(payload.data)) {
+      throw new CollectorAdapterError("schema_changed", "直播观看记录响应缺少 data。请更新采集器适配器。");
+    }
+    const extra = firstObject(payload, "extra");
+    return {
+      // type 11 是「今天 / 更早看过」这类日期分隔行，没有 UserLiveRecord，会被过滤掉
+      records: payload.data.flatMap((item) => {
+        const record = isObject(item) ? normalizeLiveRecord(item) : null;
+        return record ? [record] : [];
+      }),
+      folders: [],
+      pagination: {
+        hasMore: typeof extra?.has_more === "boolean" ? extra.has_more : null,
+        cursor: firstString(extra?.max_time_str),
+      },
+    };
   }
 
   const items = firstList(payload, "aweme_list");
@@ -686,7 +743,7 @@ export class RecordAccumulator {
     const acceptedRecords = normalized.records;
     const acceptedIds = new Set(acceptedRecords.map((record) => record.id));
     return {
-      added: this.addRecords(endpoint.kind, acceptedRecords),
+      added: this.addRecords(endpoint.kind === "live_history" ? "watch_history" : endpoint.kind, acceptedRecords),
       pageSize: normalized.records.length,
       pageFingerprint: fingerprintRecordPage(normalized.records),
       recordIds: normalized.records.map((record) => record.id),
