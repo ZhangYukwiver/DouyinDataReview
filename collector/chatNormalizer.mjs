@@ -821,6 +821,13 @@ function parseMessageObject(value, fallbackConversationId = null, fallbackConver
     : null;
   const text = comment ? messageText : messageText ?? share?.title ?? null;
   if (comment) message.comment = comment;
+  // Douyin's own notices (e.g. the one it drops into a new chat with someone who does not follow you
+  // back) carry template slots like {{0}}. They come from the site, not the user.
+  if (message.type === "text" && text && /\{\{\d+\}\}/u.test(text)) {
+    message.type = "system";
+    message.text = text.replace(/\{\{\d+\}\}/gu, "").trim();
+    return message;
+  }
   if (text) message.text = text;
   if (mediaUrl) message.mediaUrl = mediaUrl;
   if (share) message.share = share;
@@ -1558,7 +1565,7 @@ export class ChatConversationAccumulator {
       senders.push(senderId);
       this.messageSenders.set(id, senders);
       entry.messageCount += 1;
-      if (this.currentUserId && firstString(message?.senderId, message?.sender_id, message?.sender_uid) === this.currentUserId) {
+      if (this.currentUserId && message?.type !== "system" && firstString(message?.senderId, message?.sender_id, message?.sender_uid) === this.currentUserId) {
         entry.ownMessageCount += 1;
       }
     }

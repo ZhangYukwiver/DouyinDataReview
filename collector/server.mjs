@@ -486,6 +486,18 @@ export async function startCollectorServer({
           message: known ? error.message : malformed ? "发送请求无效，请重试。" : "消息没发出去，请稍后再试。",
         });
       }
+    } else if ((request.method === "POST" && url.pathname === "/v1/chat/messages") || (request.method === "GET" && url.pathname === "/v1/chat/streaks")) {
+      try {
+        const result = url.pathname.endsWith("/streaks") ? await collector.readChatStreaks() : await collector.readChatMessages(await readJsonBody(request));
+        sendJson(response, 200, result);
+      } catch (error) {
+        const known = error instanceof ChatSendError;
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        sendJson(response, known ? error.status : malformed ? 400 : 500, {
+          error: known ? error.code : malformed ? "invalid_request" : "chat_read_failed",
+          message: known ? error.message : malformed ? "请求无效，请重试。" : "暂时读不到，请稍后再试。",
+        });
+      }
     } else if (request.method === "POST" && url.pathname === "/v1/chat/observe/stop") {
       const stopped = await collector.stopChatObservation();
       sendJson(response, 200, { stopped, status: collector.getStatus() });

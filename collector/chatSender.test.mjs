@@ -127,8 +127,10 @@ describe("sending through the site's composer", () => {
     expect(chat.box()).toBe("");
   });
 
-  it("refuses groups, unknown conversations and a missing composer", async () => {
-    await expect(sendChatText(fakeChat({ type: 2 }).page, { conversationId: CONVERSATION, text: "hi" }, fast)).rejects.toMatchObject({ code: "invalid_request" });
+  it("sends to a group as a group message, refuses unknown conversations and a missing composer", async () => {
+    const group = fakeChat({ type: 2, onSend: sdkSend(3, { serverId: "7000000000000000001" }) });
+    const sent = await sendChatText(group.page, { conversationId: CONVERSATION, text: "hi" }, fast);
+    expect(sent).toMatchObject({ outcome: "confirmed", chatMessage: { conversationType: "group" } });
     await expect(sendChatText(fakeChat().page, { conversationId: "0:1:111:999", text: "hi" }, fast)).rejects.toMatchObject({ code: "conversation_unavailable" });
     const hidden = fakeChat({ editors: 0 });
     await expect(sendChatText(hidden.page, { conversationId: CONVERSATION, text: "hi" }, fast)).rejects.toMatchObject({ code: "control_unavailable" });

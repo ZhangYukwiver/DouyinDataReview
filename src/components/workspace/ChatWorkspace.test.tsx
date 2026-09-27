@@ -67,6 +67,23 @@ describe("buildChatConversationRows", () => {
     expect(rows[0]).toMatchObject({ kind: "group", name: "测试群", messageCount: 12, messages: [], preview: "群聊 · 已采集 12 条消息" });
   });
 
+  it("leaves out chats that only hold Douyin's own notice, keeps real chats that also have one", () => {
+    const notice = (id: string, conversationId: string) => ({ ...message(id, conversationId, "2026-09-26T12:41:49Z", "对方回复或关注你之前，只能发送一条文字消息。"), type: "system" as const });
+    const rows = buildChatConversationRows([notice("n-1", "phantom"), notice("n-2", "real"), message("r-1", "real", "2026-09-20T10:00:00Z", "早")], [
+      { id: "phantom", kind: "friend", name: "没聊过的人", messageCount: 1, ownMessageCount: 0 },
+      { id: "real", kind: "friend", name: "老朋友", messageCount: 2, ownMessageCount: 1 },
+      { id: "not-loaded", kind: "friend", name: "消息还没读", messageCount: 5, ownMessageCount: 2 },
+    ]);
+    expect(rows.map((row) => row.id).sort()).toEqual(["not-loaded", "real"]);
+  });
+
+  it("names the chat with yourself instead of numbering it", () => {
+    const rows = buildChatConversationRows([message("s-1", "0:1:607:607", "2026-09-26T12:41:47Z", "疯狂陀螺", "share")], [
+      { id: "0:1:607:607", kind: "friend", name: null, messageCount: 1, ownMessageCount: 1 },
+    ]);
+    expect(rows[0]?.name).toBe("我自己");
+  });
+
   it("uses a sender avatar when the conversation catalog has no avatar", () => {
     const rows = buildChatConversationRows([{
       ...message("avatar-message", "avatar-conversation", "2026-08-03T10:00:00Z", "你好"),

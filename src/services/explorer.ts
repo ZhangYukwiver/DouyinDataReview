@@ -13,15 +13,18 @@ export interface ExploreComment {
   images?: string[];
   parentId?: string | null; replyToName?: string | null;
 }
-export type ExploreKind = "users" | "videos" | "profile" | "detail" | "comments" | "replies";
+/** Someone in the site's "分享给朋友" list; groups share the same id space as people. */
+export interface ExploreSharee { id: string; name: string; avatar: string | null; group: boolean | null; shared: boolean }
+export type ExploreKind = "users" | "videos" | "profile" | "detail" | "comments" | "replies" | "sharees";
 export interface ExploreQuery { kind: ExploreKind; query?: string; id?: string; sessionId?: string; commentId?: string }
 export interface ExplorePage {
-  sessionId: string; kind: ExploreKind; items: Array<ExploreUser | ExploreVideo | ExploreComment>;
+  sessionId: string; kind: ExploreKind; items: Array<ExploreUser | ExploreVideo | ExploreComment | ExploreSharee>;
   profile: ExploreUser | null; video: ExploreVideo | null; hasMore: boolean | null; limited: boolean;
   commentId?: string;
 }
 export interface ExploreAction {
-  sessionId: string; requestId: string; action: "like" | "collect" | "follow" | "comment"; desired?: boolean; text?: string;
+  sessionId: string; requestId: string; action: "like" | "collect" | "follow" | "comment" | "share"; desired?: boolean; text?: string;
+  replyTo?: string; targetId?: string;
 }
 export interface ExploreOutcome { outcome: "confirmed" | "unknown" | "rejected"; value?: boolean; message: string; comment?: ExploreComment }
 export interface ExploreConnection { baseUrl: string; token: string }

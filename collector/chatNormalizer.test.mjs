@@ -5,6 +5,7 @@ import {
   ChatMessageAccumulator,
   matchChatEndpoint,
   matchImapiEndpoint,
+  normalizeChatPayload,
   normalizeChatPresence,
   normalizeImapiResponse,
 } from "./chatNormalizer.mjs";
@@ -670,5 +671,18 @@ describe("friend online status", () => {
     expect(byId.get("conv-a").lastActiveAt).toBe("2025-09-18T08:00:00.000Z");
     expect(byId.get("conv-b").lastActiveAt).toBeNull();
     expect(byId.get("conv-g").lastActiveAt).toBeNull();
+  });
+});
+
+describe("Douyin's own notices", () => {
+  it("keeps a templated notice in a new chat as a system line, not a message you sent", () => {
+    const { messages } = normalizeChatPayload({ msgs: [{
+      server_id: "7689823287246178873", sender_uid: "607350412292247", type_code: 7, created_at: 1790412109792,
+      content_json: { text: "对方回复或关注你之前，只能发送一条文字消息。请礼貌发言，自觉遵守{{0}}", aweType: 700 },
+    }] }, { conversationId: "0:1:70433296616:607350412292247", conversationType: 1 });
+    expect(messages[0]).toMatchObject({ type: "system", text: "对方回复或关注你之前，只能发送一条文字消息。请礼貌发言，自觉遵守" });
+    const accumulator = new ChatConversationAccumulator([], "607350412292247");
+    accumulator.addMessages(messages);
+    expect(accumulator.snapshot()[0]).toMatchObject({ messageCount: 1, ownMessageCount: 0 });
   });
 });

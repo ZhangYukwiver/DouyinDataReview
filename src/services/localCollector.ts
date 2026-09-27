@@ -444,6 +444,11 @@ function parseChatMessage(value: unknown): ChatMessage | null {
     callDurationSeconds: duration,
   };
   if (senderAvatarUrl) message.senderAvatarUrl = senderAvatarUrl;
+  // 抖音自己插的提示带 {{0}} 这种模板空位（比如跟没互关的人新建会话时那句），旧版采集器把它当成了「我发的文字」
+  if (message.type === "text" && message.text && /\{\{\d+\}\}/u.test(message.text)) {
+    message.type = "system";
+    message.text = message.text.replace(/\{\{\d+\}\}/gu, "").trim();
+  }
   if (type === "comment") {
     const comment = isObject(value.comment) ? value.comment : {};
     message.comment = {

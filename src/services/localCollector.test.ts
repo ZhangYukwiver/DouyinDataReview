@@ -668,3 +668,14 @@ describe("local collector client", () => {
     expect(fetchMock.mock.calls.every(([url]) => !url.includes("session-secret"))).toBe(true);
   });
 });
+
+describe("Douyin notices stored by older collectors", () => {
+  it("reads a templated notice as a system line instead of a message you sent", async () => {
+    const { parseExportedSnapshot } = await import("./localCollector");
+    const snapshot = parseExportedSnapshot({ exportedAt: "2026-09-26T13:00:00Z", records: { watch_history: [], liked_videos: [], favorite_videos: [] }, chatConversations: [], chatMessages: [{
+      id: "7689823287246178873", conversationId: "0:1:70433296616:607350412292247", conversationType: "friend", conversationName: null, senderId: "607350412292247", senderName: null,
+      sentAt: "2026-09-26T12:41:49.792Z", type: "text", text: "对方回复或关注你之前，只能发送一条文字消息。请礼貌发言，自觉遵守{{0}}", mediaUrl: null, share: null, callDurationSeconds: null,
+    }] });
+    expect(snapshot?.chatMessages[0]).toMatchObject({ type: "system", text: "对方回复或关注你之前，只能发送一条文字消息。请礼貌发言，自觉遵守" });
+  });
+});
