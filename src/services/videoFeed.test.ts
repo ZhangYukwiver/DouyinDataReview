@@ -25,9 +25,10 @@ describe("video feed", () => {
     expect(switches.filter(Boolean)).toEqual([1, 1, 1]);
     expect(gesture(-70, 2100)).toBe(-1);
   });
-  it("preserves list order and skips image, live and unlinked rows", () => {
+  it("preserves list order, keeps image posts and skips live and unlinked rows", () => {
     const next = { ...record, id: "next" };
-    expect(buildVideoFeed([{ ...record, id: "photo", mediaType: "image" }, record, { ...record, id: "live", mediaType: "live" }, { ...record, id: "missing", url: null }, next], record)).toEqual([record, next]);
+    const photo = { ...record, id: "photo", mediaType: "image" as const };
+    expect(buildVideoFeed([photo, record, { ...record, id: "live", mediaType: "live" }, { ...record, id: "missing", url: null }, next], record)).toEqual([photo, record, next]);
     expect(buildVideoFeed([next], record)).toEqual([record, next]);
   });
 });

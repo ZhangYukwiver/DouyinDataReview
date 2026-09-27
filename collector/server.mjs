@@ -207,7 +207,7 @@ async function sendVideoFile(response, filePath, fileName) {
     .replace(/[<>:"/\\|?*\u0000-\u001F]/gu, "_")
     .slice(0, 180) || "douyin-video.mp4";
   response.writeHead(200, {
-    "Content-Type": "video/mp4",
+    "Content-Type": safeName.endsWith(".zip") ? "application/zip" : "video/mp4",
     "Content-Length": file.size,
     "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(safeName)}`,
     "Cache-Control": "no-store",
@@ -352,7 +352,7 @@ export async function startCollectorServer({
 
     const streamMatch = request.method === "GET" ? url.pathname.match(/^\/v1\/downloads\/([0-9a-f-]{20,})\/stream$/iu) : null;
     if (streamMatch) {
-      const stream = collector.playbackStream(streamMatch[1], url.searchParams.get("key"));
+      const stream = collector.playbackStream(streamMatch[1], url.searchParams.get("key"), url.searchParams.get("live"));
       if (stream) await proxyMediaStream(request, response, stream);
       else sendJson(response, 404, { error: "download_job_not_found" });
       return;

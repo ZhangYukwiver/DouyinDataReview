@@ -699,7 +699,7 @@ function RecordsGallery({
             selection={selectionFor(item)}
             downloadState={downloadStates[item.id] ?? "idle"}
             onDownloadRecord={item.mediaType === "live" ? undefined : onDownloadRecord}
-            onPlayRecord={item.mediaType === "live" ? openLive : onLoadVideo && item.mediaType !== "image" ? setPlayingRecord : undefined}
+            onPlayRecord={item.mediaType === "live" ? openLive : onLoadVideo ? setPlayingRecord : undefined}
             onOpenRecord={onOpenRecord}
             privacy={privacy}
             record={item}
@@ -925,7 +925,7 @@ function RecordTile({
           {onPlayRecord ? (
             <Pressable
               testID="record-tile-action"
-              accessibilityLabel={record.mediaType === "live" ? "进入直播间" : "播放视频"}
+              accessibilityLabel={record.mediaType === "live" ? "进入直播间" : record.mediaType === "image" ? "播放图文" : "播放视频"}
               accessibilityRole="button"
               onFocus={markFocused}
               onBlur={checkFocusBoundary}

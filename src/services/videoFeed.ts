@@ -3,7 +3,7 @@ import { closeExplore, interactExplore, readExplore, type ExploreConnection, typ
 import { LocalCollectorError } from "./localCollector";
 
 export function buildVideoFeed(records: PersonalVideoRecord[], initial: PersonalVideoRecord): PersonalVideoRecord[] {
-  const videos = records.filter((item) => item.url && item.mediaType !== "image" && item.mediaType !== "live");
+  const videos = records.filter((item) => item.url && item.mediaType !== "live");
   return videos.some((item) => item.id === initial.id) ? videos : [initial, ...videos];
 }
 

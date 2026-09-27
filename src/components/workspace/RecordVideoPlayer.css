@@ -8,6 +8,12 @@
 .rv-ambient { position: absolute; inset: -50px; background-size: cover; background-position: center; filter: blur(35px) brightness(.22); pointer-events: none; }
 .rv-stage { position: relative; flex-shrink: 1; height: 100%; aspect-ratio: 9 / 16; min-width: 0; max-width: 100%; background: #000; animation: rv-enter .2s ease-out; user-select: none; }
 .rv-stage video { display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
+.rv-album { position: absolute; inset: 0; cursor: pointer; }
+.rv-album img, .rv-album video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.rv-album img[hidden] { display: none; }
+.rv-album-dots { display: flex; gap: 4px; margin-top: 4px; }
+.rv-album-dots button { flex: 1; height: 14px; padding: 5px 0; border-radius: 0; background: #ffffff4d content-box; }
+.rv-album-dots button.rv-on { background-color: #fff; }
 .rv-loading-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .rv-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg,rgba(0,0,0,.52),transparent 18%,transparent 48%,rgba(0,0,0,.72) 89%,rgba(0,0,0,.88)); }
 .rv-topbar { position: absolute; inset: 12px 12px auto; display: flex; align-items: center; gap: 12px; text-shadow: 0 1px 8px #000; }

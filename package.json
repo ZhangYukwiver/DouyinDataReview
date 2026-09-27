@@ -81,7 +81,7 @@
       "package.json",
       "!**/*.test.mjs",
       "!collector/fixtures/**",
-      "!node_modules/!(playwright-core|electron-updater|builder-util-runtime|debug|ms|fs-extra|graceful-fs|jsonfile|universalify|js-yaml|argparse|sax|lazy-val|lodash.escaperegexp|lodash.isequal|semver|tiny-typed-emitter)/**"
+      "!node_modules/!(playwright-core|fflate|electron-updater|builder-util-runtime|debug|ms|fs-extra|graceful-fs|jsonfile|universalify|js-yaml|argparse|sax|lazy-val|lodash.escaperegexp|lodash.isequal|semver|tiny-typed-emitter)/**"
     ],
     "asar": true,
     "asarUnpack": [

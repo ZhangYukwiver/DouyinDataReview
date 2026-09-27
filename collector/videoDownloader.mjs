@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pageNeedsVerification, prepareReadOnlyPage } from "./readOnlyPage.mjs";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
+import { zipSync } from "fflate";
 
 const MAX_SOURCE_URL_LENGTH = 2_048;
 const MAX_TITLE_LENGTH = 90;
@@ -25,6 +26,10 @@ const MEDIA_HOSTS = [
   "byteimg.com",
   "snssdk.com",
 ];
+
+// 图文的图片和配乐在另外两个 CDN 上，只用于图文，不参与视频地址挑选
+const IMAGE_HOSTS = ["douyinpic.com"];
+const MUSIC_HOSTS = ["douyinstatic.com"];
 
 const DETAIL_PATH_PATTERN = /\/aweme\/v1\/web\/aweme\/detail\//iu;
 const VIDEO_ID_PATTERN = /\/(?:video|note|share\/(?:video|note|item))\/(\d+)/iu;
@@ -81,16 +86,40 @@ export function normalizeDouyinVideoUrl(value) {
   return url.toString();
 }
 
-export function isAllowedMediaUrl(value) {
+function isHttpsUrlOn(value, hosts) {
   if (typeof value !== "string" || value.length > MAX_SOURCE_URL_LENGTH * 2) return false;
   try {
     const url = new URL(value);
     return url.protocol === "https:"
-      && isHostInList(url.hostname, MEDIA_HOSTS)
+      && isHostInList(url.hostname, hosts)
       && (!url.port || url.port === "443");
   } catch {
     return false;
   }
+}
+
+export function isAllowedMediaUrl(value) {
+  return isHttpsUrlOn(value, MEDIA_HOSTS);
+}
+
+const list = (value) => Array.isArray(value) ? value : [];
+
+/**
+ * 图文作品：每张图取无水印地址（有 jpeg 用 jpeg），实况照片带上它那段短视频，再加上配乐。
+ * 不是图文返回 null。图文的 video.play_addr 是配乐，实况短视频也会出现在页面请求里，都不能当成作品本身。
+ */
+export function extractDouyinAlbum(payload) {
+  const detail = payload?.aweme_detail ?? payload;
+  const images = list(detail?.images).flatMap((image) => {
+    const urls = list(image?.url_list).filter((url) => isHttpsUrlOn(url, IMAGE_HOSTS));
+    const url = urls.find((item) => /\.jpe?g$/iu.test(new URL(item).pathname)) ?? urls[0];
+    const live = list(image?.video?.play_addr?.url_list).find(isAllowedMediaUrl);
+    return url ? [{ url, ...(live ? { live } : {}) }] : [];
+  });
+  if (!images.length) return null;
+  const music = [...list(detail.music?.play_url?.url_list), ...list(detail.video?.play_addr?.url_list)]
+    .find((url) => isHttpsUrlOn(url, MUSIC_HOSTS)) ?? null;
+  return { images, music };
 }
 
 function isLikelyMediaUrl(value, contentType = "") {
@@ -300,6 +329,7 @@ export async function discoverDouyinVideo(context, sourceUrl, {
   const candidates = [];
   const pending = new Set();
   let detailMeta = {};
+  let album = null;
   const add = (candidate) => pushCandidate(candidates, candidate);
   const onResponse = (response) => {
     const task = (async () => {
@@ -313,6 +343,7 @@ export async function discoverDouyinVideo(context, sourceUrl, {
           if (payload) {
             collectDouyinMediaCandidates(payload, candidates);
             detailMeta = { ...detailMeta, ...extractDouyinMetadata(payload, page.url()) };
+            album ??= extractDouyinAlbum(payload);
           }
         }
       }
@@ -358,7 +389,7 @@ export async function discoverDouyinVideo(context, sourceUrl, {
 
     const deadline = Date.now() + mediaWaitMs;
     let firstCandidateAt = null;
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !album) {
       if (candidates.length > 0) {
         firstCandidateAt ??= Date.now();
         if (Date.now() - firstCandidateAt >= 1_500) break;
@@ -370,8 +401,8 @@ export async function discoverDouyinVideo(context, sourceUrl, {
 
     for (const candidate of await runtimeMediaCandidates(page)) add(candidate);
     const canonicalUrl = page.url();
-    const selected = selectDouyinMediaCandidate(candidates);
-    if (!selected) {
+    const selected = album ? null : selectDouyinMediaCandidate(candidates);
+    if (!selected && !album) {
       const text = await bodyText(page);
       if (await pageNeedsVerification(page)) {
         throw new VideoDownloadError("verification_required", "抖音要求完成安全验证，请稍后重试或先在浏览器中验证。", { retryable: true });
@@ -392,6 +423,7 @@ export async function discoverDouyinVideo(context, sourceUrl, {
       publishedAt: detailMeta.publishedAt ?? null,
       stats: detailMeta.stats ?? null,
       media: selected,
+      ...album,
       candidates: candidates.map((candidate) => ({ ...candidate })),
     };
   } finally {
@@ -558,6 +590,40 @@ export async function downloadMediaFile({
   }
 }
 
+/** 图文打成一个 zip：01.jpg、02.jpg…，实况照片的短视频用同一个序号的 .mp4。图片本来就压缩过，zip 只存不压。 */
+async function downloadImageAlbum({ images, outputDirectory, fileName, referer, signal, onProgress, maxBytes = MAX_MEDIA_BYTES }) {
+  const files = {};
+  let bytes = 0;
+  try {
+    for (const [index, image] of images.entries()) {
+      const name = String(index + 1).padStart(2, "0");
+      const still = /\.(webp|png|gif|heic)$/iu.exec(new URL(image.url).pathname)?.[1].toLowerCase() ?? "jpg";
+      const parts = [[image.url, IMAGE_HOSTS, still], ...(image.live ? [[image.live, MEDIA_HOSTS, "mp4"]] : [])];
+      for (const [url, hosts, extension] of parts) {
+        const response = await fetchMediaStream({ url, referer, signal, hosts });
+        if (bytes + numberOrZero(response.headers.get("content-length")) > maxBytes) {
+          await response.body?.cancel().catch(() => undefined);
+          throw new VideoDownloadError("media_too_large", "图文文件超过本地安全大小限制。", { retryable: false });
+        }
+        const data = new Uint8Array(await response.arrayBuffer());
+        bytes += data.length;
+        if (bytes > maxBytes) throw new VideoDownloadError("media_too_large", "图文文件超过本地安全大小限制。", { retryable: false });
+        files[`${name}.${extension}`] = [data, { level: 0 }];
+        onProgress?.(bytes);
+      }
+    }
+  } catch (error) {
+    if (error instanceof VideoDownloadError) throw error;
+    signal?.throwIfAborted();
+    throw new VideoDownloadError("media_download_failed", "图文图片下载失败，请稍后重试。");
+  }
+  await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
+  const filePath = path.join(outputDirectory, fileName);
+  const zip = zipSync(files);
+  await writeFile(filePath, zip, { mode: 0o600 });
+  return { filePath, fileName, bytes: zip.length, skipped: false };
+}
+
 export async function downloadDouyinVideo({
   context,
   sourceUrl,
@@ -575,16 +641,10 @@ export async function downloadDouyinVideo({
     videoId: parsed.videoId,
     sourceUrl: parsed.sourceUrl,
   });
-  const downloaded = await downloadMediaFile({
-    context,
-    media: parsed.media,
-    outputDirectory,
-    fileName,
-    referer: parsed.canonicalUrl || "https://www.douyin.com/",
-    signal,
-    onProgress,
-    timeoutMs,
-  });
+  const referer = parsed.canonicalUrl || "https://www.douyin.com/";
+  const downloaded = parsed.images
+    ? await downloadImageAlbum({ images: parsed.images, outputDirectory, fileName: fileName.replace(/\.mp4$/u, ".zip"), referer, signal, onProgress })
+    : await downloadMediaFile({ context, media: parsed.media, outputDirectory, fileName, referer, signal, onProgress, timeoutMs });
   return { ...parsed, ...downloaded };
 }
 
@@ -592,16 +652,15 @@ export async function downloadDouyinVideo({
 export async function resolveDouyinStream({ context, sourceUrl, signal, pageTimeoutMs, mediaWaitMs } = {}) {
   const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal });
   signal?.throwIfAborted();
-  return {
-    url: parsed.media.url,
-    referer: parsed.canonicalUrl || "https://www.douyin.com/",
-    cookie: await fetchCookieHeader(context, parsed.media.url),
-  };
+  const referer = parsed.canonicalUrl || "https://www.douyin.com/";
+  // 图文的图片和配乐浏览器能直接加载；实况照片的短视频要带抖音来源才给，由 /stream?live=序号 转发
+  if (parsed.images) return { images: parsed.images, music: parsed.music, referer };
+  return { url: parsed.media.url, referer, cookie: await fetchCookieHeader(context, parsed.media.url) };
 }
 
 /** Forward one (range) request to the allowed media host; the caller pipes the body. */
-export async function fetchMediaStream({ url, referer, cookie, range, signal }) {
-  if (!isAllowedMediaUrl(url)) {
+export async function fetchMediaStream({ url, referer, cookie, range, signal, hosts = MEDIA_HOSTS }) {
+  if (!isHttpsUrlOn(url, hosts)) {
     throw new VideoDownloadError("invalid_media_url", "抖音媒体地址不在允许范围内。", { retryable: false });
   }
   const response = await fetch(url, {
@@ -615,7 +674,7 @@ export async function fetchMediaStream({ url, referer, cookie, range, signal }) 
       ...(range ? { Range: range } : {}),
     },
   });
-  if (!response.ok || !response.body || !isAllowedMediaUrl(response.url || url)) {
+  if (!response.ok || !response.body || !isHttpsUrlOn(response.url || url, hosts)) {
     await response.body?.cancel().catch(() => undefined);
     throw new VideoDownloadError("media_http_error", `抖音媒体地址返回 HTTP ${response.status}。`);
   }
