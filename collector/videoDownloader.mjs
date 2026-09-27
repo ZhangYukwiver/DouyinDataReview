@@ -397,7 +397,8 @@ export async function discoverDouyinVideo(context, sourceUrl, {
   } finally {
     signal?.removeEventListener("abort", abort);
     page.off("response", onResponse);
-    await page.close().catch(() => undefined);
+    // 抖音页面偶尔关不掉（close 一直不返回），限时放手，别卡住后面所有播放和下载；留下的标签页随浏览器会话一起关
+    await Promise.race([page.close().catch(() => undefined), delay(5_000, undefined, { ref: false })]);
   }
 }
 
