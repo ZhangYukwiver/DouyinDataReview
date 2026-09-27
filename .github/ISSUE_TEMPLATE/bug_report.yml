@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        请先阅读 README 的常见问题和采集边界。不要上传 Cookie、Token、浏览器配置、聊天记录或未脱敏截图。
+        请先阅读 README 的常见问题。不要上传 Cookie、Token、浏览器配置、聊天记录或未脱敏截图。
   - type: input
     id: version
     attributes:
