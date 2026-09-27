@@ -54,6 +54,7 @@ import {
 import { observeChatSockets } from "./chatRealtime.mjs";
 import { ChatSendError, sendChatText, validateChatSend } from "./chatSender.mjs";
 import { loadChatMessages, readChatStreaks } from "./chatViewer.mjs";
+import { LiveRooms } from "./liveRoom.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
 const CHAT_URL = "https://www.douyin.com/chat?isPopup=1";
@@ -110,6 +111,10 @@ export function directContextLaunchOptions({ executablePath, userAgent, platform
     args: [
       "--headless=new",
       "--window-size=1280,900",
+      // 直播间的弹幕连接开在 worker 里，关掉这个特性它才走页面网络、能被监听到
+      "--disable-features=PlzDedicatedWorker",
+      // 无头页面没人听，直播间礼物特效之类别出声
+      "--mute-audio",
     ],
   };
 }
@@ -1008,6 +1013,7 @@ export class DouyinCollector {
     this.videoDownloadQueue = Promise.resolve();
     this.videoDownloadControllers = new Set();
     this.videoDownloadActive = null;
+    this.liveRooms = new LiveRooms(this);
     this.statusRevision = 0;
     this.statusListeners = new Set();
     this.status = {
@@ -1308,7 +1314,7 @@ export class DouyinCollector {
       if (job.released) this.retireVideoDownloadJob(job);
       if (ownsContext && context) {
         // 聊天接收或无界面读取可能中途加入了同一个会话，别把它们一起关掉
-        const shared = this.context === context && (this.chat?.active || this.syncMode === "direct_records");
+        const shared = this.context === context && (this.chat?.active || this.syncMode === "direct_records" || this.liveRooms.size > 0);
         if (!shared) {
           if (this.context === context) {
             this.context = null;
@@ -1559,7 +1565,7 @@ export class DouyinCollector {
 
   // 还有别的无头任务在用这个共享会话吗
   headlessWorkRunning() {
-    return this.syncMode === "direct_records" || this.hasActiveVideoDownload();
+    return this.syncMode === "direct_records" || this.hasActiveVideoDownload() || this.liveRooms.size > 0;
   }
 
   async releaseHeadlessContextIfIdle() {

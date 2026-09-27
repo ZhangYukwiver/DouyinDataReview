@@ -347,6 +347,8 @@ describe("direct browser launch options", () => {
       args: [
         "--headless=new",
         "--window-size=1280,900",
+        "--disable-features=PlzDedicatedWorker",
+        "--mute-audio",
       ],
     });
   });
@@ -358,7 +360,7 @@ describe("direct browser launch options", () => {
       platform: "linux",
     })).toMatchObject({
       headless: true,
-      args: ["--headless=new", "--window-size=1280,900"],
+      args: ["--headless=new", "--window-size=1280,900", "--disable-features=PlzDedicatedWorker", "--mute-audio"],
     });
   });
 });

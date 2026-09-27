@@ -15,6 +15,7 @@ import { chromium } from "playwright-core";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
+import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
 
@@ -442,6 +443,23 @@ export async function startCollectorServer({
         await sendVideoFile(response, filePath, job.fileName);
       } else {
         sendJson(response, 200, { job });
+      }
+    } else if (url.pathname === "/v1/live/following" || url.pathname === "/v1/live/rooms" || /^\/v1\/live\/rooms\/[0-9a-f-]{36}$/u.test(url.pathname)) {
+      // 直播间：POST 进房（换台会收掉上一个），GET 取新弹幕，DELETE 退出；following 是关注的人谁在播
+      const id = url.pathname.split("/")[4];
+      try {
+        if (request.method === "GET" && url.pathname === "/v1/live/following") sendJson(response, 200, { rooms: await collector.liveRooms.following({ refresh: url.searchParams.get("refresh") === "1" }) });
+        else if (request.method === "POST" && url.pathname === "/v1/live/rooms") sendJson(response, 200, await collector.liveRooms.open((await readJsonBody(request))?.room));
+        else if (request.method === "GET" && id) sendJson(response, 200, collector.liveRooms.read(id, Number(url.searchParams.get("after") ?? -1)));
+        else if (request.method === "DELETE" && id) sendJson(response, 200, { closed: await collector.liveRooms.close(id) });
+        else sendJson(response, 404, { error: "not_found" });
+      } catch (error) {
+        const known = error instanceof LiveRoomError;
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        if (!response.headersSent) sendJson(response, known ? error.status : malformed ? 400 : 500, {
+          error: known ? error.code : malformed ? "invalid_request" : "live_failed",
+          message: known ? error.message : malformed ? "请求无效，请重试。" : id || request.method === "POST" ? "直播间没打开，请稍后重试。" : "没读到关注的人的直播，请稍后重试。",
+        });
       }
     } else if (request.method === "GET" && url.pathname === "/v1/status") {
       const requestedRevision = url.searchParams.get("afterRevision");
