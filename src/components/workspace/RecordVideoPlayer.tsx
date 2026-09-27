@@ -10,11 +10,11 @@ import "./RecordVideoPlayer.css";
 
 /** Resolves to a stream URL that stays valid until `signal` aborts. */
 export type RecordVideoLoader = (record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void) => Promise<string>;
-const count = (value?: number | null) => value == null ? "—" : value >= 10000 ? `${(value / 10000).toFixed(1).replace(/\.0$/u, "")}万` : value.toLocaleString("zh-CN");
+export const count = (value?: number | null) => value == null ? "—" : value >= 10000 ? `${(value / 10000).toFixed(1).replace(/\.0$/u, "")}万` : value.toLocaleString("zh-CN");
 const time = (value: number) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
 const date = (value?: string | null) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString("zh-CN") : "";
 // 评论和文案里的小表情以 [捂脸] 这样的文字代码传输，用聊天页同一份字典换成行内小图，没收录的原样显示。
-const EmojiText = ({ text }: { text: string }) => <>{splitChatEmoji(text).map((part, index) => "emoji" in part
+export const EmojiText = ({ text }: { text: string }) => <>{splitChatEmoji(text).map((part, index) => "emoji" in part
   ? <img className="rv-emoji" key={index} src={part.url} alt={part.emoji} title={part.emoji} referrerPolicy="no-referrer" draggable={false} />
   : part.text)}</>;
 

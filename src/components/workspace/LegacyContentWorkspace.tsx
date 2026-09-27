@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text as RNText,
+  TextInput,
   type TextProps,
   useWindowDimensions,
   View,
@@ -56,6 +57,9 @@ import { DEFAULT_APP_STYLE, type AppStyle } from "../../services/appStyle";
 import Svg, { Circle } from "react-native-svg";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { RecordVideoPlayer, type RecordVideoLoader } from "./RecordVideoPlayer";
+import { LiveRoomPlayer, type LiveTarget } from "./LiveRoomPlayer";
+import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../services/liveRoom";
+import { waitForCollector } from "../../services/videoFeed";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { ReportDashboard } from "./ReportDashboard";
@@ -387,6 +391,7 @@ export function ContentWorkspace({
         ) : (
           <RecordsGallery
             activeType={activeView === "live" ? "watch_history" : activeView}
+            live={activeView === "live"}
             label={currentNav.label}
             downloadStates={downloadStates}
             mobile={mobile}
@@ -536,6 +541,7 @@ function NavButton({
 
 function RecordsGallery({
   activeType,
+  live = false,
   label,
   downloadStates,
   mobile,
@@ -552,6 +558,8 @@ function RecordsGallery({
   width,
 }: {
   activeType: PersonalRecordType;
+  /** 直播一栏：卡片进直播间，页头能粘贴直播间链接 */
+  live?: boolean;
   label: string;
   downloadStates: Record<string, RecordDownloadState>;
   mobile: boolean;
@@ -569,6 +577,10 @@ function RecordsGallery({
 }) {
   const [layout, setLayout] = useState<"grid" | "list">("grid");
   const [playingRecord, setPlayingRecord] = useState<PersonalVideoRecord | null>(null);
+  const [liveTarget, setLiveTarget] = useState<LiveTarget | null>(null);
+  const openLive = Platform.OS === "web" && !privacy
+    ? (record: PersonalVideoRecord) => record.url && setLiveTarget({ room: record.url, title: record.title, anchor: record.author, cover: record.coverUrl })
+    : undefined;
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRecords, setBatchRecords] = useState<PersonalVideoRecord[] | null>(null);
@@ -577,7 +589,7 @@ function RecordsGallery({
     return () => onBatchDownloadActiveChange?.(false);
   }, [batchRecords, onBatchDownloadActiveChange]);
   useEffect(() => { setSelecting(false); setSelected(new Set()); }, [label, privacy]);
-  useEffect(() => { setPlayingRecord(null); }, [label, privacy]);
+  useEffect(() => { setPlayingRecord(null); setLiveTarget(null); }, [label, privacy]);
   const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
   // 最后一行不满时 flex:1 会把卡片拉宽，限成一列宽（12 是 gridRow 的 gap）
   const cellStyle = Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null;
@@ -627,11 +639,13 @@ function RecordsGallery({
       data={sortedRecords}
       keyExtractor={(item) => item.id}
       ListHeaderComponent={(
+        <>
         <View {...fx({ motion: "rise", ws: "w-ghead" })} style={styles.galleryHeader}>
           <View style={styles.galleryHeaderCopy}>
             <Text {...ws("w-gtitle")} style={styles.galleryTitle}>{label}</Text>
             <Text {...ws("mono")} style={styles.galleryMeta}>{sourceLabel} · {status?.message ?? `${records.length} 条本地记录`}</Text>
           </View>
+          {live && Platform.OS === "web" && !privacy ? <LiveRoomEntry onEnter={setLiveTarget} /> : null}
           {Platform.OS === "web" && !privacy && candidates.length > 0 ? <Pressable {...ws("btn")} accessibilityRole="button"
             onPress={() => { setSelecting(!selecting); setSelected(new Set()); }} style={styles.batchButton}>
             <Download size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{selecting ? "退出多选" : "批量下载"}</Text>
@@ -659,6 +673,8 @@ function RecordsGallery({
             </Pressable>
           </View>
         </View>
+        {live && Platform.OS === "web" && !privacy && commentsConnection ? <FollowingLiveRow connection={commentsConnection} onEnter={setLiveTarget} /> : null}
+        </>
       )}
       ListEmptyComponent={(
         <View {...fx({ motion: "rise" })} style={styles.emptyState}>
@@ -683,7 +699,7 @@ function RecordsGallery({
             selection={selectionFor(item)}
             downloadState={downloadStates[item.id] ?? "idle"}
             onDownloadRecord={item.mediaType === "live" ? undefined : onDownloadRecord}
-            onPlayRecord={onLoadVideo && item.mediaType !== "image" && item.mediaType !== "live" ? setPlayingRecord : undefined}
+            onPlayRecord={item.mediaType === "live" ? openLive : onLoadVideo && item.mediaType !== "image" ? setPlayingRecord : undefined}
             onOpenRecord={onOpenRecord}
             privacy={privacy}
             record={item}
@@ -695,12 +711,86 @@ function RecordsGallery({
     {Platform.OS === "web" && playingRecord && !privacy && onLoadVideo ? (
       <RecordVideoPlayer record={playingRecord} records={sortedRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)} />
     ) : null}
+    {liveTarget && Platform.OS === "web" && !privacy ? (
+      <LiveRoomPlayer target={liveTarget} connection={commentsConnection ?? null} onClose={() => setLiveTarget(null)} onOpenRecord={onOpenRecord} onOpenSettings={onOpenSettings} />
+    ) : null}
     {batchRecords && commentsConnection ? <BatchVideoDownloadDialog records={batchRecords} connection={commentsConnection} privacy={privacy} onClose={() => setBatchRecords(null)} /> : null}
     </>
   );
 }
 
 type RecordSelection = { checked: boolean; disabled: boolean; toggle: () => void };
+
+function LiveRoomEntry({ onEnter }: { onEnter: (target: LiveTarget) => void }) {
+  const [text, setText] = useState("");
+  const room = liveRoomIdFrom(text);
+  const enter = () => {
+    if (!room) return;
+    onEnter({ room });
+    setText("");
+  };
+  return (
+    <View style={styles.liveEntry}>
+      <TextInput accessibilityLabel="直播间链接或房间号" onChangeText={setText} onSubmitEditing={enter} placeholder="粘贴直播间链接或房间号"
+        placeholderTextColor={color.textMuted} {...ws("c-input")} style={styles.liveEntryInput} value={text} />
+      <Pressable {...ws("btn")} accessibilityLabel="进入直播间" accessibilityRole="button" accessibilityState={{ disabled: !room }} disabled={!room} onPress={enter}
+        style={({ pressed }) => [styles.batchButton, !room && styles.buttonDisabled, pressed && styles.buttonPressed, webPointer]}>
+        <Radio size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>进入直播间</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/** 关注的人谁在播：进直播页读一次（采集器缓存 30 秒），右边按钮强制刷新。 */
+function FollowingLiveRow({ connection, onEnter }: { connection: ExploreConnection; onEnter: (target: LiveTarget) => void }) {
+  const [rooms, setRooms] = useState<LiveFollowing[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    void waitForCollector(() => readFollowingLive(connection, attempt > 0, controller.signal), controller.signal)
+      .then(setRooms)
+      .catch((cause) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "没读到关注的人的直播。"); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [connection.baseUrl, connection.token, attempt]);
+  return (
+    <View style={styles.followLive}>
+      <View style={styles.followLiveHead}>
+        <Text style={styles.followLiveTitle}>关注的人正在直播</Text>
+        {rooms?.length ? <Text {...ws("mono")} style={styles.followLiveCount}>{rooms.length}</Text> : null}
+        <Pressable accessibilityLabel="刷新关注的人的直播" accessibilityRole="button" disabled={loading} onPress={() => setAttempt((value) => value + 1)}
+          style={({ pressed }) => [styles.followLiveRefresh, pressed && styles.buttonPressed, webPointer]}>
+          {loading ? <ActivityIndicator color={color.cyan} size="small" /> : <RefreshCw color={color.textSecondary} size={14} />}
+        </Pressable>
+      </View>
+      {error ? <Text style={styles.followLiveNote}>{error}</Text>
+        : rooms === null ? <Text style={styles.followLiveNote}>正在看你关注的人谁在播…</Text>
+        : rooms.length === 0 ? <Text style={styles.followLiveNote}>你关注的人现在都没在播。</Text>
+        : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.followLiveList}>
+            {rooms.map((room) => (
+              <Pressable key={room.webRid} accessibilityLabel={`进入${room.anchor.name || "主播"}的直播间`} accessibilityRole="button"
+                onPress={() => onEnter({ room: room.webRid, title: room.title, anchor: room.anchor.name, cover: room.cover })}
+                {...fx({ hover: "card" })} style={({ pressed }) => [styles.followLiveCard, pressed && styles.buttonPressed, webPointer]}>
+                <View style={styles.followLiveAvatar}>
+                  {room.anchor.avatar ? <Image source={{ uri: room.anchor.avatar }} style={styles.followLiveAvatarImage} /> : <Radio color={color.accent} size={18} />}
+                </View>
+                <View style={styles.followLiveCopy}>
+                  <Text numberOfLines={1} style={styles.followLiveName}>{room.anchor.name || "主播"}</Text>
+                  <Text numberOfLines={1} style={styles.followLiveRoomTitle}>{room.title || "直播中"}</Text>
+                  {room.online || room.tag ? <Text numberOfLines={1} style={styles.followLiveMeta}>{[room.online && `${room.online} 人在看`, room.tag].filter(Boolean).join(" · ")}</Text> : null}
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+    </View>
+  );
+}
 
 function SelectionMark({ selection }: { selection: RecordSelection }) {
   return <View {...ws("w-check", selection.checked && "on")} pointerEvents="none" style={[styles.selectionMark, selection.checked && styles.selectionChecked, selection.disabled && styles.buttonDisabled]}>
@@ -835,7 +925,7 @@ function RecordTile({
           {onPlayRecord ? (
             <Pressable
               testID="record-tile-action"
-              accessibilityLabel="播放视频"
+              accessibilityLabel={record.mediaType === "live" ? "进入直播间" : "播放视频"}
               accessibilityRole="button"
               onFocus={markFocused}
               onBlur={checkFocusBoundary}
@@ -1309,6 +1399,22 @@ const styles = StyleSheet.create({
   selectionMark: { width: 26, height: 26, borderWidth: 1, borderColor: color.textMuted, borderRadius: 6, backgroundColor: color.surface, alignItems: "center", justifyContent: "center" },
   selectionChecked: { backgroundColor: color.button, borderColor: color.button },
   galleryHeaderCopy: { flex: 1, minWidth: 0 },
+  liveEntry: { flexDirection: "row", alignItems: "center", gap: 8 },
+  followLive: { gap: 10, marginBottom: 18 },
+  followLiveHead: { flexDirection: "row", alignItems: "center", gap: 8 },
+  followLiveTitle: { color: color.text, fontSize: 13, fontWeight: "600" },
+  followLiveCount: { color: color.accent, fontSize: 11 },
+  followLiveRefresh: { width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: radius.small },
+  followLiveNote: { color: color.textMuted, fontSize: 12 },
+  followLiveList: { gap: 10, paddingBottom: 2 },
+  followLiveCard: { width: 236, flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
+  followLiveAvatar: { width: 46, height: 46, alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 2, borderColor: color.accent, borderRadius: 23, backgroundColor: color.sidebar },
+  followLiveAvatarImage: { width: "100%", height: "100%" },
+  followLiveCopy: { flex: 1, minWidth: 0, gap: 2 },
+  followLiveName: { color: color.text, fontSize: 13, fontWeight: "600" },
+  followLiveRoomTitle: { color: color.textSecondary, fontSize: 11 },
+  followLiveMeta: { color: color.textMuted, fontSize: 10 },
+  liveEntryInput: { width: 230, height: 38, color: color.text, fontSize: 12, paddingHorizontal: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
   galleryTitle: { color: color.text, fontSize: 16, fontWeight: "600", letterSpacing: 2.5, fontFamily: font.serif },
   galleryMeta: { color: color.textMuted, fontSize: 10, marginTop: 5 },
   layoutSwitch: { height: 42, flexDirection: "row", padding: 3, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.sidebar },
