@@ -108,7 +108,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "ContentInsights-Setup-${version}.${ext}"
+      "artifactName": "DouyinDataReview-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -140,7 +140,7 @@
         }
       ],
       "icon": "build/icon.icns",
-      "artifactName": "ContentInsights-${version}-${arch}.${ext}"
+      "artifactName": "DouyinDataReview-${version}-${arch}.${ext}"
     }
   }
 }

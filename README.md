@@ -69,8 +69,8 @@ https://github.com/user-attachments/assets/f1f3efef-ad55-4f9c-9240-90a4d468b80c
 
 | 平台 | 设备 / 架构 | 安装包 |
 | --- | --- | --- |
-| Windows | x64 | `ContentInsights-Setup-<version>.exe`（NSIS 安装器） |
-| macOS | Apple Silicon（arm64） | `ContentInsights-<version>-arm64.dmg` |
+| Windows | x64 | `DouyinDataReview-Setup-<version>.exe`（NSIS 安装器） |
+| macOS | Apple Silicon（arm64） | `DouyinDataReview-<version>-arm64.dmg` |
 
 两个安装包都没有开发者签名，首次打开的处理方式见下面「快速开始」。手机端通过同一局域网连接电脑上的采集器使用，见[面向开发者](#面向开发者)末尾的[手机连接](#手机连接)小节。
 
@@ -221,7 +221,7 @@ npm run web
 npm run desktop:build
 ```
 
-输出到 `release/ContentInsights-Setup-<version>.exe`，带桌面和开始菜单快捷方式。
+输出到 `release/DouyinDataReview-Setup-<version>.exe`，带桌面和开始菜单快捷方式。
 
 **macOS（DMG）**
 
@@ -229,7 +229,7 @@ npm run desktop:build
 npm run desktop:build:mac
 ```
 
-在 Apple Silicon Mac 上输出 `release/ContentInsights-<version>-arm64.dmg`。没有 Apple 开发者签名时会做 ad-hoc 签名，拿到 dmg 的人首次打开前仍要执行上面的 `xattr -cr`。
+在 Apple Silicon Mac 上输出 `release/DouyinDataReview-<version>-arm64.dmg`。没有 Apple 开发者签名时会做 ad-hoc 签名，拿到 dmg 的人首次打开前仍要执行上面的 `xattr -cr`。
 
 </details>
 
