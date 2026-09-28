@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>内容数据工作台 下载</title>
+<meta name="description" content="把抖音这一年留在自己的电脑上。内容数据工作台 macOS / Windows 安装包下载，国内线路加速。">
+<link rel="icon" href="icon.png">
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--ink:#1c1b19;--sub:#6b675f;--line:#e4e0d6;--accent:#e2344f;--code:#f0ede5}
+@media (prefers-color-scheme:dark){:root{--bg:#141412;--card:#1e1d1a;--ink:#eeebe3;--sub:#a29d92;--line:#33312c;--accent:#ff5570;--code:#2a2925}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+main{max-width:880px;margin:0 auto;padding:48px 16px 64px}
+header{display:flex;gap:20px;align-items:center}
+header img{width:80px;height:80px;border-radius:18px}
+h1{margin:0;font-size:30px;line-height:1.3}
+.tag{margin:4px 0 0;color:var(--sub)}
+.ver{margin:32px 0 12px;color:var(--sub);font-size:14px}
+.ver b{color:var(--ink)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
+.card.mine{border-color:var(--accent)}
+.card h2{margin:0;font-size:18px}
+.card p{margin:4px 0 16px;color:var(--sub);font-size:14px}
+.btn{display:block;text-align:center;background:var(--accent);color:#fff;text-decoration:none;font-weight:600;padding:12px;border-radius:10px}
+.btn[aria-disabled=true]{opacity:.5;pointer-events:none}
+.route{margin:16px 0 0;font-size:14px;color:var(--sub)}
+select{font:inherit;padding:4px 8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+h3{margin:40px 0 8px;font-size:18px}
+pre{background:var(--code);border-radius:10px;padding:12px 14px;overflow-x:auto;margin:8px 0;font-size:14px}
+button.copy{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:2px 10px;cursor:pointer}
+details{margin-top:12px;font-size:14px;color:var(--sub)}
+code.sha{word-break:break-all;font-size:12px}
+.shot{width:100%;border-radius:12px;border:1px solid var(--line);margin-top:8px}
+footer{margin-top:48px;font-size:14px;color:var(--sub)}
+a{color:var(--accent)}
+.qq{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.qq img{width:140px;border-radius:8px}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <img src="icon.png" alt="">
+  <div>
+    <h1>内容数据工作台</h1>
+    <p class="tag">把抖音这一年留在自己的电脑上。观看、喜欢、收藏和聊天记录都存在本机，可以离线查看，还能生成年度回顾。</p>
+  </div>
+</header>
+
+<p class="ver" id="ver">正在查最新版本…</p>
+<div class="grid">
+  <div class="card" id="mac">
+    <h2>macOS</h2>
+    <p>适用于 Apple 芯片（M1 及更新）<span class="size"></span></p>
+    <a class="btn" aria-disabled="true">下载 .dmg</a>
+  </div>
+  <div class="card" id="win">
+    <h2>Windows</h2>
+    <p>适用于 Windows 10 / 11<span class="size"></span></p>
+    <a class="btn" aria-disabled="true">下载 .exe</a>
+  </div>
+</div>
+<p class="route">下载慢或打不开就换一条线路：
+  <!-- ponytail: 第三方公共加速，哪条失效了就删掉或换新的 -->
+  <select id="route">
+    <option value="https://ghfast.top/">线路 1</option>
+    <option value="https://gh-proxy.com/">线路 2</option>
+    <option value="https://gh.llkk.cc/">线路 3</option>
+    <option value="https://ghproxy.net/">线路 4</option>
+    <option value="">GitHub 原站</option>
+  </select>
+</p>
+
+<h3>安装</h3>
+<p>本机需要装有 Chrome、Edge、Brave 或 Chromium 其中一个，Windows 自带的 Edge 就可以。</p>
+<p><b>macOS：</b>打开 dmg，把「内容数据工作台」拖进「应用程序」。安装包没有开发者签名，第一次打开前先在「终端」里运行下面这行，不然会提示“应用已损坏”：</p>
+<pre id="xattr">xattr -cr "/Applications/内容数据工作台.app"</pre>
+<button class="copy" data-for="xattr">复制命令</button>
+<p>Mac 版没法在应用里自动更新，出新版本时回到这里重新下载，覆盖安装就行，已经采集的数据不会丢。</p>
+<p><b>Windows：</b>运行安装程序。如果弹出 SmartScreen 提示，先点「更多信息」，再点「仍要运行」。以后的新版本可以在应用里直接更新。</p>
+<details>
+  <summary>核对安装包是否完整（SHA-256）</summary>
+  <p>加速线路由第三方转发。担心文件被改过的话，可以对照下面的校验值：macOS 在终端运行 <code>shasum -a 256 文件名</code>，Windows 在 PowerShell 运行 <code>Get-FileHash 文件名</code>。</p>
+  <p id="sha">暂时拿不到校验值，请到 GitHub 发布页查看。</p>
+</details>
+
+<h3>看看长什么样</h3>
+<img class="shot" src="screenshots/dashboard-trace.jpg" alt="工作台首页截图" loading="lazy">
+
+<h3>交流与反馈</h3>
+<div class="qq">
+  <img src="qq-group.jpg" alt="QQ 群二维码" loading="lazy">
+  <p>QQ 群 DDDouyin，群号 1124211302<br>也可以直接加 QQ 940537208</p>
+</div>
+
+<footer>
+  开源项目，源码和历史版本都在 <a href="https://github.com/ZhangYukwiver/DouyinDataReview">GitHub</a>。
+  只读取你本人账号在网页端能看到的记录，数据不会发给任何外部服务。
+</footer>
+</main>
+<script>
+const REPO = 'ZhangYukwiver/DouyinDataReview';
+const RELEASES = `https://github.com/${REPO}/releases`;
+const route = document.getElementById('route');
+const cards = {mac: /-arm64\.dmg$/, win: /-Setup-.*\.exe$/};
+let assets = [];
+
+try { route.value = localStorage.getItem('route') ?? route.value; } catch {}
+route.onchange = () => { try { localStorage.setItem('route', route.value); } catch {} render(); };
+
+function render() {
+  for (const [id, re] of Object.entries(cards)) {
+    const a = assets.find(x => re.test(x.name));
+    const btn = document.querySelector(`#${id} .btn`);
+    btn.href = a ? route.value + a.url : RELEASES + '/latest';
+    btn.removeAttribute('aria-disabled');
+    if (a?.size) document.querySelector(`#${id} .size`).textContent = `，约 ${Math.round(a.size / 1048576)} MB`;
+  }
+}
+
+async function load() {
+  try {
+    // GitHub 接口国内一般能直连，还带文件大小和校验值
+    const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
+    if (!r.ok) throw 0;
+    const d = await r.json();
+    assets = d.assets.map(a => ({name: a.name, size: a.size, url: a.browser_download_url, digest: a.digest}));
+    document.getElementById('ver').innerHTML = `最新版本 <b>${d.tag_name}</b>，${d.published_at.slice(0, 10)} 发布`;
+    const sums = assets.filter(a => a.digest && Object.values(cards).some(re => re.test(a.name)));
+    if (sums.length) document.getElementById('sha').innerHTML = sums.map(a => `${a.name}<br><code class="sha">${a.digest.replace('sha256:', '')}</code>`).join('<br>');
+  } catch {
+    // 接口不通时从加速线路读 latest.yml 拿版本号，文件名按发版规则拼
+    try {
+      const t = await (await fetch(`https://gh.llkk.cc/${RELEASES}/latest/download/latest.yml`)).text();
+      const v = t.match(/^version:\s*(\S+)/m)[1];
+      const base = `${RELEASES}/download/v${v}/`;
+      assets = [`DouyinDataReview-${v}-arm64.dmg`, `DouyinDataReview-Setup-${v}.exe`].map(n => ({name: n, url: base + n}));
+      document.getElementById('ver').innerHTML = `最新版本 <b>v${v}</b>`;
+    } catch {
+      document.getElementById('ver').innerHTML = `暂时查不到版本信息，按钮会打开 <a href="${RELEASES}/latest">GitHub 发布页</a>`;
+    }
+  }
+  render();
+}
+
+const os = /Mac/.test(navigator.platform) ? 'mac' : /Win/.test(navigator.platform) ? 'win' : null;
+if (os) document.getElementById(os).classList.add('mine');
+document.querySelectorAll('button.copy').forEach(b => b.onclick = () => {
+  navigator.clipboard.writeText(document.getElementById(b.dataset.for).textContent).then(() => b.textContent = '已复制');
+});
+load();
+</script>
+</body>
+</html>
