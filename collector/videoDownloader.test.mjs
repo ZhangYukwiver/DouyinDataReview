@@ -1,11 +1,13 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { unzipSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   collectDouyinMediaCandidates,
   discoverDouyinVideo,
+  downloadDouyinVideo,
   downloadMediaFile,
   fetchMediaStream,
   isAllowedMediaUrl,
@@ -82,6 +84,67 @@ describe("media candidate selection", () => {
       url: "https://p3.douyinvod.com/aweme/v1/play/video.mp4",
       type: "video+audio",
     });
+  });
+
+  it("takes an image post as all of its pictures and zips every one, live clips included", async () => {
+    // 真实图文的形状：video.play_addr 是配乐，实况照片各带一段短视频，页面还会顺带请求这些短视频
+    const picture = (n) => `https://p3-pc-sign.douyinpic.com/tos/p${n}~tplv-dy-aweme-images:q75`;
+    const payload = {
+      aweme_detail: {
+        aweme_id: "7562882230080818489",
+        desc: "图鉴",
+        aweme_type: 68,
+        images: [1, 2].map((n) => ({
+          url_list: [`${picture(n)}.webp`, `${picture(n)}.jpeg`],
+          download_url_list: [`https://p3-pc-sign.douyinpic.com/tos/p${n}~tplv-dy-water-v2.jpeg`],
+          ...(n === 1 ? { video: { play_addr: { url_list: ["https://v11-weba.douyinvod.com/live1/", "https://www.douyin.com/aweme/v1/play/?video_id=x"] } } } : {}),
+        })),
+        video: { play_addr: { url_list: ["https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/1.mp3"] } },
+        music: { play_url: { url_list: ["https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/1.mp3"] } },
+      },
+    };
+    let responseHandler;
+    const page = {
+      addInitScript: async () => {},
+      context: () => ({ newCDPSession: async () => ({ on() {}, send: async () => {} }) }),
+      on: (_event, handler) => { responseHandler = handler; },
+      off: () => undefined,
+      goto: async () => {
+        await responseHandler({
+          url: () => "https://www.douyin.com/aweme/v1/web/aweme/detail/",
+          headers: () => ({ "content-type": "application/json" }),
+          ok: () => true,
+          json: async () => payload,
+        });
+      },
+      url: () => "https://www.douyin.com/note/7562882230080818489",
+      title: async () => "图鉴 - 抖音",
+      evaluate: async () => [{ url: "https://v11-weba.douyinvod.com/live1/", source: "video-current-src" }],
+      locator: () => null,
+      close: async () => undefined,
+    };
+    const context = { newPage: async () => page };
+    // 默认要等 25 秒视频地址；图文拿到详情就该返回，否则这里会超时
+    const parsed = await discoverDouyinVideo(context, "https://www.douyin.com/video/7562882230080818489");
+    expect(parsed).toMatchObject({
+      media: null,
+      images: [{ url: `${picture(1)}.jpeg`, live: "https://v11-weba.douyinvod.com/live1/" }, { url: `${picture(2)}.jpeg` }],
+      music: "https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/1.mp3",
+    });
+
+    const fetch = vi.fn(async (url) => new Response(new TextEncoder().encode(new URL(url).pathname)));
+    vi.stubGlobal("fetch", fetch);
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "album-download-"));
+    temporaryDirectories.push(outputDirectory);
+    const result = await downloadDouyinVideo({ context, sourceUrl: "https://www.douyin.com/video/7562882230080818489", outputDirectory });
+    expect(result.fileName).toBe("图鉴-7562882230080818489.zip");
+    const entries = unzipSync(await readFile(result.filePath));
+    expect(Object.fromEntries(Object.entries(entries).map(([name, data]) => [name, new TextDecoder().decode(data)]))).toEqual({
+      "01.jpg": "/tos/p1~tplv-dy-aweme-images:q75.jpeg",
+      "01.mp4": "/live1/",
+      "02.jpg": "/tos/p2~tplv-dy-aweme-images:q75.jpeg",
+    });
+    expect(fetch.mock.calls.every(([, init]) => init.headers.Referer === "https://www.douyin.com/note/7562882230080818489")).toBe(true);
   });
 
   it("resolves a playable stream from a Douyin detail response", async () => {

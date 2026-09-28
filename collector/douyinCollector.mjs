@@ -1150,6 +1150,11 @@ export class DouyinCollector {
       startedAt: job.startedAt,
       completedAt: job.completedAt,
       ...(job.playback ? { streamKey: job.streamKey } : {}),
+      // 图文播放：图片和配乐由播放器直接加载，实况短视频只给个有无，地址走 /stream?live=序号
+      ...(job.stream?.images ? {
+        images: job.stream.images.map((image) => ({ url: image.url, live: Boolean(image.live) })),
+        music: job.stream.music,
+      } : {}),
     };
   }
 
@@ -1208,7 +1213,7 @@ export class DouyinCollector {
   }
 
   /** The player's <video> cannot send the session header, so each playback job carries its own key. */
-  playbackStream(jobId, key) {
+  playbackStream(jobId, key, live = null) {
     const job = this.videoDownloadJobs.get(jobId);
     const expected = Buffer.from(job?.stream ? job.streamKey : "");
     const given = Buffer.from(String(key ?? ""));
@@ -1216,7 +1221,9 @@ export class DouyinCollector {
     // Playing can outlast the orphan timer; the player's DELETE or retention pruning ends it now.
     clearTimeout(job.releaseTimer);
     this.touchVideoDownloadJob(job);
-    return job.stream;
+    if (live === null) return job.stream.url ? job.stream : null;
+    const url = job.stream.images?.[Number(live)]?.live;
+    return url ? { url, referer: job.stream.referer } : null;
   }
 
   getVideoDownloadJob(jobId) {

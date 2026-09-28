@@ -413,6 +413,26 @@ describe("video download jobs", () => {
     expect(collector.playbackStream(job.id, job.streamKey)).toBeNull();
     expect(collector.startVideoDownload("https://www.douyin.com/video/1234567891")).not.toHaveProperty("streamKey");
   });
+  it("gives an image post's pictures to the player and streams only its live clips", () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.ensureBrowser = vi.fn(async () => { throw new Error("no browser in tests"); });
+    const job = collector.startVideoDownload("https://www.douyin.com/video/1234567890", { playback: true });
+    const referer = "https://www.douyin.com/note/1234567890";
+    collector.videoDownloadJobs.get(job.id).stream = {
+      images: [{ url: "https://p3-pc-sign.douyinpic.com/a.jpeg", live: "https://v11-weba.douyinvod.com/a/" }, { url: "https://p3-pc-sign.douyinpic.com/b.jpeg" }],
+      music: "https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/1.mp3",
+      referer,
+    };
+    expect(collector.getVideoDownloadJob(job.id)).toMatchObject({
+      images: [{ url: "https://p3-pc-sign.douyinpic.com/a.jpeg", live: true }, { url: "https://p3-pc-sign.douyinpic.com/b.jpeg", live: false }],
+      music: "https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/1.mp3",
+    });
+    expect(collector.playbackStream(job.id, job.streamKey, "0")).toEqual({ url: "https://v11-weba.douyinvod.com/a/", referer });
+    expect(collector.playbackStream(job.id, job.streamKey, "1")).toBeNull();
+    expect(collector.playbackStream(job.id, job.streamKey)).toBeNull();
+    expect(collector.playbackStream(job.id, "wrong", "0")).toBeNull();
+    collector.releaseVideoPlayback(job.id);
+  });
   it("validates the source before creating a queued job", () => {
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
     expect(() => collector.startVideoDownload("https://example.com/video/1")).toThrowError(/抖音视频链接/u);

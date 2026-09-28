@@ -61,6 +61,7 @@ import {
   type CollectorImportResult,
   type CollectorSnapshot,
   type CollectorStatus,
+  type PlaybackMedia,
   type VideoDownloadJob,
 } from "./src/services/localCollector";
 import {
@@ -1236,7 +1237,7 @@ function AppContent() {
     }
   }
 
-  async function loadRecordVideo(record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void): Promise<string> {
+  async function loadRecordVideo(record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void): Promise<PlaybackMedia> {
     if (!record.url) throw new LocalCollectorError("invalid_url", "该记录没有可用的抖音链接。");
     if (!collectorToken) {
       throw new LocalCollectorError("not_paired", "请先在“连接与采集”页面连接本地采集服务，再播放视频。");

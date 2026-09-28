@@ -1,15 +1,15 @@
 import React, { memo, useEffect, useRef, useState } from "react";
 import { Modal } from "react-native";
-import { ArrowUp, ArrowUpRight, Bookmark, ChevronDown, ChevronUp, Forward, Heart, Link, MessageCircle, Music2, Pause, Play, Search, Smile, Volume2, VolumeX, X } from "lucide-react-native";
+import { ArrowUp, ArrowUpRight, Bookmark, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Forward, Heart, Link, MessageCircle, Music2, Pause, Play, Search, Smile, Volume2, VolumeX, X } from "lucide-react-native";
 import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreComment, ExploreConnection, ExploreOutcome, ExplorePage, ExploreSharee } from "../../services/explorer";
 import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, waitForCollector } from "../../services/videoFeed";
-import { LocalCollectorError } from "../../services/localCollector";
+import { LocalCollectorError, type PlaybackMedia } from "../../services/localCollector";
 import "./RecordVideoPlayer.css";
 
-/** Resolves to a stream URL that stays valid until `signal` aborts. */
-export type RecordVideoLoader = (record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void) => Promise<string>;
+/** Resolves to a stream URL (or an image post's pictures) that stays valid until `signal` aborts. */
+export type RecordVideoLoader = (record: PersonalVideoRecord, signal: AbortSignal, onProgress?: (message: string) => void) => Promise<PlaybackMedia>;
 export const count = (value?: number | null) => value == null ? "—" : value >= 10000 ? `${(value / 10000).toFixed(1).replace(/\.0$/u, "")}万` : value.toLocaleString("zh-CN");
 const time = (value: number) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
 const date = (value?: string | null) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString("zh-CN") : "";
@@ -143,7 +143,8 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   commentsOpen: boolean; onToggleComments: () => void; shareOpen: boolean; onToggleShare: () => void; commentsConnection: ExploreConnection | null;
   position: string; onClose: () => void; onOpenRecord?: (url: string) => Promise<void>;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
+  const [media, setMedia] = useState<PlaybackMedia | null>(null);
+  const [slide, setSlide] = useState(0);
   const [readyToPlay, setReadyToPlay] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -152,6 +153,10 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   const [duration, setDuration] = useState(0);
   const [loadingMessage, setLoadingMessage] = useState("正在准备视频…");
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const src = typeof media === "string" ? media : null;
+  const album = typeof media === "object" ? media : null;
+  const step = (direction: number) => { if (album) setSlide((value) => (value + direction + album.images.length) % album.images.length); };
   const loaderRef = useRef(onLoadVideo);
   loaderRef.current = onLoadVideo;
   useEffect(() => {
@@ -161,16 +166,18 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
       setError("视频准备超时，请重试或切换下一个视频。");
       controller.abort();
     }, 90_000);
-    setSrc(null); setReadyToPlay(false); setError(null); setPaused(true); setElapsed(0); setDuration(0);
+    setMedia(null); setSlide(0); setReadyToPlay(false); setError(null); setPaused(true); setElapsed(0); setDuration(0);
     setLoadingMessage("正在准备视频…");
     void (async () => {
       try {
-        const url = await waitForCollector(() => loaderRef.current(record, controller.signal, (message) => {
+        const next = await waitForCollector(() => loaderRef.current(record, controller.signal, (message) => {
           if (!controller.signal.aborted) setLoadingMessage(message);
         }), controller.signal);
         if (controller.signal.aborted) return;
         setLoadingMessage("正在载入画面…");
-        setSrc(url);
+        setMedia(next);
+        // 图文没有要缓冲的视频，拿到图片就开始：自动翻页、放配乐
+        if (typeof next === "object") { setReadyToPlay(true); setPaused(false); }
       } catch (cause) {
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "视频暂时无法播放，请稍后重试。");
       } finally { clearTimeout(timeout); }
@@ -188,12 +195,35 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
     else { video.pause(); video.currentTime = 0; }
   }, [src, active]);
   useEffect(() => { if (error) videoRef.current?.pause(); }, [error]);
+  // 图文：配乐跟着播放和暂停走，每 4 秒翻一张，最后一张之后回到第一张（和视频循环一样）；划走就回到开头
+  useEffect(() => {
+    if (!album) return;
+    if (!active) { setSlide(0); if (audioRef.current) audioRef.current.currentTime = 0; }
+    if (active && !paused && !error) void audioRef.current?.play().catch(() => {});
+    else audioRef.current?.pause();
+  }, [album, active, paused, error]);
+  useEffect(() => {
+    if (!album || !active || paused || error) return;
+    const timer = setTimeout(() => step(1), 4_000);
+    return () => clearTimeout(timer);
+  }, [album, active, paused, error, slide]);
+  useEffect(() => {
+    if (!album || !active) return;
+    const turn = (event: KeyboardEvent) => {
+      if (!["ArrowLeft", "ArrowRight"].includes(event.key) || (event.target as Element).closest?.("input,textarea,[data-comments-panel],[data-share-panel]")) return;
+      event.preventDefault();
+      step(event.key === "ArrowRight" ? 1 : -1);
+    };
+    window.addEventListener("keydown", turn);
+    return () => window.removeEventListener("keydown", turn);
+  }, [album, active]);
   useEffect(() => {
     if (!active || !src || readyToPlay || error) return;
     const timeout = setTimeout(() => setError("视频画面加载超时，请重试或切换下一个视频。"), 15_000);
     return () => clearTimeout(timeout);
   }, [active, src, readyToPlay, error]);
   const toggle = () => {
+    if (album) { if (!error) setPaused(!paused); return; }
     const video = videoRef.current;
     if (!src || !readyToPlay || error || !video) return;
     if (video.paused) void video.play().catch(() => setError("无法开始播放，请重试。"));
@@ -204,13 +234,19 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
     <div className="rv-stage" style={active ? undefined : { display: "none" }} data-testid={active ? "video-feed-stage" : undefined} data-loading={!readyToPlay && !error} onKeyDown={(event) => {
       if (event.code === "Space" && !(event.target as Element).closest("button,input,a")) { event.preventDefault(); toggle(); }
     }}>
-      <video ref={videoRef} aria-label={`${record.title}，视频播放`} src={src ?? undefined} poster={record.coverUrl ?? undefined}
+      {album ? <div className="rv-album" role="img" aria-label={`${record.title}，第 ${slide + 1} 张，共 ${album.images.length} 张`} onClick={toggle}>
+        {/* 实况照片翻到时放一遍它的短视频（静音，配乐照常），其余只显示图片；图片都先挂上，翻页不用等加载 */}
+        {album.images.map((image, i) => image.live && i === slide && active
+          ? <video key={`live${i}`} src={image.live} poster={image.url} autoPlay muted playsInline />
+          : <img key={i} src={image.url} alt="" hidden={i !== slide} referrerPolicy="no-referrer" draggable={false} />)}
+        {album.music ? <audio ref={audioRef} src={album.music} loop muted={muted} preload="auto" /> : null}
+      </div> : <video ref={videoRef} aria-label={`${record.title}，视频播放`} src={src ?? undefined} poster={record.coverUrl ?? undefined}
         loop playsInline muted={muted} preload="auto" onClick={toggle} tabIndex={0}
         onLoadedData={() => setReadyToPlay(true)}
         onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
         onTimeUpdate={() => setElapsed(videoRef.current?.currentTime ?? 0)}
         onDurationChange={() => { const value = videoRef.current?.duration; setDuration(value && Number.isFinite(value) ? value : 0); }}
-        onError={() => { if (src) setError("视频无法播放，请重试或打开抖音原视频。"); }} />
+        onError={() => { if (src) setError("视频无法播放，请重试或打开抖音原视频。"); }} />}
       {(!readyToPlay || error) && record.coverUrl ? <img className="rv-loading-cover" src={record.coverUrl} alt="" referrerPolicy="no-referrer" /> : null}
       <div className="rv-shade" aria-hidden="true" />
       {!readyToPlay || error ? <div className="rv-message" role={error ? "alert" : "status"}>
@@ -245,18 +281,25 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
       </div>
       <div className="rv-controls" data-feed-controls>
         <div className="rv-control-row">
-          <button className="rv-icon-button" aria-label={paused ? "播放视频" : "暂停视频"} disabled={!readyToPlay || Boolean(error)} onClick={toggle}>
+          <button className="rv-icon-button" aria-label={`${paused ? "播放" : "暂停"}${album ? "图文" : "视频"}`} disabled={!readyToPlay || Boolean(error)} onClick={toggle}>
             {paused ? <Play color="#fff" fill="#fff" size={17} /> : <Pause color="#fff" fill="#fff" size={17} />}
           </button>
-          <span>{time(elapsed)} / {time(duration)}</span><span className="rv-control-spacer" />
+          {album ? <>
+            <button className="rv-icon-button" aria-label="上一张" onClick={() => step(-1)}><ChevronLeft color="#fff" size={19} /></button>
+            <span aria-live="polite">{slide + 1} / {album.images.length}</span>
+            <button className="rv-icon-button" aria-label="下一张" onClick={() => step(1)}><ChevronRight color="#fff" size={19} /></button>
+          </> : <span>{time(elapsed)} / {time(duration)}</span>}
+          <span className="rv-control-spacer" />
           <button className="rv-icon-button" aria-label={muted ? "开启声音" : "静音"} onClick={onToggleMute}>{muted ? <VolumeX color="#fff" size={21} /> : <Volume2 color="#fff" size={21} />}</button>
         </div>
-        <input aria-label="视频进度" type="range" min={0} max={duration || 1} step={0.1} value={Math.min(elapsed, duration || 1)} disabled={!duration}
-          onChange={(event) => { if (videoRef.current) { videoRef.current.currentTime = Number(event.target.value); setElapsed(Number(event.target.value)); } }} />
+        {album ? <div className="rv-album-dots">{album.images.map((_, i) => <button key={i} aria-label={`第 ${i + 1} 张`} aria-current={i === slide}
+          className={i <= slide ? "rv-on" : undefined} onClick={() => setSlide(i)} />)}</div>
+          : <input aria-label="视频进度" type="range" min={0} max={duration || 1} step={0.1} value={Math.min(elapsed, duration || 1)} disabled={!duration}
+            onChange={(event) => { if (videoRef.current) { videoRef.current.currentTime = Number(event.target.value); setElapsed(Number(event.target.value)); } }} />}
       </div>
       {active && shareOpen ? <VideoShare record={record} connection={commentsConnection} onClose={onToggleShare} /> : null}
     </div>
-    {active && commentsOpen ? <VideoComments record={record} connection={commentsConnection} ready={Boolean(src || error)} onClose={onToggleComments} onOpenRecord={onOpenRecord} /> : null}
+    {active && commentsOpen ? <VideoComments record={record} connection={commentsConnection} ready={Boolean(media || error)} onClose={onToggleComments} onOpenRecord={onOpenRecord} /> : null}
   </>;
 }
 

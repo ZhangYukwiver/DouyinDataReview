@@ -77,7 +77,14 @@ export interface VideoDownloadJob {
   completedAt: string | null;
   /** Playback jobs only: grants the <video> element its stream without the session token. */
   streamKey?: string;
+  /** Image posts only: pictures and music load directly; `live` marks a motion clip served through the stream. */
+  images?: { url: string; live: boolean }[];
+  music?: string | null;
 }
+
+export type ImageAlbum = { images: { url: string; live: string | null }[]; music: string | null };
+/** A video stream URL, or the pictures of an image post. */
+export type PlaybackMedia = string | ImageAlbum;
 
 export interface VideoDownloadFile {
   blob: Blob;
@@ -670,6 +677,10 @@ function parseVideoDownloadJob(value: unknown): VideoDownloadJob {
   const optionalBytes = (candidate: unknown): number | null => candidate === null || candidate === undefined
     ? null
     : typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0 ? candidate : null;
+  const https = (candidate: unknown): candidate is string => typeof candidate === "string" && candidate.startsWith("https://");
+  const images = Array.isArray(value.images)
+    ? value.images.flatMap((image) => isObject(image) && https(image.url) ? [{ url: image.url, live: image.live === true }] : [])
+    : [];
   const createdAt = typeof value.createdAt === "string" ? value.createdAt : "";
   const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : createdAt;
   if (!createdAt || !updatedAt) throw new LocalCollectorError("invalid_response", "采集服务下载任务时间字段无效。");
@@ -686,6 +697,7 @@ function parseVideoDownloadJob(value: unknown): VideoDownloadJob {
     startedAt: optionalString(value.startedAt),
     completedAt: optionalString(value.completedAt),
     ...(typeof value.streamKey === "string" ? { streamKey: value.streamKey } : {}),
+    ...(images.length ? { images, music: https(value.music) ? value.music : null } : {}),
   };
 }
 
@@ -867,14 +879,14 @@ export async function fetchCollectorVideoFile(
   }
 }
 
-/** Resolve a playback job to a stream URL; the job lives until `signal` aborts, nothing is saved. */
+/** Resolve a playback job to a stream URL (or an image post's pictures); the job lives until `signal` aborts, nothing is saved. */
 export async function loadCollectorVideo(
   baseUrl: string,
   token: string,
   url: string,
   signal: AbortSignal,
   onProgress?: (message: string) => void,
-): Promise<string> {
+): Promise<PlaybackMedia> {
   const deadline = Date.now() + 90_000;
   let job: VideoDownloadJob | undefined;
   const release = () => {
@@ -907,7 +919,10 @@ export async function loadCollectorVideo(
       throw new LocalCollectorError(job.errorCode ?? "playback_failed", job.error ?? "视频暂时无法播放，请稍后重试。");
     }
     signal.addEventListener("abort", release, { once: true });
-    return `${normalizeCollectorBaseUrl(baseUrl)}/v1/downloads/${encodeURIComponent(job.id)}/stream?key=${encodeURIComponent(job.streamKey)}`;
+    const stream = `${normalizeCollectorBaseUrl(baseUrl)}/v1/downloads/${encodeURIComponent(job.id)}/stream?key=${encodeURIComponent(job.streamKey)}`;
+    return job.images
+      ? { images: job.images.map((image, index) => ({ url: image.url, live: image.live ? `${stream}&live=${index}` : null })), music: job.music ?? null }
+      : stream;
   } catch (error) {
     release();
     signal.throwIfAborted();

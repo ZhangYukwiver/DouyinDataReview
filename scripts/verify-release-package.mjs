@@ -11,6 +11,7 @@ import { DIRECT_SIGNER_FILES, verifyDirectSigner } from "../collector/directHist
 const projectDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|records(?:\.json)?|direct-history-template\.json|cookies?(?:\.sqlite|\.db|\.json)?(?:-journal|-wal|-shm)?|login data(?:-journal|-wal|-shm)?|local state|web data(?:-journal|-wal|-shm)?|\.env(?:\..*)?|\.git|\.ssh)$/i;
 const runtimeDependencyRoots = new Set([
+  "fflate",
   "electron-updater",
   "builder-util-runtime",
   "debug",
