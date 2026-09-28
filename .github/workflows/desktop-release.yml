@@ -84,8 +84,8 @@ jobs:
         with:
           name: desktop-windows-x64
           path: |
-            release/ContentInsights-Setup-*.exe
-            release/ContentInsights-Setup-*.exe.blockmap
+            release/DouyinDataReview-Setup-*.exe
+            release/DouyinDataReview-Setup-*.exe.blockmap
             release/latest.yml
           if-no-files-found: error
           retention-days: 14
@@ -95,8 +95,8 @@ jobs:
         with:
           name: desktop-macos-arm64
           path: |
-            release/ContentInsights-*-arm64.dmg
-            release/ContentInsights-*-arm64.zip
+            release/DouyinDataReview-*-arm64.dmg
+            release/DouyinDataReview-*-arm64.zip
             release/latest-mac.yml
           if-no-files-found: error
           retention-days: 14
@@ -132,10 +132,10 @@ jobs:
           const { version } = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           assert.equal(process.env.GITHUB_REF_NAME, `v${version}`);
           const expected = [
-            `ContentInsights-${version}-arm64.dmg`,
-            `ContentInsights-${version}-arm64.zip`,
-            `ContentInsights-Setup-${version}.exe`,
-            `ContentInsights-Setup-${version}.exe.blockmap`,
+            `DouyinDataReview-${version}-arm64.dmg`,
+            `DouyinDataReview-${version}-arm64.zip`,
+            `DouyinDataReview-Setup-${version}.exe`,
+            `DouyinDataReview-Setup-${version}.exe.blockmap`,
             'latest-mac.yml',
             'latest.yml',
           ].sort();

@@ -483,6 +483,7 @@ describe("local collector client", () => {
           title: "unsafe images",
           authorAvatarUrl: "https://evil.example/avatar",
           coverUrl: "https://evil.example/cover",
+          watchProgress: { watchedSeconds: 0, percent: 0 },
         }],
         liked_videos: [],
         favorite_videos: [],
@@ -506,6 +507,45 @@ describe("local collector client", () => {
     });
     expect(snapshot.records.watch_history[1]).not.toHaveProperty("authorAvatarUrl");
     expect(snapshot.records.watch_history[1]).not.toHaveProperty("coverUrl");
+    expect(snapshot.records.watch_history[1]).not.toHaveProperty("watchProgress");
+  });
+
+  it("estimates watch progress from the time until the next watch", async () => {
+    const at = (seconds: number) => new Date(Date.UTC(2026, 8, 1) + seconds * 1_000).toISOString();
+    const watch = (videoId: string, seconds: number, durationSeconds: number, extra = {}) => ({
+      id: `watch_history:${videoId}`, title: videoId, videoId, occurredAt: at(seconds), occurredAtSource: "platform_action", mediaType: "video", durationSeconds, ...extra,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      schemaVersion: 2,
+      updatedAt: at(1_000),
+      records: {
+        // newest first, like the history list
+        watch_history: [
+          watch("last", 800, 20),
+          watch("left-app", 200, 20),
+          watch("batch-b", 60.2, 40),
+          watch("batch-a", 60, 40),
+          watch("resume-point", 45, 60, { watchProgress: { watchedSeconds: 12, percent: 20 } }),
+          watch("partial", 30, 60),
+          watch("looped", 0, 10),
+        ],
+        liked_videos: [],
+        favorite_videos: [],
+      },
+      warnings: [],
+    }), { status: 200 })));
+
+    const snapshot = await getCollectorRecords("http://127.0.0.1:4765", "session-secret");
+    const progress = Object.fromEntries(snapshot.records.watch_history.map((record) => [record.videoId, record.watchProgress]));
+    expect(progress).toEqual({
+      looped: { watchedSeconds: 10, percent: 100 },
+      partial: { watchedSeconds: 15, percent: 25 },
+      "resume-point": { watchedSeconds: 12, percent: 20 },
+      "batch-a": undefined,
+      "batch-b": undefined,
+      "left-app": undefined,
+      last: undefined,
+    });
   });
 
   it("accepts chat messages and preserves call duration/share metadata", async () => {

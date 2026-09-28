@@ -1,6 +1,6 @@
 {
   "name": "douyin-content-insights-mobile",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -108,7 +108,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "ContentInsights-Setup-${version}.${ext}"
+      "artifactName": "DouyinDataReview-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -140,7 +140,7 @@
         }
       ],
       "icon": "build/icon.icns",
-      "artifactName": "ContentInsights-${version}-${arch}.${ext}"
+      "artifactName": "DouyinDataReview-${version}-${arch}.${ext}"
     }
   }
 }
