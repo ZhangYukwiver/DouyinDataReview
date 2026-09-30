@@ -186,6 +186,15 @@ describe("explore data boundaries and pagination", () => {
     ingestExploreResponse(state, "/aweme/v1/web/discover/search/", null);
     expect(state.error.code).toBe("platform_error");
   });
+  it("reads the signed-in account's own page, which loads through profile/self", () => {
+    const state = { ...session("profile"), id: author.sec_uid };
+    ingestExploreResponse(state, "/aweme/v1/web/user/profile/self/", { status_code: 0, user: { ...author, sec_uid: "someone-else-entirely" } });
+    expect(state.profile).toBeUndefined();
+    ingestExploreResponse(state, "/aweme/v1/web/user/profile/self/", { status_code: 0, user: author });
+    expect(state.profile).toMatchObject({ id: author.sec_uid, name: author.nickname, self: true });
+    ingestExploreResponse(state, "/aweme/v1/web/user/profile/other/", { status_code: 0, user: author });
+    expect(state.profile.self).toBe(false);
+  });
   it("disables remote autoplay before navigating comment and search pages", async () => {
     const page = { context: () => ({ newCDPSession: async () => ({ on() {}, send: async () => {} }) }), addInitScript: vi.fn(async () => {}), on: vi.fn(), goto: vi.fn(async () => {}),
       locator: () => ({ evaluateAll: async () => {}, count: async () => 0 }) };

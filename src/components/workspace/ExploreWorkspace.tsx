@@ -175,10 +175,10 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
 
     {user && !detail ? <>
       <View {...ws("e-box")} style={[styles.profile, narrow && styles.profileNarrow]}><Avatar user={user} size={86} /><View style={styles.profileCopy}><Text {...ws("e-name")} accessibilityRole="header" style={styles.profileName}>{user.name}</Text><Text style={styles.muted}>抖音号：{user.handle || "未提供"}</Text><Text style={styles.bio}>{user.bio || "还没有个人简介"}</Text><View style={styles.metrics}><Metric value={user.followers} label="粉丝" /><Metric value={user.following} label="关注" /><Metric value={user.likes} label="获赞" /><Metric value={user.posts} label="作品" /></View></View>
-        <View style={styles.actions}><Button label={pending.includes(pendingKey("follow")) ? "关注待核验" : user.followed ? "已关注" : "关注"} disabled={busy || pending.includes(pendingKey("follow"))} primary={!user.followed} onPress={() => setIntent({ action: "follow", label: user.followed ? "取消关注" : "关注", desired: !user.followed })} />
+        <View style={styles.actions}>{user.self ? null : <Button label={pending.includes(pendingKey("follow")) ? "关注待核验" : user.followed ? "已关注" : "关注"} disabled={busy || pending.includes(pendingKey("follow"))} primary={!user.followed} onPress={() => setIntent({ action: "follow", label: user.followed ? "取消关注" : "关注", desired: !user.followed })} />}
           <Button label="抖音主页" onPress={() => void onOpenRecord(user.url)}><ArrowUpRight size={15} color={color.text} /></Button></View>
       </View>
-      <View style={styles.between}><Text {...ws("e-section")} style={styles.sectionTitle}>TA 的作品</Text><Text style={styles.muted}>已加载 {profile?.items.length ?? 0} 条</Text></View>
+      <View style={styles.between}><Text {...ws("e-section")} style={styles.sectionTitle}>{user.self ? "我的作品" : "TA 的作品"}</Text><Text style={styles.muted}>已加载 {profile?.items.length ?? 0} 条</Text></View>
       {profile?.items.length ? videoCards(profile) : !loading ? <Text style={styles.emptyText}>暂无可查看的公开作品。</Text> : null}
       {moreButton(profile, { kind: "profile", id: user.id }, "profile")}
     </> : null}

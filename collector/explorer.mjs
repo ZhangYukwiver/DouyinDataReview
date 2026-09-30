@@ -140,7 +140,9 @@ export function ingestExploreResponse(session, pathname, payload) {
     raw = payload.data?.flatMap((entry) => entry.aweme_info ? [entry.aweme_info] : entry.aweme_list ?? []);
     normalize = normalizeExploreVideo;
   } else if (kind === "profile") {
-    if (pathname.endsWith("/user/profile/other/") && payload.user?.sec_uid === id) session.profile = normalizeExploreUser(payload.user);
+    // Opening the signed-in account's own page loads it through profile/self instead of profile/other.
+    if (/\/user\/profile\/(?:other|self)\/$/u.test(pathname) && payload.user?.sec_uid === id)
+      session.profile = { ...normalizeExploreUser(payload.user), self: pathname.endsWith("/self/") };
     if (pathname.endsWith("/aweme/post/")) { raw = payload.aweme_list; normalize = normalizeExploreVideo; }
   } else if (kind === "detail" && pathname.endsWith("/aweme/detail/") && String(payload.aweme_detail?.aweme_id) === id) {
     session.video = normalizeExploreVideo(payload.aweme_detail); session.received = true;
