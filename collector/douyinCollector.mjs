@@ -489,6 +489,40 @@ function mergeRecordList(type, existingRecords, fetchedRecords) {
   });
 }
 
+const COMPLETION_PAGE_LIMIT = 300;
+const COMPLETION_OVERLAP_MS = 60 * 60 * 1000;
+
+// 上次标到哪就从哪接着读，往回多读一小时，免得漏掉读取途中才看完的
+export function completionScanFloor(records) {
+  let newest = -Infinity;
+  for (const record of records) {
+    if (typeof record.watchCompleted === "boolean") newest = Math.max(newest, Date.parse(record.occurredAt ?? "") || -Infinity);
+  }
+  return newest - COMPLETION_OVERLAP_MS;
+}
+
+// 抖音的「已看完」只认每个视频最近那次观看：时间对上就是看完了；
+// 视频不在列表里、而且这是它最新的一条，才算没看完。其余（比如后来又看了一遍）保持原样。
+export function labelWatchCompletion(records, completed, coveredFromMs) {
+  const latest = new Map();
+  for (const record of records) {
+    const at = Date.parse(record.occurredAt ?? "");
+    if (record.videoId && at > (latest.get(record.videoId) ?? -Infinity)) latest.set(record.videoId, at);
+  }
+  return records.map((record) => {
+    const at = Date.parse(record.occurredAt ?? "");
+    if (record.occurredAtSource !== "platform_action" || record.mediaType === "live" || !record.videoId || !(at >= coveredFromMs)) return record;
+    const completedAt = completed.get(record.videoId);
+    // 上次读取时还停在这条上、后来看完了：抖音把时间挪到了离开那一刻，这条的「没看完」作废
+    if (completedAt > at && record.watchCompleted === false) {
+      const { watchCompleted, ...rest } = record;
+      return rest;
+    }
+    const label = completedAt === at ? true : !completed.has(record.videoId) && latest.get(record.videoId) === at ? false : undefined;
+    return label === undefined || record.watchCompleted === label ? record : { ...record, watchCompleted: label };
+  });
+}
+
 // 观看历史的「直播」分栏没有可直接调用的接口，只能在页面里点开它、拦页面自己发的请求
 async function collectLiveHistoryRecords(context) {
   const endpoint = { kind: "live_history", pathname: "/webcast/feed/" };
@@ -2705,7 +2739,7 @@ export class DouyinCollector {
     }
   }
 
-  async readDirectHistory(context, cursor = "0") {
+  async readDirectHistory(context, cursor = "0", { completedOnly = false } = {}) {
     const page = context.pages()[0] ?? await context.newPage();
     const currentUserAgent = await page.evaluate(() => navigator.userAgent);
     return fetchDirectHistoryPage({
@@ -2714,7 +2748,41 @@ export class DouyinCollector {
       dataDirectory: this.dataDirectory,
       directory: this.signerDirectory,
       cursor,
+      completedOnly,
     });
+  }
+
+  // 「已看完」列表按观看时间倒序，读到比 stopBeforeMs 更早就停；返回视频 id → 那次观看的时间，以及读到的最早时间
+  async readCompletedWatchTimes(context, runId, stopBeforeMs) {
+    const completed = new Map();
+    const cursors = new Set();
+    let cursor = "0";
+    let oldest = Infinity;
+    for (let page = 1; page <= COMPLETION_PAGE_LIMIT; page += 1) {
+      this.assertSyncActive(runId);
+      if (cursors.has(cursor)) throw new DirectHistoryError("pagination_stalled", "看完标记分页游标重复，已停止读取。");
+      cursors.add(cursor);
+      const payload = await this.readDirectHistory(context, cursor, { completedOnly: true });
+      this.assertSyncActive(runId);
+      const field = (key) => payload?.[key] ?? payload?.data?.[key];
+      const dates = field("aweme_date") ?? {};
+      for (const item of field("aweme_list") ?? []) {
+        const id = String(item?.aweme_id ?? "");
+        if (!id) continue;
+        // 和观看历史一样，没有 aweme_date 就退回 view_time；都没有也得记下它看完了，只是对不上具体哪次
+        const raw = Number(dates[id] ?? item?.history_info?.view_time);
+        const at = raw > 0 ? (raw < 10_000_000_000 ? raw * 1_000 : raw) : Number.NaN;
+        completed.set(id, at);
+        if (at > 0) oldest = Math.min(oldest, at);
+      }
+      this.updateStatus({ phase: "watch_history", message: `正在读取看完标记（第 ${page} 页，${completed.size} 条）` });
+      const hasMore = field("has_more") === true || field("has_more") === 1;
+      if (!hasMore || oldest < stopBeforeMs) break;
+      cursor = String(field("max_cursor") ?? "");
+      if (!/^\d{1,20}$/u.test(cursor)) break;
+      await delay(900);
+    }
+    return { completed, coveredFromMs: oldest };
   }
 
   async collectDirectList(context, type, onPage) {
@@ -2921,14 +2989,32 @@ export class DouyinCollector {
       this.assertSyncActive(runId);
       const withLive = mergeRecordList("watch_history", stagedRecords.watch_history, liveRecords);
       const liveAdded = withLive.length - stagedRecords.watch_history.length;
-      // 没有新增也要写回：已有的直播记录可能刚补上封面、改了昵称
-      if (liveRecords.length > 0) {
-        stagedRecords.watch_history = withLive;
+      const saveStaged = async () => {
         this.snapshot = await this.store.save(stagedRecords, this.snapshot.warnings, {
           directSync,
           chatMessages: this.snapshot.chatMessages,
           chatConversations: this.snapshot.chatConversations,
         });
+      };
+      // 没有新增也要写回：已有的直播记录可能刚补上封面、改了昵称
+      if (liveRecords.length > 0) {
+        stagedRecords.watch_history = withLive;
+        await saveStaged();
+      }
+      // 看完标记也是附加信息：读不到就沿用按时间的估算，不影响上面已经存好的记录
+      this.updateStatus({ phase: "watch_history", message: "正在读取看完标记" });
+      const completion = await this.readCompletedWatchTimes(context, runId, completionScanFloor(stagedRecords.watch_history))
+        .catch((error) => {
+          if (error instanceof CollectorCancelledError) throw error;
+          return null;
+        });
+      this.assertSyncActive(runId);
+      if (completion) {
+        const labelled = labelWatchCompletion(stagedRecords.watch_history, completion.completed, completion.coveredFromMs);
+        if (labelled.some((record, index) => record !== stagedRecords.watch_history[index])) {
+          stagedRecords.watch_history = labelled;
+          await saveStaged();
+        }
       }
       const newCounts = Object.fromEntries(REQUIRED_TYPES.map((type) => [type, newIds.get(type).size]));
       this.updateStatus({

@@ -6,12 +6,27 @@ import {
   CollectorAdapterError,
   RecordAccumulator,
   matchDouyinEndpoint,
+  mergeRecords,
   normalizeDouyinResponse,
+  normalizeRecord,
 } from "./normalizer.mjs";
 
 function responseFixture(name) {
   return JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
 }
+
+describe("watch completion label", () => {
+  const record = {
+    id: "watch_history:v1:2026-09-30T13:05:01.570Z", title: "看完的", author: null, url: null, videoId: "v1",
+    occurredAt: "2026-09-30T13:05:01.570Z", occurredAtSource: "platform_action",
+  };
+
+  it("survives saving and a fresh copy of the same record that knows nothing about it", () => {
+    expect(normalizeRecord({ ...record, watchCompleted: true })?.watchCompleted).toBe(true);
+    expect(normalizeRecord({ ...record, watchCompleted: "yes" })).not.toHaveProperty("watchCompleted");
+    expect(mergeRecords({ ...record, watchCompleted: false }, record).watchCompleted).toBe(false);
+  });
+});
 
 describe("matchDouyinEndpoint", () => {
   it("matches only the supported Douyin hosts and exact paths", () => {

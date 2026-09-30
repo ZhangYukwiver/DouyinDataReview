@@ -54,6 +54,8 @@ export interface PersonalVideoRecord {
   topics?: string[];
   stats?: PersonalVideoStats | null;
   watchProgress?: PersonalVideoProgress | null;
+  /** Douyin's own verdict for this viewing: true once it played past ~90–95%; absent when it was never checked. */
+  watchCompleted?: boolean;
 }
 
 export type PersonalRecordCollection = Record<PersonalRecordType, PersonalVideoRecord[]>;
