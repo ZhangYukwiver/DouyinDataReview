@@ -169,7 +169,8 @@ export function normalizeFollowingLive(payload) {
     // 关注页那个 POST 接口把直播间放在 data 里，这个 GET 放在 room 里
     const room = item?.room ?? item?.data;
     const webRid = String(item?.web_rid ?? room?.owner?.web_rid ?? "");
-    if (!room || typeof room !== "object" || !/^\d{1,20}$/u.test(webRid) || (room.status ?? 2) !== 2) return [];
+    // 这个列表只放在播的人；2026-10 起在播的房间 status 也回 0（官方关注页一样照常显示），所以只排除明确下播的 4
+    if (!room || typeof room !== "object" || !/^\d{1,20}$/u.test(webRid) || room.status === 4) return [];
     const online = room.room_view_stats?.display_short ?? room.user_count_str;
     return [{
       webRid,
