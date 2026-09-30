@@ -5,6 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>内容年志 · 档案馆</title>
+<script src="story-export.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600&family=Noto+Serif+SC:wght@400;500;600;700;900&family=Noto+Sans+SC:wght@400;500&display=swap">
@@ -173,7 +174,9 @@ figure{margin:0}
 .flip-hint b{font-weight:500}
 @keyframes hint-breath{0%,100%{opacity:1}50%{opacity:.35}}
 .flip-hint.show b{animation:hint-breath 2.4s ease-in-out infinite}
-@media (max-width:1240px){.nav-idx a{padding:0 7px}.nav-idx a .nm{display:none}.nav-l{padding-right:14px}}
+/* 右边多了「导出」：1400 以下先收起「本机数据」，1300 以下再只留章节序号 */
+@media (max-width:1400px){.nav-src{display:none}}
+@media (max-width:1300px){.nav-idx a{padding:0 7px}.nav-idx a .nm{display:none}.nav-l{padding-right:14px}}
 @media (max-width:1000px){.flip-hint span{display:none}.nav-src{display:none}}
 
 /* ============ 封面图：细金线框的藏品图 ============ */
@@ -207,8 +210,11 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   const REDUCED = !document.documentElement.classList.contains("motion-full") && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---------- data ----------
+  // 导出的离线文件把数据直接放在 window.__STORY_EXPORT__ 里（见 story-export.js）
+  const EXPORTED = window.__STORY_EXPORT__ || null;
   let data = DEMO, live = false;
-  if (query.get("data") !== "demo") {
+  if (EXPORTED) { data = EXPORTED.data; live = true; }
+  else if (query.get("data") !== "demo") {
     try {
       const raw = localStorage.getItem(STORE);
       if (raw) { const value = JSON.parse(raw); if (value && value.version === 1) { data = value; live = true; } }
@@ -685,6 +691,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     if (year) year.textContent = String(data.year);
     if (src) { src.textContent = live ? "本机数据" : "演示数据"; src.classList.toggle("demo", !live); }
     if (priv) priv.addEventListener("click", () => togglePrivacy());
+    const exp = document.getElementById("navExport");
+    if (exp && live && !EXPORTED && window.StoryExport) window.StoryExport.wire(exp, () => ({ data, privacy: privacyOn, privateTopics: true, images: [], fileName: `内容年志-档案馆-${data.year}.html` }));
     if (ws) { ws.hidden = !FRAMED; ws.addEventListener("click", toWorkspace); }
     if (home) home.addEventListener("click", (event) => { event.preventDefault(); go(0); });
     if (FRAMED) addEventListener("keydown", (event) => { if (event.key === "Escape") toWorkspace(); });
@@ -737,7 +745,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     let resizeTimer = 0;
     addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { for (const fn of resizeFns) safe(fn); }, 120); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { for (const fn of resizeFns) safe(fn); });
-    let wantPrivacy = query.get("privacy") === "1";
+    let wantPrivacy = query.get("privacy") === "1" || Boolean(EXPORTED && EXPORTED.privacy);
     if (!wantPrivacy) { try { wantPrivacy = localStorage.getItem(PRIV_KEY) === "1"; } catch (error) { /* ignore */ } }
     if (wantPrivacy) togglePrivacy(true);
     const start = Math.max(0, Math.min(pages.length - 1, (Number(query.get("page")) || 1) - 1));
@@ -764,6 +772,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     <span class="nav-no" id="navNo" aria-live="polite"></span>
     <span class="nav-src" id="navSrc">演示数据</span>
     <button class="btn" id="navPriv" type="button" aria-pressed="false">隐私</button>
+    <button class="btn" id="navExport" type="button" hidden>导出</button>
     <button class="btn solid" id="navWs" type="button" hidden>工作台</button>
   </div>
   <div class="nav-seg" id="navSeg" aria-hidden="true"></div>
@@ -3615,7 +3624,7 @@ CH.push({
   id: "taste",
   render(D, el) {
     const HAN = /[⺀-鿿豈-﫿　-〿＀-￯]/;
-    const em = (s) => Array.from(String(s)).reduce((w, c) => w + (HAN.test(c) || c === "■" ? 1 : /[0-9]/.test(c) ? 0.56 : c === " " ? 0.28 : /[mwMW@]/.test(c) ? 0.82 : /[il.,:;'!|]/.test(c) ? 0.3 : 0.6), 0);
+    const em = (s) => Array.from(String(s)).reduce((w, c) => w + (HAN.test(c) || c === "■" ? 1 : /[\u200b-\u200d]/.test(c) ? 0 : /[0-9]/.test(c) ? 0.56 : c === " " ? 0.28 : /[mwMW@]/.test(c) ? 0.82 : /[il.,:;'!|]/.test(c) ? 0.3 : 0.6), 0);
     const pad2 = (n) => String(n).padStart(2, "0");
     const firstLine = (s) => String(s || "").split(/\r?\n/)[0].trim();
     const cut = (s, n) => { const a = Array.from(String(s)); return a.length > n ? `${a.slice(0, n - 1).join("")}…` : String(s); };

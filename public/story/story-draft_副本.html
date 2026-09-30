@@ -10,6 +10,7 @@
 </script>
 <meta charset="utf-8">
 <script src="story-glide.js"></script>
+<script src="story-export.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TRACE · 内容年志</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -196,8 +197,11 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   const REDUCED = !document.documentElement.classList.contains("motion-full") && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---------- data ----------
+  // 导出的离线文件把数据直接放在 window.__STORY_EXPORT__ 里（见 story-export.js）
+  const EXPORTED = window.__STORY_EXPORT__ || null;
   let data = DEMO, live = false;
-  if (query.get("data") !== "demo") {
+  if (EXPORTED) { data = EXPORTED.data; live = true; }
+  else if (query.get("data") !== "demo") {
     try {
       const raw = localStorage.getItem(STORE);
       if (raw) { const value = JSON.parse(raw); if (value && value.version === 1) { data = value; live = true; } }
@@ -548,7 +552,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     document.body.dataset.sky = key;
     for (const layer of host.children) {
       const on = layer.dataset.k === key;
-      if (on && !layer.style.backgroundImage && SKY[key]) layer.style.backgroundImage = `url("story-images/${SKY[key]}.jpg")`;
+      if (on && !layer.style.backgroundImage && SKY[key]) layer.style.backgroundImage = `url("${(EXPORTED && EXPORTED.assets[SKY[key]]) || `story-images/${SKY[key]}.jpg`}")`;
       layer.classList.toggle("on", on);
     }
   }
@@ -702,6 +706,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     if (year) year.textContent = String(data.year);
     if (src) { src.textContent = live ? "本机数据" : "演示数据"; src.classList.toggle("sig", !live); }
     if (priv) priv.addEventListener("click", () => togglePrivacy());
+    const exp = document.getElementById("navExport");
+    if (exp && live && !EXPORTED && window.StoryExport) window.StoryExport.wire(exp, () => ({ data, privacy: privacyOn, privateTopics: false, images: Object.values(SKY), fileName: `内容年志-${data.year}.html` }));
     if (ws) { ws.hidden = !FRAMED; ws.addEventListener("click", toWorkspace); }
     if (FRAMED) addEventListener("keydown", (event) => { if (event.key === "Escape") toWorkspace(); });
     const home = document.querySelector(".brand");
@@ -762,7 +768,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { remeasureMarquees(); update(); }, 120); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { remeasureMarquees(); update(); });
     addEventListener("load", () => { remeasureMarquees(); update(); });
-    let wantPrivacy = query.get("privacy") === "1";
+    let wantPrivacy = query.get("privacy") === "1" || Boolean(EXPORTED && EXPORTED.privacy);
     if (!wantPrivacy) { try { wantPrivacy = localStorage.getItem(PRIV_KEY) === "1"; } catch (error) { /* ignore */ } }
     if (wantPrivacy) togglePrivacy(true);
     document.documentElement.classList.add("booted");
@@ -792,6 +798,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   <div class="nav-r">
     <span class="stamp" id="navSrc">演示数据</span>
     <button class="pill ghost sm" id="navPriv" type="button" aria-pressed="false">隐私</button>
+    <button class="pill ghost sm" id="navExport" type="button" hidden>导出</button>
     <button class="pill sm" id="navWs" type="button" hidden>工作台</button>
   </div>
   <i class="nav-prog" id="navProg"></i>
