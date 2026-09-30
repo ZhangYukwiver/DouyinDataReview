@@ -245,6 +245,9 @@ export function SetupWorkspace({
   const syncing = connected && !observing && ["launching_browser", "awaiting_login", "collecting"].includes(status?.state ?? "");
   // 完整读取要独占可见浏览器；增量读取走无头，接收和下载照常
   const visibleBusy = observing || status?.syncMode === "page";
+  // 读取中哪个按钮发起的就由哪个按钮停：完整读取走可见浏览器（syncMode=page），其余是增量
+  const pageSyncing = syncing && status?.syncMode === "page";
+  const directSyncing = syncing && !pageSyncing;
   const chatProgress = status?.chat.progress ?? null;
   const source = snapshotSource === "archive" ? "备用文件导入" : connected ? "本地采集器" : "尚未连接";
   const loginNeeded = status?.state === "awaiting_login" || status?.code === "login_required";
@@ -359,8 +362,8 @@ export function SetupWorkspace({
               <FitSlot style={styles.slotChart}>{(size) => <RecordSketches digest={digest} roomy={roomy} size={size} />}</FitSlot>
               <ChatProgress progress={chatProgress} />
               <View style={styles.actions}>
-                <ActionButton seed="act-incremental" compact={narrow} disabled={!connected || (busy && !syncing) || visibleBusy} icon={Play} label={syncing ? "正在读取" : "增量读取"} onPress={syncing ? () => void onStopSync() : onStartIncrementalSync} busy={syncing ? stoppingSync : busy && !observing} />
-                <ActionButton seed="act-full" compact={narrow} disabled={!connected || busy || visibleBusy} icon={RefreshCw} label="完整读取" onPress={onStartFullSync} />
+                <ActionButton seed="act-incremental" compact={narrow} disabled={!connected || (busy && !directSyncing) || visibleBusy} icon={directSyncing ? Pause : Play} label={directSyncing ? "停止读取" : "增量读取"} onPress={directSyncing ? () => void onStopSync() : onStartIncrementalSync} busy={directSyncing ? stoppingSync : busy && !observing && !pageSyncing} />
+                <ActionButton seed="act-full" compact={narrow} disabled={!connected || (!pageSyncing && (busy || visibleBusy))} icon={pageSyncing ? Pause : RefreshCw} label={pageSyncing ? "停止读取" : "完整读取"} onPress={pageSyncing ? () => void onStopSync() : onStartFullSync} busy={pageSyncing && stoppingSync} />
                 <ActionButton seed="act-observe" compact={narrow} disabled={!connected || busy} icon={observing ? Pause : Eye} label={observing ? "停止监听" : "手动监听"} onPress={() => void (observing ? onStopObservation() : onStartObservation())} />
                 <ActionButton seed="act-chat" compact={narrow} disabled={!connected || chatBusy || (!chatCollecting && (visibleBusy || busy))} icon={chatCollecting ? Pause : MessageCircle} label={chatCollecting ? "暂停接收" : "开始接收"} onPress={() => void (chatCollecting ? onStopObservation() : onStartChatObservation())} />
                 <ActionButton seed="act-history" compact={narrow} disabled={!connected || chatBusy || visibleBusy || (busy && !chatCollecting)} icon={RefreshCw} label="采集聊天记录" onPress={() => void onCollectChatHistory()} busy={chatBusy} />
@@ -941,7 +944,7 @@ function tipNotes(state: { fromArchive: boolean; connected: boolean; loginNeeded
       : !state.connected
         ? { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。第一次连接会弹出一个浏览器窗口，在里面登录抖音就行。" }
         : state.syncing
-          ? { title: "正在读取", body: "随时可以点「正在读取」停下，已经读到的会先存好；聊天照常接收。" }
+          ? { title: "正在读取", body: "随时可以点「停止读取」停下，已经读到的会先存好。" }
           : state.ready
             ? { title: "可以打开报告了", body: state.autoSyncEnabled ? "右上角「打开报告」看这些记录。应用回到前台时会自动补读新的记录。" : "右上角「打开报告」看这些记录。自动读取已暂停，想更新就点「增量读取」。" }
             : { title: "连上了，下一步读取", body: "「增量读取」在后台读最近的记录，不弹窗口；「完整读取」会从头翻一遍，要久一些。" };
