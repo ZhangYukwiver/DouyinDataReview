@@ -205,6 +205,20 @@ describe("direct history request", () => {
     expect(signer.mock.calls[0]?.[0].searchParams.get("max_cursor")).toBe("1700000000000");
   });
 
+  it("asks for the watched-to-the-end list with the history page's own filter, right after count", async () => {
+    const { context, requestFactory } = fakeContext();
+    const signer = vi.fn(async (url) => signedUrl(url));
+
+    await fetchDirectHistoryPage({ context, currentUserAgent: userAgent, dataDirectory, completedOnly: true, requestFactory, signer });
+
+    const params = signer.mock.calls[0][0].searchParams;
+    const names = [...params.keys()];
+    expect(names.slice(names.indexOf("count"), names.indexOf("count") + 4)).toEqual(["count", "status", "category", "directory"]);
+    // the template carries its own status=-1 filter; sending both would read the whole history as finished
+    expect(Object.fromEntries(["status", "category", "directory"].map((name) => [name, params.getAll(name)])))
+      .toEqual({ status: ["1"], category: ["0"], directory: ["0"] });
+  });
+
   it("rejects an invalid pagination cursor before signing or sending", async () => {
     const { context, requestFactory } = fakeContext();
     const signer = vi.fn();

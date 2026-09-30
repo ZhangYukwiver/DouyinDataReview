@@ -523,8 +523,9 @@ describe("local collector client", () => {
         watch_history: [
           watch("last", 800, 20),
           watch("left-app", 200, 20),
-          watch("batch-b", 60.2, 40),
-          watch("batch-a", 60, 40),
+          // scrolled one video too far and came straight back
+          watch("flicked-past", 60.2, 40),
+          watch("came-back-to", 60, 40),
           watch("resume-point", 45, 60, { watchProgress: { watchedSeconds: 12, percent: 20 } }),
           watch("partial", 30, 60),
           watch("looped", 0, 10),
@@ -541,9 +542,113 @@ describe("local collector client", () => {
       looped: { watchedSeconds: 10, percent: 100 },
       partial: { watchedSeconds: 15, percent: 25 },
       "resume-point": { watchedSeconds: 12, percent: 20 },
-      "batch-a": undefined,
-      "batch-b": undefined,
+      "came-back-to": { watchedSeconds: 40, percent: 100 },
+      "flicked-past": { watchedSeconds: 0.2, percent: 0.5 },
       "left-app": undefined,
+      last: undefined,
+    });
+  });
+
+  it("reads a millisecond pair as a finished video left for the next one when there is no label", async () => {
+    const at = (seconds: number) => new Date(Date.UTC(2026, 8, 1) + seconds * 1_000).toISOString();
+    const watch = (videoId: string, seconds: number, durationSeconds: number) => ({
+      id: `watch_history:${videoId}`, title: videoId, videoId, occurredAt: at(seconds), occurredAtSource: "platform_action", mediaType: "video", durationSeconds,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      schemaVersion: 2,
+      updatedAt: at(1_000),
+      records: {
+        watch_history: [watch("end", 400, 10), watch("after", 80, 10), watch("entered", 50.001, 60), watch("left", 50, 20), watch("before", 0, 100)],
+        liked_videos: [],
+        favorite_videos: [],
+      },
+      warnings: [],
+    }), { status: 200 })));
+
+    const snapshot = await getCollectorRecords("http://127.0.0.1:4765", "session-secret");
+    const progress = Object.fromEntries(snapshot.records.watch_history.map((record) => [record.videoId, record.watchProgress]));
+    expect(progress).toEqual({
+      before: { watchedSeconds: 32, percent: 32 },
+      left: { watchedSeconds: 20, percent: 100 },
+      entered: { watchedSeconds: 30, percent: 50 },
+      after: undefined,
+      end: undefined,
+    });
+  });
+
+  it("leaves the newest burst unknown and keeps timing sane when labels and pairs disagree", async () => {
+    const at = (seconds: number) => new Date(Date.UTC(2026, 8, 1) + seconds * 1_000).toISOString();
+    const watch = (videoId: string, seconds: number, durationSeconds: number, extra = {}) => ({
+      id: `watch_history:${videoId}`, title: videoId, videoId, occurredAt: at(seconds), occurredAtSource: "platform_action", mediaType: "video", durationSeconds, ...extra,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      schemaVersion: 2,
+      updatedAt: at(1_000),
+      records: {
+        watch_history: [
+          // still scrolling: nothing after this burst yet
+          watch("flicked", 250.3, 60),
+          watch("watching", 250, 60),
+          // finished and then the app went to the background, so no record follows within 3 ms
+          watch("done", 200, 20, { watchCompleted: true }),
+          watch("before-done", 100.001, 100),
+          // an old "unfinished" label on the video that was left: the next one still counts as entered
+          watch("stale", 100, 30, { watchCompleted: false }),
+          watch("first", 0, 400),
+        ],
+        liked_videos: [],
+        favorite_videos: [],
+      },
+      warnings: [],
+    }), { status: 200 })));
+
+    const snapshot = await getCollectorRecords("http://127.0.0.1:4765", "session-secret");
+    const progress = Object.fromEntries(snapshot.records.watch_history.map((record) => [record.videoId, record.watchProgress]));
+    expect(progress).toEqual({
+      first: { watchedSeconds: 100, percent: 25 },
+      stale: undefined,
+      "before-done": { watchedSeconds: 82, percent: 82 },
+      done: { watchedSeconds: 20, percent: 100 },
+      watching: undefined,
+      flicked: undefined,
+    });
+  });
+
+  it("trusts Douyin's watched-to-the-end label over timing", async () => {
+    const at = (seconds: number) => new Date(Date.UTC(2026, 8, 1) + seconds * 1_000).toISOString();
+    const watch = (videoId: string, seconds: number, durationSeconds: number, extra = {}) => ({
+      id: `watch_history:${videoId}`, title: videoId, videoId, occurredAt: at(seconds), occurredAtSource: "platform_action", mediaType: "video", durationSeconds, ...extra,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      schemaVersion: 2,
+      updatedAt: at(1_000),
+      records: {
+        watch_history: [
+          watch("last", 170, 30),
+          // stayed 40s on a 20s video yet Douyin says unfinished: paused, so no more than 90%
+          watch("paused", 130, 20, { watchCompleted: false }),
+          // entered the moment "finished" was left
+          watch("after-finish", 100.001, 50),
+          // its time is when it was left, after playing at least 90% of its 30s
+          watch("finished", 100, 30, { watchCompleted: true }),
+          watch("before-finish", 20, 60, { watchCompleted: false }),
+          // dragged to 97% then back to the start: the resume point is stale
+          watch("seeked", 0, 100, { watchCompleted: true, watchProgress: { watchedSeconds: 97, percent: 97 } }),
+        ],
+        liked_videos: [],
+        favorite_videos: [],
+      },
+      warnings: [],
+    }), { status: 200 })));
+
+    const snapshot = await getCollectorRecords("http://127.0.0.1:4765", "session-secret");
+    const progress = Object.fromEntries(snapshot.records.watch_history.map((record) => [record.videoId, record.watchProgress]));
+    expect(progress).toEqual({
+      seeked: { watchedSeconds: 100, percent: 100 },
+      "before-finish": { watchedSeconds: 53, percent: 88.33 },
+      finished: { watchedSeconds: 30, percent: 100 },
+      "after-finish": { watchedSeconds: 30, percent: 60 },
+      paused: { watchedSeconds: 18, percent: 90 },
       last: undefined,
     });
   });

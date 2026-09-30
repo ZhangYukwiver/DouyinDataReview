@@ -6,8 +6,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  completionScanFloor,
   directContextLaunchOptions,
   DouyinCollector,
+  labelWatchCompletion,
   normalizeChatConversationCatalog,
   normalizeOwnProfileUrl,
   profileTabUrl,
@@ -54,6 +56,92 @@ function fakeResponse(pathname, payload) {
     json: () => typeof payload === "function" ? payload() : Promise.resolve(payload),
   };
 }
+
+describe("watch completion labels", () => {
+  const watch = (videoId, occurredAt, extra = {}) => ({
+    id: `watch_history:${videoId}:${occurredAt}`, title: videoId, author: null, url: null, videoId, occurredAt, occurredAtSource: "platform_action", mediaType: "video", ...extra,
+  });
+  const ms = (iso) => Date.parse(iso);
+
+  it("marks the viewing Douyin lists as finished, and a video missing from the list as unfinished", () => {
+    const records = [
+      watch("finished", "2026-09-30T13:05:01.570Z"),
+      watch("skipped", "2026-09-30T13:02:30.037Z"),
+      // watched again later: that newer viewing was finished, this older one is left alone
+      watch("again", "2026-09-30T12:00:00.000Z"),
+      watch("again", "2026-09-30T13:00:00.000Z"),
+      // entry write that a later finish replaced on Douyin's side
+      watch("replaced", "2026-09-30T12:30:00.000Z"),
+      watch("old", "2026-09-29T00:00:00.000Z"),
+      watch("undated", "2026-09-30T13:00:00.000Z", { occurredAtSource: "unknown" }),
+      watch("live-1", "2026-09-30T13:00:00.000Z", { mediaType: "live" }),
+    ];
+    const completed = new Map([
+      ["finished", ms("2026-09-30T13:05:01.570Z")],
+      ["again", ms("2026-09-30T13:00:00.000Z")],
+      ["replaced", ms("2026-09-30T12:40:00.000Z")],
+    ]);
+
+    const labels = labelWatchCompletion(records, completed, ms("2026-09-30T12:00:00.000Z")).map((record) => [record.videoId, record.watchCompleted]);
+
+    expect(labels).toEqual([
+      ["finished", true],
+      ["skipped", false],
+      ["again", undefined],
+      ["again", true],
+      ["replaced", undefined],
+      ["old", undefined],
+      ["undated", undefined],
+      ["live-1", undefined],
+    ]);
+  });
+
+  it("drops an unfinished label once that video turns up finished later, and never guesses for a finish without a time", () => {
+    const records = [
+      // read while still on screen, then watched to the end: Douyin moved its time to 13:00:40
+      watch("was-on-screen", "2026-09-30T13:00:00.000Z", { watchCompleted: false }),
+      watch("was-on-screen", "2026-09-30T13:00:40.000Z"),
+      watch("no-time", "2026-09-30T13:01:00.000Z"),
+    ];
+    const completed = new Map([["was-on-screen", ms("2026-09-30T13:00:40.000Z")], ["no-time", Number.NaN]]);
+
+    const labelled = labelWatchCompletion(records, completed, ms("2026-09-30T12:00:00.000Z"));
+
+    expect(labelled.map((record) => record.watchCompleted)).toEqual([undefined, true, undefined]);
+    expect(labelled[0]).not.toHaveProperty("watchCompleted");
+  });
+
+  it("labels nothing when the finished list came back empty", () => {
+    expect(labelWatchCompletion([watch("a", "2026-09-30T13:00:00.000Z")], new Map(), Infinity)[0]).not.toHaveProperty("watchCompleted");
+  });
+
+  it("pages the finished list until it passes the floor, in seconds or milliseconds", async () => {
+    const pages = {
+      0: { status_code: 0, aweme_list: [{ aweme_id: "a" }, { aweme_id: "b", history_info: { view_time: 1_790_000_900 } }], aweme_date: { a: 1_790_001_000_000 }, has_more: 1, max_cursor: "1790000900000" },
+      1790000900000: { status_code: 0, aweme_list: [{ aweme_id: "c" }], aweme_date: { c: 1_790_000_000 }, has_more: 1, max_cursor: "1790000000000" },
+    };
+    const self = { assertSyncActive: vi.fn(), updateStatus: vi.fn(), readDirectHistory: vi.fn(async (_context, cursor, options) => {
+      expect(options).toEqual({ completedOnly: true });
+      return pages[cursor];
+    }) };
+
+    // the second page reaches below the floor, so a third is never asked for
+    const result = await DouyinCollector.prototype.readCompletedWatchTimes.call(self, {}, 1, 1_790_000_500_000);
+
+    expect(self.readDirectHistory.mock.calls.map(([, cursor]) => cursor)).toEqual(["0", "1790000900000"]);
+    expect(Object.fromEntries(result.completed)).toEqual({ a: 1_790_001_000_000, b: 1_790_000_900_000, c: 1_790_000_000_000 });
+    expect(result.coveredFromMs).toBe(1_790_000_000_000);
+  });
+
+  it("resumes an hour before the newest labelled viewing", () => {
+    expect(completionScanFloor([watch("a", "2026-09-30T13:00:00.000Z")])).toBe(-Infinity);
+    expect(completionScanFloor([
+      watch("a", "2026-09-30T13:00:00.000Z", { watchCompleted: false }),
+      watch("b", "2026-09-30T14:00:00.000Z"),
+      watch("c", "2026-09-30T11:00:00.000Z", { watchCompleted: true }),
+    ])).toBe(ms("2026-09-30T12:00:00.000Z"));
+  });
+});
 
 describe("importRecords", () => {
   it("only adds what the collector lacks, keeps local copies on overlap, and refuses while a read runs", async () => {
@@ -1684,7 +1772,10 @@ describe("DouyinCollector direct records", () => {
       await onPage({ status_code: 0, aweme_list: [{ aweme_id: type === "liked_videos" ? "liked-new" : "favorite-new" }], has_more: 0 }, 1);
       return 1;
     });
-    collector.readDirectHistory = vi.fn(async (_context, cursor) => {
+    collector.readDirectHistory = vi.fn(async (_context, cursor, options) => {
+      if (options?.completedOnly) {
+        return { status_code: 0, aweme_list: [{ aweme_id: "history-new" }], aweme_date: { "history-new": 1_700_000_000 }, has_more: 0 };
+      }
       return cursor === "0" ? {
         status_code: 0,
         aweme_list: [{ aweme_id: "history-new", desc: "本次观看" }],
@@ -1709,12 +1800,16 @@ describe("DouyinCollector direct records", () => {
     expect(collector.snapshot.records.liked_videos[0]?.videoId).toBe("liked-new");
     expect(collector.snapshot.records.favorite_videos[0]?.videoId).toBe("favorite-new");
     expect(collector.snapshot.records.watch_history).toHaveLength(2);
-    expect(collector.readDirectHistory.mock.calls.map(([, cursor]) => cursor)).toEqual([
-      "0",
-      "1700000000000",
+    expect(collector.readDirectHistory.mock.calls.map(([, cursor, options]) => [cursor, Boolean(options?.completedOnly)])).toEqual([
+      ["0", false],
+      ["1700000000000", false],
+      ["0", true],
     ]);
+    // the completed list reaches back only to history-new, so the older record stays unchecked
+    expect(Object.fromEntries(collector.snapshot.records.watch_history.map((record) => [record.videoId, record.watchCompleted])))
+      .toEqual({ "history-new": true, "history-second": undefined });
     expect(collector.status.state).toBe("complete");
-    expect(store.save).toHaveBeenCalledTimes(3);
+    expect(store.save).toHaveBeenCalledTimes(4);
     expect(collector.snapshot.directSync).toEqual({
       watch_history: true,
       liked_videos: true,
@@ -1722,6 +1817,26 @@ describe("DouyinCollector direct records", () => {
     });
     expect(visibleContext.close).toHaveBeenCalledTimes(1);
     expect(context.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("finishes the sync with the records it read when the finished list can't be read", async () => {
+    const store = mockStore("2026-08-13T00:00:00.000Z");
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
+    collector.snapshot = emptySnapshot();
+    collector.syncRunId = 1;
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
+    collector.collectDirectList = vi.fn(async () => 0);
+    collector.readDirectHistory = vi.fn(async (_context, _cursor, options) => {
+      if (options?.completedOnly) throw new DirectHistoryError("rate_limited", "限流");
+      return { status_code: 0, aweme_list: [{ aweme_id: "saved-watch" }], aweme_date: { "saved-watch": 1_700_000_000 }, has_more: 0 };
+    });
+
+    await collector.runDirectRecords(1);
+
+    expect(collector.status.state).toBe("complete");
+    expect(collector.snapshot.records.watch_history.map((record) => [record.videoId, record.watchCompleted])).toEqual([["saved-watch", undefined]]);
   });
 
   it("does not save when the direct request fails", async () => {
@@ -1827,7 +1942,11 @@ describe("DouyinCollector direct records", () => {
     collector.snapshot = initial;
     collector.syncRunId = 1;
     collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
-    collector.readDirectHistory = vi.fn(async () => ({
+    collector.readDirectHistory = vi.fn(async (_context, _cursor, options) => options?.completedOnly ? {
+      status_code: 0,
+      aweme_list: [],
+      has_more: 0,
+    } : ({
       status_code: 0,
       aweme_list: [
         { aweme_id: "history-new", history_info: { view_time: 1_700_003_600 } },
@@ -1862,7 +1981,7 @@ describe("DouyinCollector direct records", () => {
 
     await collector.runDirectRecords(1);
 
-    expect(collector.readDirectHistory).toHaveBeenCalledTimes(1);
+    expect(collector.readDirectHistory.mock.calls.filter(([, , options]) => !options?.completedOnly)).toHaveLength(1);
     expect(collector.snapshot.records.watch_history).toHaveLength(4);
     expect(collector.snapshot.records.watch_history.map((record) => record.id)).toContain("watch_history:history-old");
     expect(collector.snapshot.records.watch_history.map((record) => record.videoId)).toContain("history-low");

@@ -564,6 +564,7 @@ export async function fetchDirectHistoryPage({
   dataDirectory,
   directory,
   cursor = "0",
+  completedOnly = false,
   requestFactory = playwrightRequest,
   signer = signDirectHistoryUrl,
 }) {
@@ -582,6 +583,24 @@ export async function fetchDirectHistoryPage({
   requireSessionCookies(cookies);
   const { url: unsignedUrl } = buildUnsignedHistoryUrl(cookies, template);
   unsignedUrl.searchParams.set("max_cursor", normalizedCursor);
+  // 观看历史页「筛选 → 观看进度 → 已看完」发的就是这三个参数，紧跟在 count 后面；少了另外两个会回状态码 5
+  if (completedOnly) {
+    const params = [...unsignedUrl.searchParams];
+    unsignedUrl.search = "";
+    for (const [name, value] of params) {
+      // 模板自己带的筛选（用户在页面里点过筛选时会被抓进来）不能跟着发，否则一个请求里有两个 status
+      if (["status", "category", "directory"].includes(name)) continue;
+      unsignedUrl.searchParams.append(name, value);
+      if (name !== "count") continue;
+      unsignedUrl.searchParams.append("status", "1");
+      unsignedUrl.searchParams.append("category", "0");
+      unsignedUrl.searchParams.append("directory", "0");
+    }
+    // 没带上筛选就会拿到整份历史，被当成「全看完了」
+    if (unsignedUrl.searchParams.getAll("status").join() !== "1") {
+      throw new DirectHistoryError("template_invalid", "增量读取配置缺少分页参数，无法读取看完标记。");
+    }
+  }
   const userAgent = template.headers["user-agent"];
   const signedUrl = await signer(unsignedUrl, {
     directory,

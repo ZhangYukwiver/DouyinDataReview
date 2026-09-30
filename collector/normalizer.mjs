@@ -567,6 +567,7 @@ export function normalizeRecord(value, timestampSource = "unknown") {
   if (topics.length > 0) result.topics = topics;
   if (stats) result.stats = stats;
   if (watchProgress) result.watchProgress = watchProgress;
+  if (typeof value.watchCompleted === "boolean") result.watchCompleted = value.watchCompleted;
   return result;
 }
 
