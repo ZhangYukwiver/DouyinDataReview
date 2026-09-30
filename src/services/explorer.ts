@@ -4,6 +4,7 @@ import { LocalCollectorError, normalizeCollectorBaseUrl } from "./localCollector
 export interface ExploreUser {
   id: string; name: string; handle: string; bio: string; avatar: string | null; url: string;
   followers: number | null; following: number | null; likes: number | null; posts: number | null; followed: boolean | null;
+  /** 登录账号本人的主页 */ self?: boolean;
 }
 export interface ExploreVideo extends PersonalVideoRecord {
   authorProfile: ExploreUser | null; liked: boolean | null; collected: boolean | null; images: string[];
