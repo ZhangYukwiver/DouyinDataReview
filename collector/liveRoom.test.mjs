@@ -77,9 +77,12 @@ describe("live room", () => {
       { web_rid: "123", data: { ...room("下播了", 4) } },
       { web_rid: "not-a-room", room: room("坏数据") },
       { web_rid: "584923819885", data: { ...room("盘它"), room_view_stats: { display_short: "1.2万" } } },
+      // the feed now reports rooms that are live as status 0
+      { web_rid: "504448096643", room: room("天霸黑潮", 0) },
     ] } })).toEqual([
       { webRid: "921169302662", title: "陈伯大舞台", anchor: { name: "陈伯", avatar: "https://p11.douyinpic.com/a.jpeg" }, cover: "https://p3.douyinpic.com/c.jpeg", online: "76万+", tag: "王者荣耀" },
       { webRid: "584923819885", title: "盘它", anchor: { name: "陈伯", avatar: "https://p11.douyinpic.com/a.jpeg" }, cover: "https://p3.douyinpic.com/c.jpeg", online: "1.2万", tag: null },
+      { webRid: "504448096643", title: "天霸黑潮", anchor: { name: "陈伯", avatar: "https://p11.douyinpic.com/a.jpeg" }, cover: "https://p3.douyinpic.com/c.jpeg", online: "76万+", tag: null },
     ]);
     expect(normalizeFollowingLive({ status_code: 0, data: { data: [] } })).toEqual([]);
     expect(normalizeFollowingLive({ status_code: 8, data: {} })).toBeNull();
