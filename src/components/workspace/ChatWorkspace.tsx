@@ -263,7 +263,8 @@ export function ChatWorkspace({
   const sparkAlerts = sparks.filter((spark) => spark.state === "pending" && (spark.official !== undefined || spark.days >= SPARK_LIT_DAYS)).length;
   const shareVideos = useMemo(() => {
     const seen = new Set<string>();
-    return [...(videoRecords?.favorite_videos ?? []), ...(videoRecords?.liked_videos ?? [])].filter((record) => {
+    // 喜欢按点赞先后排、最新的在前；收藏没有时间又很少变，放后面，否则前 60 条永远是那几个收藏
+    return [...(videoRecords?.liked_videos ?? []), ...(videoRecords?.favorite_videos ?? [])].filter((record) => {
       if (!record.videoId || !record.url || record.mediaType === "image" || record.mediaType === "live" || seen.has(record.videoId)) return false;
       seen.add(record.videoId);
       return true;
