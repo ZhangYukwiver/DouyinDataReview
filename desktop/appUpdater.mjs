@@ -152,7 +152,7 @@ export function createAppUpdateController(options = {}) {
       ...details,
       phase: "available",
       message: manualDownload
-        ? `发现新版本${details.version ? ` v${details.version}` : ""}，去发布页下载安装包替换旧版。`
+        ? `发现新版本${details.version ? ` v${details.version}` : ""}，去下载页下载安装包替换旧版。`
         : details.version ? `发现新版本 v${details.version}，可以下载。` : "发现新版本，可以下载。",
       error: null,
       progress: 0,
