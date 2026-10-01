@@ -5,6 +5,7 @@
 <meta charset="utf-8">
 <script src="story-glide.js"></script>
 <script src="story-export.js"></script>
+<script src="story-card.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>内容年志 · 海报</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -635,6 +636,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     <span class="stamp" id="navSrc">演示数据</span>
     <button class="btn" id="navPriv" type="button" aria-pressed="false">隐私</button>
     <button class="btn" id="navExport" type="button" hidden>导出</button>
+    <button class="btn" id="navCard" type="button" hidden>分享图</button>
     <button class="btn sig" id="navWs" type="button" hidden>工作台</button>
   </div>
   <i class="nav-prog" id="navProg"></i>
@@ -3436,7 +3438,7 @@ CH.push({
 #sign-end .se-y{display:block;font-size:1em;line-height:.92;letter-spacing:-.02em;white-space:nowrap}
 #sign-end .se-yo{color:transparent;-webkit-text-stroke:max(2px,.006em) var(--paper)}
 #sign-end .se-yf{position:absolute;inset:0;color:var(--sig);-webkit-text-stroke:max(2px,.006em) var(--sig);clip-path:inset(0 calc((1 - var(--p)) * 105% - .05em) 0 -.05em)}
-#sign-end .se-acts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:var(--rule) solid var(--fg);border-bottom:var(--rule) solid var(--fg)}
+#sign-end .se-acts{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);border-top:var(--rule) solid var(--fg);border-bottom:var(--rule) solid var(--fg)}
 #sign-end .se-act{display:grid;grid-template-rows:auto 1fr;gap:calc(var(--u)*.6);text-align:left;padding:calc(var(--u)*1.1) calc(var(--u)*1.4) calc(var(--u)*1.3);color:var(--paper);min-width:0}
 #sign-end .se-act+.se-act{border-left:var(--rule) solid var(--fg)}
 #sign-end .se-act:hover,#sign-end .se-act:focus-visible{background:var(--sig);color:var(--ink)}
@@ -3576,16 +3578,20 @@ CH.push({
     const ITEMS = [
       { tag: "button", t: "进入持续报告", a: "→", d: FRAMED ? "回到工作台，报告会随着新的采集接着更新。" : "在应用里打开时，这一格会带你去工作台。", on: () => toWorkspace() },
       { tag: "button", t: "隐私模式", a: priv, d: "名字、标题、头像都换成方块，截图更放心。", on: () => togglePrivacy(), priv: true },
+      LIVE && window.StoryCard && { tag: "button", t: "存一张分享图", a: "↓", d: "时间段、几个数和三个词排成一张 3:4 的图，存成 PNG。", card: true },
       { tag: "button", t: "从头再看", a: "↑", d: "回到封面，从第一章重新看一遍。", on: () => goTo(document.body) },
-    ];
+    ].filter(Boolean);
     let privBtn = null;
     for (const it of ITEMS) {
       const node = H(it.tag, { class: "se-act", type: it.tag === "button" ? "button" : null, href: it.href || null, onclick: it.on || null },
         H("span", { class: "se-ah" }, H("b", { class: "cjk se-at" }, it.t), typeof it.a === "string" ? H("b", { class: "se-aa" }, it.a) : it.a),
         H("span", { class: "se-ad" }, it.d));
       if (it.priv) privBtn = node;
+      if (it.card && window.StoryCard) StoryCard.wire(node, D, { theme: "poster" });
       acts.append(node);
     }
+    const navCard = document.getElementById("navCard");
+    if (navCard && LIVE && window.StoryCard) StoryCard.wire(navCard, D, { theme: "poster" });
     const sync = () => { if (privBtn) privBtn.setAttribute("aria-pressed", String(document.body.classList.contains("privacy-on"))); };
     sync();
     new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ["class"] });
