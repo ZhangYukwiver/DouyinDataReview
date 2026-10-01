@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, session, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -259,6 +259,15 @@ async function launch() {
   const updater = app.isPackaged && (process.platform === "win32" || process.platform === "darwin")
     ? electronUpdater.autoUpdater
     : null;
+  if (updater && process.platform === "win32") {
+    // 国内直连 GitHub 下一百多兆的安装包经常断。版本信息和 sha512 仍从 GitHub
+    // 直连读取，只把安装包改走加速线路，下完 electron-updater 会按 sha512 校验。
+    // ponytail: 写死一条第三方线路，失效就换成 docs/index.html 里的下一条
+    session.fromPartition("electron-updater", { cache: false }).webRequest.onBeforeRequest(
+      { urls: ["https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/*"] },
+      ({ url }, callback) => callback(url.endsWith(".exe") ? { redirectURL: `https://gh-proxy.com/${url}` } : {}),
+    );
+  }
   appUpdateController = createAppUpdateController({
     updater,
     isPackaged: app.isPackaged,
@@ -269,7 +278,7 @@ async function launch() {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("desktop:app-update-state", state);
     },
     openDownloadPage: process.platform === "darwin"
-      ? () => openExternalUrl("https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest")
+      ? () => openExternalUrl("https://zhangyukwiver.github.io/DouyinDataReview/")
       : null,
     beforeInstall: async () => {
       // The updater schedules app.quit() only after it has accepted the

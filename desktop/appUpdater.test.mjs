@@ -115,7 +115,7 @@ describe("desktop app updater", () => {
     expect(controller.getState().manualDownload).toBe(true);
 
     updater.emit("update-available", { version: "1.3.0" });
-    expect(controller.getState().message).toContain("发布页");
+    expect(controller.getState().message).toContain("下载页");
     await controller.download();
 
     expect(openDownloadPage).toHaveBeenCalledWith("1.3.0");
