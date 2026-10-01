@@ -13,7 +13,7 @@
   // 话题词：档案馆当隐私，海报和内容年志开着隐私也照常显示；聊天里的高频词三个页面都当隐私
   const TOPIC_ZONES = new Set(["topics", "topTopic", "lexicon"]);
   const TOPIC_WORDS = new Set(["name", "both", "sharedOnly", "likedOnly"]);
-  const SHARED_SCRIPTS = ["story-glide.js"];
+  const SHARED_SCRIPTS = ["story-glide.js", "story-card.js"];
 
   // 抹成同样长的 ■（和页面上的遮挡一样）。页面还要拿这些词比对、去重（词场连线、配乐去掉榜首），
   // 所以同一个词（按页面的比法：去掉开头的 #、去空格、不分大小写）始终抹成同一串，

@@ -6,9 +6,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>内容年志 · 档案馆</title>
 <script src="story-export.js"></script>
+<script src="story-card.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600&family=Noto+Serif+SC:wght@400;500;600;700;900&family=Noto+Sans+SC:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600&family=Noto+Serif+SC:wght@200;400;500;600;700;900&family=Noto+Sans+SC:wght@400;500&display=swap">
 <style>
 /* ============ tokens：档案馆自己的语言——冷调近黑的观测室、羊皮纸色字、暖金、冷青、1px 青铜细线、纸纹、暗角 ============ */
 :root{
@@ -773,6 +774,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     <span class="nav-src" id="navSrc">演示数据</span>
     <button class="btn" id="navPriv" type="button" aria-pressed="false">隐私</button>
     <button class="btn" id="navExport" type="button" hidden>导出</button>
+    <button class="btn" id="navCard" type="button" hidden>分享图</button>
     <button class="btn solid" id="navWs" type="button" hidden>工作台</button>
   </div>
   <div class="nav-seg" id="navSeg" aria-hidden="true"></div>
@@ -7713,6 +7715,11 @@ CH.push({
 #sign .se-h{font-size:clamp(28px,calc(var(--u)*4.4),66px);line-height:1.1;white-space:nowrap;--stagger:60ms}
 #sign .se-colo{margin-top:calc(var(--u)*1.6);max-width:23em;text-wrap:balance}
 #sign .se-acts{display:flex;justify-content:center;gap:calc(var(--u)*1.4);margin-top:calc(var(--u)*3)}
+/* 分享图另起一行：三颗并排比外圈还宽 */
+#sign .se-cardrow{display:flex;justify-content:center;margin-top:calc(var(--u)*1.2)}
+#sign .se-cardrow:has(>[hidden]){display:none}
+#sign .se-cardrow .se-card{height:38px;border-color:var(--line-2);color:var(--paper-2);font-size:14px}
+#sign .se-cardrow .se-card:hover,#sign .se-cardrow .se-card:focus-visible{background:rgba(59,45,25,.35);border-color:var(--gold);color:var(--gold-hi)}
 #sign .se-acts .btn .ar{font:400 18px/1 var(--display);letter-spacing:0}
 /* 按钮也是细线的：主按钮金色细框 + 深金淡底，悬停时底色亮一档；次按钮青铜细框、不填底，悬停时框和字转金。
    全书不留整块金色平涂 */
@@ -7794,6 +7801,7 @@ CH.push({
           <button class="btn solid se-go" type="button">进入持续报告<span class="ar" aria-hidden="true">→</span></button>
           <button class="btn se-back" type="button"><span class="ar" aria-hidden="true">←</span>从头再翻</button>
         </div>
+        <div class="se-cardrow fx-slide" data-t="2700"><button class="btn se-card" type="button" hidden><span class="sc-l">存一张分享图</span><span class="ar" aria-hidden="true">↓</span></button></div>
         <p class="small se-note fx-fade" data-t="3100"></p>
       </div>
     </div>
@@ -8100,6 +8108,8 @@ CH.push({
     rider.append(starSvg("var(--gold-hi)"));
     $(".se-go", p2).addEventListener("click", () => toWorkspace());
     $(".se-back", p2).addEventListener("click", () => window.__ARCHIVE.go(0));
+    // 分享图只给真实数据：演示数据存出去的数字不是谁的
+    if (LIVE && window.StoryCard) for (const b of [$(".se-card", p2), document.getElementById("navCard")]) if (b) StoryCard.wire(b, D, { theme: "archive", privateTopics: true });
     $(".se-go", p2).title = FRAMED ? "回到工作台，同样这些数那边一屏就能看完" : "单独打开时会回到封面";
     $(".se-note", p2).append(...phr(!FRAMED
       ? "这一页是单独打开的，「进入持续报告」会先回到封面；在应用里打开时，它会带你去工作台。"

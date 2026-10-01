@@ -85,6 +85,17 @@ describe("story data", () => {
   const model = buildReportModel(records, messages, null, conversations);
   const data = buildStoryData(model, { records, chatMessages: messages, chatConversations: conversations, source: "collector", updatedAt: "2026-09-03T10:00:00+08:00", warnings: ["a", "b"] });
 
+  it("finds the latest night and the longest sitting for the share card", () => {
+    const at = (h: number, m: number, day = 10) => new Date(2026, 0, day, h, m).toISOString();
+    const watch = [at(21, 0), at(21, 8), at(21, 15), at(22, 0), at(23, 50), at(6, 0, 11)].map((occurredAt, i) => rec(`r${i}`, { videoId: `v${i}`, occurredAt }));
+    const liked = [rec("late", { videoId: "v0", occurredAt: at(3, 40, 11) })];
+    const input = { watch_history: watch, liked_videos: liked, favorite_videos: [] };
+    const story = buildStoryData(buildReportModel(input, [], null, []), { records: input, chatMessages: [], chatConversations: [], source: "collector", updatedAt: null, warnings: [] });
+    expect(story.latest).toBe(at(3, 40, 11)); // 03:40 is later into the night than 23:50; 06:00 is morning
+    expect(story.longestRun).toEqual({ start: at(21, 0), minutes: 15, count: 3 });
+    expect(data.longestRun).toBeNull(); // no two watch records within ten minutes
+  });
+
   it("summarises the sample, time and kept chapters from the records", () => {
     expect(data.counts).toEqual({ watch: 6, liked: 2, favorite: 2, chat: 54, events: 10 });
     expect(data.unique).toBe(5);

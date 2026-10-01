@@ -70,6 +70,10 @@ export interface StoryData {
   days: Array<[string, number]>;
   peakHour: number | null;
   peakDay: string | null;
+  /** The record latest into the night (the day turns over at 05:00), for the share card. */
+  latest: string | null;
+  /** Longest stretch of watch records no more than 10 minutes apart. */
+  longestRun: { start: string; minutes: number; count: number } | null;
   timeSources: { platform_action: number; archive_action: number; unknown: number };
   intersection: ReportModel["intersection"];
   /** Shares of watched records finishing ≥90% / 30–90% / <30%; null without progress data. */
@@ -113,6 +117,9 @@ export interface StoryInput {
 
 type Row = { record: PersonalVideoRecord; type: keyof PersonalRecordCollection };
 
+// ponytail: a 10-minute gap ends a sitting; tune here if real sessions split too eagerly
+const RUN_GAP_MS = 10 * 60_000;
+
 export function buildStoryData(model: ReportModel, input: StoryInput): StoryData {
   const { records } = input;
   const rows: Row[] = (["watch_history", "liked_videos", "favorite_videos"] as const).flatMap((type) => records[type].map((record) => ({ record, type })));
@@ -128,6 +135,17 @@ export function buildStoryData(model: ReportModel, input: StoryInput): StoryData
   const range: StoryData["range"] = times.length ? [isoDay(Math.min(...times)), isoDay(Math.max(...times))] : null;
   const perDay = new Map<string, number>();
   for (const { time } of reliable) perDay.set(isoDay(time), (perDay.get(isoDay(time)) ?? 0) + 1);
+  // 05:00 is the latest a night can run: 03:40 beats 23:50, 06:00 is the next morning
+  const nightKey = (time: number) => { const date = new Date(time); return (date.getHours() * 60 + date.getMinutes() + 1140) % 1440; };
+  const latest = times.length ? new Date(times.reduce((best, time) => (nightKey(time) > nightKey(best) ? time : best))).toISOString() : null;
+  const watchTimes = reliable.filter(({ row }) => row.type === "watch_history").map(({ time }) => time).sort((a, b) => a - b);
+  const at = (i: number) => watchTimes[i] ?? 0;
+  let run = { from: 0, to: 0 };
+  for (let i = 1, from = 0; i < watchTimes.length; i++) {
+    if (at(i) - at(i - 1) > RUN_GAP_MS) from = i;
+    if (at(i) - at(from) > at(run.to) - at(run.from)) run = { from, to: i };
+  }
+  const longestRun = run.to > run.from ? { start: new Date(at(run.from)).toISOString(), minutes: Math.round((at(run.to) - at(run.from)) / 60_000), count: run.to - run.from + 1 } : null;
   const peakDay = [...perDay].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? null;
 
   const progress = model.progressPercents;
@@ -226,6 +244,8 @@ export function buildStoryData(model: ReportModel, input: StoryInput): StoryData
     days: [...perDay].sort((a, b) => a[0].localeCompare(b[0])),
     peakHour: model.peakHour,
     peakDay,
+    latest,
+    longestRun,
     timeSources,
     intersection: model.intersection,
     progress: bands,
