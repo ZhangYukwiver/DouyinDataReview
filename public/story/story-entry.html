@@ -135,10 +135,10 @@
         <strong>内容年志</strong>
         <span class="en">ANNUAL VOLUME</span>
         <span class="gc-rows">
-          <span><span>WATCH</span><b>20</b></span>
-          <span><span>LIKED</span><b>8</b></span>
-          <span><span>FAVORITE</span><b>6</b></span>
-          <span><span>CHAT</span><b>—</b></span>
+          <span><span>WATCH</span><b>1,180</b></span>
+          <span><span>LIKED</span><b>214</b></span>
+          <span><span>FAVORITE</span><b>63</b></span>
+          <span><span>CHAT</span><b>1,040</b></span>
         </span>
       </span>
       <span class="gc-bottom"><span>TAP TO ENTER</span><i>↓</i></span>
@@ -153,9 +153,10 @@
     const reduced = !motionFull && matchMedia("(prefers-reduced-motion: reduce)").matches;
     const NEXT = `story-draft_副本.html?from=card${motionFull ? "&motion=full" : ""}`;
 
-    // the app opens this page with ?watch=&liked=&favorite=&chat=&year=; without them the demo numbers stay
+    // the app opens this page with ?watch=&liked=&favorite=&chat=&year= (chat left out when there is none → —);
+    // without them the demo numbers stay, matching the story page's built-in demo data
     const query = new URLSearchParams(location.search);
-    document.querySelectorAll(".gc-rows b").forEach((cell, i) => { const v = query.get(["watch", "liked", "favorite", "chat"][i]); if (v !== null && v !== "" && Number.isFinite(+v)) cell.textContent = (+v).toLocaleString("zh-CN"); });
+    if (query.has("watch")) document.querySelectorAll(".gc-rows b").forEach((cell, i) => { const v = query.get(["watch", "liked", "favorite", "chat"][i]); cell.textContent = v !== null && v !== "" && Number.isFinite(+v) ? (+v).toLocaleString("zh-CN") : "—"; });
     if (/^\d{4}$/.test(query.get("year") || "")) document.querySelector(".gc-top span:last-child").textContent = query.get("year");
     if (query.has("watch")) { document.querySelector(".nav-center span").textContent = "本地快照"; document.querySelector(".gate-fine").lastChild.textContent = "本地快照 LOCAL SNAPSHOT"; }
 
