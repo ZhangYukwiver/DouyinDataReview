@@ -1797,8 +1797,9 @@ describe("DouyinCollector direct records", () => {
       occurredAt: "2023-11-14T22:13:20.000Z",
       occurredAtSource: "platform_action",
     });
-    expect(collector.snapshot.records.liked_videos[0]?.videoId).toBe("liked-new");
-    expect(collector.snapshot.records.favorite_videos[0]?.videoId).toBe("favorite-new");
+    // 整份读完才替换：已经取消的旧喜欢、旧收藏不能留下来
+    expect(collector.snapshot.records.liked_videos.map((record) => record.videoId)).toEqual(["liked-new"]);
+    expect(collector.snapshot.records.favorite_videos.map((record) => record.videoId)).toEqual(["favorite-new"]);
     expect(collector.snapshot.records.watch_history).toHaveLength(2);
     expect(collector.readDirectHistory.mock.calls.map(([, cursor, options]) => [cursor, Boolean(options?.completedOnly)])).toEqual([
       ["0", false],
@@ -1884,6 +1885,97 @@ describe("DouyinCollector direct records", () => {
       favorite_videos: false,
     });
     expect(context.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks a type unfinished when an incremental read stops after saving new records", async () => {
+    const initial = emptySnapshot();
+    initial.warnings = ["无界面读取完成：新增观看 0、点赞 0、收藏 0；读取观看历史 1 页、点赞 1 页、收藏 1 页。"];
+    initial.directSync = normalizeDirectSyncState({ watch_history: true, liked_videos: true, favorite_videos: true });
+    initial.records.watch_history = [{
+      id: "watch_history:history-old:2023-11-14T22:13:20.000Z",
+      title: "旧观看",
+      author: null,
+      occurredAt: "2023-11-14T22:13:20.000Z",
+      occurredAtSource: "platform_action",
+      url: "https://www.douyin.com/video/history-old",
+      videoId: "history-old",
+    }];
+    const store = mockStore("2026-08-14T00:00:00.000Z");
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
+    collector.snapshot = initial;
+    collector.syncRunId = 1;
+    collector.progressPersistIntervalMs = 0;
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
+    collector.readDirectHistory = vi.fn()
+      .mockResolvedValueOnce({
+        status_code: 0,
+        aweme_list: [{ aweme_id: "history-new", history_info: { view_time: 1_700_003_600 } }],
+        has_more: 1,
+        max_cursor: "1700003000000",
+      })
+      .mockRejectedValueOnce(new DirectHistoryError("rate_limited", "请求太频繁"));
+
+    await expect(collector.runDirectRecords(1)).rejects.toThrow("请求太频繁");
+
+    const [savedRecords, savedWarnings, savedOptions] = store.save.mock.calls.at(-1);
+    expect(savedRecords.watch_history.map((record) => record.videoId)).toContain("history-new");
+    expect(savedOptions.directSync).toMatchObject({ watch_history: false, liked_videos: true, favorite_videos: true });
+    // 重新载入时旧的「读取完成」提示不能把它盖回已完成，否则下次又只读到 history-new 就停
+    expect(normalizeDirectSyncState(savedOptions.directSync, savedWarnings).watch_history).toBe(false);
+  });
+
+  it.each([
+    ["an incremental like read", true],
+    ["a full like re-read", false],
+  ])("keeps saved likes when %s stops halfway", async (_label, likesComplete) => {
+    const initial = emptySnapshot();
+    initial.directSync = normalizeDirectSyncState({ watch_history: true, liked_videos: likesComplete, favorite_videos: true });
+    initial.records.watch_history = [{
+      id: "watch_history:history-old:2023-11-14T22:13:20.000Z",
+      title: "旧观看",
+      author: null,
+      occurredAt: "2023-11-14T22:13:20.000Z",
+      occurredAtSource: "platform_action",
+      url: "https://www.douyin.com/video/history-old",
+      videoId: "history-old",
+    }];
+    initial.records.liked_videos = ["liked-a", "liked-b"].map((videoId) => ({
+      id: `liked_videos:${videoId}`,
+      title: videoId,
+      author: null,
+      occurredAt: null,
+      url: `https://www.douyin.com/video/${videoId}`,
+      videoId,
+    }));
+    const store = mockStore("2026-08-14T00:00:00.000Z");
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
+    collector.snapshot = initial;
+    collector.syncRunId = 1;
+    collector.progressPersistIntervalMs = 0;
+    collector.ensureBrowser = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
+    collector.readDirectHistory = vi.fn(async () => ({
+      status_code: 0,
+      aweme_list: [{ aweme_id: "history-old", history_info: { view_time: 1_700_000_000 } }],
+      has_more: 0,
+    }));
+    collector.collectDirectList = vi.fn(async (_context, type, onPage) => {
+      await onPage({ status_code: 0, aweme_list: [{ aweme_id: "liked-new" }], has_more: 1, max_cursor: "1" }, 1);
+      throw new DirectHistoryError("rate_limited", "请求太频繁");
+    });
+
+    await expect(collector.runDirectRecords(1)).rejects.toThrow("请求太频繁");
+
+    for (const [records, , options] of store.save.mock.calls) {
+      expect(options.directSync.liked_videos).toBe(likesComplete);
+      // 标着读完的存盘里不能出现只读了一半的新喜欢，否则下次增量会在它身上停住
+      if (options.directSync.liked_videos) expect(records.liked_videos.map((record) => record.videoId)).not.toContain("liked-new");
+    }
+    const savedLikes = store.save.mock.calls.at(-1)[0].liked_videos.map((record) => record.videoId);
+    expect(savedLikes).toEqual(expect.arrayContaining(["liked-a", "liked-b"]));
   });
 
   it("reads only through the known boundary after a completed direct sync", async () => {

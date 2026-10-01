@@ -554,11 +554,16 @@ async function collectLiveHistoryRecords(context) {
   }
 }
 
-function finalizeDirectType(type, incremental, existingRecords, fetchedRecords, knownIds, rejectedIds) {
+function finalizeDirectType(type, incremental, existingRecords, fetchedRecords, knownIds, rejectedIds, final = true) {
   if (type === "watch_history") {
     return mergeRecordList(type, existingRecords, fetchedRecords);
   }
-  if (!incremental) return structuredClone(fetchedRecords);
+  if (!incremental && final) return structuredClone(fetchedRecords);
+  if (!incremental) {
+    // 整份重读还没读完时，没读到的旧记录先留着，中途被打断也不会把本地记录截短；读完才按这次的结果整份替换
+    const fetchedIds = new Set(fetchedRecords.map((record) => record.id));
+    return [...structuredClone(fetchedRecords), ...existingRecords.filter((record) => !fetchedIds.has(record.id))];
+  }
 
   const fetchedById = new Map(fetchedRecords.map((record) => [record.id, record]));
   return [
@@ -2870,7 +2875,7 @@ export class DouyinCollector {
         }
         for (const id of result.rejectedRecordIds) rejectedIds.get(type).add(id);
       };
-      const previewRecords = (type) => {
+      const previewRecords = (type, final = false) => {
         const preview = structuredClone(stagedRecords);
         preview[type] = finalizeDirectType(
           type,
@@ -2879,6 +2884,7 @@ export class DouyinCollector {
           accumulator.snapshot().records[type],
           knownIds.get(type),
           rejectedIds.get(type),
+          final,
         );
         return preview;
       };
@@ -2892,11 +2898,15 @@ export class DouyinCollector {
       // 每读一段就落盘，工作台边采边能看到新记录；限流是因为快照要整份重写
       let lastProgressPersistAt = Date.now();
       const persistProgress = async (type) => {
+        // 喜欢和收藏的增量一般一两页就读完，读完再一起存：中途存下的新记录会让下次读取在它们身上停住，中间那段就补不回来了
+        if (type !== "watch_history" && incrementalByType.get(type)) return;
         if (Date.now() - lastProgressPersistAt < this.progressPersistIntervalMs) return;
         lastProgressPersistAt = Date.now();
         this.assertSyncActive(runId);
         this.snapshot = await this.store.save(previewRecords(type), this.snapshot.warnings, {
-          directSync,
+          // 观看历史读到一半存下的新记录，下次增量读取会在它们身上停住，被打断时中间那段就再也补不回来。
+          // 存了新记录就先把它标成没读完，被打断的话下次整段重读（观看历史是合并，不会丢旧记录），读完再标回去
+          directSync: newIds.get(type).size > 0 ? { ...directSync, [type]: false } : directSync,
           chatMessages: this.snapshot.chatMessages,
           chatConversations: this.snapshot.chatConversations,
         });
@@ -2904,7 +2914,7 @@ export class DouyinCollector {
       };
       const persistCompletedType = async (type, finalPhase) => {
         this.assertSyncActive(runId);
-        stagedRecords[type] = previewRecords(type)[type];
+        stagedRecords[type] = previewRecords(type, true)[type];
         directSync[type] = true;
         const newCounts = Object.fromEntries(REQUIRED_TYPES.map((kind) => [kind, newIds.get(kind).size]));
         const warnings = [...new Set([

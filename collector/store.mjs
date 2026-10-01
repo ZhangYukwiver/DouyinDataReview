@@ -271,7 +271,9 @@ function normalizeChatConversations(value) {
 }
 
 export function normalizeDirectSyncState(value, warnings = []) {
-  const legacyComplete = Array.isArray(warnings)
+  // 只给还没有 directSync 字段的旧快照用；有了字段就以它为准，否则读到一半标的「没读完」会被旧提示盖回去
+  const legacyComplete = !value
+    && Array.isArray(warnings)
     && warnings.some((warning) => typeof warning === "string"
       && warning.startsWith(LEGACY_DIRECT_COMPLETE_WARNING_PREFIX));
   return Object.fromEntries(RECORD_TYPES.map((type) => [
