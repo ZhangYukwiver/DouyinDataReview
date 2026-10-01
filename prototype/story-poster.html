@@ -4,6 +4,7 @@
 <script>if (new URLSearchParams(location.search).get("motion") === "full") document.documentElement.classList.add("motion-full");</script>
 <meta charset="utf-8">
 <script src="story-glide.js"></script>
+<script src="story-export.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>内容年志 · 海报</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -120,6 +121,9 @@ figure{margin:0}
 .nav-idx a:hover{background:var(--paper);color:var(--ink)}
 .nav-idx a.on{background:var(--sig);color:var(--ink)}
 .nav-r{display:flex;align-items:center;gap:8px;padding:0 var(--gut) 3px 0;white-space:nowrap}
+/* 窄窗口里章节目录放不下：先收起「本机数据」（档案馆也这样），给「导出」腾地方；还放不下的那截压在右边按钮底下 */
+@media (max-width:1160px){#navSrc{display:none}}
+.nav-r{position:relative;background:var(--ink)}
 .nav-r .btn{height:30px;padding:0 10px;border-width:2px;font-size:11px}
 .nav-r .stamp{font-family:var(--body);font-weight:700;letter-spacing:.08em}
 .nav-prog{position:absolute;left:0;bottom:0;width:100%;height:3px;background:var(--sig);transform-origin:0 50%;transform:scaleX(var(--doc-p,0))}
@@ -144,8 +148,11 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   const REDUCED = !document.documentElement.classList.contains("motion-full") && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---------- data ----------
+  // 导出的离线文件把数据直接放在 window.__STORY_EXPORT__ 里（见 story-export.js）
+  const EXPORTED = window.__STORY_EXPORT__ || null;
   let data = DEMO, live = false;
-  if (query.get("data") !== "demo") {
+  if (EXPORTED) { data = EXPORTED.data; live = true; }
+  else if (query.get("data") !== "demo") {
     try {
       const raw = localStorage.getItem(STORE);
       if (raw) { const value = JSON.parse(raw); if (value && value.version === 1) { data = value; live = true; } }
@@ -544,6 +551,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     if (year) year.textContent = String(data.year);
     if (src) { src.textContent = live ? "本机数据" : "演示数据"; src.classList.toggle("sig", !live); }
     if (priv) priv.addEventListener("click", () => togglePrivacy());
+    const exp = document.getElementById("navExport");
+    if (exp && live && !EXPORTED && window.StoryExport) window.StoryExport.wire(exp, () => ({ data, privacy: privacyOn, privateTopics: false, images: [], fileName: `内容年志-海报-${data.year}.html` }));
     if (ws) { ws.hidden = !FRAMED; ws.addEventListener("click", toWorkspace); }
     if (FRAMED) addEventListener("keydown", (event) => { if (event.key === "Escape") toWorkspace(); });
     const home = document.querySelector(".nav-l");
@@ -603,7 +612,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { remeasureMarquees(); update(); }, 120); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { remeasureMarquees(); update(); });
     addEventListener("load", () => { remeasureMarquees(); update(); });
-    let wantPrivacy = query.get("privacy") === "1";
+    let wantPrivacy = query.get("privacy") === "1" || Boolean(EXPORTED && EXPORTED.privacy);
     if (!wantPrivacy) { try { wantPrivacy = localStorage.getItem(PRIV_KEY) === "1"; } catch (error) { /* ignore */ } }
     if (wantPrivacy) togglePrivacy(true);
     document.documentElement.classList.add("booted");
@@ -625,6 +634,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   <div class="nav-r">
     <span class="stamp" id="navSrc">演示数据</span>
     <button class="btn" id="navPriv" type="button" aria-pressed="false">隐私</button>
+    <button class="btn" id="navExport" type="button" hidden>导出</button>
     <button class="btn sig" id="navWs" type="button" hidden>工作台</button>
   </div>
   <i class="nav-prog" id="navProg"></i>
@@ -1855,7 +1865,7 @@ CH.push({
   id: "taste",
   render(D, el) {
     const wb = (s) => String(s).replace(/ /g, "\u00a0").split("|").flatMap((x, i) => (i ? [H("wbr"), x] : [x]));
-    const em = (s) => Array.from(String(s)).reduce((w, c) => w + (/[⺀-鿿豈-﫿　-〿＀-￯]/.test(c) ? 1 : c === "1" ? 0.34 : /[0-9]/.test(c) ? 0.5 : c === "%" ? 1.06 : /[,.:;'!|il]/.test(c) ? 0.26 : c === " " ? 0.24 : /[mwMW@]/.test(c) ? 0.76 : 0.53), 0);
+    const em = (s) => Array.from(String(s)).reduce((w, c) => w + (/[⺀-鿿豈-﫿　-〿＀-￯■]/.test(c) ? 1 : /[\u200b-\u200d]/.test(c) ? 0 : c === "1" ? 0.34 : /[0-9]/.test(c) ? 0.5 : c === "%" ? 1.06 : /[,.:;'!|il]/.test(c) ? 0.26 : c === " " ? 0.24 : /[mwMW@]/.test(c) ? 0.76 : 0.53), 0);
     const pad = (n) => String(n).padStart(2, "0");
     const topics = D.topics.filter((t) => t && t.name && t.count > 0).slice(0, 10);
     const lead = $(".tt-lead", el), list = $(".tt-list", el), view = $(".tt-view", el), ctr = $(".tt-ctr", el);
@@ -1941,7 +1951,7 @@ CH.push({
   id: "taste-who",
   render(D, el) {
     const wb = (s) => String(s).replace(/ /g, "\u00a0").split("|").flatMap((x, i) => (i ? [H("wbr"), x] : [x]));
-    const em = (s) => Array.from(String(s)).reduce((w, c) => w + (/[⺀-鿿豈-﫿　-〿＀-￯]/.test(c) ? 1 : c === "1" ? 0.34 : /[0-9]/.test(c) ? 0.5 : c === "%" ? 1.06 : /[,.:;'!|il]/.test(c) ? 0.26 : c === " " ? 0.24 : /[mwMW@]/.test(c) ? 0.76 : 0.56), 0);
+    const em = (s) => Array.from(String(s)).reduce((w, c) => w + (/[⺀-鿿豈-﫿　-〿＀-￯■]/.test(c) ? 1 : /[\u200b-\u200d]/.test(c) ? 0 : c === "1" ? 0.34 : /[0-9]/.test(c) ? 0.5 : c === "%" ? 1.06 : /[,.:;'!|il]/.test(c) ? 0.26 : c === " " ? 0.24 : /[mwMW@]/.test(c) ? 0.76 : 0.56), 0);
     const cs = D.creators.filter((c) => c && c.name && c.count > 0).slice(0, 5);
     const board = $(".tw-board", el), lead = $(".tw-lead", el), foot = $(".tw-foot", el);
     const total = Math.max(D.creatorsCount || 0, cs.length);
@@ -1998,7 +2008,7 @@ CH.push({
   id: "taste-sound",
   render(D, el) {
     const wb = (s) => String(s).replace(/ /g, "\u00a0").split("|").flatMap((x, i) => (i ? [H("wbr"), x] : [x]));
-    const em = (s) => Array.from(String(s)).reduce((w, c) => w + (/[⺀-鿿豈-﫿　-〿＀-￯]/.test(c) ? 1 : /[0-9]/.test(c) ? 0.55 : c === " " ? 0.3 : /[mwMW@]/.test(c) ? 0.8 : 0.58), 0);
+    const em = (s) => Array.from(String(s)).reduce((w, c) => w + (/[⺀-鿿豈-﫿　-〿＀-￯■]/.test(c) ? 1 : /[\u200b-\u200d]/.test(c) ? 0 : /[0-9]/.test(c) ? 0.55 : c === " " ? 0.3 : /[mwMW@]/.test(c) ? 0.8 : 0.58), 0);
     const ms = D.musics.filter((m) => m && m.title && m.count > 0).slice(0, 3);
     const list = $(".ts-list", el), lead = $(".ts-lead", el), mq = $(".ts-mq", el);
     const nameOf = (m) => (m.author ? `${m.author}的《${m.title}》` : `「${m.title}」`);
