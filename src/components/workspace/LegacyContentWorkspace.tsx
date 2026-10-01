@@ -62,6 +62,7 @@ import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../ser
 import { waitForCollector } from "../../services/videoFeed";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
+import { earliestRecordDate, searchRecords } from "../../services/recordSearch";
 import { ReportDashboard } from "./ReportDashboard";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -584,17 +585,26 @@ function RecordsGallery({
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRecords, setBatchRecords] = useState<PersonalVideoRecord[] | null>(null);
+  const [query, setQuery] = useState("");
   useEffect(() => {
     onBatchDownloadActiveChange?.(batchRecords !== null);
     return () => onBatchDownloadActiveChange?.(false);
   }, [batchRecords, onBatchDownloadActiveChange]);
   useEffect(() => { setSelecting(false); setSelected(new Set()); }, [label, privacy]);
-  useEffect(() => { setPlayingRecord(null); setLiveTarget(null); }, [label, privacy]);
+  // 换了搜索词就重新选，免得之前选的、现在看不见的那些悄悄留在下载列表里
+  useEffect(() => { setSelected(new Set()); }, [query]);
+  useEffect(() => { setPlayingRecord(null); setLiveTarget(null); setQuery(""); }, [label, privacy]);
   const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
   // 最后一行不满时 flex:1 会把卡片拉宽，限成一列宽（12 是 gridRow 的 gap）
   const cellStyle = Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null;
-  const sortedRecords = useMemo(() => records, [records]);
-  const candidates = useMemo(() => uniqueDownloadVideos(records), [records]);
+  // 播放器的上一条/下一条和批量下载都跟着搜索结果走
+  const shownRecords = useMemo(() => searchRecords(records, query), [records, query]);
+  const searching = query.trim().length > 0;
+  // 喜欢和收藏的时间是上次播放的时间，不是点赞收藏的时间，拿来说「最早一条」会误导
+  const earliest = useMemo(() => activeType === "watch_history" ? earliestRecordDate(records) : null, [activeType, records]);
+  const candidates = useMemo(() => uniqueDownloadVideos(shownRecords), [shownRecords]);
+  // 按钮按全部记录决定显不显示：跟着搜索结果来回出现会让搜索框左右跳，多选时还会找不到「退出多选」
+  const hasDownloadable = useMemo(() => uniqueDownloadVideos(records).length > 0, [records]);
   const chosen = candidates.filter((record) => selected.has(videoDownloadKey(record)!));
   const selectionFor = (record: PersonalVideoRecord) => {
     if (!selecting) return undefined;
@@ -635,18 +645,27 @@ function RecordsGallery({
       testID="record-grid"
       key={`${layout}:${columns}`}
       columnWrapperStyle={layout === "grid" ? styles.gridRow : undefined}
-      contentContainerStyle={[styles.galleryContent, mobile && styles.galleryContentMobile, records.length === 0 && styles.galleryContentEmpty]}
-      data={sortedRecords}
+      contentContainerStyle={[styles.galleryContent, mobile && styles.galleryContentMobile, shownRecords.length === 0 && styles.galleryContentEmpty]}
+      data={shownRecords}
       keyExtractor={(item) => item.id}
       ListHeaderComponent={(
         <>
         <View {...fx({ motion: "rise", ws: "w-ghead" })} style={styles.galleryHeader}>
           <View style={styles.galleryHeaderCopy}>
             <Text {...ws("w-gtitle")} style={styles.galleryTitle}>{label}</Text>
-            <Text {...ws("mono")} style={styles.galleryMeta}>{sourceLabel} · {status?.message ?? `${records.length} 条本地记录`}</Text>
+            <Text {...ws("mono")} style={styles.galleryMeta}>{searching
+              ? `在 ${records.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
+              : `${sourceLabel} · ${status?.message ?? `${records.length} 条本地记录`}`}</Text>
           </View>
+          {records.length > 0 && !privacy ? (
+            <View {...ws("c-search")} style={styles.searchBox}>
+              <Search size={14} color={color.textMuted} />
+              <TextInput accessibilityLabel="搜索记录" onChangeText={setQuery} placeholder="搜标题、作者、话题或音乐"
+                placeholderTextColor={color.textMuted} style={styles.searchInput} value={query} />
+            </View>
+          ) : null}
           {live && Platform.OS === "web" && !privacy ? <LiveRoomEntry onEnter={setLiveTarget} /> : null}
-          {Platform.OS === "web" && !privacy && candidates.length > 0 ? <Pressable {...ws("btn")} accessibilityRole="button"
+          {Platform.OS === "web" && !privacy && (selecting || hasDownloadable) ? <Pressable {...ws("btn")} accessibilityRole="button"
             onPress={() => { setSelecting(!selecting); setSelected(new Set()); }} style={styles.batchButton}>
             <Download size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{selecting ? "退出多选" : "批量下载"}</Text>
           </Pressable> : null}
@@ -676,7 +695,23 @@ function RecordsGallery({
         {live && Platform.OS === "web" && !privacy && commentsConnection ? <FollowingLiveRow connection={commentsConnection} onEnter={setLiveTarget} /> : null}
         </>
       )}
-      ListEmptyComponent={(
+      ListEmptyComponent={searching ? (
+        <View {...fx({ motion: "rise" })} style={styles.emptyState}>
+          <View {...ws("w-emptyicon")} style={styles.emptyIcon}><Search color={color.cyan} size={24} /></View>
+          <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>没找到「{query.trim()}」</Text>
+          <Text style={styles.emptyDetail}>
+            换个词或少输几个词试试。只能搜到读进本机的记录{earliest ? `，最早一条是 ${formatLongDate(earliest)}` : ""}。
+          </Text>
+          <Pressable
+            {...ws("btn-solid")}
+            accessibilityRole="button"
+            onPress={() => setQuery("")}
+            style={({ pressed }) => [styles.emptyButton, pressed && styles.buttonPressed, webPointer]}
+          >
+            <Text style={styles.emptyButtonText}>清空搜索</Text>
+          </Pressable>
+        </View>
+      ) : (
         <View {...fx({ motion: "rise" })} style={styles.emptyState}>
           <View {...ws("w-emptyicon")} style={styles.emptyIcon}><Play color={color.cyan} fill={color.cyan} size={24} /></View>
           <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>{label}还没有内容</Text>
@@ -709,7 +744,7 @@ function RecordsGallery({
       showsVerticalScrollIndicator={false}
     />
     {Platform.OS === "web" && playingRecord && !privacy && onLoadVideo ? (
-      <RecordVideoPlayer record={playingRecord} records={sortedRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)} />
+      <RecordVideoPlayer record={playingRecord} records={shownRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)} />
     ) : null}
     {liveTarget && Platform.OS === "web" && !privacy ? (
       <LiveRoomPlayer target={liveTarget} connection={commentsConnection ?? null} onClose={() => setLiveTarget(null)} onOpenRecord={onOpenRecord} onOpenSettings={onOpenSettings} />
@@ -1299,6 +1334,12 @@ function formatShortDate(value: string | null): string {
   return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
 }
 
+function formatLongDate(value: string): string {
+  const date = new Date(value);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return `${sameYear ? "" : `${date.getFullYear()} 年 `}${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
+
 function formatDuration(seconds: number): string {
   const rounded = Math.max(0, Math.round(seconds));
   const minutes = Math.floor(rounded / 60);
@@ -1398,7 +1439,7 @@ const styles = StyleSheet.create({
   tileSelection: { position: "absolute", left: 10, top: 10, zIndex: 3 },
   selectionMark: { width: 26, height: 26, borderWidth: 1, borderColor: color.textMuted, borderRadius: 6, backgroundColor: color.surface, alignItems: "center", justifyContent: "center" },
   selectionChecked: { backgroundColor: color.button, borderColor: color.button },
-  galleryHeaderCopy: { flex: 1, minWidth: 0 },
+  galleryHeaderCopy: { flex: 1, minWidth: 180 },
   liveEntry: { flexDirection: "row", alignItems: "center", gap: 8 },
   followLive: { gap: 10, marginBottom: 18 },
   followLiveHead: { flexDirection: "row", alignItems: "center", gap: 8 },
@@ -1414,6 +1455,8 @@ const styles = StyleSheet.create({
   followLiveName: { color: color.text, fontSize: 13, fontWeight: "600" },
   followLiveRoomTitle: { color: color.textSecondary, fontSize: 11 },
   followLiveMeta: { color: color.textMuted, fontSize: 10 },
+  searchBox: { width: 240, height: 38, flexDirection: "row", alignItems: "center", gap: 7, paddingLeft: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
+  searchInput: { flex: 1, minWidth: 0, height: 36, color: color.text, fontSize: 12, paddingRight: 11 },
   liveEntryInput: { width: 230, height: 38, color: color.text, fontSize: 12, paddingHorizontal: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
   galleryTitle: { color: color.text, fontSize: 16, fontWeight: "600", letterSpacing: 2.5, fontFamily: font.serif },
   galleryMeta: { color: color.textMuted, fontSize: 10, marginTop: 5 },
