@@ -74,7 +74,12 @@ import {
   getDesktopCollectorConfig,
   getDesktopUpdateState,
   installDesktopUpdate,
+  isDesktopApp,
+  isDesktopWindowHidden,
+  notifyDesktopBackgroundSyncBlocked,
+  subscribeDesktopBackgroundSync,
   subscribeDesktopUpdateState,
+  trackDesktopWindowVisibility,
   type DesktopUpdateState,
 } from "./src/desktopRuntime";
 import { shouldAutoSync } from "./src/services/autoSync";
@@ -137,7 +142,15 @@ function triggerBrowserDownload(blob: Blob, fileName: string | null): void {
   }, 0);
 }
 
+// 窗口收在托盘里或最小化了，用户看不到页面
+function pageHidden() {
+  return isDesktopWindowHidden()
+    || (Platform.OS === "web" && typeof document !== "undefined" && document.visibilityState === "hidden");
+}
+
 function showAlert(title: string, message: string) {
+  // 隐藏时的 alert 会把整个页面卡住，等用户打开窗口才能点掉；错误照样留在页面上
+  if (pageHidden()) return;
   if (Platform.OS === "web" && typeof window !== "undefined") {
     window.alert(`${title}\n\n${message}`);
     return;
@@ -236,7 +249,15 @@ function AppContent() {
   const syncConfirmationOpenRef = useRef(false);
   const accountSwitchConfirmationOpenRef = useRef(false);
   const autoSyncInFlightRef = useRef(false);
-  const autoSyncTriggerRef = useRef<() => void>(() => undefined);
+  const autoSyncTriggerRef = useRef<(options?: { manual?: boolean; timer?: boolean }) => void>(() => undefined);
+  // 托盘定时读取发起的这一轮：失败了也不弹浏览器，等用户回到窗口那次再说
+  const timerSyncRef = useRef(false);
+  // 托盘里点的「现在读取一次」碰上还没连接，连上以后要接着按手动读
+  const pendingManualSyncRef = useRef(false);
+  // 用户自己点过「断开连接」，后台就别再偷偷连回去
+  const userDisconnectedRef = useRef(false);
+  // 停止读取后聊天接收会自动重启并换掉 pollRequest，「正在停止」要按自己的编号收尾，不然会一直挡着自动读取
+  const stopRequestRef = useRef(0);
   const chatStartupRef = useRef(createChatStartupRequest());
   // Keep the origin of the active chat run after take() consumes the
   // automatic startup request, so an asynchronous collector error can re-arm
@@ -454,6 +475,10 @@ function AppContent() {
     return () => subscription.remove();
   }, []);
 
+  useEffect(() => subscribeDesktopBackgroundSync((manual) => autoSyncTriggerRef.current({ manual, timer: !manual })), []);
+  // 从托盘叫回窗口等于回到前台；开机后台启动时窗口一直不出来，也要先连上采集器读一次
+  useEffect(() => trackDesktopWindowVisibility(() => autoSyncTriggerRef.current(), () => autoSyncTriggerRef.current()), []);
+
   useEffect(() => {
     if (collectorToken && displaySnapshot?.source === "collector") autoSyncTriggerRef.current();
   }, [autoSyncEnabled, collectorToken, displaySnapshot?.source]);
@@ -543,8 +568,14 @@ function AppContent() {
           }
           // 每次增量读取最多回退一次完整读取；完整读取失败时不重复启动。
           if (syncRecoveryRef.current.takeFallback(status)) {
-            void beginSync(baseUrl, token);
-            return;
+            // 收在托盘里或是定时读取时不替用户弹浏览器，提醒一次；用户回到窗口时的那次自动读取会再走到这里
+            if (!pageHidden() && !timerSyncRef.current) {
+              void beginSync(baseUrl, token);
+              return;
+            }
+            notifyDesktopBackgroundSyncBlocked(status.code === "login_required"
+              ? "抖音登录过期了，打开工作台重新登录后才能接着记录。"
+              : "读取新记录需要打开一次浏览器，打开工作台继续。");
           }
           if (!chatOperation && chatStartupRef.current.isPending()) chatStartupRef.current.retry();
           if (chatStartupRef.current.isReady() && !chatCollectionInFlightRef.current) {
@@ -610,7 +641,8 @@ function AppContent() {
     return true;
   }
 
-  async function beginSync(baseUrl: string, token: string, incremental = false) {
+  async function beginSync(baseUrl: string, token: string, incremental = false, { timer = false }: { timer?: boolean } = {}) {
+    timerSyncRef.current = timer;
     const requestId = pollRequest.current + 1;
     pollRequest.current = requestId;
     syncRecoveryRef.current.begin(incremental);
@@ -636,14 +668,25 @@ function AppContent() {
     }
   }
 
-  function triggerAutoSync() {
+  function triggerAutoSync(options: { manual?: boolean; timer?: boolean } = {}) {
+    const manual = options.manual === true || pendingManualSyncRef.current;
     if (batchDownloadActive) return;
     // Returning from the search browser must not close its result/verification
-    // page to launch a foreground history sync.
-    if (activeView !== "sources" && dashboardOpen && dashboardView === "explore" && !storySrc) return;
+    // page to launch a foreground history sync. 窗口收在托盘里时没人在看探索页，照常读
+    if (!pageHidden() && activeView !== "sources" && dashboardOpen && dashboardView === "explore" && !storySrc) return;
     const token = collectorToken;
+    // 桌面版每次启动都是新端口新配对码，开机后台启动或没点连接就关窗时，后台读取得自己先连上；
+    // 连上后监听 collectorToken 的那个 effect 会接着读
+    if (!token && isDesktopApp() && (manual || (pageHidden() && autoSyncEnabled && !userDisconnectedRef.current))) {
+      if (manual) {
+        pendingManualSyncRef.current = true;
+        userDisconnectedRef.current = false;
+      }
+      void connectCollector({ automaticPairing: true, revealSources: false });
+      return;
+    }
     if (!token || !shouldAutoSync({
-      enabled: autoSyncEnabled,
+      enabled: autoSyncEnabled || manual,
       connected: Boolean(token),
       source: displaySnapshot?.source ?? null,
       busy: collectorBusy,
@@ -655,7 +698,8 @@ function AppContent() {
         : collectorStatus?.state ?? null,
     })) return;
     autoSyncInFlightRef.current = true;
-    void beginSync(collectorUrl, token, true);
+    pendingManualSyncRef.current = false;
+    void beginSync(collectorUrl, token, true, { timer: options.timer === true });
   }
 
   autoSyncTriggerRef.current = triggerAutoSync;
@@ -672,6 +716,8 @@ function AppContent() {
   async function endSync(baseUrl: string, token: string) {
     const requestId = pollRequest.current + 1;
     pollRequest.current = requestId;
+    const stopId = stopRequestRef.current + 1;
+    stopRequestRef.current = stopId;
     setCollectorBusy(true);
     setStoppingSync(true);
     setCollectorError(null);
@@ -695,7 +741,7 @@ function AppContent() {
       setCollectorError(message);
       showAlert("无法停止读取", message);
     } finally {
-      if (pollRequest.current === requestId) setStoppingSync(false);
+      if (stopRequestRef.current === stopId) setStoppingSync(false);
     }
   }
 
@@ -992,6 +1038,8 @@ function AppContent() {
   async function disconnectCollector() {
     const token = collectorToken;
     if (!token) return;
+    userDisconnectedRef.current = true;
+    pendingManualSyncRef.current = false;
     pollRequest.current += 1;
     downloadRequestRef.current += 1;
     downloadInFlightRef.current.clear();
@@ -1416,7 +1464,10 @@ function AppContent() {
           }}
           onClearCache={clearCurrentRecords}
           onExportData={exportCurrentData}
-          onConnect={() => connectCollector({ automaticPairing: true })}
+          onConnect={() => {
+            userDisconnectedRef.current = false;
+            return connectCollector({ automaticPairing: true });
+          }}
           onDisconnect={disconnectCollector}
           onEnterWorkspace={enterWorkspace}
           onOpenDashboard={openDashboard}

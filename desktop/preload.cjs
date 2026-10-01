@@ -12,4 +12,18 @@ contextBridge.exposeInMainWorld("desktopRuntime", Object.freeze({
     ipcRenderer.on("desktop:app-update-state", handler);
     return () => ipcRenderer.removeListener("desktop:app-update-state", handler);
   },
+  onBackgroundSync: (listener) => {
+    if (typeof listener !== "function") return () => undefined;
+    const handler = (_event, options) => listener(options?.manual === true);
+    ipcRenderer.on("desktop:background-sync", handler);
+    return () => ipcRenderer.removeListener("desktop:background-sync", handler);
+  },
+  isWindowVisible: () => ipcRenderer.invoke("desktop:is-window-visible"),
+  onWindowVisibility: (listener) => {
+    if (typeof listener !== "function") return () => undefined;
+    const handler = (_event, visible) => listener(visible === true);
+    ipcRenderer.on("desktop:window-visibility", handler);
+    return () => ipcRenderer.removeListener("desktop:window-visibility", handler);
+  },
+  notifyBackgroundSyncBlocked: (message) => ipcRenderer.send("desktop:background-sync-blocked", String(message ?? "")),
 }));

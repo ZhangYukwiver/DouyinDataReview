@@ -37,6 +37,10 @@ interface DesktopRuntimeBridge {
   downloadAppUpdate(): Promise<unknown>;
   installAppUpdate(): Promise<unknown>;
   onAppUpdateState(listener: (value: unknown) => void): () => void;
+  onBackgroundSync(listener: (manual: boolean) => void): () => void;
+  isWindowVisible(): Promise<unknown>;
+  onWindowVisibility(listener: (visible: boolean) => void): () => void;
+  notifyBackgroundSyncBlocked(message: string): void;
 }
 
 declare global {
@@ -141,4 +145,38 @@ export async function installDesktopUpdate(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export function isDesktopApp(): boolean {
+  return getDesktopRuntime() !== null;
+}
+
+/** 托盘里的定时读取（manual = 用户在托盘菜单里点的）：只有桌面版有，浏览器里打开时什么也不做 */
+export function subscribeDesktopBackgroundSync(listener: (manual: boolean) => void): () => void {
+  const unsubscribe = getDesktopRuntime()?.onBackgroundSync(listener);
+  return typeof unsubscribe === "function" ? unsubscribe : () => undefined;
+}
+
+let desktopWindowHidden = false;
+
+/** 桌面版窗口收在托盘里（开机后台启动时一开始就是）；浏览器里打开时恒为 false */
+export function isDesktopWindowHidden(): boolean {
+  return desktopWindowHidden;
+}
+
+export function trackDesktopWindowVisibility(onShow: () => void, onHiddenStart: () => void): () => void {
+  const runtime = getDesktopRuntime();
+  if (!runtime) return () => undefined;
+  void runtime.isWindowVisible().then((visible) => {
+    desktopWindowHidden = visible === false;
+    if (desktopWindowHidden) onHiddenStart();
+  }, () => undefined);
+  return runtime.onWindowVisibility((visible) => {
+    desktopWindowHidden = !visible;
+    if (visible) onShow();
+  });
+}
+
+export function notifyDesktopBackgroundSyncBlocked(message: string): void {
+  getDesktopRuntime()?.notifyBackgroundSyncBlocked(message);
 }
