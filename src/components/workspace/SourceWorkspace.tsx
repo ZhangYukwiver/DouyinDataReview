@@ -371,7 +371,7 @@ export function SetupWorkspace({
               <Text style={styles.hint}>完整读取和手动监听会先暂停接收聊天。</Text>
               <HRule seed="auto-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />
               <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSyncEnabled }} aria-checked={autoSyncEnabled} onPress={onToggleAutoSync} style={(state) => [styles.auto, state.pressed && styles.pressed, pointer]}>
-                <Text style={[styles.strong, styles.flex]}>回到前台时自动增量读取</Text>
+                <Text style={[styles.strong, styles.flex]}>自动补读新记录</Text>
                 <Hand style={[styles.autoState, autoSyncEnabled && styles.autoStateOn]}>{autoSyncEnabled ? "已开启" : "已暂停"}</Hand>
                 <SketchSwitch on={autoSyncEnabled} />
               </Pressable>

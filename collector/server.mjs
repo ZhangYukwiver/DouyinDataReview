@@ -562,7 +562,10 @@ export async function startCollectorServer({
       await explorer.close();
       await collector.close();
     } finally {
-      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      const closed = new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      // 页面一直在长轮询状态，不掐断的话 close 会一直等下去，退出应用就卡住
+      server.closeAllConnections();
+      await closed;
     }
   };
 

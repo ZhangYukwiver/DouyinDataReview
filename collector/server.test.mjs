@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DouyinCollector } from "./douyinCollector.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { startCollectorServer } from "./server.mjs";
 
@@ -93,6 +94,41 @@ describe("collector server runtime", () => {
     controller.abort();
     await rejected;
   });
+
+  it("shuts down promptly while a client keeps long-polling the status", async () => {
+    // 关浏览器要一会儿；这段时间里工作台会再发一次长轮询，关服务时它还挂着
+    const closeCollector = DouyinCollector.prototype.close;
+    const slowClose = vi.spyOn(DouyinCollector.prototype, "close").mockImplementation(async function () {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return closeCollector.call(this);
+    });
+    try {
+      const dataDirectory = await mkdtemp(path.join(tmpdir(), "status-shutdown-"));
+      temporaryDirectories.push(dataDirectory);
+      const runtime = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath });
+      const paired = await fetch(`${runtime.baseUrl}/v1/pair`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: runtime.getPairingCode() }),
+      }).then((response) => response.json());
+      const headers = { Authorization: `Bearer ${paired.token}` };
+      // 和工作台一样：一次长轮询回来就立刻发下一次，直到连不上为止
+      const polling = (async () => {
+        let revision = (await fetch(`${runtime.baseUrl}/v1/status`, { headers }).then((response) => response.json())).revision;
+        for (;;) {
+          const status = await fetch(`${runtime.baseUrl}/v1/status?afterRevision=${revision}`, { headers })
+            .then((response) => response.json()).catch(() => null);
+          if (!status) return;
+          revision = status.revision;
+        }
+      })();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const startedAt = Date.now();
+      await runtime.close();
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
+      await polling;
+    } finally {
+      slowClose.mockRestore();
+    }
+  }, 15_000);
 
   it("supports an ephemeral desktop port and pairing", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "content-insights-collector-"));
