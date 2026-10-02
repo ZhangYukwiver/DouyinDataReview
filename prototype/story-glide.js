@@ -22,7 +22,7 @@
     const root = document.documentElement;
     let cur = scrollY, target = scrollY, lastSet = -1, raf = 0, lastT = 0;
     let lastWheel = 0, lastDy = 0, swallowDir = 0, pull = 0, pullDir = 0, gestureFrom = 0;
-    let lastInput = -1e9, arrivedAt = 0, playing = null, rewound = false, snapAt = 0;
+    let lastInput = -1e9, arrivedAt = 0, playing = null, rewound = false, snapAt = 0, held = false;
     let detents = [], scenesInfo = [], stale = true;
 
     const vh = () => innerHeight;
@@ -89,12 +89,12 @@
     }
 
     function wantsPlay(now) {
-      if (playing || document.hidden || rewound) return false;
+      if (playing || document.hidden || rewound || held) return false;
       const s = pinnedAt(target);
       return Boolean(s) && Math.abs(target - cur) < 2;
     }
     function autoplay(now, dt) {
-      if (document.hidden) return;
+      if (document.hidden || held) return;
       if (playing) {
         if (now - lastInput < RESUME) { playing = null; return; }
         target = Math.min(playing.end, target + playing.speed * dt);
@@ -221,7 +221,14 @@
     // 章节首次渲染、字体到位都会改变场景高度：定期重量一次
     setInterval(() => { stale = true; }, 2000);
     kick();
-    return { to, measure: () => { stale = true; }, get playing() { return Boolean(playing); } };
+    // 页面上盖了弹层（分享图预览）时按住不播；松开后照常等 RESUME 再接着播
+    function hold(on) {
+      held = Boolean(on);
+      playing = null;
+      lastInput = performance.now();
+      if (!held) kick();
+    }
+    return { to, hold, measure: () => { stale = true; }, get playing() { return Boolean(playing); } };
   }
 
   window.StoryGlide = { install };

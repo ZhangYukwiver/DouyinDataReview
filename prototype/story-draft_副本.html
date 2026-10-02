@@ -6436,13 +6436,11 @@ CH.push({
       onclick: () => goTo(document.body) },
       "从头再看", H("span", { class: "cir", "aria-hidden": "true" }, "↑"));
     act.append(goWs, priv, again);
-    // 分享图只给真实数据；背景按最常刷的钟点挑一幅天空，和第二章同一套对应
+    // 分享图只给真实数据；点了先开预览
     if (LIVE && window.StoryCard) {
-      const h = D.peakHour, sky = h == null ? "entry-mix" : h <= 4 ? "entry-night" : h <= 8 ? "sky-s0-dawn" : h <= 15 ? "sky-s1-morning" : h <= 18 ? "sky-s2-dusk" : h <= 21 ? "sky-s4-ember" : "sky-s3-night";
-      const bg = (window.__STORY_EXPORT__ && window.__STORY_EXPORT__.assets[sky]) || `story-images/${sky}.jpg`;
       const save = H("button", { class: "pill sgc-card-save", type: "button" }, H("span", { class: "sc-l" }, "存一张分享图"), H("span", { class: "cir", "aria-hidden": "true" }, "↓"));
       act.insertBefore(save, again);
-      for (const b of [save, document.getElementById("navCard")]) if (b) StoryCard.wire(b, D, { theme: "trace", bg });
+      for (const b of [save, document.getElementById("navCard")]) if (b) StoryCard.wire(b, D, { theme: "trace" });
     }
     const syncPriv = () => priv.setAttribute("aria-pressed", String(document.body.classList.contains("privacy-on")));
     new MutationObserver(syncPriv).observe(document.body, { attributes: true, attributeFilter: ["class"] });
