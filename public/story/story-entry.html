@@ -69,6 +69,40 @@
     .gc-bottom { display: flex; align-items: center; justify-content: space-between; font: 400 9px var(--mono); letter-spacing: .2em; opacity: .9; }
     .gc-bottom i { display: inline-block; animation: cue 2.2s ease-in-out infinite; }
     @keyframes cue { 50% { transform: translateY(6px); opacity: .4; } }
+    /* 极端版卡面：竖排标题 + 一个主角数字，右上角出血的巨型刻度环、右下角出血的描边年份、镭射边、镭射箔、颗粒 */
+    @property --xa { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+    .gate-card::before { outline: 1px solid rgba(254,255,252,.14); outline-offset: -11px; }
+    .gate-card::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; pointer-events: none; background: linear-gradient(115deg, transparent 38%, rgba(255,250,236,.16) 50%, transparent 62%) 0 0 / 300% 100%; animation: sheen 9s ease-in-out infinite; }
+    @keyframes sheen { 0%, 15% { background-position: 100% 0; } 55%, 100% { background-position: 0 0; } }
+    .gc-x { position: absolute; pointer-events: none; }
+    .gc-ring { left: 86%; top: 12%; width: 128%; aspect-ratio: 1; translate: -50% -50%; border-radius: 50%; animation: spin 140s linear infinite;
+      background: radial-gradient(circle at 50% 9px, #eea44e 0 5px, transparent 6px), repeating-conic-gradient(rgba(246,241,228,.8) 0 .6deg, transparent .6deg 90deg), repeating-conic-gradient(rgba(246,241,228,.5) 0 .45deg, transparent .45deg 15deg), repeating-conic-gradient(rgba(246,241,228,.3) 0 .3deg, transparent .3deg 3deg);
+      -webkit-mask: radial-gradient(closest-side, transparent 0 62.6%, #000 62.8% 63.2%, transparent 63.4% 85.8%, #000 86% 88%, transparent 88.2% 91.8%, #000 92% 100%, transparent 100%);
+      mask: radial-gradient(closest-side, transparent 0 62.6%, #000 62.8% 63.2%, transparent 63.4% 85.8%, #000 86% 88%, transparent 88.2% 91.8%, #000 92% 100%, transparent 100%); }
+    @keyframes spin { to { rotate: 1turn; } }
+    .gc-year { right: -16px; bottom: -44px; font: italic 200 168px/1 var(--serif); letter-spacing: -.04em; color: transparent; -webkit-text-stroke: 1px rgba(246,241,228,.26); }
+    .gc-year::before { content: attr(data-year); }
+    .gc-holo { inset: 0; border-radius: inherit; mix-blend-mode: color-dodge; opacity: .3; background: linear-gradient(120deg, transparent 22%, #ff8a7a 33%, #ffd58a 41%, #8ff0ff 49%, #b79bff 57%, transparent 68%) 0 0 / 260% 260%; animation: holo 11s ease-in-out infinite alternate; }
+    @keyframes holo { to { background-position: 100% 100%; } }
+    .gc-grain { inset: 0; opacity: .2; mix-blend-mode: overlay; background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+    .gc-rim { inset: 0; border-radius: inherit; padding: 1.5px; background: conic-gradient(from var(--xa), #eea44e, #ff8a7a, #b79bff, #8ff0ff, #fbe3bb, #eea44e); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: rim 8s linear infinite; }
+    @keyframes rim { to { --xa: 1turn; } }
+    .gc-top { flex-wrap: wrap; row-gap: 7px; text-shadow: 0 0 8px rgba(7,10,18,.9); }
+    .gc-top::after { content: "PERSONAL SIGNALS · LOCAL ONLY"; flex-basis: 100%; text-align: left; font-size: 7px; letter-spacing: .26em; opacity: .55; }
+    .gc-mid { grid-template-columns: auto auto 1fr; align-items: end; justify-content: stretch; place-content: end stretch; column-gap: 12px; gap: 0 12px; text-align: left; padding-bottom: 18px; }
+    .gc-mid strong { grid-row: 1; writing-mode: vertical-rl; font-size: 50px; line-height: 1; letter-spacing: .1em; text-shadow: 0 0 .4em rgba(238,164,78,.55); }
+    .gc-mid .en { grid-row: 1; align-self: end; writing-mode: vertical-rl; font-size: 8px; letter-spacing: .4em; color: #eea44e; opacity: 1; }
+    .gc-rows { grid-row: 1; gap: 7px; margin: 0; min-width: 0; }
+    .gc-rows > span { align-items: baseline; gap: 8px; }
+    .gc-rows > span > span { flex: 1; align-items: baseline; gap: 6px; letter-spacing: .14em; font-size: 8px; }
+    .gc-rows > span > span::after { content: ""; flex: 1; border-bottom: 1px dotted rgba(246,241,228,.35); }
+    .gc-rows b { font: 300 15px var(--serif); font-variant-numeric: lining-nums tabular-nums; }
+    .gc-rows > span:first-child { display: grid; gap: 2px; margin-bottom: 8px; opacity: 1; }
+    .gc-rows > span:first-child > span { color: #eea44e; }
+    .gc-rows > span:first-child > span::after { display: none; }
+    .gc-rows > span:first-child b { font: 200 60px/1 var(--serif); letter-spacing: -.03em; color: #fbe3bb; text-shadow: 0 0 18px rgba(238,164,78,.75); }
+    .gc-rows::after { content: ""; height: 14px; margin-top: 10px; background: repeating-linear-gradient(90deg, rgba(246,241,228,.55) 0 2px, transparent 2px 5px, rgba(246,241,228,.55) 5px 6px, transparent 6px 9px, rgba(246,241,228,.55) 9px 12px, transparent 12px 14px, rgba(246,241,228,.55) 14px 15px, transparent 15px 19px, rgba(246,241,228,.55) 19px 20px, transparent 20px 23px); }
+    .gc-bottom { margin: 0 -2px; padding-top: 14px; border-top: 1px dashed rgba(254,255,252,.28); }
     /* the whitening: inset light grows from the card's edges toward its centre */
     .whitener { position: absolute; inset: 0; z-index: 1; border-radius: inherit; background: rgba(255,255,255,0); box-shadow: inset 0 0 0 0 rgba(255,255,255,0); pointer-events: none; }
 
@@ -129,6 +163,11 @@
     </div>
     <button class="gate-card" id="gateCard" aria-label="点按进入年志">
       <i class="gate-glow" aria-hidden="true"></i>
+      <i class="gc-x gc-ring" aria-hidden="true"></i>
+      <i class="gc-x gc-year" data-year="2025" aria-hidden="true"></i>
+      <i class="gc-x gc-holo" aria-hidden="true"></i>
+      <i class="gc-x gc-grain" aria-hidden="true"></i>
+      <i class="gc-x gc-rim" aria-hidden="true"></i>
       <i class="whitener" aria-hidden="true"></i>
       <span class="gc-top"><span>TRACE</span><span>2025</span></span>
       <span class="gc-mid">
@@ -157,7 +196,7 @@
     // without them the demo numbers stay, matching the story page's built-in demo data
     const query = new URLSearchParams(location.search);
     if (query.has("watch")) document.querySelectorAll(".gc-rows b").forEach((cell, i) => { const v = query.get(["watch", "liked", "favorite", "chat"][i]); cell.textContent = v !== null && v !== "" && Number.isFinite(+v) ? (+v).toLocaleString("zh-CN") : "—"; });
-    if (/^\d{4}$/.test(query.get("year") || "")) document.querySelector(".gc-top span:last-child").textContent = query.get("year");
+    if (/^\d{4}$/.test(query.get("year") || "")) { document.querySelector(".gc-top span:last-child").textContent = query.get("year"); document.querySelector(".gc-year").dataset.year = query.get("year"); }
     if (query.has("watch")) { document.querySelector(".nav-center span").textContent = "本地快照"; document.querySelector(".gate-fine").lastChild.textContent = "本地快照 LOCAL SNAPSHOT"; }
 
     // clouds are painted into entry-night.jpg

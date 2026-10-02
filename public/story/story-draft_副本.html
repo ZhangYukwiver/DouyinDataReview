@@ -6263,6 +6263,42 @@ CH.push({
 #sign-card .sgc-rows>span{display:flex;justify-content:space-between;gap:6cqw;font:400 max(10px,3.1cqw)/1.2 var(--mono);opacity:.86}
 #sign-card .sgc-rows b{font-weight:400;font-variant-numeric:tabular-nums}
 #sign-card .sgc-rows b.sgc-none{opacity:.55}
+/* 极端版卡面，和入口卡同一套：竖排标题 + 一个主角数字，右上角出血的巨型刻度环、右下角出血的描边年份、镭射边、镭射箔、颗粒 */
+@property --xa{syntax:"<angle>";inherits:false;initial-value:0deg}
+#sign-card .sgc-face{overflow:hidden;border-radius:var(--r)}
+#sign-card .sgc-face::before{content:"";position:absolute;inset:3.4cqw;border:1px solid rgba(254,255,252,.14);border-radius:calc(var(--r) - 3.4cqw);pointer-events:none}
+#sign-card .sgc-face::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(115deg,transparent 38%,rgba(255,250,236,.16) 50%,transparent 62%) 0 0/300% 100%;animation:sgc-sheen 9s ease-in-out infinite}
+@keyframes sgc-sheen{0%,15%{background-position:100% 0}55%,100%{background-position:0 0}}
+#sign-card .sgc-face>span{position:relative;z-index:1}
+#sign-card .sgc-x{position:absolute;pointer-events:none}
+#sign-card .sgc-ring{left:86%;top:12%;width:128%;aspect-ratio:1;translate:-50% -50%;border-radius:50%;animation:sgc-spin 140s linear infinite;
+  background:radial-gradient(circle at 50% 2.8cqw,var(--amber) 0 1.56cqw,transparent 1.88cqw),repeating-conic-gradient(rgba(246,241,228,.8) 0 .6deg,transparent .6deg 90deg),repeating-conic-gradient(rgba(246,241,228,.5) 0 .45deg,transparent .45deg 15deg),repeating-conic-gradient(rgba(246,241,228,.3) 0 .3deg,transparent .3deg 3deg);
+  -webkit-mask:radial-gradient(closest-side,transparent 0 62.6%,#000 62.8% 63.2%,transparent 63.4% 85.8%,#000 86% 88%,transparent 88.2% 91.8%,#000 92% 100%,transparent 100%);
+  mask:radial-gradient(closest-side,transparent 0 62.6%,#000 62.8% 63.2%,transparent 63.4% 85.8%,#000 86% 88%,transparent 88.2% 91.8%,#000 92% 100%,transparent 100%)}
+@keyframes sgc-spin{to{rotate:1turn}}
+#sign-card .sgc-year{right:-5cqw;bottom:-13.75cqw;font:italic 200 52.5cqw/1 var(--serif);letter-spacing:-.04em;color:transparent;-webkit-text-stroke:1px rgba(246,241,228,.26)}
+#sign-card .sgc-year::before{content:attr(data-year)}
+#sign-card .sgc-holo{inset:0;mix-blend-mode:color-dodge;opacity:.3;background:linear-gradient(120deg,transparent 22%,#ff8a7a 33%,#ffd58a 41%,#8ff0ff 49%,#b79bff 57%,transparent 68%) 0 0/260% 260%;animation:sgc-holo 11s ease-in-out infinite alternate}
+@keyframes sgc-holo{to{background-position:100% 100%}}
+#sign-card .sgc-grain{inset:0;opacity:.2;mix-blend-mode:overlay;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+#sign-card .sgc-irid{inset:0;border-radius:inherit;padding:1.5px;background:conic-gradient(from var(--xa),#eea44e,#ff8a7a,#b79bff,#8ff0ff,#fbe3bb,#eea44e);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:sgc-irid 8s linear infinite}
+@keyframes sgc-irid{to{--xa:1turn}}
+#sign-card .sgc-top{flex-wrap:wrap;row-gap:2.2cqw;text-shadow:0 0 8px rgba(7,10,18,.9)}
+#sign-card .sgc-top::after{content:"PERSONAL SIGNALS · LOCAL ONLY";flex-basis:100%;font-size:max(7px,2.2cqw);letter-spacing:.26em;opacity:.55}
+#sign-card .sgc-mid{grid-template-columns:auto auto 1fr;align-items:end;place-content:end stretch;gap:0 3.75cqw;text-align:left;padding-bottom:5.6cqw}
+#sign-card .sgc-mid strong{grid-row:1;writing-mode:vertical-rl;font-size:15.6cqw;line-height:1;letter-spacing:.1em;text-shadow:0 0 .4em rgba(238,164,78,.55)}
+#sign-card .sgc-mid .sgc-ve{grid-row:1;align-self:end;writing-mode:vertical-rl;font-size:max(7px,2.5cqw);letter-spacing:.4em;color:var(--amber);opacity:1}
+#sign-card .sgc-rows{grid-row:1;gap:2.2cqw;margin:0}
+#sign-card .sgc-rows>span{align-items:baseline;gap:2.5cqw}
+#sign-card .sgc-rows>span>span{flex:1;display:flex;align-items:baseline;gap:1.9cqw;letter-spacing:.14em;font-size:max(7px,2.5cqw)}
+#sign-card .sgc-rows>span>span::after{content:"";flex:1;border-bottom:1px dotted rgba(246,241,228,.35)}
+#sign-card .sgc-rows b{font:300 4.7cqw/1 var(--serif);font-variant-numeric:lining-nums tabular-nums}
+#sign-card .sgc-rows>span:first-child{display:grid;gap:.6cqw;margin-bottom:2.5cqw;opacity:1}
+#sign-card .sgc-rows>span:first-child>span{color:var(--amber)}
+#sign-card .sgc-rows>span:first-child>span::after{display:none}
+#sign-card .sgc-rows>span:first-child b{font:200 18.75cqw/1 var(--serif);letter-spacing:-.03em;color:#fbe3bb;text-shadow:0 0 5.6cqw rgba(238,164,78,.75)}
+#sign-card .sgc-rows::after{content:"";height:4.4cqw;margin-top:3.1cqw;background:repeating-linear-gradient(90deg,rgba(246,241,228,.55) 0 0.62cqw,transparent 0.62cqw 1.56cqw,rgba(246,241,228,.55) 1.56cqw 1.88cqw,transparent 1.88cqw 2.81cqw,rgba(246,241,228,.55) 2.81cqw 3.75cqw,transparent 3.75cqw 4.38cqw,rgba(246,241,228,.55) 4.38cqw 4.69cqw,transparent 4.69cqw 5.94cqw,rgba(246,241,228,.55) 5.94cqw 6.25cqw,transparent 6.25cqw 7.19cqw)}
+#sign-card .sgc-bot{padding-top:4.4cqw;border-top:1px dashed rgba(254,255,252,.28)}
 #sign-card .sgc-bot{display:flex;align-items:flex-end;justify-content:space-between;gap:3cqw}
 #sign-card .sgc-slot{font-size:6.2cqw;color:var(--cream)}
 #sign-card .sgc-slot .ch{text-shadow:0 0 .3em rgba(238,164,78,.6)}
@@ -6414,6 +6450,7 @@ CH.push({
       H("span", null, H("span", null, "CHAT"), cell(C.chat)));
     const slot = nameNode("sgc-slot");
     const face = el.querySelector(".sgc-face");
+    face.append(...["sgc-ring", "sgc-year", "sgc-holo", "sgc-grain", "sgc-irid"].map((c) => H("i", { class: `sgc-x ${c}`, dataset: { year: String(D.year || "") } })));
     face.append(
       H("span", { class: "sgc-top" }, H("span", null, "TRACE"), H("span", null, String(D.year || ""))),
       H("span", { class: "sgc-mid" }, H("strong", null, "内容年志"), H("span", { class: "sgc-ve" }, "ANNUAL VOLUME"), rowsEl),
@@ -6436,13 +6473,11 @@ CH.push({
       onclick: () => goTo(document.body) },
       "从头再看", H("span", { class: "cir", "aria-hidden": "true" }, "↑"));
     act.append(goWs, priv, again);
-    // 分享图只给真实数据；背景按最常刷的钟点挑一幅天空，和第二章同一套对应
+    // 分享图只给真实数据；点了先开预览
     if (LIVE && window.StoryCard) {
-      const h = D.peakHour, sky = h == null ? "entry-mix" : h <= 4 ? "entry-night" : h <= 8 ? "sky-s0-dawn" : h <= 15 ? "sky-s1-morning" : h <= 18 ? "sky-s2-dusk" : h <= 21 ? "sky-s4-ember" : "sky-s3-night";
-      const bg = (window.__STORY_EXPORT__ && window.__STORY_EXPORT__.assets[sky]) || `story-images/${sky}.jpg`;
       const save = H("button", { class: "pill sgc-card-save", type: "button" }, H("span", { class: "sc-l" }, "存一张分享图"), H("span", { class: "cir", "aria-hidden": "true" }, "↓"));
       act.insertBefore(save, again);
-      for (const b of [save, document.getElementById("navCard")]) if (b) StoryCard.wire(b, D, { theme: "trace", bg });
+      for (const b of [save, document.getElementById("navCard")]) if (b) StoryCard.wire(b, D, { theme: "trace" });
     }
     const syncPriv = () => priv.setAttribute("aria-pressed", String(document.body.classList.contains("privacy-on")));
     new MutationObserver(syncPriv).observe(document.body, { attributes: true, attributeFilter: ["class"] });
