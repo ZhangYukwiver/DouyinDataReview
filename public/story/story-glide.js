@@ -6,24 +6,26 @@
 // 3. 自动播放：停在钉住的场景里，页面按节奏自己往下走完这一场，走到结尾停住，等你翻到下一场。
 //    节奏默认按场景长度算，场景上写 data-play="秒" 可以单独定；刚落到一场的开头先静一会儿，
 //    data-hold="秒" 单独定。往回翻是在倒带：不自动播，等再往下推才接着播。
+//    install({ chain: true }) 时连着播：一场播完（或一屏的场景读完）停一会儿，自己滑到下一场，一直到卷尾。
 // 页面自己的引擎照旧只听 scroll 事件，所以各章的滚动动画不用改。减弱动效时整个不装。
 (function () {
   "use strict";
-  const TAU = 0.14;          // 阻尼时间常数（秒）：越大越"黏"
+  const TAU = 0.14;          // 阻尼时间常数（秒）：越大越"黏"；install({ tau }) 可单独定
   const PULL = 70;           // 离开停靠点要先推过的距离（px）
   const GESTURE_GAP = 170;   // 两次滚轮间隔超过它算新的一下
   const RESUME = 1300;       // 手动滚动停下多久后恢复自动播放（ms）
   const SETTLE = 1000;       // 真正停稳在场景开头以后先静这么久再开始播（ms）
   const COMMIT = 0.22;       // 过渡带里朝一个方向推过两成多，直接认定去那一头
   const SNAP_MIN = 150;      // 过渡带里松手：朝推的方向走过这么多（px）就去那一头，不到就退回
+  const DWELL = 2600;        // 连着播时，一场播完 / 一屏的场景停多久再往下走（ms）；一屏的场景写 data-hold 可单独定
 
   function install(opts) {
-    const getScenes = opts.scenes;
+    const getScenes = opts.scenes, tau = opts.tau || TAU, chain = Boolean(opts.chain);
     const root = document.documentElement;
     let cur = scrollY, target = scrollY, lastSet = -1, raf = 0, lastT = 0;
     let lastWheel = 0, lastDy = 0, swallowDir = 0, pull = 0, pullDir = 0, gestureFrom = 0;
     let lastInput = -1e9, arrivedAt = 0, playing = null, rewound = false, snapAt = 0, held = false;
-    let detents = [], scenesInfo = [], stale = true;
+    let detents = [], scenesInfo = [], tops = new Map(), stale = true;
 
     const vh = () => innerHeight;
     const maxY = () => Math.max(0, root.scrollHeight - innerHeight);
@@ -31,14 +33,14 @@
 
     function measure() {
       const y0 = scrollY, h = vh();
-      scenesInfo = [];
+      scenesInfo = []; tops = new Map();
       const set = new Set([0]);
       for (const el of getScenes()) {
         const r = el.getBoundingClientRect();
         if (!r.height) continue;
         const top = Math.round(r.top + y0);
         const end = Math.round(top + r.height - h);
-        set.add(top);
+        set.add(top); tops.set(top, el);
         if (end > top + 4) { set.add(end); scenesInfo.push({ el, top, end }); }
       }
       set.add(Math.round(maxY()));
@@ -53,9 +55,17 @@
       return null;
     }
     const pinnedAt = (y) => scenesInfo.find((s) => y >= s.top - 1 && y < s.end - 1);
-    function holdOf(s) {
-      const own = s.el.dataset.hold;
-      return own != null && own !== "" && Number(own) >= 0 ? Number(own) * 1000 : SETTLE;
+    function holdOf(el, fallback = SETTLE) {
+      const own = el && el.dataset.hold;
+      return own != null && own !== "" && Number(own) >= 0 ? Number(own) * 1000 : fallback;
+    }
+    // 连着播：停在某个停靠点上（不在钉住场景的播放段里），下一站是哪
+    function chainFrom(y) {
+      if (!chain || pinnedAt(y)) return null;
+      const at = near(y);
+      if (at === undefined) return null;
+      const next = detents.find((d) => d > at + 1);
+      return next === undefined ? null : { at, next };
     }
     // 两场之间的过渡带：target 所在的两个相邻停靠点，且这段不超过 1.2 屏（很长的普通内容不算）
     function bandAt(y) {
@@ -79,7 +89,7 @@
       // 别人挪了页面（滚动条、页内查找、滚动锚定）：跟上它，也不再自动往下播
       if (Math.abs(scrollY - lastSet) > 2) { cur = target = lastSet = scrollY; playing = null; lastInput = now; }
       autoplay(now, dt);
-      const k = 1 - Math.exp(-dt / TAU);
+      const k = 1 - Math.exp(-dt / tau);
       cur += (target - cur) * k;
       if (Math.abs(target - cur) < 0.4) cur = target;
       if (Math.abs(target - cur) < 2) { if (!arrivedAt) arrivedAt = now; } else arrivedAt = 0;
@@ -90,8 +100,7 @@
 
     function wantsPlay(now) {
       if (playing || document.hidden || rewound || held) return false;
-      const s = pinnedAt(target);
-      return Boolean(s) && Math.abs(target - cur) < 2;
+      return Boolean(pinnedAt(target) || chainFrom(target)) && Math.abs(target - cur) < 2;
     }
     function autoplay(now, dt) {
       if (document.hidden || held) return;
@@ -103,9 +112,16 @@
       }
       if (rewound || now - lastInput < RESUME || !arrivedAt) return;
       const s = pinnedAt(target);
-      if (!s) return;
+      if (!s) {
+        // 连着播：停够了就滑到下一站，一屏左右的距离约 1.2 秒
+        const c = chainFrom(target);
+        if (!c || now - arrivedAt < holdOf(tops.get(c.at), DWELL)) return;
+        const dist = c.next - c.at;
+        playing = { end: c.next, speed: dist / Math.min(2, Math.max(0.9, 0.4 + (dist / vh()) * 0.8)) };
+        return;
+      }
       // 刚到场景开头：停稳后再静 hold 这么久；场景中途被打断的，RESUME 已经等过了
-      if (Math.abs(target - s.top) < 2 && now - arrivedAt < holdOf(s)) return;
+      if (Math.abs(target - s.top) < 2 && now - arrivedAt < holdOf(s.el)) return;
       playing = { end: s.end, speed: (s.end - s.top) / duration(s) };
     }
 

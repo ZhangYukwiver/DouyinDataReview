@@ -609,7 +609,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     update();
     addEventListener("scroll", update, { passive: true });
     // 封面的标题、导语、年份约 1.5 秒落定，#cover 上的 data-hold 让它完整停一会儿再自己撕页
-    if (!REDUCED && window.StoryGlide) glide = window.StoryGlide.install({ scenes: () => scenes.map((s) => s.el) });
+    // 海报页跟手更紧（阻尼减半），并且连着播：一场播完停一会儿自己去下一场，一直到卷尾
+    if (!REDUCED && window.StoryGlide) glide = window.StoryGlide.install({ scenes: () => scenes.map((s) => s.el), tau: 0.07, chain: true });
     addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { remeasureMarquees(); update(); }, 120); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { remeasureMarquees(); update(); });
     addEventListener("load", () => { remeasureMarquees(); update(); });
