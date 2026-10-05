@@ -23,7 +23,6 @@ import {
   LockKeyhole,
   MessageCircle,
   Mic,
-  MoreHorizontal,
   Phone,
   Pause,
   Play,
@@ -44,6 +43,7 @@ import {
   type ChatMessage,
   hasChatShareEvidence,
 } from "../../domain/chatRecords";
+import { buildChatMemorial, scrubMemorial } from "../../domain/chatMemorial";
 import { buildSparks, mergeOfficialSparks, shiftDay, SPARK_LIT_DAYS, sparkDayKey, type OfficialStreak, type Spark, type SparkDay } from "../../domain/chatSparks";
 import { loadChatStreaks, loadLiveMessages } from "../../services/chatLive";
 import { CHAT_SEND_UNCONFIRMED, sendChatMessage, type ChatSendConnection, type ChatSendOutcome } from "../../services/chatSend";
@@ -54,6 +54,7 @@ import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii
 import { fx, ws } from "./motion";
 import { CHAT_EMOJI } from "../../domain/chatEmoji";
 import { renderEmojiText } from "./emojiText";
+import { SparkCardPreview } from "./SparkCardPreview";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 const CHAT_MESSAGE_RENDER_LIMIT = 320;
@@ -450,6 +451,7 @@ export function ChatWorkspace({
             row={selectedForDetail}
             selfId={selfId}
             sendBlock={sendBlock}
+            spark={sparks.find((spark) => spark.id === selectedForDetail?.id) ?? null}
             onSend={sendMessage}
             live={liveReady ? sendConnection : null}
           />}
@@ -675,6 +677,7 @@ function ChatDetailPane({
   row,
   selfId,
   sendBlock,
+  spark,
 }: {
   /** 能现读抖音网页时给连接：群消息不落盘，打开群才从那边读 */
   live: ChatSendConnection | null;
@@ -686,8 +689,11 @@ function ChatDetailPane({
   row: ChatConversationRow | null;
   selfId: string | null;
   sendBlock: string | null;
+  /** 这个会话的火花（抖音给的或本机估算的），纪念卡用 */
+  spark: Spark | null;
 }) {
   const messageListRef = useRef<FlatList<ChatMessage>>(null);
+  const [cardOpen, setCardOpen] = useState(false);
   const stickToBottomRef = useRef(true);
   const group = row?.kind === "group" && live ? live : null;
   const groupMessages = useGroupMessages(group, row?.id ?? null);
@@ -772,9 +778,14 @@ function ChatDetailPane({
             <ShieldCheck color={color.green} size={13} strokeWidth={2} />
             <Text style={styles.readonlyBadgeText}>{group ? "不存本机" : "本地保存"}</Text>
           </View>
-          <Pressable {...ws("btn square")} accessibilityLabel="聊天详情" accessibilityRole="button" style={[styles.iconButton, webPointer]}>
-            <MoreHorizontal color={color.textMuted} size={19} />
-          </Pressable>
+          {/* 一条消息都没有、也没有火花的会话，卡上没什么可写 */}
+          {row.messageCount > 0 || spark ? (
+            <Pressable {...ws("btn small")} accessibilityLabel="火花纪念卡" accessibilityRole="button" onPress={() => setCardOpen(true)}
+              style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, webPointer]} testID="chat-memorial-open">
+              <Flame color={color.amber} size={13} strokeWidth={2} />
+              <Text style={styles.receptionButtonText}>纪念卡</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
@@ -823,8 +834,18 @@ function ChatDetailPane({
         // 读不到群消息时（没在接收），发出去这里看不到，只能靠一句提示
         sentNotice={row.kind === "group" && !group ? "已发到群里。群消息不会存到本机，所以这里不显示。" : undefined}
       />
+      {cardOpen ? <MemorialCard group={group ? groupMessages.messages : null} onClose={() => setCardOpen(false)} privacy={privacy} row={row} selfId={selfId} spark={spark} /> : null}
     </View>
   );
+}
+
+// 打开那一刻的统计就是卡上的数；群里用的是这次现读到的那批消息（不存本机）
+function MemorialCard({ group, onClose, privacy, row, selfId, spark }: { group: ChatMessage[] | null; onClose: () => void; privacy: boolean; row: ChatConversationRow; selfId: string | null; spark: Spark | null }) {
+  const [memorial] = useState(() => {
+    const built = buildChatMemorial({ id: row.id, kind: row.kind, name: row.name, messages: group ?? (row.kind === "group" ? [] : row.messages), messageCount: row.messageCount, ownMessageCount: row.ownMessageCount }, selfId, spark);
+    return privacy ? scrubMemorial(built) : built;
+  });
+  return <SparkCardPreview memorial={memorial} onClose={onClose} />;
 }
 
 // 群消息只在打开群时从采集器里的抖音网页读：先拿网页手里的最新一批（不用点开会话），
