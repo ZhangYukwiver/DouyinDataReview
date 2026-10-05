@@ -30,7 +30,7 @@ export class ExplorerBridge {
   collectorBusy() {
     const current = this.collector;
     const receiving = current.isChatReceiving?.() || current.isManualObserving?.();
-    return Boolean(current.syncPromise || (current.observationPromise && !receiving) || current.accountSwitchPromise || current.hasActiveVideoDownload());
+    return Boolean(current.syncPromise || (current.observationPromise && !receiving) || current.hasActiveVideoDownload());
   }
   async run(input, operation = "read", signal) {
     if (this.busy || this.collectorBusy()) throw new ExploreError("collector_busy", "采集器正在执行任务，请停止采集或等待完成后再探索。");

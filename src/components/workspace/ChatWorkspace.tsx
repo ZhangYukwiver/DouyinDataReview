@@ -439,6 +439,7 @@ export function ChatWorkspace({
               sendConnection={sendConnection}
               selfId={selfId}
               sparks={sparks}
+              draftKey={renewDraftKey(status?.account?.id)}
               targets={rows}
               videos={shareVideos}
             />
@@ -929,6 +930,7 @@ function ChatFact({ label, value }: { label: string; value: string }) {
 }
 
 function SparkBoard({
+  draftKey,
   live,
   mobile,
   now,
@@ -943,6 +945,8 @@ function SparkBoard({
   targets,
   videos,
 }: {
+  /** 续火花草稿按抖音账号分开存，换了号不会勾上另一个号的会话 */
+  draftKey: string;
   live: boolean;
   mobile: boolean;
   now: Date;
@@ -981,7 +985,7 @@ function SparkBoard({
 
   // 续火花：勾选对象、选好内容，一个一个发出去；看板关掉就停。
   const [renewing, setRenewing] = useState(false);
-  const [draft] = useState(loadRenewDraft);
+  const [draft] = useState(() => loadRenewDraft(draftKey));
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   // 发送在看板外面跑（sparkRenewJob），关掉看板也接着发
   const run = useSyncExternalStore(sparkRenewJob.subscribe, sparkRenewJob.snapshot);
@@ -1003,7 +1007,7 @@ function SparkBoard({
   const start = (payload: SparkPayload, content: Omit<RenewDraft, "picked">) => {
     if (!sendConnection || running) return;
     const ids = targets.map((row) => row.id).filter((id) => picked.has(id));
-    saveRenewDraft({ ...content, picked: ids });
+    saveRenewDraft(draftKey, { ...content, picked: ids });
     sparkRenewJob.start(sendConnection, ids, payload, selfId);
   };
 
@@ -1146,16 +1150,20 @@ function SparkRenewStatus({ run }: { run: SparkRenewRun }) {
 }
 
 const RENEW_DRAFT_KEY = "content-insights.spark-renew";
+// 第一个账号沿用原来的键，多账号以前存的草稿就是它的
+function renewDraftKey(accountId: string | undefined): string {
+  return accountId && accountId !== "default" ? `${RENEW_DRAFT_KEY}:${accountId}` : RENEW_DRAFT_KEY;
+}
 type RenewDraft = { picked: string[]; kind: (typeof SPARK_KINDS)[number][0]; text: string; emoji: string };
 // 只是本机的使用习惯（上次发给谁、发什么），读写失败就当第一次用
-function loadRenewDraft(): RenewDraft | null {
+function loadRenewDraft(key: string): RenewDraft | null {
   try {
-    const value = JSON.parse(globalThis.localStorage?.getItem(RENEW_DRAFT_KEY) ?? "null");
+    const value = JSON.parse(globalThis.localStorage?.getItem(key) ?? "null");
     return value && Array.isArray(value.picked) && SPARK_KINDS.some(([kind]) => kind === value.kind) ? value : null;
   } catch { return null; }
 }
-function saveRenewDraft(draft: RenewDraft) {
-  try { globalThis.localStorage?.setItem(RENEW_DRAFT_KEY, JSON.stringify(draft)); } catch { /* 存不下就下次重选 */ }
+function saveRenewDraft(key: string, draft: RenewDraft) {
+  try { globalThis.localStorage?.setItem(key, JSON.stringify(draft)); } catch { /* 存不下就下次重选 */ }
 }
 const sparkSummary = (spark: Spark) => spark.state === "recover" ? `${spark.days} 天，${spark.official}` : spark.state === "broken" ? `断了，之前 ${spark.days} 天`
   : spark.state === "done" ? `${spark.days} 天，今天续上了` : spark.today === "mine" ? `${spark.days} 天，你今天发过了` : `${spark.days} 天，今天还没续`;

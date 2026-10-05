@@ -15,6 +15,7 @@ describe("release privacy boundary", () => {
     ".local-data/records.json",
     "collector/records.json",
     "dist/direct-history-template.json",
+    "dist/accounts.json",
     "browser-profile/Default/Cookies",
     "app.asar.unpacked/browser-profile/Default/Network/Cookies",
     "dist/profile/Preferences",
@@ -30,6 +31,7 @@ describe("release privacy boundary", () => {
   it.each([
     "collector/directHistory.mjs",
     "collector/douyinCollector.mjs",
+    "collector/accounts.mjs",
     "app.asar.unpacked/collector/directSignerRunner.cjs",
     "node_modules/playwright-core/lib/server/cookieStore.js",
     "node_modules/electron-updater/out/AppUpdater.js",

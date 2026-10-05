@@ -682,7 +682,8 @@ function hiddenListConfig(type) {
   throw new DirectHistoryError("invalid_type", "无界面读取记录类型无效。");
 }
 
-export async function collectDirectRecordPages(context, type, onPage) {
+// onPageReady 在列表页打开后、开始翻页前调一次，采集器拿它顺手核对页面里登录的是谁
+export async function collectDirectRecordPages(context, type, onPage, { onPageReady = null } = {}) {
   if (!context || typeof context.newPage !== "function" || typeof onPage !== "function") {
     throw new DirectHistoryError("invalid_context", "无界面读取没有可用的专用浏览器会话。");
   }
@@ -776,6 +777,7 @@ export async function collectDirectRecordPages(context, type, onPage) {
   };
   try {
     await page.goto(config.pageUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await onPageReady?.(page);
     let stalled = 0;
     while (!terminal && !responseError && stalled < 20) {
       const previousResponseCount = responseCount;

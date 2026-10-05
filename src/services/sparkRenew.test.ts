@@ -70,4 +70,17 @@ describe("a renewal run outside the board", () => {
     sparkRenewJob.dismiss();
     expect(sparkRenewJob.snapshot()).toBeNull();
   });
+  it("drops the run when the Douyin account changes, and the old send never lands in the next run", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(sendChatMessage).mockImplementationOnce(async () => { await gate; return sent; }).mockImplementation(() => new Promise(() => {}));
+    sparkRenewJob.start(connection, friends, { kind: "text", text: "早" }, me);
+    sparkRenewJob.reset();
+    expect(sparkRenewJob.snapshot()).toBeNull();
+    sparkRenewJob.start(connection, ["0:1:1:2"], { kind: "text", text: "另一个号" }, me);
+    release();
+    await vi.waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(2));
+    expect(sparkRenewJob.snapshot()).toMatchObject({ running: true, ids: ["0:1:1:2"], progress: { "0:1:1:2": { state: "sending" } } });
+    sparkRenewJob.reset();
+  });
 });

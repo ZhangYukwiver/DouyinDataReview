@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   type LayoutChangeEvent,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -16,6 +18,7 @@ import {
 } from "react-native";
 import Svg, { Circle, Path } from "react-native-svg";
 import {
+  ArrowLeftRight,
   ArrowRight,
   BookOpen,
   Bookmark,
@@ -36,13 +39,14 @@ import {
   RefreshCw,
   Trash2,
   Unplug,
-  UserRoundCog,
+  UserRound,
+  UserRoundPlus,
   X,
 } from "lucide-react-native";
 
 import type { PersonalRecordCollection } from "../../domain/personalRecords";
 import type { DesktopUpdateState } from "../../desktopRuntime";
-import type { CollectorStatus } from "../../services/localCollector";
+import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type CollectorAccount, type CollectorAccounts, type CollectorStatus } from "../../services/localCollector";
 import { APP_STYLES, type AppStyle } from "../../services/appStyle";
 import { ease, useCountUp } from "./motion";
 import {
@@ -96,7 +100,14 @@ export interface SetupWorkspaceProps {
   onStartIncrementalSync: () => void;
   onStartFullSync: () => void;
   onStopSync: () => Promise<void>;
-  onSwitchAccount: () => void;
+  accounts: CollectorAccounts | null;
+  /** 有视频在下载（含批量下载）：换号会把它丢掉 */
+  downloading: boolean;
+  /** 一键续火花还在发 */
+  sparkRenewing: boolean;
+  onActivateAccount: (id: string) => void;
+  onAddAccount: () => void;
+  onRemoveAccount: (id: string, name: string) => void;
   onClearCache: () => void;
   onExportData: () => void;
   onPickArchive: () => Promise<void>;
@@ -187,6 +198,7 @@ function useSize(): [Size | null, (event: LayoutChangeEvent) => void] {
 }
 
 export function SetupWorkspace({
+  accounts,
   appStyle,
   archive,
   autoSyncEnabled,
@@ -194,6 +206,7 @@ export function SetupWorkspace({
   chatCount,
   collectorUrl,
   connected,
+  downloading,
   error,
   onChangeAppStyle,
   onChangeCollectorUrl,
@@ -204,6 +217,9 @@ export function SetupWorkspace({
   onDisconnect,
   onEnterWorkspace,
   onOpenDashboard,
+  onActivateAccount,
+  onAddAccount,
+  onRemoveAccount,
   onPickArchive,
   onRemoveArchive,
   onMergeArchive,
@@ -214,7 +230,6 @@ export function SetupWorkspace({
   onStartObservation,
   onStopObservation,
   onStopSync,
-  onSwitchAccount,
   onToggleAutoSync,
   observing,
   chatCollecting,
@@ -224,6 +239,7 @@ export function SetupWorkspace({
   records,
   snapshotSource,
   snapshotUpdatedAt,
+  sparkRenewing,
   status,
   stoppingSync,
   switchingAccount,
@@ -272,6 +288,23 @@ export function SetupWorkspace({
   const notes = tipNotes({ fromArchive, connected, loginNeeded, syncing, ready, autoSyncEnabled });
   const cardPad = narrow ? styles.cardNarrow : short ? styles.cardShort : roomy ? styles.cardRoomy : null;
 
+  const [accountMenu, setAccountMenu] = useState(false);
+  const closeAccountMenu = useCallback(() => setAccountMenu(false), []);
+  useEffect(() => { if (!connected) setAccountMenu(false); }, [connected]);
+  const accountRows = accounts?.accounts ?? [];
+  const activeAccountId = accounts?.activeId ?? status?.account?.id ?? null;
+  const activeIndex = accountRows.findIndex((account) => account.id === activeAccountId);
+  const accountLabel = !connected ? "抖音账号"
+    : status?.account?.nickname ?? (activeIndex >= 0 ? collectorAccountName(accountRows[activeIndex]!, activeIndex) : "抖音账号");
+  // 切换要先关掉旧账号的浏览器，读取和手动监听都用着它；聊天接收、看直播之类采集器会自己停
+  const accountBlocked = switchingAccount ? "正在切换账号，稍等一下。"
+    : observing ? "正在手动监听，先停下再切换账号。"
+      : syncing ? "正在读取记录，先停下再切换账号。"
+        : busy ? "采集器正在忙，等它忙完再切换账号。"
+          : downloading ? "正在下载视频，等下完再切换账号。"
+            : sparkRenewing ? "正在续火花，等发完或先停下再切换账号。"
+              : null;
+
   return (
     <View testID="setup-workspace" style={styles.root}>
       <View style={[styles.topbar, narrow && styles.topbarNarrow]}>
@@ -282,7 +315,7 @@ export function SetupWorkspace({
         <View style={styles.topStatus}><View style={[styles.dot, connected && styles.dotOn]} /><Text numberOfLines={1} style={styles.statusText}>{busy && ready && snapshotSource === "collector" ? `${source} · 采集中，报告用采集前的数据` : source}</Text></View>
         <View style={styles.row8}>
           <SketchButton seed="top-dashboard" icon={LayoutDashboard} label="进入工作台" onPress={onOpenDashboard} />
-          <SketchButton seed="top-report" disabled={!ready} icon={ArrowRight} iconAfter kind="ink" label="打开报告" onPress={onEnterWorkspace} />
+          <SketchButton seed="top-report" disabled={!ready || switchingAccount} icon={ArrowRight} iconAfter kind="ink" label="打开报告" onPress={onEnterWorkspace} />
         </View>
         <HRule seed="topbar-rule" style={styles.topRule} />
       </View>
@@ -321,7 +354,7 @@ export function SetupWorkspace({
             <View style={[styles.statusCopy, narrow && styles.statusCopyNarrow]}>
               {/* 窄窗口里流向图已经圈出了状态，标题让位给说明 */}
               {narrow ? null : <Hand numberOfLines={1} style={styles.statusTitle}>{fromArchive ? "正在用导入的文件" : connected ? "采集器已就绪" : "等待连接数据源"}</Hand>}
-              <Text numberOfLines={2} style={[styles.meta, styles.flex]}>{status?.message ?? "所有操作均在本机执行"}</Text>
+              <Text numberOfLines={2} style={[styles.meta, styles.flex]}>{switchingAccount ? "正在切换抖音账号，等旧账号的浏览器关好就换过去。" : status?.message ?? "所有操作均在本机执行"}</Text>
             </View>
           </SketchBox>
 
@@ -365,8 +398,8 @@ export function SetupWorkspace({
                 <ActionButton seed="act-incremental" compact={narrow} disabled={!connected || (busy && !directSyncing) || visibleBusy} icon={directSyncing ? Pause : Play} label={directSyncing ? "停止读取" : "增量读取"} onPress={directSyncing ? () => void onStopSync() : onStartIncrementalSync} busy={directSyncing ? stoppingSync : busy && !observing && !pageSyncing} />
                 <ActionButton seed="act-full" compact={narrow} disabled={!connected || (!pageSyncing && (busy || visibleBusy))} icon={pageSyncing ? Pause : RefreshCw} label={pageSyncing ? "停止读取" : "完整读取"} onPress={pageSyncing ? () => void onStopSync() : onStartFullSync} busy={pageSyncing && stoppingSync} />
                 <ActionButton seed="act-observe" compact={narrow} disabled={!connected || busy} icon={observing ? Pause : Eye} label={observing ? "停止监听" : "手动监听"} onPress={() => void (observing ? onStopObservation() : onStartObservation())} />
-                <ActionButton seed="act-chat" compact={narrow} disabled={!connected || chatBusy || (!chatCollecting && (visibleBusy || busy))} icon={chatCollecting ? Pause : MessageCircle} label={chatCollecting ? "暂停接收" : "开始接收"} onPress={() => void (chatCollecting ? onStopObservation() : onStartChatObservation())} />
-                <ActionButton seed="act-history" compact={narrow} disabled={!connected || chatBusy || visibleBusy || (busy && !chatCollecting)} icon={RefreshCw} label="采集聊天记录" onPress={() => void onCollectChatHistory()} busy={chatBusy} />
+                <ActionButton seed="act-chat" compact={narrow} disabled={!connected || chatBusy || switchingAccount || (!chatCollecting && (visibleBusy || busy))} icon={chatCollecting ? Pause : MessageCircle} label={chatCollecting ? "暂停接收" : "开始接收"} onPress={() => void (chatCollecting ? onStopObservation() : onStartChatObservation())} />
+                <ActionButton seed="act-history" compact={narrow} disabled={!connected || chatBusy || switchingAccount || visibleBusy || (busy && !chatCollecting)} icon={RefreshCw} label="采集聊天记录" onPress={() => void onCollectChatHistory()} busy={chatBusy} />
               </View>
               <Text style={styles.hint}>完整读取和手动监听会先暂停接收聊天。</Text>
               <HRule seed="auto-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />
@@ -391,7 +424,8 @@ export function SetupWorkspace({
               <FitSlot style={styles.slotTop}>{(size) => <RecentList digest={digest} size={size} />}</FitSlot>
               <HRule seed="tools-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />
               <View style={styles.smallRow}>
-                <SketchButton seed="tool-account" compact={narrow} disabled={!connected || busy || switchingAccount} icon={UserRoundCog} kind="small" label="切换账号" onPress={onSwitchAccount} />
+                {/* 写着正在用的账号，点开是账号面板。宽度封顶：不比原来的「切换账号」宽，宽窗口里这行有余量才多露几个字，所以这一行不会因为它多折一行 */}
+                <SketchButton accessibilityLabel={`抖音账号：${accountLabel}，点开切换或添加`} busy={switchingAccount} compact={narrow} disabled={!connected} icon={UserRound} kind="small" label={accountLabel} onPress={() => setAccountMenu(true)} seed="tool-account" style={{ maxWidth: narrow ? 75 : width >= 1600 ? 180 : width >= 1300 ? 112 : 89 }} testID="account-button" />
                 {web ? <SketchButton seed="tool-export" compact={narrow} disabled={!connected} icon={Download} kind="small" label="导出数据" onPress={onExportData} /> : null}
                 <SketchButton seed="tool-clear" compact={narrow} disabled={!total || busy} icon={Trash2} kind="small" label="清除本地记录" onPress={onClearCache} />
               </View>
@@ -400,6 +434,112 @@ export function SetupWorkspace({
           </View>
         </View>
       </ScrollView>
+      {accountMenu && connected ? (
+        <AccountMenu
+          accounts={accountRows}
+          activeId={activeAccountId}
+          blocked={accountBlocked}
+          maxListHeight={Math.max(96, height - (short ? 250 : 300))}
+          onActivate={(id) => { setAccountMenu(false); onActivateAccount(id); }}
+          onAdd={() => { setAccountMenu(false); onAddAccount(); }}
+          onClose={closeAccountMenu}
+          onRemove={onRemoveAccount}
+          switching={switchingAccount}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+// ---------- 账号面板 ----------
+
+/** 盖在页面上的一张卡：列出存着的抖音账号，切换、删除、添加都在这里。不占布局，关掉就没了。 */
+function AccountMenu({ accounts, activeId, blocked, maxListHeight, onActivate, onAdd, onClose, onRemove, switching }: {
+  accounts: CollectorAccount[];
+  activeId: string | null;
+  blocked: string | null;
+  maxListHeight: number;
+  onActivate: (id: string) => void;
+  onAdd: () => void;
+  onClose: () => void;
+  onRemove: (id: string, name: string) => void;
+  switching: boolean;
+}) {
+  // Modal 管着焦点圈定、Esc 关闭和关掉后把焦点还给账号按钮；打开时先把焦点放到关闭钮上，别留在被遮住的按钮上
+  const closeRef = useRef<View>(null);
+  useEffect(() => {
+    if (!web) return undefined;
+    const frame = requestAnimationFrame(() => (closeRef.current as unknown as HTMLElement | null)?.focus?.());
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return (
+    <Modal animationType="none" onRequestClose={onClose} transparent visible>
+    <View style={styles.menuLayer}>
+      <Pressable focusable={false} onPress={onClose} style={styles.menuBackdrop} />
+      <SketchBox accessibilityLabel="抖音账号" accessibilityViewIsModal fill={C.card} seed="account-menu" style={styles.menu} testID="account-menu">
+        <Tape seed="tape-account" />
+        <View style={styles.menuHead}>
+          <Hand style={styles.menuTitle}>抖音账号</Hand>
+          <Pressable accessibilityLabel="关掉账号面板" accessibilityRole="button" onPress={onClose} ref={closeRef} style={(state) => [styles.menuClose, hovered(state) && styles.segmentHover, pointer]}>
+            <X color={C.text2} size={16} strokeWidth={1.9} />
+          </Pressable>
+        </View>
+        <Text style={styles.meta}>每个账号的登录和记录分开存，切换不会删掉记录。</Text>
+        {blocked ? <Hand numberOfLines={2} style={styles.menuBlocked}>{blocked}</Hand> : null}
+        <HRule color={C.pencil} seed="account-rule-top" style={styles.menuRule} />
+        <ScrollView style={{ maxHeight: maxListHeight }}>
+          {accounts.length ? accounts.map((account, index) => {
+            const name = collectorAccountName(account, index);
+            const current = account.id === activeId;
+            // 同一个号添加了两次时两行长得一样，靠添加日期分清
+            const added = formatAccountAddedDay(account.createdAt);
+            const note = [added ? `${added}添加` : null, findTwinAccount(accounts, account) ? "和另一个是同一个抖音号" : null].filter(Boolean).join("，");
+            return (
+              <View key={account.id} style={styles.accountRow} testID={`account-row-${account.id}`}>
+                <AccountAvatar initial={account.nickname ? Array.from(account.nickname)[0]! : String(index + 1)} seed={account.id} uri={account.avatar} />
+                <View style={styles.accountCopy}>
+                  <Text numberOfLines={1} style={[styles.accountName, current && styles.accountNameOn]}>{name}</Text>
+                  {note ? <Text numberOfLines={1} style={styles.fine}>{note}</Text> : null}
+                </View>
+                {current ? <CurrentMark seed={account.id} /> : <>
+                  <SketchButton accessibilityLabel={`切换到${name}`} disabled={Boolean(blocked)} icon={ArrowLeftRight} kind="small" label="切换" onPress={() => onActivate(account.id)} seed={`account-switch-${account.id}`} />
+                  <SketchButton accessibilityLabel={`删除${name}`} disabled={switching} icon={Trash2} kind="small" label="删除" onPress={() => onRemove(account.id, name)} seed={`account-remove-${account.id}`} />
+                </>}
+              </View>
+            );
+          }) : <Text style={[styles.meta, styles.accountEmpty]}>还没读到账号列表，稍后再点开看看。</Text>}
+        </ScrollView>
+        <HRule color={C.pencil} seed="account-rule-bottom" style={styles.menuRule} />
+        <View style={styles.menuFoot}>
+          <SketchButton disabled={Boolean(blocked)} icon={UserRoundPlus} kind="ink" label="添加账号" onPress={onAdd} seed="account-add" testID="account-add" />
+          <Text style={[styles.fine, styles.flex]}>会打开专用浏览器，登录另一个抖音号后自动开始读取。</Text>
+        </View>
+      </SketchBox>
+    </View>
+    </Modal>
+  );
+}
+
+/** 头像：有图就是一张小圆图套一道铅笔圈；没有（或者图过期了）就在手绘圈里写昵称的头一个字。 */
+function AccountAvatar({ initial, seed, uri }: { initial: string; seed: string; uri: string | null }) {
+  // 记下是哪个地址没加载出来：头像签名过期后重新登录会换新地址，新地址要重新试
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const ring = useMemo(() => roughEllipse(17, 17, 14.5, 14.5, `avatar-${seed}`, { turns: 1.12, jitter: 0.05 }), [seed]);
+  const photo = uri && failedUri !== uri;
+  return (
+    <View style={styles.avatar}>
+      {photo ? <Image accessibilityIgnoresInvertColors onError={() => setFailedUri(uri)} source={{ uri }} style={styles.avatarImage} /> : <Hand style={styles.avatarInitial}>{initial}</Hand>}
+      <Svg height={34} style={styles.under} width={34}><Path d={ring} fill={photo ? "none" : C.noteYellow} stroke={C.line} strokeLinecap="round" strokeWidth={1.3} /></Svg>
+    </View>
+  );
+}
+
+function CurrentMark({ seed }: { seed: string }) {
+  const check = useMemo(() => roughCheck(1, 1, 12, `current-${seed}`), [seed]);
+  return (
+    <View style={styles.currentMark}>
+      <Svg height={14} width={14}><Path d={check} fill="none" stroke={C.green} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.9} /></Svg>
+      <Hand style={styles.currentText}>正在用</Hand>
     </View>
   );
 }
@@ -407,7 +547,7 @@ export function SetupWorkspace({
 // ---------- 手绘的底子：框、线、胶带、荧光笔 ----------
 
 /** 带手绘边框和填充的容器；边框按自身尺寸现画，种子固定所以每次都是同一笔。 */
-function SketchBox({ amp = 2.2, children, dash, fill, passes = 2, seed, stroke = C.line, strokeWidth = 1.4, style }: { amp?: number; children?: React.ReactNode; dash?: string; fill?: string; passes?: number; seed: string; stroke?: string; strokeWidth?: number; style?: StyleProp<ViewStyle> }) {
+function SketchBox({ accessibilityLabel, accessibilityViewIsModal, amp = 2.2, children, dash, fill, passes = 2, seed, stroke = C.line, strokeWidth = 1.4, style, testID }: { accessibilityLabel?: string; accessibilityViewIsModal?: boolean; amp?: number; children?: React.ReactNode; dash?: string; fill?: string; passes?: number; seed: string; stroke?: string; strokeWidth?: number; style?: StyleProp<ViewStyle>; testID?: string }) {
   const [size, onLayout] = useSize();
   // 第一遍是实笔，第二遍细一点、淡一点，像铅笔回头又描了一道
   const paths = useMemo(() => (size ? {
@@ -416,7 +556,7 @@ function SketchBox({ amp = 2.2, children, dash, fill, passes = 2, seed, stroke =
     second: passes > 1 ? roughRect(size.w, size.h, `${seed}#2`, { amp: amp * 1.1, passes: 1 }) : null,
   } : null), [amp, fill, passes, seed, size]);
   return (
-    <View onLayout={onLayout} style={style}>
+    <View accessibilityLabel={accessibilityLabel} accessibilityViewIsModal={accessibilityViewIsModal} onLayout={onLayout} style={style} testID={testID}>
       {size && paths ? (
         <Svg height={size.h} style={styles.under} width={size.w}>
           {paths.fill ? <Path d={paths.fill} fill={fill} /> : null}
@@ -478,7 +618,7 @@ function FitSlot({ children, style }: { children: (size: Size) => React.ReactNod
 
 // ---------- 按钮 ----------
 
-function SketchButton({ busy, compact, disabled, full, icon: ButtonIcon, iconAfter, kind = "outline", label, onPress, seed, tall, accessibilityLabel, style }: { busy?: boolean; compact?: boolean; disabled?: boolean; full?: boolean; icon: Icon; iconAfter?: boolean; kind?: "ink" | "outline" | "small"; label: string; onPress: () => void; seed: string; tall?: boolean; accessibilityLabel?: string; style?: StyleProp<ViewStyle> }) {
+function SketchButton({ busy, compact, disabled, full, icon: ButtonIcon, iconAfter, kind = "outline", label, onPress, seed, tall, accessibilityLabel, style, testID }: { busy?: boolean; compact?: boolean; disabled?: boolean; full?: boolean; icon: Icon; iconAfter?: boolean; kind?: "ink" | "outline" | "small"; label: string; onPress: () => void; seed: string; tall?: boolean; accessibilityLabel?: string; style?: StyleProp<ViewStyle>; testID?: string }) {
   const [size, onLayout] = useSize();
   const ink = kind === "ink";
   const paths = useMemo(() => {
@@ -492,7 +632,8 @@ function SketchButton({ busy, compact, disabled, full, icon: ButtonIcon, iconAft
   }, [ink, kind, seed, size]);
   const iconColor = ink ? C.inkText : C.text2;
   const iconSize = kind === "small" ? 13 : compact ? 13 : 15;
-  const glyph = busy ? <ActivityIndicator color={iconColor} size="small" /> : <ButtonIcon color={iconColor} size={iconSize} strokeWidth={1.9} />;
+  // 包一层不让图标跟着文字被挤扁（账号按钮宽度封顶，长昵称时只该省略文字）
+  const glyph = <View style={styles.glyph}>{busy ? <ActivityIndicator color={iconColor} size="small" /> : <ButtonIcon color={iconColor} size={iconSize} strokeWidth={1.9} />}</View>;
   return (
     <Pressable
       accessibilityLabel={accessibilityLabel}
@@ -501,6 +642,7 @@ function SketchButton({ busy, compact, disabled, full, icon: ButtonIcon, iconAft
       disabled={disabled}
       onLayout={onLayout}
       onPress={onPress}
+      testID={testID}
       style={(state) => [styles.button, kind === "small" && styles.small, kind === "small" && compact && styles.smallCompact, tall && styles.buttonTall, full && styles.full, !paths && (ink ? styles.inkFallback : styles.outlineFallback), disabled && styles.disabled, state.pressed && styles.pressed, pointer, style]}
     >
       {(state) => (
@@ -1193,5 +1335,21 @@ const styles = StyleSheet.create({
   update: { gap: 6, marginTop: 4 }, updateShort: { gap: 4 }, updateRule: { marginVertical: 4 },
   updateHead: { flexDirection: "row", alignItems: "center", gap: 8 }, updateTitleRow: { flexDirection: "row", alignItems: "baseline", gap: 8 }, updateTitle: { fontSize: 20, lineHeight: 23 }, updateBadge: { color: C.red, fontSize: 17, lineHeight: 20, transform: [{ rotate: "-4deg" }] },
   updateTarget: { color: C.blue, fontSize: 11 }, updateError: { color: C.red, fontSize: 11, lineHeight: 16 },
-  pressed: { opacity: 0.8, transform: [{ translateY: 1 }] }, disabled: { opacity: 0.4 },
+  pressed: { opacity: 0.8, transform: [{ translateY: 1 }] }, disabled: { opacity: 0.4 }, glyph: { flexShrink: 0 },
+  menuLayer: { position: "absolute", left: 0, top: 0, right: 0, bottom: 0, zIndex: 20, alignItems: "center", justifyContent: "center", padding: 24 },
+  menuBackdrop: { position: "absolute", left: 0, top: 0, right: 0, bottom: 0, backgroundColor: "rgba(38,42,51,.22)" },
+  menu: { width: 460, maxWidth: "100%", paddingHorizontal: 22, paddingTop: 20, paddingBottom: 18 },
+  menuHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
+  menuTitle: { fontSize: 26, lineHeight: 32 },
+  menuClose: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
+  menuBlocked: { color: C.red, fontSize: 18, lineHeight: 22, marginTop: 6 },
+  menuRule: { marginTop: 12, marginBottom: 6 },
+  menuFoot: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 6 },
+  accountRow: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 5 },
+  accountCopy: { flex: 1, minWidth: 0, marginLeft: 4 },
+  accountName: { color: C.text2, fontSize: 14, fontWeight: "500" }, accountNameOn: { color: C.text, fontWeight: "700" },
+  accountEmpty: { paddingVertical: 10 },
+  avatar: { width: 34, height: 34, flexGrow: 0, flexShrink: 0, flexBasis: "auto", alignItems: "center", justifyContent: "center" },
+  avatarImage: { width: 28, height: 28, borderRadius: 14 }, avatarInitial: { fontSize: 19, lineHeight: 22, color: C.noteInk },
+  currentMark: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 4 }, currentText: { color: C.green, fontSize: 19, lineHeight: 22 },
 });
