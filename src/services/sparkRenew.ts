@@ -85,15 +85,23 @@ export const sparkRenewJob = {
     const run = new AbortController();
     controller = run;
     publish({ ids: [...ids], progress: Object.fromEntries(ids.map((id) => [id, { state: "waiting" }])), running: true });
+    // 被 reset 丢掉的那一轮还会把手上那一个发完，它的进度别写进下一轮
     void renewSparks(connection, ids, payload, {
       signal: run.signal, selfId,
-      onUpdate: (id, update) => { if (current) publish({ ...current, progress: { ...current.progress, [id]: update } }); },
+      onUpdate: (id, update) => { if (controller === run && current) publish({ ...current, progress: { ...current.progress, [id]: update } }); },
     }).finally(() => {
-      if (controller === run) controller = null;
+      if (controller !== run) return;
+      controller = null;
       if (current) publish({ ...current, running: false });
     });
   },
   stop() { controller?.abort(); },
   /** 发完以后把这一轮的结果收起来；还在发就不动。 */
   dismiss() { if (!current?.running) publish(null); },
+  /** 换了抖音账号：停下这一轮，结果也不留，免得记在另一个号头上。 */
+  reset() {
+    controller?.abort();
+    controller = null;
+    publish(null);
+  },
 };

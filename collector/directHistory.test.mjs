@@ -713,4 +713,27 @@ describe("hidden likes and favorites", () => {
     expect(page.goto.mock.calls[0][0]).toContain("showTab=favorite_collection");
     expect(page.close).toHaveBeenCalledTimes(1);
   });
+
+  it("checks the opened list page before reading it and stops when the check fails", async () => {
+    const page = {
+      close: vi.fn(async () => undefined),
+      evaluate: vi.fn(async () => undefined),
+      goto: vi.fn(async () => undefined),
+      on: vi.fn(),
+    };
+    const onPage = vi.fn();
+    const onPageReady = vi.fn(async (opened) => {
+      expect(opened).toBe(page);
+      expect(page.goto).toHaveBeenCalledTimes(1);
+      throw new Error("account_mismatch");
+    });
+
+    await expect(collectDirectRecordPages({ newPage: vi.fn(async () => page) }, "liked_videos", onPage, { onPageReady }))
+      .rejects.toThrow("account_mismatch");
+
+    expect(onPageReady).toHaveBeenCalledTimes(1);
+    expect(page.evaluate).not.toHaveBeenCalled();
+    expect(onPage).not.toHaveBeenCalled();
+    expect(page.close).toHaveBeenCalledTimes(1);
+  });
 });

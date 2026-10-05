@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  activateCollectorAccount,
+  addCollectorAccount,
   clearCollectorRecords,
+  findTwinAccount,
+  formatAccountAddedDay,
+  getCollectorAccounts,
+  removeCollectorAccount,
   fetchCollectorVideoFile,
   getCollectorPairingCode,
   getCollectorRecords,
+  importCollectorRecords,
   LocalCollectorError,
   loadCollectorVideo,
   getCollectorStatus,
@@ -314,6 +321,23 @@ describe("local collector client", () => {
         headers: expect.objectContaining({ Authorization: "Bearer session-secret" }),
       }),
     );
+  });
+
+  it("names the account it means to clear or merge into, and surfaces a stale-account refusal", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "account_changed", message: "采集器已经换到另一个账号了，这次没有改动记录。" }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "account_changed", message: "采集器已经换到另一个账号了，这次没有改动记录。" }), { status: 409 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(clearCollectorRecords("http://127.0.0.1:4765", "session-secret", "a1b2c3d4e5f6"))
+      .rejects.toMatchObject({ code: "account_changed", message: expect.stringContaining("另一个账号") });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:4765/v1/records?account=a1b2c3d4e5f6");
+    await expect(importCollectorRecords("http://127.0.0.1:4765", "session-secret", {
+      records: { watch_history: [], liked_videos: [], favorite_videos: [] }, chatMessages: [], chatConversations: [],
+    }, "default")).rejects.toMatchObject({ code: "account_changed" });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://127.0.0.1:4765/v1/records/import?account=default");
+    await expect(clearCollectorRecords("http://127.0.0.1:4765", "session-secret", "../x")).rejects.toMatchObject({ code: "invalid_account" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("starts and stops manual observation through local authenticated endpoints", async () => {
@@ -822,5 +846,98 @@ describe("Douyin notices stored by older collectors", () => {
       sentAt: "2026-09-26T12:41:49.792Z", type: "text", text: "对方回复或关注你之前，只能发送一条文字消息。请礼貌发言，自觉遵守{{0}}", mediaUrl: null, share: null, callDurationSeconds: null,
     }] });
     expect(snapshot?.chatMessages[0]).toMatchObject({ type: "system", text: "对方回复或关注你之前，只能发送一条文字消息。请礼貌发言，自觉遵守" });
+  });
+});
+
+describe("saved Douyin accounts", () => {
+  const baseUrl = "http://127.0.0.1:4765";
+  const idle = {
+    state: "idle", phase: null, message: "就绪", counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0 }, updatedAt: null, browserOpen: false,
+  };
+  const list = {
+    activeId: "default",
+    accounts: [
+      { id: "a1b2c3d4e5f6", nickname: "  小号  ", avatar: "http://p3.douyinpic.com/a.jpeg", uid: "2", createdAt: "2026-10-05T02:00:00.000Z" },
+      { id: "default", nickname: null, avatar: "https://p3.douyinpic.com/me.jpeg", uid: "1", createdAt: "2026-10-01T00:00:00.000Z" },
+      { id: "../browser-profile", nickname: "坏的", avatar: null, uid: null, createdAt: "2026-10-02T00:00:00.000Z" },
+      { id: "0123456789ab", nickname: "图床不对", avatar: "https://evil.example.com/x.png", uid: null, createdAt: "2026-10-03T00:00:00.000Z" },
+    ],
+  };
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+  it("lists accounts oldest first and drops ids and avatars it cannot trust", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json(list));
+    vi.stubGlobal("fetch", fetchMock);
+    const accounts = await getCollectorAccounts(baseUrl, "session-secret");
+    expect(accounts.activeId).toBe("default");
+    expect(accounts.accounts).toEqual([
+      { id: "default", nickname: null, avatar: "https://p3.douyinpic.com/me.jpeg", uid: "1", createdAt: "2026-10-01T00:00:00.000Z" },
+      { id: "0123456789ab", nickname: "图床不对", avatar: null, uid: null, createdAt: "2026-10-03T00:00:00.000Z" },
+      { id: "a1b2c3d4e5f6", nickname: "小号", avatar: null, uid: "2", createdAt: "2026-10-05T02:00:00.000Z" },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(`${baseUrl}/v1/accounts`, expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer session-secret" }) }));
+  });
+
+  it("adds, switches and removes accounts through their own endpoints", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ ...list, activeId: "a1b2c3d4e5f6", status: { ...idle, account: { id: "a1b2c3d4e5f6", nickname: null, avatar: null } } }, 201))
+      .mockResolvedValueOnce(json({ ...list, status: { ...idle, account: { id: "default", nickname: "我", avatar: "https://p3.douyinpic.com/me.jpeg" } } }))
+      .mockResolvedValueOnce(json({ activeId: "default", accounts: [list.accounts[1]] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const added = await addCollectorAccount(baseUrl, "session-secret");
+    expect(added.accounts.activeId).toBe("a1b2c3d4e5f6");
+    expect(added.status.account).toEqual({ id: "a1b2c3d4e5f6", nickname: null, avatar: null });
+    const switched = await activateCollectorAccount(baseUrl, "session-secret", "default");
+    expect(switched.status.account).toEqual({ id: "default", nickname: "我", avatar: "https://p3.douyinpic.com/me.jpeg" });
+    await expect(removeCollectorAccount(baseUrl, "session-secret", "a1b2c3d4e5f6")).resolves.toMatchObject({ activeId: "default", accounts: [{ id: "default" }] });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      [`${baseUrl}/v1/accounts`, "POST"],
+      [`${baseUrl}/v1/accounts/default/activate`, "POST"],
+      [`${baseUrl}/v1/accounts/a1b2c3d4e5f6`, "DELETE"],
+    ]);
+    expect(fetchMock.mock.calls[0]![1].body).toBe("{}");
+  });
+
+  it("refuses an account id that is not one of the collector's own before sending anything", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(activateCollectorAccount(baseUrl, "session-secret", "../default")).rejects.toMatchObject({ code: "invalid_account" });
+    await expect(removeCollectorAccount(baseUrl, "session-secret", "A1B2C3D4E5F6")).rejects.toMatchObject({ code: "invalid_account" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("passes on why the collector refused, so the user knows what to stop first", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(json({ error: "collector_busy", message: "正在读取记录，先停下再切换账号。" }, 409))
+      .mockResolvedValueOnce(json({ error: "account_active" }, 409))
+      .mockResolvedValueOnce(json({ error: "account_not_found" }, 404))
+      .mockResolvedValueOnce(json({ error: "account_switch_failed", message: "没能添加账号，请稍后再试。" }, 500)));
+    await expect(activateCollectorAccount(baseUrl, "session-secret", "a1b2c3d4e5f6"))
+      .rejects.toMatchObject({ code: "collector_busy", message: "正在读取记录，先停下再切换账号。" });
+    await expect(removeCollectorAccount(baseUrl, "session-secret", "default")).rejects.toMatchObject({ code: "account_active" });
+    await expect(removeCollectorAccount(baseUrl, "session-secret", "a1b2c3d4e5f6")).rejects.toMatchObject({ code: "account_not_found", message: "找不到这个账号，可能已经删掉了。" });
+    await expect(addCollectorAccount(baseUrl, "session-secret")).rejects.toMatchObject({ code: "account_switch_failed", message: "没能添加账号，请稍后再试。" });
+  });
+
+  it("tells apart the same Douyin account added twice by the day it was added", () => {
+    const now = new Date(2026, 9, 5);
+    const older = { id: "default", nickname: "我", avatar: null, uid: "1", createdAt: new Date(2026, 9, 1, 9).toISOString() };
+    const newer = { id: "a1b2c3d4e5f6", nickname: "我", avatar: null, uid: "1", createdAt: new Date(2026, 9, 3, 9).toISOString() };
+    const other = { id: "0123456789ab", nickname: "小号", avatar: null, uid: "2", createdAt: null };
+    expect(formatAccountAddedDay(older.createdAt, now)).toBe("10 月 1 日");
+    expect(formatAccountAddedDay(new Date(2025, 11, 31, 9).toISOString(), now)).toBe("2025 年 12 月 31 日");
+    expect(formatAccountAddedDay(null, now)).toBeNull();
+    expect(formatAccountAddedDay("not a date", now)).toBeNull();
+    const accounts = [older, newer, other];
+    expect(findTwinAccount(accounts, newer)).toBe(older);
+    expect(findTwinAccount(accounts, other)).toBeNull();
+    expect(findTwinAccount(accounts, { ...other, uid: null })).toBeNull();
+  });
+
+  it("reads a status without an account from older collectors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(idle)));
+    await expect(getCollectorStatus(baseUrl, "session-secret")).resolves.toMatchObject({ state: "idle", account: null });
   });
 });

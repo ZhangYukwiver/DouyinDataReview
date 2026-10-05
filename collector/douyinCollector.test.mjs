@@ -1,5 +1,6 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { EventEmitter } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -14,6 +15,7 @@ import {
   normalizeOwnProfileUrl,
   profileTabUrl,
   readChatConversationCatalog,
+  readLoginIdentity,
 } from "./douyinCollector.mjs";
 import { DirectHistoryError } from "./directHistory.mjs";
 import { createEmptyRecords } from "./normalizer.mjs";
@@ -694,21 +696,6 @@ describe("video download jobs", () => {
     expect(collector.videoDownloadJobs.size).toBe(64);
   });
 
-  it("rejects account switching while a download is queued or running", async () => {
-    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
-    collector.videoDownloadJobs.set("download-switch-blocked", {
-      id: "download-switch-blocked",
-      status: "running",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    await expect(collector.switchAccount()).rejects.toMatchObject({
-      name: "VideoDownloadError",
-      code: "collector_busy",
-    });
-  });
-
   it("removes an expired terminal job file asynchronously when pruning", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "douyin-collector-download-jobs-"));
     const downloadsDirectory = path.join(dataDirectory, "downloads");
@@ -795,72 +782,227 @@ describe("DouyinCollector sync cancellation", () => {
   });
 });
 
-describe("DouyinCollector account switching", () => {
-  it("cancels the active run, clears dedicated account data and local records, then starts manual observation", async () => {
-    const clearedSnapshot = emptySnapshot();
-    const store = { clear: vi.fn().mockResolvedValue(clearedSnapshot) };
-    const collector = new DouyinCollector({
-      executablePath: "chrome",
-      dataDirectory: ".local-data-test",
-      store,
-    });
-    collector.snapshot = {
-      ...emptySnapshot(),
-      records: {
-        ...createEmptyRecords(),
-        liked_videos: [{
-          id: "liked_videos:old",
-          title: "旧账号记录",
-          author: null,
-          occurredAt: null,
-          url: "https://www.douyin.com/video/old",
-        }],
-      },
-    };
-    collector.context = {};
-    collector.syncRunId = 4;
-    collector.clearDedicatedAccountData = vi.fn().mockResolvedValue(undefined);
-    collector.close = vi.fn().mockImplementation(async () => {
-      collector.context = null;
-    });
-    collector.startObservation = vi.fn().mockReturnValue(true);
+describe("login identity", () => {
+  const avatar = "https://p3-pc-sign.douyinpic.com/aweme/100x100/avatar.jpeg?x-expires=1&x-signature=a";
 
-    await expect(collector.switchAccount()).resolves.toBe(true);
+  // 在 node 里直接跑页面那段函数，页面全局用假的顶上
+  async function readWith({ store, rendered, saved }) {
+    const previous = { userInfoStore: globalThis.userInfoStore, document: globalThis.document, localStorage: globalThis.localStorage };
+    if (store) globalThis.userInfoStore = { curLoginUserInfo: store };
+    if (rendered) globalThis.document = { getElementById: (id) => id === "RENDER_DATA" ? { textContent: encodeURIComponent(JSON.stringify({ app: { user: rendered } })) } : null };
+    if (saved) globalThis.localStorage = { getItem: (key) => key === "user_info" ? JSON.stringify(saved) : null };
+    try {
+      return await readLoginIdentity({ evaluate: async (callback) => callback() });
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete globalThis[key];
+        else globalThis[key] = value;
+      }
+    }
+  }
 
-    expect(collector.syncRunId).toBe(5);
-    expect(collector.clearDedicatedAccountData).toHaveBeenCalledTimes(1);
-    expect(store.clear).toHaveBeenCalledTimes(1);
-    expect(collector.snapshot.records.liked_videos).toEqual([]);
-    expect(collector.startObservation).toHaveBeenCalledWith({ allowAccountSwitch: true });
+  it("reads the logged-in user from the page store", async () => {
+    await expect(readWith({
+      store: { uid: "123456789012345", secUid: "MS4wLjABAAAA-store", nickname: "我", avatar300Url: avatar, avatarUrl: "https://p9-pc-sign.douyinpic.com/small.jpeg" },
+    })).resolves.toEqual({ uid: "123456789012345", secUid: "MS4wLjABAAAA-store", nickname: "我", avatar });
   });
 
-  it("rejects a normal sync while account data is being cleared", async () => {
-    let releaseClear;
-    const clearGate = new Promise((resolve) => {
-      releaseClear = resolve;
-    });
-    const store = { clear: vi.fn().mockResolvedValue(emptySnapshot()) };
+  it("falls back to RENDER_DATA before the store is ready, and never takes the cached secUid as the uid", async () => {
+    await expect(readWith({
+      rendered: { isLogin: true, info: { uid: "123456789012345", sec_uid: "MS4wLjABAAAA-render", nickname: "页面里的我", avatar_thumb: { url_list: [avatar.replace("https://", "http://")] } } },
+      saved: { uid: "MS4wLjABAAAA-saved", nickname: "缓存里的我", avatarUrl: avatar },
+    })).resolves.toEqual({ uid: "123456789012345", secUid: "MS4wLjABAAAA-render", nickname: "页面里的我", avatar });
+    await expect(readWith({
+      rendered: { isLogin: false, info: {} },
+      saved: { uid: "MS4wLjABAAAA-saved", nickname: "缓存里的我", avatarUrl: avatar },
+    })).resolves.toEqual({ uid: null, secUid: "MS4wLjABAAAA-saved", nickname: "缓存里的我", avatar });
+  });
+
+  it("returns null when nobody is logged in or the page cannot be read", async () => {
+    await expect(readWith({ rendered: { isLogin: false } })).resolves.toBeNull();
+    await expect(readLoginIdentity({ evaluate: vi.fn().mockRejectedValue(new Error("Execution context was destroyed")) })).resolves.toBeNull();
+    await expect(readLoginIdentity({ evaluate: vi.fn().mockResolvedValue("me") })).resolves.toBeNull();
+    await expect(readLoginIdentity(null)).resolves.toBeNull();
+    // 不在抖音图床上的头像不要
+    await expect(readLoginIdentity({ evaluate: vi.fn().mockResolvedValue({ uid: "1", nickname: "我", avatar: "https://evil.example/a.jpeg" }) }))
+      .resolves.toEqual({ uid: "1", secUid: null, nickname: "我", avatar: null });
+  });
+
+  it("reports a changed identity once, writing the account list before the status", async () => {
+    let finishWrite;
+    const onAccountIdentity = vi.fn(() => new Promise((resolve) => { finishWrite = resolve; }));
     const collector = new DouyinCollector({
       executablePath: "chrome",
-      dataDirectory: ".local-data-test",
-      store,
+      dataDirectory: ".test",
+      store: {},
+      account: { id: "default", nickname: null, avatar: null, uid: null },
+      onAccountIdentity,
     });
+    expect(collector.getStatus().account).toEqual({ id: "default", nickname: null, avatar: null });
+    const page = { evaluate: vi.fn().mockResolvedValue({ uid: "123", secUid: "MS4w-x", nickname: "我", avatar }) };
+    // 采集流程只等核对，不等名单落盘
+    await collector.assertAccountMatches(page);
+    expect(onAccountIdentity).toHaveBeenCalledWith({ uid: "123", secUid: "MS4w-x", nickname: "我", avatar });
+    expect(collector.getStatus().account).toEqual({ id: "default", nickname: null, avatar: null });
+    finishWrite();
+    await vi.waitFor(() => expect(collector.getStatus().account).toEqual({ id: "default", nickname: "我", avatar }));
+    const revision = collector.getStatus().revision;
+    await collector.assertAccountMatches(page);
+    expect(collector.getStatus().revision).toBe(revision);
+    expect(onAccountIdentity).toHaveBeenCalledTimes(1);
+    // 读失败不抛、不改状态；回写失败也照样更新状态
+    await expect(collector.assertAccountMatches({ evaluate: vi.fn().mockRejectedValue(new Error("closed")) })).resolves.toBeUndefined();
+    onAccountIdentity.mockImplementation(() => Promise.reject(new Error("disk full")));
+    await expect(collector.assertAccountMatches({ evaluate: vi.fn().mockResolvedValue({ uid: "123", nickname: "改名了" }) })).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(collector.getStatus().account).toEqual({ id: "default", nickname: "改名了", avatar }));
+  });
+
+  describe("when the dedicated browser is logged into another Douyin account", () => {
+    const other = { uid: "222", nickname: "别人" };
+    const mine = { uid: "111", nickname: "我" };
+    const accountCollector = (store = mockStore()) => {
+      const onAccountIdentity = vi.fn(async () => undefined);
+      const collector = new DouyinCollector({
+        executablePath: "chrome",
+        dataDirectory: ".test",
+        store,
+        account: { id: "aaaaaaaaaaaa", nickname: "我", avatar: null, uid: "111" },
+        onAccountIdentity,
+      });
+      collector.snapshot = emptySnapshot();
+      return { collector, onAccountIdentity, store };
+    };
+
+    it("refuses without touching the account, and keeps headless reads off until the right account is back", async () => {
+      const { collector, onAccountIdentity } = accountCollector();
+      await expect(collector.assertAccountMatches({ evaluate: vi.fn().mockResolvedValue(other) }))
+        .rejects.toMatchObject({ code: "account_mismatch", message: expect.stringContaining("「别人」") });
+      expect(onAccountIdentity).not.toHaveBeenCalled();
+      expect(collector.accountUid).toBe("111");
+      expect(collector.getStatus().account).toMatchObject({ nickname: "我" });
+
+      collector.ensureBrowser = vi.fn();
+      expect(collector.startDirectRecords()).toBe(true);
+      await vi.waitFor(() => expect(collector.getStatus()).toMatchObject({ state: "error", code: "account_mismatch" }));
+      expect(collector.ensureBrowser).not.toHaveBeenCalled();
+
+      await collector.assertAccountMatches({ evaluate: vi.fn().mockResolvedValue(mine) });
+      expect(collector.accountMismatch).toBe(false);
+    });
+
+    it("checks the list page an incremental read opens, so a read with a saved template still learns or verifies the account", async () => {
+      const { collector } = accountCollector();
+      const listPage = (identity) => ({
+        close: vi.fn(async () => undefined),
+        goto: vi.fn(async () => undefined),
+        on: vi.fn(),
+        // 第一次是核对身份，之后翻页的那次直接让它停下，测试不用等滚动超时
+        evaluate: vi.fn().mockResolvedValueOnce(identity).mockRejectedValue(new Error("stop_here")),
+      });
+      const onPage = vi.fn();
+      await expect(collector.collectDirectList({ newPage: vi.fn(async () => listPage(other)) }, "liked_videos", onPage))
+        .rejects.toMatchObject({ code: "account_mismatch" });
+      expect(onPage).not.toHaveBeenCalled();
+      expect(collector.accountMismatch).toBe(true);
+
+      // 还没认出过的账号：增量读取打开喜欢列表时就把昵称头像记下
+      const onAccountIdentity = vi.fn(async () => undefined);
+      const fresh = new DouyinCollector({
+        executablePath: "chrome",
+        dataDirectory: ".test",
+        store: mockStore(),
+        account: { id: "default", nickname: null, avatar: null, uid: null },
+        onAccountIdentity,
+      });
+      await expect(fresh.collectDirectList({ newPage: vi.fn(async () => listPage(mine)) }, "liked_videos", onPage)).rejects.toThrow("stop_here");
+      expect(onAccountIdentity).toHaveBeenCalledWith(expect.objectContaining({ uid: "111", nickname: "我" }));
+      await vi.waitFor(() => expect(fresh.getStatus().account).toMatchObject({ id: "default", nickname: "我" }));
+    });
+
+    it("saves nothing from a full read", async () => {
+      const { collector, store } = accountCollector();
+      const page = { url: () => "https://www.douyin.com/", evaluate: vi.fn().mockResolvedValue(other) };
+      const context = fakeContext(page);
+      collector.syncRunId = 1;
+      collector.ensureBrowser = vi.fn().mockResolvedValue(context);
+      collector.currentPage = vi.fn().mockResolvedValue(page);
+      collector.visit = vi.fn().mockResolvedValue(undefined);
+      collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
+      collector.collectPhase = vi.fn();
+      await expect(collector.runSync(1)).rejects.toMatchObject({ code: "account_mismatch" });
+      expect(collector.collectPhase).not.toHaveBeenCalled();
+      expect(store.save).not.toHaveBeenCalled();
+    });
+
+    it("stops manual observation without saving once the window logs into someone else", async () => {
+      const { collector, store } = accountCollector();
+      const page = { url: () => "https://www.douyin.com/", evaluate: vi.fn().mockResolvedValue(mine) };
+      const context = fakeContext(page);
+      collector.ensureBrowser = vi.fn().mockResolvedValue(context);
+      collector.currentPage = vi.fn().mockResolvedValue(page);
+      collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
+      expect(collector.startObservation()).toBe(true);
+      await vi.waitFor(() => expect(collector.getStatus().state).toBe("observing"));
+
+      page.evaluate.mockResolvedValue(other);
+      context.emit("response", fakeResponse("/aweme/v1/web/history/read/", {
+        status_code: 0,
+        aweme_list: [{ aweme_id: "someone-else", desc: "别人看的" }],
+        has_more: 0,
+      }));
+      await vi.waitFor(() => expect(collector.getStatus()).toMatchObject({ state: "error", code: "account_mismatch" }));
+      expect(store.save).not.toHaveBeenCalled();
+      expect(collector.observationPromise).toBe(null);
+    });
+
+    it("drops chat messages that arrived before the check", async () => {
+      const { collector, store } = accountCollector();
+      const page = { url: () => "https://www.douyin.com/", evaluate: vi.fn().mockResolvedValue(other) };
+      const context = fakeContext(page);
+      collector.ensureBrowser = vi.fn().mockResolvedValue(context);
+      collector.currentPage = vi.fn().mockResolvedValue(page);
+      collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
+      collector.visit = vi.fn(async () => {
+        context.emit("response", {
+          url: () => "https://imapi.douyin.com/v1/message/get_by_conversation",
+          ok: () => true,
+          status: () => 200,
+          headers: () => ({}),
+          json: () => Promise.resolve({ msgs: [{ conv_id: "conv-x", server_id: "chat-x", type_code: 7, content_json: { text: "别人的消息" } }] }),
+        });
+        await delay(20);
+      });
+      expect(collector.startChatObservation()).toBe(true);
+      await vi.waitFor(() => expect(collector.getStatus().chat).toMatchObject({ state: "error", code: "account_mismatch" }));
+      expect(store.save).not.toHaveBeenCalled();
+      expect(collector.chatPromise).toBe(null);
+    });
+  });
+});
+
+describe("DouyinCollector shutdown", () => {
+  it("closes the browser and waits for running work and pending writes before returning", async () => {
+    let finishWrite;
+    const store = { writeQueue: new Promise((resolve) => { finishWrite = resolve; }) };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
-    collector.context = {};
-    collector.clearDedicatedAccountData = vi.fn().mockReturnValue(clearGate);
-    collector.close = vi.fn().mockImplementation(async () => {
-      collector.context = null;
+    collector.runDirectRecords = vi.fn(async (runId) => {
+      await delay(30);
+      collector.assertSyncActive(runId);
     });
-    collector.runSync = vi.fn().mockResolvedValue(undefined);
-    collector.startObservation = vi.fn().mockReturnValue(true);
-
-    const switching = collector.switchAccount();
-    expect(collector.startSync()).toBe(false);
-    releaseClear();
-
-    await expect(switching).resolves.toBe(true);
-    expect(collector.startObservation).toHaveBeenCalledTimes(1);
-    expect(store.clear).toHaveBeenCalledTimes(1);
+    const context = { close: vi.fn(async () => undefined) };
+    collector.context = context;
+    collector.contextHeadless = true;
+    expect(collector.startDirectRecords()).toBe(true);
+    let done = false;
+    const closing = collector.shutdown().then(() => { done = true; });
+    await delay(60);
+    expect(context.close).toHaveBeenCalledTimes(1);
+    expect(collector.syncPromise).toBeNull();
+    expect(done).toBe(false);
+    finishWrite();
+    await closing;
+    expect(collector.context).toBeNull();
   });
 });
 
@@ -1111,7 +1253,8 @@ describe("DouyinCollector manual observation", () => {
     collector.waitForLogin = vi.fn().mockResolvedValue(undefined);
 
     expect(collector.startChatObservation()).toBe(true);
-    await vi.waitFor(() => expect(store.save).toHaveBeenCalledTimes(1));
+    // 重载后要停一下再核对账号，核对完才落盘
+    await vi.waitFor(() => expect(store.save).toHaveBeenCalledTimes(1), { timeout: 5_000 });
     expect(collector.ensureBrowser).toHaveBeenCalledWith({ headless: true });
     expect(page.reload).toHaveBeenCalledTimes(1);
     expect(collector.getSnapshot().chatMessages).toMatchObject([{ id: "chat-reload-1", text: "重载后捕获" }]);

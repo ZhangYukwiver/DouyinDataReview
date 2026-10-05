@@ -42,6 +42,21 @@ export interface CollectorStatus {
   syncMode: "page" | "direct_records" | null;
   /** 聊天接收自己的一份状态，和记录读取、视频下载互不影响 */
   chat: CollectorChatStatus;
+  /** 正在用的抖音账号；老版本采集器没有这一项 */
+  account?: { id: string; nickname: string | null; avatar: string | null } | null;
+}
+
+export interface CollectorAccount {
+  id: string;
+  nickname: string | null;
+  avatar: string | null;
+  uid: string | null;
+  createdAt: string | null;
+}
+
+export interface CollectorAccounts {
+  activeId: string;
+  accounts: CollectorAccount[];
 }
 
 export interface CollectorChatStatus {
@@ -682,7 +697,53 @@ function parseStatus(value: unknown): CollectorStatus {
       ? value.chatConnection : null,
     syncMode: value.syncMode === "page" || value.syncMode === "direct_records" ? value.syncMode : null,
     chat: parseChatStatus(value.chat, validStates),
+    account: parseStatusAccount(value.account),
   };
+}
+
+const ACCOUNT_ID = /^(?:default|[0-9a-f]{12})$/u;
+
+function parseStatusAccount(value: unknown): CollectorStatus["account"] {
+  if (!isObject(value) || typeof value.id !== "string" || !ACCOUNT_ID.test(value.id)) return null;
+  return { id: value.id, nickname: cleanRecordString(value.nickname, 100), avatar: parseImageUrl(value.avatar) };
+}
+
+function parseAccounts(value: unknown): CollectorAccounts {
+  if (!isObject(value) || typeof value.activeId !== "string" || !Array.isArray(value.accounts)) {
+    throw new LocalCollectorError("invalid_response", "采集服务没有返回账号列表。");
+  }
+  const accounts = value.accounts.flatMap((item): CollectorAccount[] => {
+    if (!isObject(item) || typeof item.id !== "string" || !ACCOUNT_ID.test(item.id)) return [];
+    return [{
+      id: item.id,
+      nickname: cleanRecordString(item.nickname, 100),
+      avatar: parseImageUrl(item.avatar),
+      uid: cleanRecordString(item.uid, 100),
+      createdAt: parseDate(item.createdAt),
+    }];
+  });
+  // 「账号 N」按添加的先后编号，没有时间的排最后
+  accounts.sort((a, b) => (a.createdAt ?? "￿").localeCompare(b.createdAt ?? "￿"));
+  return { activeId: value.activeId, accounts };
+}
+
+/** 面板和确认框里怎么称呼这个账号：有昵称用昵称，还没登录过的按添加先后叫「账号 N」 */
+export function collectorAccountName(account: Pick<CollectorAccount, "nickname">, index: number): string {
+  return account.nickname ?? `账号 ${index + 1}`;
+}
+
+/** 账号是哪天添加的，比如「10 月 3 日」；不是今年的带上年份 */
+export function formatAccountAddedDay(createdAt: string | null, now = new Date()): string | null {
+  const time = createdAt ? new Date(createdAt) : null;
+  if (!time || Number.isNaN(time.getTime())) return null;
+  const day = `${time.getMonth() + 1} 月 ${time.getDate()} 日`;
+  return time.getFullYear() === now.getFullYear() ? day : `${time.getFullYear()} 年 ${day}`;
+}
+
+/** 列表里另一个登录着同一个抖音号的账号（按 uid 认）：同一个号添加了两次时，删之前要分得清哪个存着旧记录 */
+export function findTwinAccount(accounts: readonly CollectorAccount[], account: CollectorAccount): CollectorAccount | null {
+  if (!account.uid) return null;
+  return accounts.find((item) => item.id !== account.id && item.uid === account.uid) ?? null;
 }
 
 // 聊天接收是否在跑（连接中也算），它和记录读取、视频下载各走各的
@@ -796,14 +857,21 @@ async function requestJson(
     const payload = await response.json().catch(() => null) as unknown;
     if (!response.ok) {
       const errorCode = isObject(payload) && typeof payload.error === "string" ? payload.error : `http_${response.status}`;
+      const serverMessage = isObject(payload) && typeof payload.message === "string" && payload.message.trim() ? payload.message : null;
       const message = errorCode === "invalid_pairing_code"
         ? "配对码无效或已使用。"
         : errorCode === "pairing_code_local_only"
           ? "自动获取配对码仅支持当前电脑，请输入采集器显示的配对码。"
         : errorCode === "not_paired"
           ? "连接已过期，请重新配对。"
-          : ["download_start_failed", "import_busy", "import_failed"].includes(errorCode) && isObject(payload) && typeof payload.message === "string"
-            ? payload.message
+          : (["download_start_failed", "import_busy", "import_failed", "collector_busy"].includes(errorCode) || errorCode.startsWith("account_")) && serverMessage
+            ? serverMessage
+          : errorCode === "collector_busy"
+            ? "采集器正在忙，等它做完再试。"
+          : errorCode === "account_active"
+            ? "正在用的账号不能删，先切到别的账号再删。"
+          : errorCode === "account_not_found"
+            ? "找不到这个账号，可能已经删掉了。"
           : `采集服务请求失败（${response.status}）。`;
       throw new LocalCollectorError(errorCode, message);
     }
@@ -1041,14 +1109,49 @@ export async function stopCollectorChatObservation(baseUrl: string, token: strin
   return parseStatus(value.status);
 }
 
-export async function switchCollectorAccount(baseUrl: string, token: string): Promise<CollectorStatus> {
-  const value = await requestJson(baseUrl, "/v1/account/switch", { method: "POST" }, token);
-  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务未返回换号状态。");
-  return parseStatus(value.status);
+export async function getCollectorAccounts(baseUrl: string, token: string): Promise<CollectorAccounts> {
+  return parseAccounts(await requestJson(baseUrl, "/v1/accounts", {}, token));
 }
 
-export async function clearCollectorRecords(baseUrl: string, token: string): Promise<CollectorSnapshot> {
-  return parseSnapshot(await requestJson(baseUrl, "/v1/records", { method: "DELETE" }, token));
+export interface CollectorAccountChange {
+  accounts: CollectorAccounts;
+  status: CollectorStatus;
+}
+
+function parseAccountChange(value: unknown): CollectorAccountChange {
+  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务没有返回账号列表。");
+  return { accounts: parseAccounts(value), status: parseStatus(value.status) };
+}
+
+function checkAccountId(id: string): string {
+  if (!ACCOUNT_ID.test(id)) throw new LocalCollectorError("invalid_account", "账号编号无效。");
+  return id;
+}
+
+// 新建和切换都要先关掉旧账号的浏览器、等手上的活收尾，再开新账号的，多给点时间
+const ACCOUNT_CHANGE_TIMEOUT_MS = 60_000;
+
+export async function addCollectorAccount(baseUrl: string, token: string): Promise<CollectorAccountChange> {
+  return parseAccountChange(await requestJson(baseUrl, "/v1/accounts", { method: "POST", body: "{}" }, token, ACCOUNT_CHANGE_TIMEOUT_MS));
+}
+
+export async function activateCollectorAccount(baseUrl: string, token: string, id: string): Promise<CollectorAccountChange> {
+  const path = `/v1/accounts/${checkAccountId(id)}/activate`;
+  return parseAccountChange(await requestJson(baseUrl, path, { method: "POST" }, token, ACCOUNT_CHANGE_TIMEOUT_MS));
+}
+
+export async function removeCollectorAccount(baseUrl: string, token: string, id: string): Promise<CollectorAccounts> {
+  const path = `/v1/accounts/${checkAccountId(id)}`;
+  return parseAccounts(await requestJson(baseUrl, path, { method: "DELETE" }, token, ACCOUNT_CHANGE_TIMEOUT_MS));
+}
+
+// 改记录的请求带上界面以为的当前账号：采集器已经被别的窗口切走时会回 account_changed，不会清错、并错
+function withAccount(path: string, accountId: string | null | undefined): string {
+  return accountId ? `${path}?account=${encodeURIComponent(checkAccountId(accountId))}` : path;
+}
+
+export async function clearCollectorRecords(baseUrl: string, token: string, accountId?: string | null): Promise<CollectorSnapshot> {
+  return parseSnapshot(await requestJson(baseUrl, withAccount("/v1/records", accountId), { method: "DELETE" }, token));
 }
 
 export interface CollectorImportResult {
@@ -1061,8 +1164,9 @@ export async function importCollectorRecords(
   baseUrl: string,
   token: string,
   data: Pick<CollectorSnapshot, "records" | "chatMessages" | "chatConversations">,
+  accountId?: string | null,
 ): Promise<CollectorImportResult> {
-  const value = await requestJson(baseUrl, "/v1/records/import", { method: "POST", body: JSON.stringify(data) }, token, 60_000);
+  const value = await requestJson(baseUrl, withAccount("/v1/records/import", accountId), { method: "POST", body: JSON.stringify(data) }, token, 60_000);
   if (!isObject(value) || !isObject(value.added)) throw new LocalCollectorError("invalid_response", "采集服务没有返回并入结果。");
   const added = value.added;
   const count = (key: keyof CollectorImportResult["added"]) => parseCount(added[key]) ?? 0;

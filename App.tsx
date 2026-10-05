@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   AppState,
   Alert,
@@ -34,8 +34,14 @@ import {
 } from "./src/domain/personalRecords";
 import { countChatMessages, type ChatConversationSummary, type ChatMessage } from "./src/domain/chatRecords";
 import {
+  activateCollectorAccount,
+  addCollectorAccount,
   checkCollectorHealth,
   clearCollectorRecords,
+  collectorAccountName,
+  findTwinAccount,
+  formatAccountAddedDay,
+  getCollectorAccounts,
   getCollectorPairingCode,
   getCollectorRecords,
   getCollectorStatus,
@@ -56,8 +62,9 @@ import {
   stopCollectorSync,
   stopCollectorObservation,
   stopCollectorChatObservation,
-  switchCollectorAccount,
+  removeCollectorAccount,
   fetchCollectorVideoFile,
+  type CollectorAccounts,
   type CollectorImportResult,
   type CollectorSnapshot,
   type CollectorStatus,
@@ -85,6 +92,7 @@ import {
 import { shouldAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { createSyncRecovery } from "./src/services/syncRecovery";
+import { sparkRenewJob } from "./src/services/sparkRenew";
 import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
@@ -227,6 +235,10 @@ function AppContent() {
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
+  const [collectorAccounts, setCollectorAccounts] = useState<CollectorAccounts | null>(null);
+  // 每换一次账号加一，让「自动补读」像刚连上时那样对新账号再跑一次
+  const [accountEpoch, setAccountEpoch] = useState(0);
+  const sparkRenewing = useSyncExternalStore(sparkRenewJob.subscribe, sparkRenewJob.snapshot)?.running === true;
   const [collectorError, setCollectorError] = useState<string | null>(null);
   const [downloadStates, setDownloadStates] = useState<Record<string, RecordDownloadState>>({});
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
@@ -247,7 +259,9 @@ function AppContent() {
   const downloadInFlightRef = useRef(new Set<string>());
   const connectingRef = useRef(false);
   const syncConfirmationOpenRef = useRef(false);
-  const accountSwitchConfirmationOpenRef = useRef(false);
+  // 账号列表可能同时有几次在拉，只认最后发出的那次
+  const accountsRequestRef = useRef(0);
+  const removingAccountRef = useRef(false);
   const autoSyncInFlightRef = useRef(false);
   const autoSyncTriggerRef = useRef<(options?: { manual?: boolean; timer?: boolean }) => void>(() => undefined);
   // 托盘定时读取发起的这一轮：失败了也不弹浏览器，等用户回到窗口那次再说
@@ -481,7 +495,14 @@ function AppContent() {
 
   useEffect(() => {
     if (collectorToken && displaySnapshot?.source === "collector") autoSyncTriggerRef.current();
-  }, [autoSyncEnabled, collectorToken, displaySnapshot?.source]);
+  }, [accountEpoch, autoSyncEnabled, collectorToken, displaySnapshot?.source]);
+
+  // 连上了、换了账号，或者采集器刚认出昵称头像，都把账号列表重新拉一遍
+  const accountIdentity = collectorStatus?.account ? JSON.stringify(collectorStatus.account) : null;
+  useEffect(() => {
+    if (collectorToken && accountIdentity) void refreshCollectorAccounts(collectorUrl, collectorToken);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountIdentity, collectorToken]);
 
   useEffect(() => {
     if (!collectorToken || displaySnapshot?.source !== "collector" || !chatStartupRef.current.isReady()) return undefined;
@@ -849,6 +870,8 @@ function AppContent() {
   }
 
   async function endChatObservation(baseUrl: string, token: string): Promise<boolean> {
+    // 换号期间采集器会自己停掉旧账号的接收；这时再发停止会被 409 挡回，还会把换号的结果作废
+    if (switchingAccount) return false;
     chatStartupRef.current.cancel();
     chatAutomaticRequestRef.current.clear();
     const requestId = pollRequest.current + 1;
@@ -962,28 +985,7 @@ function AppContent() {
       setCollectorUrl(normalizedUrl);
       setCollectorToken(pairedToken);
       setPairingCode("");
-      const [status, snapshot] = await Promise.all([
-        getCollectorStatus(normalizedUrl, pairedToken),
-        getCollectorRecords(normalizedUrl, pairedToken),
-      ]);
-      if (pollRequest.current !== requestId) return;
-      setCollectorUrl(normalizedUrl);
-      setCollectorStatus(status);
-      setCollectorSnapshot(snapshot);
-      clearStoryData();
-      if (isChatReceiving(status)) {
-        chatStartupRef.current.cancel();
-        chatAutomaticRequestRef.current.clear();
-        chatCollectionInFlightRef.current = true;
-        chatPollRequestRef.current = requestId;
-      } else {
-        chatStartupRef.current.request();
-      }
-      if (TERMINAL_COLLECTOR_STATES.has(status.state) && !isChatReceiving(status)) {
-        setCollectorBusy(false);
-      } else {
-        void pollCollector(normalizedUrl, pairedToken, requestId);
-      }
+      await adoptCollector(normalizedUrl, pairedToken, requestId);
     } catch (error) {
       if (pollRequest.current !== requestId) return;
       if (!pairedToken) {
@@ -1001,6 +1003,32 @@ function AppContent() {
     } finally {
       connectingRef.current = false;
     }
+  }
+
+  // 刚连上、换了账号或者换号没成：把采集器眼下的状态和记录接过来。聊天在收就接着盯，没在收就排上自动开始
+  async function adoptCollector(baseUrl: string, token: string, requestId: number): Promise<CollectorStatus | null> {
+    const [status, snapshot] = await Promise.all([
+      getCollectorStatus(baseUrl, token),
+      getCollectorRecords(baseUrl, token),
+    ]);
+    if (pollRequest.current !== requestId) return null;
+    setCollectorStatus(status);
+    setCollectorSnapshot(snapshot);
+    clearStoryData();
+    if (isChatReceiving(status)) {
+      chatStartupRef.current.cancel();
+      chatAutomaticRequestRef.current.clear();
+      chatCollectionInFlightRef.current = true;
+      chatPollRequestRef.current = requestId;
+    } else {
+      chatStartupRef.current.request();
+    }
+    if (TERMINAL_COLLECTOR_STATES.has(status.state) && !isChatReceiving(status)) {
+      setCollectorBusy(false);
+    } else {
+      void pollCollector(baseUrl, token, requestId);
+    }
+    return status;
   }
 
   function confirmFullSync() {
@@ -1061,6 +1089,8 @@ function AppContent() {
       setCollectorToken(null);
       setCollectorStatus(null);
       setCollectorSnapshot(null);
+      accountsRequestRef.current += 1;
+      setCollectorAccounts(null);
       setStoppingSync(false);
       setCollectorBusy(false);
       setDownloadStates({});
@@ -1071,13 +1101,65 @@ function AppContent() {
     }
   }
 
-  async function performAccountSwitch() {
-    if (!collectorToken || switchingAccount || collectorBusy) return;
-    const requestId = pollRequest.current + 1;
-    pollRequest.current = requestId;
+  function applyCollectorAccounts(accounts: CollectorAccounts) {
+    accountsRequestRef.current += 1;
+    setCollectorAccounts(accounts);
+  }
+
+  async function refreshCollectorAccounts(baseUrl: string, token: string) {
+    const requestId = accountsRequestRef.current + 1;
+    accountsRequestRef.current = requestId;
+    try {
+      const accounts = await getCollectorAccounts(baseUrl, token);
+      if (accountsRequestRef.current === requestId) setCollectorAccounts(accounts);
+    } catch {
+      // 老版本采集器没有账号列表，账号按钮就只显示当前这一个
+    }
+  }
+
+  // 这些活跟着当前账号走，换号会把它们悄悄丢掉，采集器那边又看不全（取文件、续火花都在前端），所以前端先拦
+  function accountChangeBlocker(): string | null {
+    if (downloadInFlightRef.current.size > 0 || batchDownloadActive) return "正在下载视频，等下完再切换账号。";
+    if (removingAccountRef.current) return "正在删除账号，等删完再切换。";
+    if (sparkRenewJob.snapshot()?.running) return "正在续火花，等发完或先停下再切换账号。";
+    return null;
+  }
+
+  // 已经换到别的账号了：旧账号留在前端的东西（下载、续火花、报告、导入的文件、冻结的旧样本）收掉，免得串到新账号上
+  function forgetPreviousAccount() {
     downloadRequestRef.current += 1;
     downloadInFlightRef.current.clear();
+    // 每个账号都重新有一次「读不了就弹浏览器登录」的机会
+    syncRecoveryRef.current = createSyncRecovery();
+    sparkRenewJob.reset();
+    storySnapshotStaleRef.current = false;
+    setStorySrc(null);
+    // 导入的文件会盖住新账号的数据，也会让自动补读一直不跑
+    removeArchive();
+    setFrozenSnapshot(null);
+    setDownloadStates({});
+    setDownloadJobs({});
+  }
+
+  // 切换或新建账号。请求前只停掉轮询和自动任务（被拒时接回来就行），采集器答应了才清旧账号的东西
+  async function changeAccount(target: { add: true } | { id: string }) {
+    const token = collectorToken;
+    const baseUrl = collectorUrl;
+    if (!token || switchingAccount || collectorBusy || (collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus))) return;
+    const adding = "add" in target;
+    const blocker = accountChangeBlocker();
+    if (blocker) {
+      showAlert(adding ? "无法添加账号" : "无法切换账号", blocker);
+      return;
+    }
+    const previousId = collectorStatus?.account?.id ?? null;
+    const requestId = pollRequest.current + 1;
+    pollRequest.current = requestId;
+    statusPollAbortRef.current?.abort();
+    stopRequestRef.current += 1;
     autoSyncInFlightRef.current = false;
+    pendingManualSyncRef.current = false;
+    timerSyncRef.current = false;
     chatStartupRef.current.cancel();
     chatAutomaticRequestRef.current.clear();
     chatCollectionInFlightRef.current = false;
@@ -1085,42 +1167,92 @@ function AppContent() {
     resetChatControlBusy();
     setSwitchingAccount(true);
     setCollectorBusy(true);
+    setStoppingSync(false);
     setCollectorError(null);
-    setCollectorSnapshot(null);
-    setDownloadStates({});
-    setDownloadJobs({});
     try {
-      const status = await switchCollectorAccount(collectorUrl, collectorToken);
+      const change = adding
+        ? await addCollectorAccount(baseUrl, token)
+        : await activateCollectorAccount(baseUrl, token, target.id);
       if (pollRequest.current !== requestId) return;
-      setCollectorStatus(status);
-      if (!await refreshCollectorSnapshot(collectorUrl, collectorToken, requestId)) return;
-      clearStoryData();
-      chatStartupRef.current.request();
-      chatAutomaticRequestRef.current.clear();
-      setActiveView("records");
-      void pollCollector(collectorUrl, collectorToken, requestId);
+      forgetPreviousAccount();
+      setCollectorSnapshot(null);
+      applyCollectorAccounts(change.accounts);
+      if (adding) {
+        // 新账号还没登录过，直接完整读取：专用浏览器打开等用户登录，登录后接着读，读完再开始接收聊天。
+        // 先接上它的空记录，完整读取没起来时界面也是这个账号的采集器数据，自动补读和聊天照常能接上
+        const snapshot = await getCollectorRecords(baseUrl, token).catch(() => null);
+        if (pollRequest.current !== requestId) return;
+        setCollectorStatus(change.status);
+        setCollectorSnapshot(snapshot);
+        chatStartupRef.current.request();
+        void beginSync(baseUrl, token);
+        return;
+      }
+      if (await adoptCollector(baseUrl, token, requestId)) setAccountEpoch((value) => value + 1);
     } catch (error) {
       if (pollRequest.current !== requestId) return;
       const message = collectorErrorMessage(error);
-      setCollectorBusy(false);
       setCollectorError(message);
-      showAlert("无法切换账号", message);
+      showAlert(adding ? "无法添加账号" : "无法切换账号", message);
+      void recoverAfterAccountChange(baseUrl, token, requestId, previousId);
     } finally {
       setSwitchingAccount(false);
     }
   }
 
-  function confirmAccountSwitch() {
-    if (accountSwitchConfirmationOpenRef.current) return;
-    accountSwitchConfirmationOpenRef.current = true;
+  // 换号没成：采集器拒绝时那边什么都没动，接回原账号就行；请求超时的话它可能还在换，这时读记录会被 409 挡回来，
+  // 就隔一秒再接。接上以后发现账号已经变了，按换成处理
+  async function recoverAfterAccountChange(baseUrl: string, token: string, requestId: number, previousId: string | null) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      try {
+        const status = await adoptCollector(baseUrl, token, requestId);
+        if (!status) return;
+        if (status.account && status.account.id !== previousId) {
+          forgetPreviousAccount();
+          setAccountEpoch((value) => value + 1);
+        }
+        void refreshCollectorAccounts(baseUrl, token);
+        return;
+      } catch (error) {
+        if (pollRequest.current !== requestId) return;
+        if (!(error instanceof LocalCollectorError && error.code === "collector_busy")) break;
+        await delay(1_000);
+        if (pollRequest.current !== requestId) return;
+      }
+    }
+    setCollectorBusy(false);
+    void refreshCollectorAccounts(baseUrl, token);
+  }
+
+  function confirmRemoveAccount(id: string, name: string) {
+    const token = collectorToken;
+    const baseUrl = collectorUrl;
+    if (!token || switchingAccount || removingAccountRef.current) return;
+    // 同一个号添加了两次时两行长得一样，靠添加日期和先后分清哪个存着旧记录
+    const rows = collectorAccounts?.accounts ?? [];
+    const account = rows.find((item) => item.id === id) ?? null;
+    const added = formatAccountAddedDay(account?.createdAt ?? null);
+    const twin = account ? findTwinAccount(rows, account) : null;
+    const twinNote = !account || !twin ? ""
+      : rows.indexOf(account) < rows.indexOf(twin)
+        ? "另一个账号登录的也是这个抖音号，不过这是先添加的那个，之前读到的记录都在它这里。"
+        : "另一个账号登录的也是这个抖音号，这是后添加的那个。";
     confirmAlert(
-      "切换抖音账号",
-      "将清除专用浏览器的登录会话和本地采集结果，随后打开专用浏览器进入手动监听，等待你登录新账号。不会影响抖音账号中的记录。",
-      "切换",
+      "删除这个抖音账号",
+      `会删掉这台电脑上「${name}」${added ? `（${added}添加）` : ""}的登录和读到的记录，抖音上的内容不受影响。${twinNote}`,
+      "删除",
       (confirmed) => {
-        accountSwitchConfirmationOpenRef.current = false;
-        if (confirmed) void performAccountSwitch();
+        if (!confirmed) return;
+        removingAccountRef.current = true;
+        void removeCollectorAccount(baseUrl, token, id)
+          .then(applyCollectorAccounts)
+          .catch((error: unknown) => {
+            showAlert("无法删除账号", collectorErrorMessage(error));
+            void refreshCollectorAccounts(baseUrl, token);
+          })
+          .finally(() => { removingAccountRef.current = false; });
       },
+      true,
     );
   }
 
@@ -1169,16 +1301,22 @@ function AppContent() {
   }
 
   function clearCurrentRecords() {
+    // 存着好几个账号时写明清的是哪个；请求里也带上它，采集器已经被别的窗口切走就不清
+    const accountId = collectorStatus?.account?.id ?? null;
+    const rows = collectorAccounts?.accounts ?? [];
+    const index = rows.findIndex((row) => row.id === accountId);
+    const name = collectorStatus?.account?.nickname ?? (index >= 0 ? collectorAccountName(rows[index]!, index) : null);
+    const whose = rows.length > 1 && name ? `「${name}」` : "";
     confirmAlert(
       "清除本地缓存",
-      "将清除本地保存的观看、喜欢和收藏记录。抖音登录状态、Cookie 和账号中的记录不会受影响；下一次读取将重新获取全部可见记录。",
+      `将清除${whose}本地保存的观看、喜欢和收藏记录。抖音登录状态、Cookie 和账号中的记录不会受影响；下一次读取将重新获取全部可见记录。`,
       "清除缓存",
       (confirmed) => {
         if (!confirmed) return;
         autoSyncInFlightRef.current = false;
         clearStoryData();
         dropArchive();
-        void changeCollectorRecords((token) => clearCollectorRecords(collectorUrl, token), "无法清除记录");
+        void changeCollectorRecords((token) => clearCollectorRecords(collectorUrl, token, accountId), "无法清除记录");
       },
       true,
     );
@@ -1210,6 +1348,15 @@ function AppContent() {
       const message = collectorErrorMessage(error);
       setCollectorError(message);
       showAlert(failureTitle, message);
+      // 另一个窗口已经把采集器换到别的账号了：这边也换过去，别再停在旧账号上
+      if (error instanceof LocalCollectorError && error.code === "account_changed") {
+        forgetPreviousAccount();
+        setCollectorSnapshot(null);
+        void adoptCollector(collectorUrl, token, requestId)
+          .then((status) => { if (status) setAccountEpoch((value) => value + 1); })
+          .catch(() => undefined);
+        void refreshCollectorAccounts(collectorUrl, token);
+      }
       return false;
     } finally {
       if (pollRequest.current === requestId) setCollectorBusy(false);
@@ -1227,12 +1374,13 @@ function AppContent() {
       (confirmed) => {
         if (!confirmed) return;
         let added: CollectorImportResult["added"] | null = null;
+        const accountId = collectorStatus?.account?.id ?? null;
         void changeCollectorRecords(async (token) => {
           const result = await importCollectorRecords(collectorUrl, token, {
             records: data.records,
             chatMessages: data.chatMessages ?? [],
             chatConversations: data.chatConversations ?? [],
-          });
+          }, accountId);
           added = result.added;
           return result.snapshot;
         }, "无法并入本机记录").then((merged) => {
@@ -1500,7 +1648,12 @@ function AppContent() {
               await endChatObservation(collectorUrl, collectorToken);
             }
           }}
-          onSwitchAccount={confirmAccountSwitch}
+          accounts={collectorAccounts}
+          downloading={batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running")}
+          sparkRenewing={sparkRenewing}
+          onActivateAccount={(id) => void changeAccount({ id })}
+          onAddAccount={() => void changeAccount({ add: true })}
+          onRemoveAccount={confirmRemoveAccount}
           autoSyncEnabled={autoSyncEnabled}
           onToggleAutoSync={() => setAutoSyncEnabled((value) => !value)}
           appStyle={appStyle}

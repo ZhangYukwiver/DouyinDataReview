@@ -3,7 +3,7 @@ import { ExplorerBridge } from "./explorerBridge.mjs";
 
 function originalCollector() {
   const state = { state: "complete", message: "原采集已完成", browserOpen: false };
-  const collector = { context: null, syncPromise: null, observationPromise: null, accountSwitchPromise: null,
+  const collector = { context: null, syncPromise: null, observationPromise: null,
     hasActiveVideoDownload: () => false, getStatus: () => ({ ...state }), updateStatus: vi.fn((patch) => Object.assign(state, patch)),
     startSync: vi.fn(), startVideoDownload: vi.fn(), store: { save: vi.fn(), clear: vi.fn() } };
   const context = { close: vi.fn(async () => { collector.context = null; }), newPage: vi.fn(), on: vi.fn() };
@@ -107,13 +107,12 @@ describe("additive explorer adapter", () => {
     expect(collector.observationPromise).toBe(observation);
     expect(collector.store.save).not.toHaveBeenCalled();
   });
-  it.each(["launching", "sync", "download", "account-switch"])("still blocks exploration during %s", async (operation) => {
+  it.each(["launching", "sync", "download"])("still blocks exploration during %s", async (operation) => {
     const { collector, context } = originalCollector();
     collector.context = context; collector.observationPromise = Promise.resolve();
     collector.isManualObserving = () => operation !== "launching";
     if (operation === "sync") collector.syncPromise = Promise.resolve();
     if (operation === "download") collector.hasActiveVideoDownload = () => true;
-    if (operation === "account-switch") collector.accountSwitchPromise = Promise.resolve();
     const bridge = new ExplorerBridge(collector);
     bridge.explorer.read = vi.fn();
     await expect(bridge.run({ kind: "users", query: "123" })).rejects.toMatchObject({ code: "collector_busy" });

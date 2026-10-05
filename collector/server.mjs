@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright-core";
 
+import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
@@ -265,10 +266,28 @@ export async function startCollectorServer({
 
   await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   await chmod(dataDirectory, 0o700);
-  const store = new CollectorStore(dataDirectory);
-  const collector = new DouyinCollector({ executablePath, dataDirectory, signerDirectory, store });
-  const explorer = new ExplorerBridge(collector);
-  await collector.initialize();
+  const accounts = new AccountRegistry(dataDirectory);
+  await accounts.load();
+  // 每个账号一个采集器，各用自己目录里的登录态和记录；同一时间只开当前这一个
+  const openCollector = async (account) => {
+    const directory = accounts.directory(account);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const next = new DouyinCollector({
+      executablePath,
+      dataDirectory: directory,
+      signerDirectory,
+      store: new CollectorStore(directory),
+      account: { id: account.id, nickname: account.nickname, avatar: account.avatar, uid: account.uid },
+      onAccountIdentity: (identity) => accounts.updateIdentity(account.id, identity).catch(() => undefined),
+    });
+    await next.initialize();
+    return next;
+  };
+  let collector = await openCollector(accounts.active());
+  let explorer = new ExplorerBridge(collector);
+  // 账号操作（切换、新建、删除）一次只做一个；切换期间旧采集器在关、新的还没接上
+  let accountWork = null;
+  let switching = false;
   const pairing = new PairingManager();
   const bindAddress = options.lan ? "0.0.0.0" : "127.0.0.1";
   const statusWaiters = new Set();
@@ -292,6 +311,59 @@ export async function startCollectorServer({
     timer = setTimeout(finish, 8_000);
     const status = collector.getStatus();
     if (status.revision !== revision) finish(status);
+  };
+
+  const rejectWhileSwitching = (response) => {
+    if (!switching) return false;
+    sendJson(response, 409, { error: "collector_busy", message: "正在切换账号，请稍等。" });
+    return true;
+  };
+
+  // 清除、并入这类改记录的请求会带上界面以为的当前账号（?account=）：另一个窗口已经切走了就不动，免得清错、并错
+  const rejectStaleAccount = (response, url) => {
+    const expected = url.searchParams.get("account");
+    if (!expected || expected === accounts.activeId) return false;
+    sendJson(response, 409, { error: "account_changed", message: "采集器已经换到另一个账号了，这次没有改动记录。界面已换成那个账号，看一眼再操作。" });
+    return true;
+  };
+
+  const accountBusyMessage = () => {
+    if (accountWork) return "上一个账号操作还没做完，请稍等。";
+    if (collector.syncPromise) return "正在读取记录，先停下再切换账号。";
+    if (collector.observationPromise) return "正在监听手动浏览，先停下再切换账号。";
+    if (collector.hasSavingVideoDownload()) return "正在下载视频，等下载完再切换账号。";
+    if (explorer.busy) return "正在搜索或打开作品，等它结束再切换账号。";
+    return null;
+  };
+
+  const runAccountWork = (work) => {
+    const promise = work().finally(() => {
+      if (accountWork === promise) accountWork = null;
+    });
+    accountWork = promise;
+    return promise;
+  };
+
+  // 切到另一个账号：收掉当前账号的浏览器和任务，换上那个账号目录的采集器，正在长轮询的状态请求直接拿新状态返回
+  // 新采集器先建好再记成当前账号，中途失败时旧的还留着能用
+  const switchTo = async (account) => {
+    await explorer.close();
+    await collector.shutdown();
+    let next;
+    try {
+      next = await openCollector(account);
+      await accounts.setActive(account.id);
+    } catch (error) {
+      // 没换过去就留在原账号：静默停下的任务不改状态，这里复位，别还显示“正在接收”、浏览器开着
+      collector.updateStatus({ state: "idle", phase: null, progress: null, message: "没能切换账号，已留在原账号。", browserOpen: Boolean(collector.context) });
+      throw error;
+    }
+    next.statusRevision = collector.statusRevision + 1;
+    collector = next;
+    explorer = new ExplorerBridge(next);
+    const status = next.getStatus();
+    for (const finish of [...statusWaiters]) finish(status);
+    return status;
   };
 
   const server = createServer(async (request, response) => {
@@ -363,7 +435,10 @@ export async function startCollectorServer({
       return;
     }
 
-    if (request.method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/observe", "/v1/chat/observe", "/v1/downloads", "/v1/account/switch", "/v1/browser/close"].includes(url.pathname)) {
+    // 切换账号时只放行读状态和账号列表
+    if (!(request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts")) && rejectWhileSwitching(response)) return;
+
+    if (request.method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/observe", "/v1/chat/observe", "/v1/downloads", "/v1/browser/close"].includes(url.pathname)) {
       if (explorer.busy) {
         sendJson(response, 409, { error: "collector_busy", message: "请等待当前探索操作完成后继续。" });
         return;
@@ -371,6 +446,65 @@ export async function startCollectorServer({
       // Release only the adapter's tabs before invoking an original workflow.
       // Downloads decide after reading the body: playback only opens its own tab, so open comments survive a prefetch.
       if (url.pathname !== "/v1/downloads") await explorer.close();
+      if (rejectWhileSwitching(response)) return;
+    }
+
+    const accountMatch = url.pathname.match(/^\/v1\/accounts\/([^/]+)(\/activate)?$/u);
+    if (url.pathname === "/v1/accounts" || accountMatch) {
+      const account = accountMatch ? accounts.get(accountMatch[1]) : null;
+      if (request.method === "GET" && !accountMatch) {
+        sendJson(response, 200, accounts.list());
+      } else if (accountMatch && (!isAccountId(accountMatch[1]) || !account)) {
+        // 请求里的 id 先过格式校验再到列表里查，绝不拿来拼路径
+        sendJson(response, 404, { error: "account_not_found", message: "没有这个账号。" });
+      } else if (request.method === "DELETE" && accountMatch && !accountMatch[2]) {
+        if (account.id === accounts.activeId) {
+          sendJson(response, 409, { error: "account_active", message: "正在用的账号不能删除，先切换到别的账号。" });
+        } else if (accountWork) {
+          sendJson(response, 409, { error: "collector_busy", message: accountBusyMessage() });
+        } else {
+          try {
+            await runAccountWork(() => accounts.remove(account.id));
+            sendJson(response, 200, accounts.list());
+          } catch (error) {
+            sendJson(response, error?.status ?? 500, {
+              error: error?.code ?? "account_remove_failed",
+              message: error?.status ? error.message : "没删干净，请稍后再试。",
+            });
+          }
+        }
+      } else if (request.method === "POST" && (!accountMatch || accountMatch[2])) {
+        if (account && account.id === accounts.activeId) {
+          sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
+          return;
+        }
+        const busy = accountBusyMessage();
+        if (busy) {
+          sendJson(response, 409, { error: "collector_busy", message: busy });
+          return;
+        }
+        try {
+          const status = await runAccountWork(async () => {
+            switching = true;
+            let created = null;
+            try {
+              return await switchTo(account ?? (created = await accounts.create()));
+            } catch (error) {
+              // 新建的号没切过去就别留个空壳在列表里
+              if (created) await accounts.remove(created.id).catch(() => undefined);
+              throw error;
+            } finally {
+              switching = false;
+            }
+          });
+          sendJson(response, account ? 200 : 201, { ...accounts.list(), status });
+        } catch {
+          sendJson(response, 500, { error: "account_switch_failed", message: account ? "没能切换账号，请稍后再试。" : "没能添加账号，请稍后再试。" });
+        }
+      } else {
+        sendJson(response, 404, { error: "not_found" });
+      }
+      return;
     }
 
     if (request.method === "POST" && ["/v1/explore/read", "/v1/explore/interact", "/v1/explore/video", "/v1/explore/close"].includes(url.pathname)) {
@@ -379,6 +513,7 @@ export async function startCollectorServer({
       response.once("close", abort);
       try {
         const body = await readJsonBody(request);
+        if (rejectWhileSwitching(response)) return;
         const operation = url.pathname.split("/").at(-1);
         if (operation === "close") {
           if (!Array.isArray(body.sessionIds)) { sendJson(response, 400, { error: "invalid_request" }); return; }
@@ -402,6 +537,7 @@ export async function startCollectorServer({
       try {
         const body = await readJsonBody(request);
         if (body?.playback !== true) await explorer.close();
+        if (rejectWhileSwitching(response)) return;
         const job = collector.startVideoDownload(body?.url, { playback: body?.playback === true });
         sendJson(response, 202, { job });
       } catch (error) {
@@ -449,7 +585,12 @@ export async function startCollectorServer({
       const id = url.pathname.split("/")[4];
       try {
         if (request.method === "GET" && url.pathname === "/v1/live/following") sendJson(response, 200, { rooms: await collector.liveRooms.following({ refresh: url.searchParams.get("refresh") === "1" }) });
-        else if (request.method === "POST" && url.pathname === "/v1/live/rooms") sendJson(response, 200, await collector.liveRooms.open((await readJsonBody(request))?.room));
+        else if (request.method === "POST" && url.pathname === "/v1/live/rooms") {
+          // 先读完请求体再取采集器：读的时候账号可能换了，不能在旧账号的浏览器里进房
+          const room = (await readJsonBody(request))?.room;
+          if (rejectWhileSwitching(response)) return;
+          sendJson(response, 200, await collector.liveRooms.open(room));
+        }
         else if (request.method === "GET" && id) sendJson(response, 200, collector.liveRooms.read(id, Number(url.searchParams.get("after") ?? -1)));
         else if (request.method === "DELETE" && id) sendJson(response, 200, { closed: await collector.liveRooms.close(id) });
         else sendJson(response, 404, { error: "not_found" });
@@ -519,20 +660,21 @@ export async function startCollectorServer({
     } else if (request.method === "POST" && url.pathname === "/v1/chat/observe/stop") {
       const stopped = await collector.stopChatObservation();
       sendJson(response, 200, { stopped, status: collector.getStatus() });
-    } else if (request.method === "POST" && url.pathname === "/v1/account/switch") {
-      try {
-        const started = await collector.switchAccount();
-        sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });
-      } catch {
-        sendJson(response, 500, { error: "account_switch_failed" });
-      }
     } else if (request.method === "DELETE" && url.pathname === "/v1/records") {
+      if (rejectStaleAccount(response, url)) return;
       sendJson(response, 200, await collector.clearRecords());
     } else if (request.method === "POST" && url.pathname === "/v1/records/import") {
       try {
         // 和应用里导入文件的上限一致
+        const target = collector;
         const body = await readJsonBody(request, 32 * 1024 * 1024);
-        sendJson(response, 200, await collector.importRecords(body));
+        // 上传期间换了账号就不并了，免得并进另一个账号
+        if (rejectWhileSwitching(response) || rejectStaleAccount(response, url)) return;
+        if (collector !== target) {
+          sendJson(response, 409, { error: "collector_busy", message: "账号已切换，请重新并入。" });
+          return;
+        }
+        sendJson(response, 200, await target.importRecords(body));
       } catch (error) {
         const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
         sendJson(response, error?.status ?? (malformed ? 400 : 500), {
@@ -559,6 +701,8 @@ export async function startCollectorServer({
     shuttingDown = true;
     for (const finish of statusWaiters) finish();
     try {
+      // 正在切换就等它换完，关掉的才是最后接上的那个采集器
+      await accountWork?.catch(() => undefined);
       await explorer.close();
       await collector.close();
     } finally {

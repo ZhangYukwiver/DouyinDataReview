@@ -14,7 +14,6 @@ import {
   countMissingDirectHistoryViewTimes,
   collectDirectRecordPages,
   fetchDirectHistoryPage,
-  invalidateDirectHistoryTemplate,
   loadDirectHistoryTemplate,
   scrollHiddenListPage,
   validateDirectHistoryUrl,
@@ -148,15 +147,62 @@ async function readCurrentUserId(page) {
   if (!page || typeof page.evaluate !== "function") return null;
   return page.evaluate(() => {
     const storeId = globalThis.userInfoStore?.curLoginUserInfo?.uid;
-    let savedId = null;
+    // localStorage 的 user_info.uid 其实是 secUid，和消息里的发送者编号对不上；store 还没就绪时看 RENDER_DATA
+    let renderId = null;
     try {
-      savedId = JSON.parse(globalThis.localStorage?.getItem("user_info") ?? "null")?.uid ?? null;
+      const user = JSON.parse(decodeURIComponent(globalThis.document?.getElementById("RENDER_DATA")?.textContent ?? ""))?.app?.user;
+      if (user?.isLogin) renderId = user.info?.uid ?? null;
     } catch {
-      // A malformed local cache should not stop chat collection.
+      // A malformed render payload should not stop chat collection.
     }
-    const value = storeId ?? savedId;
+    const value = storeId ?? renderId;
     return value === null || value === undefined ? null : String(value);
   }).catch(() => null);
+}
+
+// 当前登录的是谁。store 要开页约 7 秒后才有，RENDER_DATA 在 domcontentloaded 就有；
+// localStorage 的 user_info 只拿来兜底 secUid、昵称和头像（它的 uid 字段存的就是 secUid）
+export async function readLoginIdentity(page) {
+  if (!page || typeof page.evaluate !== "function") return null;
+  const raw = await page.evaluate(() => {
+    const str = (value) => (typeof value === "string" && value) ? value : (typeof value === "number" && value ? String(value) : null);
+    const pickUrl = (value) => typeof value === "string" ? (value || null)
+      : Array.isArray(value?.url_list) ? (value.url_list.find((url) => typeof url === "string" && url) ?? null) : null;
+    let rendered = null;
+    try {
+      rendered = JSON.parse(decodeURIComponent(globalThis.document?.getElementById("RENDER_DATA")?.textContent ?? ""))?.app?.user ?? null;
+    } catch {
+      // 页面没有或改了格式就只看 store
+    }
+    const current = globalThis.userInfoStore?.curLoginUserInfo;
+    const source = current?.uid ? current : (rendered?.isLogin && rendered.info?.uid ? rendered.info : null);
+    let saved = null;
+    try {
+      saved = JSON.parse(globalThis.localStorage?.getItem("user_info") ?? "null");
+    } catch {
+      // 坏缓存不影响别的字段
+    }
+    const savedSecUid = typeof saved?.uid === "string" && saved.uid.startsWith("MS4w") ? saved.uid : null;
+    return {
+      uid: str(source?.uid) ?? str(source?.user_id),
+      secUid: str(source?.secUid) ?? str(source?.sec_uid) ?? savedSecUid,
+      nickname: str(source?.nickname) ?? str(source?.realName) ?? str(saved?.nickname),
+      avatar: pickUrl(source?.avatar300Url) ?? pickUrl(source?.avatarUrl)
+        ?? pickUrl(source?.avatar_300x300) ?? pickUrl(source?.avatar_larger) ?? pickUrl(source?.avatar_thumb)
+        ?? pickUrl(saved?.avatarUrl),
+    };
+  }).catch(() => null);
+  if (!raw || typeof raw !== "object") return null;
+  const text = (value, limit) => typeof value === "string" && value.trim() ? value.trim().slice(0, limit) : null;
+  const uid = /^\d{1,32}$/u.test(raw.uid ?? "") ? raw.uid : null;
+  const secUid = text(raw.secUid, 200);
+  if (!uid && !secUid) return null;
+  return {
+    uid,
+    secUid,
+    nickname: text(raw.nickname, 100),
+    avatar: normalizeChatAvatarUrl(text(raw.avatar, 2_048)?.replace(/^http:\/\//iu, "https://")) ?? null,
+  };
 }
 
 export async function readChatConversationCatalog(page) {
@@ -421,6 +467,10 @@ function mergeChatConversationSnapshots(previous = [], current = []) {
     });
   }
   return [...merged.values()];
+}
+
+function accountMismatchError(nickname) {
+  return new CollectorAdapterError("account_mismatch", `这个账号的专用浏览器里登录的是另一个抖音号${nickname ? `「${nickname}」` : ""}，这次读到的没有保存。要接着用这个账号，请在完整读取打开的浏览器里退出，再登回原来的号；要用那个号，请添加一个新账号去登录。`);
 }
 
 function safeMessage(error, fallback) {
@@ -1025,7 +1075,7 @@ async function clickLoadMoreInResolvedVisualSurface(page) {
 }
 
 export class DouyinCollector {
-  constructor({ executablePath, dataDirectory, signerDirectory, store }) {
+  constructor({ executablePath, dataDirectory, signerDirectory, store, account = null, onAccountIdentity = null }) {
     this.executablePath = executablePath;
     this.dataDirectory = dataDirectory;
     this.signerDirectory = signerDirectory;
@@ -1037,7 +1087,10 @@ export class DouyinCollector {
     this.syncStopRequested = false;
     this.observation = null;
     this.observationPromise = null;
-    this.accountSwitchPromise = null;
+    this.accountUid = account?.uid ?? null;
+    // 核对时发现浏览器里登录的是别的号；登回原来的号核对通过前，无界面读取也不做
+    this.accountMismatch = false;
+    this.onAccountIdentity = onAccountIdentity;
     this.chat = null;
     this.chatPromise = null;
     this.chatRunId = 0;
@@ -1069,6 +1122,8 @@ export class DouyinCollector {
       // 聊天接收单独一份状态，这样它和记录读取、视频下载可以同时跑，互不覆盖对方的进度
       chat: { state: "idle", connection: null, message: null, progress: null, code: null },
       chatConnection: null,
+      // 当前是哪个账号；昵称头像登录后从页面读到才有
+      account: account ? { id: account.id, nickname: account.nickname ?? null, avatar: account.avatar ?? null } : null,
     };
   }
 
@@ -1115,6 +1170,41 @@ export class DouyinCollector {
 
   getSnapshot() {
     return structuredClone(this.snapshot);
+  }
+
+  // 存盘前核对浏览器里登录的还是不是这个账号：换成别的抖音号就抛 account_mismatch，两个人的记录不能混进一份；
+  // 是同一个号就顺手更新昵称头像（不用等）。读不到身份一律放行，不能耽误采集
+  async assertAccountMatches(page) {
+    const identity = await readLoginIdentity(page).catch(() => null);
+    if (!identity) return;
+    if (this.accountUid && identity.uid && identity.uid !== this.accountUid) {
+      this.accountMismatch = true;
+      throw accountMismatchError(identity.nickname);
+    }
+    if (identity.uid) this.accountMismatch = false;
+    void this.applyAccountIdentity(identity);
+  }
+
+  // 昵称头像和已知的不一样才报；名单先落盘再推状态，前端收到新昵称会马上去拉名单
+  async applyAccountIdentity(identity) {
+    const current = this.status.account;
+    if (!current) return;
+    const nickname = identity.nickname ?? current.nickname;
+    const avatar = identity.avatar ?? current.avatar;
+    const uid = identity.uid ?? this.accountUid;
+    if (nickname === current.nickname && avatar === current.avatar && uid === this.accountUid) return;
+    this.accountUid = uid;
+    try {
+      await this.onAccountIdentity?.(identity);
+    } catch {
+      // 回写账号列表失败不影响采集
+    }
+    this.updateStatus({ account: { ...this.status.account, nickname, avatar } });
+  }
+
+  // 只算要存成文件的下载；边下边播可以直接停掉
+  hasSavingVideoDownload() {
+    return [...this.videoDownloadJobs.values()].some((job) => !job.playback && (job.status === "queued" || job.status === "running"));
   }
 
   hasActiveVideoDownload() {
@@ -1374,8 +1464,7 @@ export class DouyinCollector {
           && operation.statusRevisionAfterLaunch === this.statusRevision
           && !this.syncPromise
           && !this.observationPromise
-          && !this.chat?.active
-          && !this.accountSwitchPromise;
+          && !this.chat?.active;
         if (canRestoreStatus) this.updateStatus(operation.previousStatus);
         this.videoDownloadActive = null;
       }
@@ -1400,7 +1489,7 @@ export class DouyinCollector {
   // 把本应用导出的文件并进本机记录：只补本机没有的，两边都有的以本机为准。
   // 聊天接收会拿内存里那份整份写回，所以和清除记录一样先停下，应用随后再接上
   async importRecords(data) {
-    if (this.syncPromise || this.observationPromise || this.accountSwitchPromise) {
+    if (this.syncPromise || this.observationPromise) {
       throw Object.assign(new Error("正在读取或监听，等它结束后再并入。"), { status: 409, code: "import_busy" });
     }
     await this.stopChatObservation({ silent: true });
@@ -1442,8 +1531,8 @@ export class DouyinCollector {
     };
   }
 
-  startSync({ allowAccountSwitch = false, mode = "page" } = {}) {
-    if (this.syncPromise || this.observationPromise || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
+  startSync({ mode = "page" } = {}) {
+    if (this.syncPromise || this.observationPromise) return false;
     // 无界面读取和聊天接收、视频下载共用一个无头会话，可以同时进行；
     // 需要可见浏览器的完整读取仍要等它们结束
     if (mode !== "direct_records" && (this.chatPromise || this.hasActiveVideoDownload())) return false;
@@ -1519,9 +1608,8 @@ export class DouyinCollector {
   }
 
   // 聊天接收独立于记录读取和视频下载，只有要打开可见浏览器的任务才会挡住它
-  startChatObservation({ allowAccountSwitch = false } = {}) {
-    if (this.chatPromise || this.observationPromise || this.syncMode === "page"
-      || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
+  startChatObservation() {
+    if (this.chatPromise || this.observationPromise || this.syncMode === "page") return false;
     const runId = this.chatRunId + 1;
     this.chatRunId = runId;
     let releaseStop;
@@ -1604,9 +1692,9 @@ export class DouyinCollector {
     return true;
   }
 
-  // 有任务正占着可见浏览器窗口吗（完整读取、手动监听、切换账号）
+  // 有任务正占着可见浏览器窗口吗（完整读取、手动监听）
   visibleBrowserWorkRunning() {
-    return this.syncMode === "page" || Boolean(this.observationPromise) || Boolean(this.accountSwitchPromise);
+    return this.syncMode === "page" || Boolean(this.observationPromise);
   }
 
   // 还有别的无头任务在用这个共享会话吗
@@ -1689,9 +1777,8 @@ export class DouyinCollector {
   }
 
   // 手动监听要打开可见浏览器，所有无头任务都得先让位
-  startObservation({ allowAccountSwitch = false } = {}) {
-    if (this.syncPromise || this.observationPromise || this.chatPromise || this.hasActiveVideoDownload()
-      || (this.accountSwitchPromise && !allowAccountSwitch)) return false;
+  startObservation() {
+    if (this.syncPromise || this.observationPromise || this.chatPromise || this.hasActiveVideoDownload()) return false;
     const runId = this.syncRunId + 1;
     this.syncRunId = runId;
     let releaseStop;
@@ -1763,6 +1850,8 @@ export class DouyinCollector {
     await this.waitForLogin(context, page, runId);
     this.assertSyncActive(runId);
     page = await this.currentPage(context);
+    await this.assertAccountMatches(page);
+    this.assertSyncActive(runId);
     const browserUserAgent = typeof page.evaluate === "function"
       ? await page.evaluate(() => navigator.userAgent).catch(() => null)
       : null;
@@ -1774,9 +1863,19 @@ export class DouyinCollector {
     let persistChain = Promise.resolve();
     let capturedResponses = 0;
     let acceptingResponses = true;
+    let mismatch = null;
 
     const persistSnapshot = () => {
       persistChain = persistChain.then(async () => {
+        if (mismatch || !observation.active || runId !== this.syncRunId) return;
+        // 监听期间可能在窗口里换了号，每次存之前再核对一次，对不上就停下
+        try {
+          await this.assertAccountMatches(page);
+        } catch (error) {
+          mismatch = error;
+          observation.stop();
+          return;
+        }
         if (!observation.active || runId !== this.syncRunId) return;
         const warnings = [...new Set([
           ...this.snapshot.warnings.filter((warning) => warning !== MANUAL_OBSERVATION_WARNING),
@@ -1840,6 +1939,7 @@ export class DouyinCollector {
     context.off("response", handleResponse);
     await Promise.allSettled([...pendingResponses]);
     await persistChain;
+    if (mismatch) throw mismatch;
   }
 
   async runChatObservation(runId, observation) {
@@ -1893,6 +1993,9 @@ export class DouyinCollector {
     let reconnectTimer;
     let reconnectPromise = null;
     let lastCatalogRefresh = 0;
+    // 进聊天页核对完是不是这个账号再落盘；核对不过整轮作废，一条都不存
+    let settleIdentity;
+    const identityChecked = new Promise((resolve) => { settleIdentity = resolve; });
     const receptionMessage = () => this.status.chatConnection === "connected"
       ? "正在实时接收新消息"
       : this.status.chatConnection === "reconnecting"
@@ -1901,7 +2004,7 @@ export class DouyinCollector {
 
     const persistSnapshot = () => {
       persistChain = persistChain.then(async () => {
-        if (!observation.active || runId !== this.chatRunId) return;
+        if (!await identityChecked || !observation.active || runId !== this.chatRunId) return;
         const warnings = [...new Set([
           ...currentChatWarnings(this.snapshot.warnings).filter((warning) => warning !== CHAT_OBSERVATION_WARNING),
           CHAT_OBSERVATION_WARNING,
@@ -2079,6 +2182,14 @@ export class DouyinCollector {
       }
       const detectedUserId = await readCurrentUserId(page);
       if (detectedUserId) conversationAccumulator.setCurrentUserId(detectedUserId);
+      try {
+        await this.assertAccountMatches(page);
+      } catch (error) {
+        settleIdentity(false);
+        throw error;
+      }
+      settleIdentity(true);
+      this.assertChatActive(runId);
       report({
         state: "observing",
         progress: { current: 0, total: 0 },
@@ -2203,6 +2314,8 @@ export class DouyinCollector {
       clearInterval(reconnectTimer);
       stopSockets();
       context.off("response", handleResponse);
+      // 没核对完就收工的，等着落盘的那些也不存
+      settleIdentity(false);
       await Promise.allSettled([...pendingResponses, sweepPromise, reconnectPromise]);
       await persistChain;
     }
@@ -2563,6 +2676,8 @@ export class DouyinCollector {
     await this.waitForLogin(context, page, runId);
     this.assertSyncActive(runId);
     page = await this.currentPage(context);
+    await this.assertAccountMatches(page);
+    this.assertSyncActive(runId);
     const browserUserAgent = typeof page.evaluate === "function"
       ? await page.evaluate(() => navigator.userAgent)
       : null;
@@ -2672,6 +2787,8 @@ export class DouyinCollector {
         activeProgressByPath.delete(REQUIRED_PATHS[phase]);
       }
 
+      // 读的过程中也可能在窗口里换了号，存盘前再核对一次
+      await this.assertAccountMatches(page);
       const drained = await drainPendingResponses();
       acceptingResponses = false;
       if (!drained) phaseWarnings.push("部分抖音响应读取超时，本次结果按不完整数据处理。");
@@ -2790,8 +2907,9 @@ export class DouyinCollector {
     return { completed, coveredFromMs: oldest };
   }
 
+  // 有了模板的增量读取不开主页、观看历史走签名直连，只有这里会打开页面：借它认出当前账号的昵称头像，也核对没换号
   async collectDirectList(context, type, onPage) {
-    return collectDirectRecordPages(context, type, onPage);
+    return collectDirectRecordPages(context, type, onPage, { onPageReady: (page) => this.assertAccountMatches(page) });
   }
 
   async prepareDirectHistoryTemplate(context, page, runId) {
@@ -2811,6 +2929,7 @@ export class DouyinCollector {
     if (!await this.hasLoginSession(context, page)) {
       throw new DirectHistoryError("login_required", "增量读取需要先在采集器中完成登录。");
     }
+    await this.assertAccountMatches(page);
     const profileUrl = await this.resolveOwnProfileUrl(page, runId);
     const responsePromise = page.waitForResponse((response) => (
       Boolean(validateDirectHistoryUrl(response.url(), { allowSignature: true }))
@@ -2828,6 +2947,8 @@ export class DouyinCollector {
 
   async runDirectRecords(runId) {
     this.assertSyncActive(runId);
+    // 核对时发现浏览器里登录的是别的号：登回原来的号之前不用那份登录态读，也别关掉用户正拿来换号的窗口
+    if (this.accountMismatch) throw accountMismatchError();
     const visibleContext = this.contextHeadless === true ? null : this.context;
     if (visibleContext) {
       this.context = null;
@@ -3045,61 +3166,6 @@ export class DouyinCollector {
     }
   }
 
-  async switchAccount() {
-    if (this.accountSwitchPromise) return false;
-    if (this.hasActiveVideoDownload()) {
-      throw new VideoDownloadError("collector_busy", "采集器正在下载视频，请稍后再试。", { retryable: true });
-    }
-    const promise = (async () => {
-      this.syncRunId += 1;
-      const runningSync = this.syncPromise;
-      const runningObservation = this.observationPromise;
-      if (runningObservation) await this.stopObservation({ silent: true });
-      if (this.chatPromise) await this.stopChatObservation({ silent: true });
-      if (runningSync) await runningSync;
-      const context = this.context ?? await this.ensureBrowser();
-      await this.clearDedicatedAccountData(context);
-      await invalidateDirectHistoryTemplate(this.dataDirectory);
-      await this.close();
-
-      this.snapshot = await this.store.clear();
-      this.updateStatus({
-        state: "idle",
-        phase: null,
-        message: "旧账号会话已清除",
-        counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
-        updatedAt: this.snapshot.updatedAt,
-        browserOpen: false,
-      });
-      if (!this.startObservation({ allowAccountSwitch: true })) throw new Error("account_switch_observation_not_started");
-    })();
-    this.accountSwitchPromise = promise;
-    try {
-      await promise;
-      return true;
-    } finally {
-      if (this.accountSwitchPromise === promise) this.accountSwitchPromise = null;
-    }
-  }
-
-  async clearDedicatedAccountData(context) {
-    const page = await this.currentPage(context);
-    const session = await context.newCDPSession(page);
-    try {
-      await session.send("Network.clearBrowserCache");
-      for (const origin of [
-        "https://www.douyin.com",
-        "https://douyin.com",
-        "https://passport.douyin.com",
-      ]) {
-        await session.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
-      }
-      await context.clearCookies();
-    } finally {
-      await session.detach().catch(() => undefined);
-    }
-  }
-
   async close() {
     for (const job of this.videoDownloadJobs.values()) {
       if (job.playback) {
@@ -3123,5 +3189,22 @@ export class DouyinCollector {
     this.context = null;
     this.contextHeadless = null;
     if (context) await closeContextWithin(context);
+  }
+
+  // 换账号前把这个账号的活全收掉：关直播间和浏览器，再等挂着的读取、监听、下载和存盘落地
+  async shutdown() {
+    clearTimeout(this.liveRooms.releaseTimer);
+    await this.liveRooms.closeAll({ release: false });
+    await this.close();
+    await Promise.allSettled([
+      this.syncPromise,
+      this.observationPromise,
+      this.chatPromise,
+      this.videoDownloadQueue,
+      this.liveRooms.queue,
+      this.store?.writeQueue,
+    ]);
+    // 收尾途中刚起来的浏览器（比如正在启动的那次）也一起关掉
+    if (this.context) await this.close();
   }
 }
