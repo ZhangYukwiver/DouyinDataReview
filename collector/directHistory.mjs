@@ -8,7 +8,8 @@ import { request as playwrightRequest } from "playwright-core";
 
 export const DIRECT_HISTORY_ENDPOINT = "https://www.douyin.com/aweme/v1/web/history/read/";
 export const DIRECT_LIKED_ENDPOINT = "https://www-hj.douyin.com/aweme/v1/web/aweme/favorite/";
-export const DIRECT_FAVORITE_ENDPOINT = "https://www.douyin.com/aweme/v1/web/aweme/listcollection/";
+export const DIRECT_FAVORITE_ENDPOINT = "https://www-hj.douyin.com/aweme/v1/web/aweme/listcollection/";
+const DIRECT_SELF_ENDPOINT = "https://www.douyin.com/aweme/v1/web/user/profile/self/";
 export const DIRECT_SIGNER_COMMIT = "42987a1aa0c88c4d7f00d106ea2bc87dc01b0edf";
 export const DIRECT_SIGNER_FILES = Object.freeze({
   LICENSE: "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
@@ -146,9 +147,9 @@ const REQUIRED_TEMPLATE_PARAMETERS = new Set([
 const MAX_RESPONSE_BYTES = 24 * 1024 * 1024;
 const MAX_SIGNER_OUTPUT_BYTES = 64 * 1024;
 const SIGNER_TIMEOUT_MS = 8_000;
-const DIRECT_LIST_RESPONSE_TIMEOUT_MS = 12_000;
-const DIRECT_LIST_PAGE_OPERATION_TIMEOUT_MS = 15_000;
-const DIRECT_LIST_CLOSE_TIMEOUT_MS = 5_000;
+const DIRECT_LIST_REQUEST_TIMEOUT_MS = 30_000;
+// 一页喜欢/收藏本身就要传 1–2 MB；再隔 300ms，大约每秒一页，比抖音页面自己滚动加载（约每秒两页）还慢
+const DIRECT_LIST_PAGE_INTERVAL_MS = 300;
 const MACOS_SIGNER_PROFILE = "(version 1) (allow default) (deny network*) (deny file-write*)";
 
 export class DirectHistoryError extends Error {
@@ -167,21 +168,6 @@ function settleWithin(operation, timeoutMs, onTimeout) {
     timeout = setTimeout(() => reject(onTimeout()), timeoutMs);
   });
   return Promise.race([task, deadline]).finally(() => clearTimeout(timeout));
-}
-
-async function closeWithin(resource, timeoutMs) {
-  if (!resource || typeof resource.close !== "function") return;
-  const task = Promise.resolve().then(() => resource.close());
-  task.catch(() => undefined);
-  let timeout;
-  const deadline = new Promise((resolve) => {
-    timeout = setTimeout(resolve, timeoutMs);
-  });
-  try {
-    await Promise.race([task, deadline]);
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 export function directSignerProcessConfiguration({
@@ -526,7 +512,7 @@ function directValue(payload, key) {
   return payload?.[key] ?? payload?.data?.[key];
 }
 
-function validateDirectPayload(payload, label) {
+function checkDirectStatus(payload) {
   const statusCode = directValue(payload, "status_code");
   // 8 是抖音的「未登录」：Cookie 还在，但服务端已让这次网页登录失效
   if (statusCode === 8) {
@@ -535,6 +521,10 @@ function validateDirectPayload(payload, label) {
   if (statusCode !== undefined && statusCode !== 0) {
     throw new DirectHistoryError("douyin_error", `抖音读取返回状态码 ${String(statusCode).slice(0, 20)}。`);
   }
+}
+
+function validateDirectPayload(payload, label) {
+  checkDirectStatus(payload);
   return directItems(payload, label);
 }
 
@@ -664,139 +654,112 @@ export async function fetchDirectHistoryPage({
   }
 }
 
-function hiddenListConfig(type) {
-  if (type === "liked_videos") {
-    return {
-      endpoint: DIRECT_LIKED_ENDPOINT,
-      label: "点赞列表",
-      pageUrl: "https://www.douyin.com/user/self?showTab=like",
-    };
+const DIRECT_LIST_LABELS = {
+  liked_videos: "点赞列表",
+  favorite_videos: "收藏列表",
+};
+
+// 设备和浏览器参数用观看历史模板里抓到的那份，和页面自己发的一样；msToken 和各种签名留给页面 SDK 补
+function pageRequestUrl(endpoint, template, business) {
+  const url = new URL(endpoint);
+  for (const [name, value] of business) url.searchParams.append(name, value);
+  for (const name of template.parameterOrder) {
+    if (SAFE_TEMPLATE_PARAMETERS.has(name)) url.searchParams.append(name, template.values[name]);
   }
-  if (type === "favorite_videos") {
-    return {
-      endpoint: DIRECT_FAVORITE_ENDPOINT,
-      label: "收藏列表",
-      pageUrl: "https://www.douyin.com/user/self?from_tab_name=main&showTab=favorite_collection",
-    };
-  }
-  throw new DirectHistoryError("invalid_type", "无界面读取记录类型无效。");
+  return url.toString();
 }
 
-// onPageReady 在列表页打开后、开始翻页前调一次，采集器拿它顺手核对页面里登录的是谁
-export async function collectDirectRecordPages(context, type, onPage, { onPageReady = null } = {}) {
-  if (!context || typeof context.newPage !== "function" || typeof onPage !== "function") {
-    throw new DirectHistoryError("invalid_context", "无界面读取没有可用的专用浏览器会话。");
+// 抖音页面自己翻喜欢、收藏时发的就是这两种请求：喜欢是 GET + max_cursor，收藏是 POST 表单 + cursor
+function listRequest(type, template, cursor, secUid) {
+  if (type === "liked_videos") {
+    return {
+      url: pageRequestUrl(DIRECT_LIKED_ENDPOINT, template, [
+        ["sec_user_id", secUid], ["max_cursor", cursor], ["min_cursor", "0"], ["whale_cut_token", ""],
+        ["cut_version", "1"], ["count", "18"], ["publish_video_strategy_type", "2"],
+      ]),
+      body: null,
+    };
   }
-  const config = hiddenListConfig(type);
-  const endpointPath = new URL(config.endpoint).pathname;
-  const page = await context.newPage();
-  const seenPages = new Map();
-  let terminal = false;
-  let responseError = null;
-  let accessError = null;
-  let responseCount = 0;
-  const responseQueue = [];
-  page.on("response", (response) => {
-    let responseUrl;
-    try {
-      responseUrl = new URL(response.url());
-    } catch {
-      return;
-    }
-    if (
-      !["https://www.douyin.com", "https://www-hj.douyin.com"].includes(responseUrl.origin)
-      || responseUrl.pathname !== endpointPath
-    ) return;
-    const readTask = response.finished().catch(() => undefined).then(async () => ({
-      body: await response.body(),
-      headers: response.headers(),
-      status: response.status(),
-    }));
-    let timeout;
-    const task = Promise.race([
-      readTask,
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new DirectHistoryError(
-          "response_timeout",
-          `${config.label}响应读取超时。`,
-        )), DIRECT_LIST_RESPONSE_TIMEOUT_MS);
-      }),
-    ]).finally(() => clearTimeout(timeout));
-    responseQueue.push(task);
-    void task.catch(() => undefined);
+  return {
+    url: pageRequestUrl(DIRECT_FAVORITE_ENDPOINT, template, [["publish_video_strategy_type", "2"]]),
+    body: `count=10&cursor=${cursor}`,
+  };
+}
+
+// 在抖音页面里执行。页面的安全 SDK 会给这里发出的请求补上 a_bogus、msToken 和 x-secsdk-web-signature
+async function fetchFromPage({ url, body }) {
+  const response = await fetch(url, body === null ? { credentials: "include" } : {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body,
   });
-  const processResponse = async ({ body, headers, status }) => {
-    if (terminal || responseError) return;
-    if (status === 401 || status === 403) {
-      accessError = new DirectHistoryError("session_rejected", `${config.label}读取返回 HTTP ${status}。`);
-      return;
-    }
-    if (status === 429) throw new DirectHistoryError("rate_limited", `${config.label}读取触发限流。`);
-    if (status !== 200) throw new DirectHistoryError("http_error", `${config.label}读取返回 HTTP ${status}。`);
-    accessError = null;
-    const declaredLength = Number(headers["content-length"] ?? 0);
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
-      throw new DirectHistoryError("response_too_large", `${config.label}响应过大，已拒绝处理。`);
-    }
-    if (body.length > MAX_RESPONSE_BYTES) throw new DirectHistoryError("response_too_large", `${config.label}响应过大，已拒绝处理。`);
-    let payload;
-    try {
-      payload = JSON.parse(body.toString("utf8"));
-    } catch {
-      throw new DirectHistoryError("invalid_json", `${config.label}接口没有返回有效 JSON。`);
-    }
-    const items = validateDirectPayload(payload, config.label);
-    const rawHasMore = directValue(payload, "has_more");
-    const hasMore = rawHasMore === 1 || rawHasMore === "1" || rawHasMore === true
-      ? true
-      : rawHasMore === 0 || rawHasMore === "0" || rawHasMore === false
-        ? false
-        : null;
-    if (hasMore === null) throw new DirectHistoryError("pagination_missing", `${config.label}响应缺少分页状态。`);
-    const cursor = String(directValue(payload, type === "liked_videos" ? "max_cursor" : "cursor") ?? "");
-    if (hasMore && !/^\d{1,20}$/u.test(cursor)) {
-      throw new DirectHistoryError("pagination_missing", `${config.label}响应缺少下一页游标。`);
-    }
-    const fingerprint = items.map((item) => String(item?.aweme_id ?? "")).join(",");
-    if (hasMore && seenPages.has(cursor)) {
-      if (seenPages.get(cursor) === fingerprint) return;
-      throw new DirectHistoryError("pagination_stalled", `${config.label}分页游标重复，已停止且未保存本次结果。`);
-    }
-    if (hasMore) seenPages.set(cursor, fingerprint);
-    responseCount += 1;
-    const shouldContinue = await onPage(payload, responseCount);
-    terminal = !hasMore || shouldContinue === false;
-  };
-  const processQueuedResponses = async () => {
-    let processed = false;
-    while (!terminal && responseQueue.length > 0) {
-      await processResponse(await responseQueue.shift());
-      processed = true;
-    }
-    return processed;
-  };
+  return { status: response.status, text: await response.text() };
+}
+
+async function requestInPage(page, request, label) {
+  const result = await settleWithin(
+    () => page.evaluate(fetchFromPage, request),
+    DIRECT_LIST_REQUEST_TIMEOUT_MS,
+    () => new DirectHistoryError("page_timeout", `${label}请求超时，已停止读取。`),
+  ).catch((error) => {
+    if (error instanceof DirectHistoryError) throw error;
+    throw new DirectHistoryError("request_failed", `${label}请求失败，请检查网络后重试。`);
+  });
+  const status = Number(result?.status);
+  const text = typeof result?.text === "string" ? result.text : "";
+  if (status === 401 || status === 403) {
+    throw new DirectHistoryError("session_rejected", text.includes("Argus")
+      ? `${label}请求被抖音安全网关拦下，已停止且未保存本次结果。`
+      : `${label}读取返回 HTTP ${status}，已停止且未保存本次结果。`);
+  }
+  if (status === 429) throw new DirectHistoryError("rate_limited", `${label}读取触发限流，已停止且不会自动重试。`);
+  if (status !== 200) throw new DirectHistoryError("http_error", `${label}读取返回 HTTP ${status}。`);
+  if (text.length > MAX_RESPONSE_BYTES) throw new DirectHistoryError("response_too_large", `${label}响应过大，已拒绝处理。`);
   try {
-    await page.goto(config.pageUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
-    await onPageReady?.(page);
-    let stalled = 0;
-    while (!terminal && !responseError && stalled < 20) {
-      const previousResponseCount = responseCount;
-      await settleWithin(() => page.evaluate(scrollHiddenListPage), DIRECT_LIST_PAGE_OPERATION_TIMEOUT_MS, () => new DirectHistoryError(
-        "page_timeout",
-        `${config.label}页面操作超时，已停止读取。`,
-      ));
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      await processQueuedResponses().catch((error) => { responseError = error; });
-      stalled = responseCount > previousResponseCount ? 0 : stalled + 1;
+    return JSON.parse(text);
+  } catch {
+    throw new DirectHistoryError("invalid_json", `${label}接口没有返回有效 JSON。`);
+  }
+}
+
+// 喜欢和收藏的接口要页面安全 SDK 现场算的签名，Node 里直接请求会被 Argus 网关回 403「Signature Not Found」。
+// 所以借一个已经打开的抖音页面，按游标在页面里自己发请求：不用滚动列表去触发懒加载，也不依赖页面布局。
+// 页面由调用方打开和关闭，两份列表可以共用一个。
+export async function collectDirectRecordPages(page, type, onPage, { dataDirectory } = {}) {
+  if (!page || typeof page.evaluate !== "function" || typeof onPage !== "function") {
+    throw new DirectHistoryError("invalid_context", "无界面读取没有可用的抖音页面。");
+  }
+  const label = DIRECT_LIST_LABELS[type];
+  if (!label) throw new DirectHistoryError("invalid_type", "无界面读取记录类型无效。");
+  const template = await loadDirectHistoryTemplate(dataDirectory);
+  let secUid = null;
+  if (type === "liked_videos") {
+    // 点赞列表要带本人的 sec_uid，问 profile/self 拿：拿到的一定是这个页面里登录的号
+    const self = await requestInPage(page, { url: pageRequestUrl(DIRECT_SELF_ENDPOINT, template, []), body: null }, "账号资料");
+    checkDirectStatus(self);
+    secUid = typeof self?.user?.sec_uid === "string" && /^MS4w[\w-]{10,200}$/u.test(self.user.sec_uid) ? self.user.sec_uid : null;
+    if (!secUid) throw new DirectHistoryError("schema_changed", "账号资料缺少 sec_uid，未读取点赞列表。");
+  }
+  const cursors = new Set();
+  let cursor = "0";
+  for (let pageCount = 1; ; pageCount += 1) {
+    if (cursors.has(cursor)) {
+      throw new DirectHistoryError("pagination_stalled", `${label}分页游标重复，已停止且未保存本次结果。`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    await processQueuedResponses().catch((error) => { responseError = error; });
-    if (responseError) throw responseError;
-    if (accessError && !terminal) throw accessError;
-    if (!terminal) throw new DirectHistoryError("pagination_missing", `${config.label}未到达末页，已停止且未保存本次结果。`);
-    return responseCount;
-  } finally {
-    await closeWithin(page, DIRECT_LIST_CLOSE_TIMEOUT_MS).catch(() => undefined);
+    cursors.add(cursor);
+    const payload = await requestInPage(page, listRequest(type, template, cursor, secUid), label);
+    validateDirectPayload(payload, label);
+    const rawHasMore = directValue(payload, "has_more");
+    const hasMore = [1, "1", true].includes(rawHasMore) ? true : [0, "0", false].includes(rawHasMore) ? false : null;
+    if (hasMore === null) throw new DirectHistoryError("pagination_missing", `${label}响应缺少分页状态。`);
+    const next = String(directValue(payload, type === "liked_videos" ? "max_cursor" : "cursor") ?? "");
+    if (hasMore && !/^\d{1,20}$/u.test(next)) {
+      throw new DirectHistoryError("pagination_missing", `${label}响应缺少下一页游标。`);
+    }
+    if (await onPage(payload, pageCount) === false || !hasMore) return pageCount;
+    cursor = next;
+    await new Promise((resolve) => setTimeout(resolve, DIRECT_LIST_PAGE_INTERVAL_MS));
   }
 }
 

@@ -890,22 +890,25 @@ describe("login identity", () => {
       expect(collector.accountMismatch).toBe(false);
     });
 
-    it("checks the list page an incremental read opens, so a read with a saved template still learns or verifies the account", async () => {
-      const { collector } = accountCollector();
-      const listPage = (identity) => ({
-        close: vi.fn(async () => undefined),
-        goto: vi.fn(async () => undefined),
-        on: vi.fn(),
-        // 第一次是核对身份，之后翻页的那次直接让它停下，测试不用等滚动超时
-        evaluate: vi.fn().mockResolvedValueOnce(identity).mockRejectedValue(new Error("stop_here")),
-      });
-      const onPage = vi.fn();
-      await expect(collector.collectDirectList({ newPage: vi.fn(async () => listPage(other)) }, "liked_videos", onPage))
-        .rejects.toMatchObject({ code: "account_mismatch" });
-      expect(onPage).not.toHaveBeenCalled();
+    it("checks the page an incremental read opens before saving anything, so a read with a saved template still learns or verifies the account", async () => {
+      const runWith = (target, identity) => {
+        const page = { goto: vi.fn(async () => undefined), evaluate: vi.fn().mockResolvedValue(identity), close: vi.fn(async () => undefined) };
+        const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
+        target.syncRunId = 1;
+        target.ensureBrowser = vi.fn(async () => { target.context = context; target.contextHeadless = true; return context; });
+        // 核对过了才轮到观看历史；让它直接停下，测试不用走完整个读取
+        target.readDirectHistory = vi.fn(async () => { throw new Error("stop_here"); });
+        target.collectDirectList = vi.fn();
+        return target.runDirectRecords(1);
+      };
+      const { collector, store } = accountCollector();
+      await expect(runWith(collector, other)).rejects.toMatchObject({ code: "account_mismatch" });
+      // 观看历史还没读就拦下：别人的记录一条都没存
+      expect(collector.readDirectHistory).not.toHaveBeenCalled();
+      expect(store.save).not.toHaveBeenCalled();
       expect(collector.accountMismatch).toBe(true);
 
-      // 还没认出过的账号：增量读取打开喜欢列表时就把昵称头像记下
+      // 还没认出过的账号：增量读取一打开页面就把昵称头像记下
       const onAccountIdentity = vi.fn(async () => undefined);
       const fresh = new DouyinCollector({
         executablePath: "chrome",
@@ -914,7 +917,8 @@ describe("login identity", () => {
         account: { id: "default", nickname: null, avatar: null, uid: null },
         onAccountIdentity,
       });
-      await expect(fresh.collectDirectList({ newPage: vi.fn(async () => listPage(mine)) }, "liked_videos", onPage)).rejects.toThrow("stop_here");
+      fresh.snapshot = emptySnapshot();
+      await expect(runWith(fresh, mine)).rejects.toThrow("stop_here");
       expect(onAccountIdentity).toHaveBeenCalledWith(expect.objectContaining({ uid: "111", nickname: "我" }));
       await vi.waitFor(() => expect(fresh.getStatus().account).toMatchObject({ id: "default", nickname: "我" }));
     });
@@ -1903,7 +1907,7 @@ describe("DouyinCollector direct records", () => {
       videoId: "favorite-old",
     }];
     const store = mockStore("2026-08-13T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = initial;
@@ -1965,7 +1969,7 @@ describe("DouyinCollector direct records", () => {
 
   it("finishes the sync with the records it read when the finished list can't be read", async () => {
     const store = mockStore("2026-08-13T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
@@ -1985,7 +1989,7 @@ describe("DouyinCollector direct records", () => {
 
   it("does not save when the direct request fails", async () => {
     const store = { save: vi.fn() };
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
@@ -2003,7 +2007,7 @@ describe("DouyinCollector direct records", () => {
 
   it("keeps a completed watch phase when a later direct list fails", async () => {
     const store = mockStore("2026-08-13T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
@@ -2044,7 +2048,7 @@ describe("DouyinCollector direct records", () => {
       videoId: "history-old",
     }];
     const store = mockStore("2026-08-14T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = initial;
@@ -2093,7 +2097,7 @@ describe("DouyinCollector direct records", () => {
       videoId,
     }));
     const store = mockStore("2026-08-14T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = initial;
@@ -2171,7 +2175,7 @@ describe("DouyinCollector direct records", () => {
       videoId: "favorite-old",
     }];
     const store = mockStore("2026-08-14T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = initial;
@@ -2236,7 +2240,7 @@ describe("DouyinCollector direct records", () => {
 
   it("does not save when direct pagination repeats a cursor", async () => {
     const store = { save: vi.fn() };
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
@@ -2268,7 +2272,7 @@ describe("DouyinCollector direct records", () => {
       videoId: `existing-${index}`,
     }));
     const store = mockStore("2026-08-13T00:00:00.000Z");
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = initial;
@@ -2628,7 +2632,7 @@ describe("DouyinCollector concurrent headless work", () => {
 
   it("saves each page of a direct read instead of waiting for the whole list", async () => {
     const store = mockStore();
-    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), close: vi.fn(async () => undefined) };
+    const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
     collector.snapshot = emptySnapshot();
