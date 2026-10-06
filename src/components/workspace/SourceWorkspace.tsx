@@ -265,6 +265,9 @@ export function SetupWorkspace({
   const pageSyncing = syncing && status?.syncMode === "page";
   const directSyncing = syncing && !pageSyncing;
   const chatProgress = status?.chat.progress ?? null;
+  // 聊天历史还在整理（起浏览器、逐个会话读）时，「采集聊天记录」变成停止键；停下就是停掉这一轮接收，已读到的照样留着
+  const chatReading = chatCollecting && (status?.chat.state !== "observing" || chatProgress !== null);
+  const [stoppingChat, setStoppingChat] = useState(false);
   const source = snapshotSource === "archive" ? "备用文件导入" : connected ? "本地采集器" : "尚未连接";
   const loginNeeded = status?.state === "awaiting_login" || status?.code === "login_required";
   const digest = useMemo(() => digestRecords(records, 24), [records]);
@@ -399,7 +402,7 @@ export function SetupWorkspace({
                 <ActionButton seed="act-full" compact={narrow} disabled={!connected || (!pageSyncing && (busy || visibleBusy))} icon={pageSyncing ? Pause : RefreshCw} label={pageSyncing ? "停止读取" : "完整读取"} onPress={pageSyncing ? () => void onStopSync() : onStartFullSync} busy={pageSyncing && stoppingSync} />
                 <ActionButton seed="act-observe" compact={narrow} disabled={!connected || busy} icon={observing ? Pause : Eye} label={observing ? "停止监听" : "手动监听"} onPress={() => void (observing ? onStopObservation() : onStartObservation())} />
                 <ActionButton seed="act-chat" compact={narrow} disabled={!connected || chatBusy || switchingAccount || (!chatCollecting && (visibleBusy || busy))} icon={chatCollecting ? Pause : MessageCircle} label={chatCollecting ? "暂停接收" : "开始接收"} onPress={() => void (chatCollecting ? onStopObservation() : onStartChatObservation())} />
-                <ActionButton seed="act-history" compact={narrow} disabled={!connected || chatBusy || switchingAccount || visibleBusy || (busy && !chatCollecting)} icon={RefreshCw} label="采集聊天记录" onPress={() => void onCollectChatHistory()} busy={chatBusy} />
+                <ActionButton seed="act-history" compact={narrow} disabled={!connected || switchingAccount || (chatReading ? stoppingChat : chatBusy || visibleBusy || (busy && !chatCollecting))} icon={chatReading ? Pause : RefreshCw} label={chatReading ? "停止读取" : "采集聊天记录"} onPress={chatReading ? () => { setStoppingChat(true); void onStopObservation().finally(() => setStoppingChat(false)); } : () => void onCollectChatHistory()} busy={chatReading ? stoppingChat : chatBusy} />
               </View>
               <Text style={styles.hint}>完整读取和手动监听会先暂停接收聊天。</Text>
               <HRule seed="auto-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />

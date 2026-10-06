@@ -332,6 +332,9 @@ export function ChatWorkspace({
       : status?.chatConnection === "connected" ? "实时接收中"
         : status?.chatConnection === "reconnecting" ? "连接中断，正在重连" : "正在连接消息";
   const controlDisabled = connected && busy && !receiving;
+  // 历史还在整理时「采集聊天记录」变成停止键，和采集器页一样
+  const reading = connected && receiving && (status?.chat.state !== "observing" || Boolean(status?.chat.progress));
+  const historyDisabled = !connected || !onCollectHistory || (busy && !reading);
   // 发送借用正在接收的抖音网页，所以要等历史整理完、连接就绪。
   const sendBlock = !sendConnection || !connected ? "连接采集器后才能发消息"
     : !receiving ? "开始接收后才能发消息"
@@ -369,15 +372,15 @@ export function ChatWorkspace({
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="采集聊天记录"
-            accessibilityState={{ disabled: !connected || busy || !onCollectHistory }}
-            disabled={!connected || busy || !onCollectHistory}
-            onPress={onCollectHistory}
+            accessibilityLabel={reading ? "停止读取聊天记录" : "采集聊天记录"}
+            accessibilityState={{ disabled: historyDisabled }}
+            disabled={historyDisabled}
+            onPress={reading ? onToggleReception : onCollectHistory}
             {...ws("btn small")}
-            style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, (!connected || busy || !onCollectHistory) && { opacity: 0.45 }, webPointer]}
+            style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, historyDisabled && { opacity: 0.45 }, webPointer]}
           >
-            {busy ? <ActivityIndicator color={color.textSecondary} size="small" /> : <RefreshCw color={color.textSecondary} size={13} />}
-            <Text style={styles.receptionButtonText}>采集聊天记录</Text>
+            {reading ? <Pause color={color.textSecondary} size={13} /> : busy ? <ActivityIndicator color={color.textSecondary} size="small" /> : <RefreshCw color={color.textSecondary} size={13} />}
+            <Text style={styles.receptionButtonText}>{reading ? "停止读取" : "采集聊天记录"}</Text>
           </Pressable>
         </View>
       </View>
