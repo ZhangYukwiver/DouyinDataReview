@@ -2907,9 +2907,9 @@ export class DouyinCollector {
     return { completed, coveredFromMs: oldest };
   }
 
-  // 有了模板的增量读取不开主页、观看历史走签名直连，只有这里会打开页面：借它认出当前账号的昵称头像，也核对没换号
-  async collectDirectList(context, type, onPage) {
-    return collectDirectRecordPages(context, type, onPage, { onPageReady: (page) => this.assertAccountMatches(page) });
+  // page 是 runDirectRecords 开头打开、核对过账号的那个抖音页面，喜欢和收藏都借它发请求
+  async collectDirectList(page, type, onPage) {
+    return collectDirectRecordPages(page, type, onPage, { dataDirectory: this.dataDirectory });
   }
 
   async prepareDirectHistoryTemplate(context, page, runId) {
@@ -2965,6 +2965,11 @@ export class DouyinCollector {
       if (typeof page.waitForResponse === "function") {
         await this.prepareDirectHistoryTemplate(context, page, runId);
       }
+      // 喜欢和收藏只能在抖音页面里发请求（见 collectDirectRecordPages），先把页面打开；
+      // 顺手认出当前账号的昵称头像，存任何记录之前就核对没换号
+      await page.goto(SELF_PROFILE_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
+      this.assertSyncActive(runId);
+      await this.assertAccountMatches(page);
       const currentUserAgent = await page.evaluate(() => navigator.userAgent);
       const accumulator = new RecordAccumulator();
       const existingRecords = structuredClone(this.snapshot.records);
@@ -3060,7 +3065,7 @@ export class DouyinCollector {
       for (const [phaseIndex, [type, endpointUrl]] of phases.entries()) {
         const endpoint = matchDouyinEndpoint(endpointUrl);
         if (type !== "watch_history") {
-          pageCounts[type] = await this.collectDirectList(context, type, async (payload, pageCount) => {
+          pageCounts[type] = await this.collectDirectList(page, type, async (payload, pageCount) => {
             this.assertSyncActive(runId);
             const result = accumulator.addResponse(endpoint, payload);
             trackResult(type, result);
@@ -3159,7 +3164,8 @@ export class DouyinCollector {
         updatedAt: this.snapshot.updatedAt,
       });
     } finally {
-      await page?.close().catch(() => undefined);
+      // 抖音页面偶尔关不掉，限时 5 秒，别卡住读取收尾
+      await Promise.race([page?.close().catch(() => undefined), delay(CONTEXT_CLOSE_TIMEOUT_MS)]);
       // 读取结束后不留常驻的无头 Chrome，除非聊天或下载还在用它
       this.syncMode = null;
       await this.releaseHeadlessContextIfIdle();

@@ -418,322 +418,105 @@ describe("hidden likes and favorites", () => {
     }
   });
 
-  it("continues a hidden likes list through multiple response pages", async () => {
-    let onResponse;
-    let scrollCount = 0;
-    const response = (payload) => ({
-      body: vi.fn(async () => Buffer.from(JSON.stringify(payload))),
-      finished: vi.fn(async () => null),
-      headers: vi.fn(() => ({})),
-      status: vi.fn(() => 200),
-      url: vi.fn(() => DIRECT_LIKED_ENDPOINT),
+  // 页面里那段请求函数直接在 node 里跑，只把 fetch 换成假的
+  function listPage(respond) {
+    const requests = [];
+    vi.stubGlobal("fetch", vi.fn(async (url, init = {}) => {
+      requests.push({ url: new URL(url), init });
+      const { status = 200, payload, text } = await respond(new URL(url), init);
+      return { status, text: async () => text ?? JSON.stringify(payload) };
+    }));
+    return { page: { evaluate: vi.fn(async (callback, argument) => callback(argument)) }, requests };
+  }
+  const selfPayload = { status_code: 0, user: { uid: "123", sec_uid: "MS4wLjABAAAA-me" } };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads likes page by page inside the page, with the account's sec_uid and the next max_cursor", async () => {
+    const { page, requests } = listPage((url) => {
+      if (url.pathname.endsWith("/user/profile/self/")) return { payload: selfPayload };
+      return url.searchParams.get("max_cursor") === "0"
+        ? { payload: { status_code: 0, aweme_list: [{ aweme_id: "liked-1" }], has_more: 1, max_cursor: 1_700_000_000_001 } }
+        : { payload: { status_code: 0, aweme_list: [{ aweme_id: "liked-2" }], has_more: 0, max_cursor: 1_700_000_000_000 } };
     });
-    const page = {
-      close: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => {
-        scrollCount += 1;
-        if (scrollCount === 1) {
-          onResponse(response({
-            status_code: 0,
-            aweme_list: [{ aweme_id: "liked-2" }],
-            has_more: 1,
-            max_cursor: "1700000000001",
-          }));
-        } else if (scrollCount === 2) {
-          onResponse(response({
-            status_code: 0,
-            aweme_list: [{ aweme_id: "liked-3" }],
-            has_more: 0,
-          }));
-        }
-      }),
-      goto: vi.fn(async () => {
-        onResponse(response({
-          status_code: 0,
-          aweme_list: [{ aweme_id: "liked-1" }],
-          has_more: 1,
-          max_cursor: "1700000000000",
-        }));
-      }),
-      on: vi.fn((event, callback) => { if (event === "response") onResponse = callback; }),
-    };
     const pages = [];
 
-    await expect(collectDirectRecordPages(
-      { newPage: vi.fn(async () => page) },
-      "liked_videos",
-      async (payload) => { pages.push(payload); return true; },
-    )).resolves.toBe(3);
+    await expect(collectDirectRecordPages(page, "liked_videos", async (payload, count) => {
+      pages.push([count, payload.aweme_list[0].aweme_id]);
+    }, { dataDirectory })).resolves.toBe(2);
 
-    expect(pages.map((payload) => payload.aweme_list[0].aweme_id)).toEqual([
-      "liked-1",
-      "liked-2",
-      "liked-3",
+    expect(pages).toEqual([[1, "liked-1"], [2, "liked-2"]]);
+    expect(requests.map(({ url }) => `${url.origin}${url.pathname}`)).toEqual([
+      "https://www.douyin.com/aweme/v1/web/user/profile/self/",
+      DIRECT_LIKED_ENDPOINT,
+      DIRECT_LIKED_ENDPOINT,
     ]);
-    expect(page.evaluate).toHaveBeenCalledTimes(2);
-    expect(page.close).toHaveBeenCalledTimes(1);
+    const liked = requests[1].url.searchParams;
+    expect([liked.get("sec_user_id"), liked.get("count"), liked.get("webid"), liked.get("aid")]).toEqual(["MS4wLjABAAAA-me", "18", "1234567890123456789", "6383"]);
+    expect(requests[2].url.searchParams.get("max_cursor")).toBe("1700000000001");
+    // 签名和 msToken 交给页面 SDK，这里一个都不带
+    for (const { url, init } of requests) {
+      expect(url.searchParams.has("a_bogus") || url.searchParams.has("msToken")).toBe(false);
+      expect(init).toEqual({ credentials: "include" });
+    }
   });
 
-  it("accepts a successful list response after an initial access rejection", async () => {
-    let onResponse;
-    const response = (status, payload) => ({
-      body: vi.fn(async () => Buffer.from(JSON.stringify(payload))),
-      finished: vi.fn(async () => null),
-      headers: vi.fn(() => ({})),
-      status: vi.fn(() => status),
-      url: vi.fn(() => DIRECT_FAVORITE_ENDPOINT),
+  it("posts the favorites cursor as a form body and stops where the handler says", async () => {
+    const { page, requests } = listPage(() => ({
+      payload: { status_code: 0, aweme_list: [{ aweme_id: "favorite-1" }], has_more: 1, cursor: 1_787_844_497_003_727 },
+    }));
+    const onPage = vi.fn(async (_payload, count) => count < 2);
+
+    await expect(collectDirectRecordPages(page, "favorite_videos", onPage, { dataDirectory })).resolves.toBe(2);
+
+    expect(requests.map(({ url }) => `${url.origin}${url.pathname}`)).toEqual([DIRECT_FAVORITE_ENDPOINT, DIRECT_FAVORITE_ENDPOINT]);
+    expect(requests.map(({ init }) => init.body)).toEqual(["count=10&cursor=0", "count=10&cursor=1787844497003727"]);
+    expect(requests[0].init).toMatchObject({
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/x-www-form-urlencoded; charset=UTF-8" },
     });
-    const page = {
-      close: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => false),
-      goto: vi.fn(async () => {
-        onResponse(response(403, {}));
-        onResponse(response(200, {
-          status_code: 0,
-          aweme_list: [{ aweme_id: "favorite-1" }],
-          has_more: 0,
-        }));
-        await Promise.resolve();
-      }),
-      on: vi.fn((event, callback) => { if (event === "response") onResponse = callback; }),
-    };
-    const onPage = vi.fn(async () => true);
-
-    await expect(collectDirectRecordPages(
-      { newPage: vi.fn(async () => page) },
-      "favorite_videos",
-      onPage,
-    )).resolves.toBe(1);
-
-    expect(onPage).toHaveBeenCalledWith(expect.objectContaining({
-      aweme_list: [{ aweme_id: "favorite-1" }],
-    }), 1);
   });
 
-  it("stops hidden pagination when the page handler reaches a known record", async () => {
-    let onResponse;
-    const response = (payload, url = DIRECT_LIKED_ENDPOINT) => ({
-      body: vi.fn(async () => Buffer.from(JSON.stringify(payload))),
-      finished: vi.fn(async () => null),
-      headers: vi.fn(() => ({})),
-      status: vi.fn(() => 200),
-      url: vi.fn(() => url),
-    });
-    const page = {
-      close: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => undefined),
-      goto: vi.fn(async () => {
-        onResponse(response({
-          status_code: 0,
-          aweme_list: [{ aweme_id: "liked-1" }],
-          has_more: 1,
-          max_cursor: "1700000000000",
-        }));
-        await Promise.resolve();
-        onResponse(response(
-          { status_code: 0, aweme_list: [], has_more: 0 },
-          DIRECT_LIKED_ENDPOINT.replace("www-hj.douyin.com", "www.douyin.com"),
-        ));
-        await Promise.resolve();
-      }),
-      on: vi.fn((event, callback) => { if (event === "response") onResponse = callback; }),
-    };
-    const context = { newPage: vi.fn(async () => page) };
-    const pages = [];
+  it("stops when the next cursor points back to a page already read", async () => {
+    const { page } = listPage(() => ({ payload: { status_code: 0, aweme_list: [], has_more: 1, cursor: "0" } }));
+    const onPage = vi.fn();
 
-    await expect(collectDirectRecordPages(context, "liked_videos", async (payload) => {
-      pages.push(payload);
-      return false;
-    })).resolves.toBe(1);
-
-    expect(page.goto).toHaveBeenCalledWith("https://www.douyin.com/user/self?showTab=like", expect.any(Object));
-    expect(pages.map((payload) => payload.aweme_list.length)).toEqual([1]);
-    expect(page.close).toHaveBeenCalledTimes(1);
+    await expect(collectDirectRecordPages(page, "favorite_videos", onPage, { dataDirectory }))
+      .rejects.toMatchObject({ code: "pagination_stalled" });
+    expect(onPage).toHaveBeenCalledTimes(1);
   });
 
   it.each([
-    { delayMs: 0, timing: "prefetched", shouldContinue: false, behavior: "ignores" },
-    { delayMs: 1_000, timing: "late", shouldContinue: false, behavior: "ignores" },
-    { delayMs: 0, timing: "required", shouldContinue: true, behavior: "propagates" },
-  ])("$behavior $timing body failures at the incremental boundary", async ({ delayMs, shouldContinue }) => {
-    vi.useFakeTimers();
-    let onResponse;
-    const response = (body) => ({
-      body,
-      finished: vi.fn(async () => null),
-      headers: vi.fn(() => ({})),
-      status: vi.fn(() => 200),
-      url: vi.fn(() => DIRECT_LIKED_ENDPOINT),
-    });
-    const bodyError = new Error("response.body: Protocol error (Network.getResponseBody): No resource with given identifier found");
-    const failedResponse = response(vi.fn(async () => { throw bodyError; }));
-    const page = {
-      close: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => undefined),
-      goto: vi.fn(async () => {
-        onResponse(response(vi.fn(async () => Buffer.from(JSON.stringify({
-          status_code: 0,
-          aweme_list: [{ aweme_id: "known-liked-video" }],
-          has_more: 1,
-          max_cursor: "1700000000000",
-        })))));
-        if (delayMs === 0) onResponse(failedResponse);
-        else setTimeout(() => onResponse(failedResponse), delayMs);
-      }),
-      on: vi.fn((event, callback) => { if (event === "response") onResponse = callback; }),
-    };
-    const onPage = vi.fn(async () => shouldContinue);
-
-    try {
-      const outcome = collectDirectRecordPages(
-        { newPage: vi.fn(async () => page) },
-        "liked_videos",
-        onPage,
-      ).then((value) => ({ value }), (error) => ({ error }));
-
-      await vi.runAllTimersAsync();
-
-      expect(onPage).toHaveBeenCalledTimes(1);
-      expect(page.close).toHaveBeenCalledTimes(1);
-      await expect(outcome).resolves.toEqual(shouldContinue ? { error: bodyError } : { value: 1 });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("stops when a moving likes page does not advance pagination", async () => {
-    vi.useFakeTimers();
-    const page = {
-      close: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => true),
-      goto: vi.fn(async () => undefined),
-      on: vi.fn(),
-    };
-
-    try {
-      const collection = collectDirectRecordPages(
-        { newPage: vi.fn(async () => page) },
-        "liked_videos",
-        vi.fn(),
-      );
-      const rejection = expect(collection).rejects.toMatchObject({ code: "pagination_missing" });
-
-      await vi.runAllTimersAsync();
-      await rejection;
-
-      expect(page.evaluate).toHaveBeenCalledTimes(20);
-      expect(page.close).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("times out when a likes response never finishes", async () => {
-    vi.useFakeTimers();
-    let onResponse;
-    const page = {
-      close: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => undefined),
-      goto: vi.fn(async () => {
-        onResponse({
-          body: vi.fn(async () => Buffer.from("")),
-          finished: vi.fn(async () => new Promise(() => undefined)),
-          headers: vi.fn(() => ({})),
-          status: vi.fn(() => 200),
-          url: vi.fn(() => DIRECT_LIKED_ENDPOINT),
-        });
-      }),
-      on: vi.fn((event, callback) => { if (event === "response") onResponse = callback; }),
-    };
-
-    try {
-      const collection = collectDirectRecordPages(
-        { newPage: vi.fn(async () => page) },
-        "liked_videos",
-        vi.fn(),
-      );
-      const rejection = expect(collection).rejects.toMatchObject({ code: "response_timeout" });
-
-      await vi.runAllTimersAsync();
-      await rejection;
-
-      expect(page.close).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("times out when the list page stops answering script evaluations", async () => {
-    vi.useFakeTimers();
-    const page = {
-      close: vi.fn(() => new Promise(() => undefined)),
-      evaluate: vi.fn(() => new Promise(() => undefined)),
-      goto: vi.fn(async () => undefined),
-      on: vi.fn(),
-    };
-
-    try {
-      const collection = collectDirectRecordPages(
-        { newPage: vi.fn(async () => page) },
-        "liked_videos",
-        vi.fn(),
-      );
-      const rejection = expect(collection).rejects.toMatchObject({ code: "page_timeout" });
-
-      await vi.runAllTimersAsync();
-      await rejection;
-
-      expect(page.evaluate).toHaveBeenCalledTimes(1);
-      expect(page.close).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("uses the favorites collection route without requiring a visible browser", async () => {
-    let onResponse;
-    const page = {
-      close: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => undefined),
-      goto: vi.fn(async () => {
-        onResponse({
-          body: vi.fn(async () => Buffer.from('{"status_code":0,"aweme_list":[],"has_more":0}')),
-          finished: vi.fn(async () => null),
-          headers: vi.fn(() => ({})),
-          status: vi.fn(() => 200),
-          url: vi.fn(() => DIRECT_FAVORITE_ENDPOINT),
-        });
-        await Promise.resolve();
-      }),
-      on: vi.fn((event, callback) => { if (event === "response") onResponse = callback; }),
-    };
-
-    await collectDirectRecordPages({ newPage: vi.fn(async () => page) }, "favorite_videos", vi.fn());
-
-    expect(page.goto.mock.calls[0][0]).toContain("showTab=favorite_collection");
-    expect(page.close).toHaveBeenCalledTimes(1);
-  });
-
-  it("checks the opened list page before reading it and stops when the check fails", async () => {
-    const page = {
-      close: vi.fn(async () => undefined),
-      evaluate: vi.fn(async () => undefined),
-      goto: vi.fn(async () => undefined),
-      on: vi.fn(),
-    };
+    ["the security gateway blocks the request", "favorite_videos", () => ({ status: 403, text: "Blocked by ArgusSecurityPlugin Signature Not Found" }), { code: "session_rejected", message: expect.stringContaining("安全网关") }],
+    ["the login has expired", "favorite_videos", () => ({ payload: { status_code: 8 } }), { code: "login_required" }],
+    ["Douyin rate-limits the read", "favorite_videos", () => ({ status: 429, text: "" }), { code: "rate_limited" }],
+    ["a page says nothing about more pages", "favorite_videos", () => ({ payload: { status_code: 0, aweme_list: [] } }), { code: "pagination_missing" }],
+    ["the account profile lacks a sec_uid", "liked_videos", () => ({ payload: { status_code: 0, user: { uid: "123" } } }), { code: "schema_changed" }],
+    ["the network request fails", "liked_videos", () => { throw new TypeError("Failed to fetch"); }, { code: "request_failed" }],
+  ])("stops without reading on when %s", async (_case, type, respond, expected) => {
+    const { page } = listPage(respond);
     const onPage = vi.fn();
-    const onPageReady = vi.fn(async (opened) => {
-      expect(opened).toBe(page);
-      expect(page.goto).toHaveBeenCalledTimes(1);
-      throw new Error("account_mismatch");
-    });
 
-    await expect(collectDirectRecordPages({ newPage: vi.fn(async () => page) }, "liked_videos", onPage, { onPageReady }))
-      .rejects.toThrow("account_mismatch");
-
-    expect(onPageReady).toHaveBeenCalledTimes(1);
-    expect(page.evaluate).not.toHaveBeenCalled();
+    await expect(collectDirectRecordPages(page, type, onPage, { dataDirectory })).rejects.toMatchObject(expected);
     expect(onPage).not.toHaveBeenCalled();
-    expect(page.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out when the page stops answering", async () => {
+    vi.useFakeTimers();
+    const page = { evaluate: vi.fn(() => new Promise(() => undefined)) };
+
+    try {
+      const collection = collectDirectRecordPages(page, "favorite_videos", vi.fn(), { dataDirectory });
+      const rejection = expect(collection).rejects.toMatchObject({ code: "page_timeout" });
+      // 先读完模板文件、发出请求，超时的计时器才挂上
+      await vi.waitFor(() => expect(page.evaluate).toHaveBeenCalled());
+      await vi.runAllTimersAsync();
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
