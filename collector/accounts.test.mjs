@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
 
@@ -49,6 +49,21 @@ describe("AccountRegistry", () => {
     await registry.setActive(second.id);
     expect((await readRegistry(root)).activeId).toBe(second.id);
     await expect(registry.setActive("0123456789ab")).rejects.toMatchObject({ code: "account_not_found", status: 404 });
+  });
+
+  it("lists new accounts after the default one even when the clock is behind the folder time", async () => {
+    const root = await makeRoot();
+    const registry = new AccountRegistry(root);
+    await registry.load();
+    // 模拟 Windows 上程序时钟比文件系统时间慢
+    vi.useFakeTimers({ now: 0, toFake: ["Date"] });
+    try {
+      const first = await registry.create();
+      const second = await registry.create();
+      expect(registry.list().accounts.map((account) => account.id)).toEqual(["default", first.id, second.id]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("removes only that account's data and never the active one", async () => {
