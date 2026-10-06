@@ -17,6 +17,7 @@ import {
 import {
   ArrowUpRight,
   Bookmark,
+  ChartColumn,
   Check,
   Download,
   Eye,
@@ -68,10 +69,11 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator";
 
 export interface ContentWorkspaceProps {
   explore?: React.ReactNode;
+  creator?: React.ReactNode;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
   chatMessages?: ChatMessage[];
@@ -112,6 +114,7 @@ type IconComponent = React.ComponentType<{
 
 const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent; accent: string }> = [
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
+  { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
@@ -121,6 +124,9 @@ const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent
   { id: "highlights", label: "变化线索", icon: Star, accent: color.cyan },
 ];
 
+
+// 探索和创作者中心是工具页：不显示条数、隐私和重新读取
+const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -137,6 +143,7 @@ function Text({ style, ...rest }: TextProps) {
 
 export function ContentWorkspace({
   explore,
+  creator,
   activeView,
   records,
   chatMessages = [],
@@ -198,6 +205,7 @@ export function ContentWorkspace({
   ], [records.watch_history]);
   const counts: Record<WorkspaceViewKey, number> = {
     explore: 0,
+    creator: 0,
     watch_history: watchedVideos.length,
     live: watchedLives.length,
     liked_videos: records.liked_videos.length,
@@ -301,7 +309,7 @@ export function ContentWorkspace({
             <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : trace ? "CONTENT STREAMS" : "CONTENT ARCHIVE"}</Text>
             <View style={styles.topbarTitleRow}>
               <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{currentNav.label}</Text>
-              {activeView !== "explore" ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
+              {!toolView(activeView) ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
             </View>
           </View>
           <View style={styles.topbarActions}>
@@ -316,7 +324,7 @@ export function ContentWorkspace({
                 <Sparkles color={color.accent} size={19} />
               </Pressable>
             ) : null}
-            {activeView !== "explore" ? <Pressable
+            {!toolView(activeView) ? <Pressable
               accessibilityLabel={privacy ? "关闭隐私模式" : "开启隐私模式"}
               accessibilityRole="switch"
               accessibilityState={{ checked: privacy }}
@@ -326,7 +334,7 @@ export function ContentWorkspace({
             >
               {privacy ? <EyeOff color={color.cyan} size={19} /> : <Eye color={color.textSecondary} size={19} />}
             </Pressable> : null}
-            {activeView !== "explore" ? <Pressable
+            {!toolView(activeView) ? <Pressable
               accessibilityLabel="重新增量读取记录"
               accessibilityRole="button"
               disabled={busy}
@@ -363,7 +371,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "explore" ? explore : activeView === "chat" ? (
+        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
@@ -438,7 +446,7 @@ export function ContentWorkspace({
             return (
               <Pressable
                 key={item.id}
-                accessibilityLabel={item.id === "explore" ? item.label : `${item.label}，${counts[item.id]} 条`}
+                accessibilityLabel={toolView(item.id) ? item.label : `${item.label}，${counts[item.id]} 条`}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
                 onPress={() => changeView(item.id)}
@@ -516,7 +524,7 @@ function NavButton({
     <Pressable
       {...fx({ hover: "tint", ws: selected ? "w-nav on" : "w-nav" })}
       testID={`workspace-nav-${item.id}`}
-      accessibilityLabel={item.id === "explore" ? item.label : `${item.label}，${count} 条`}
+      accessibilityLabel={toolView(item.id) ? item.label : `${item.label}，${count} 条`}
       accessibilityRole="tab"
       accessibilityState={{ selected }}
       onLayout={onLayoutTop ? (event) => onLayoutTop(event.nativeEvent.layout.y) : undefined}
@@ -533,7 +541,7 @@ function NavButton({
       </View>
       <View style={[styles.navMeta, collapseCopy, compact && styles.sidebarCopyHidden]}>
         <Text {...ws("w-navlabel")} numberOfLines={1} style={[styles.navLabel, selected && styles.navLabelSelected]}>{item.label}</Text>
-        {item.id !== "explore" ? <Text {...ws("mono w-navcount")} style={[styles.navCount, selected && { color: item.accent }]}>{formatCompactNumber(count)}</Text> : null}
+        {!toolView(item.id) ? <Text {...ws("mono w-navcount")} style={[styles.navCount, selected && { color: item.accent }]}>{formatCompactNumber(count)}</Text> : null}
       </View>
       {selected && Platform.OS !== "web" ? <View style={[styles.navIndicator, { backgroundColor: item.accent }]} /> : null}
     </Pressable>

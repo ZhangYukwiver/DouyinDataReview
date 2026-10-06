@@ -53,6 +53,7 @@ import {
 import { observeChatSockets } from "./chatRealtime.mjs";
 import { ChatSendError, sendChatText, validateChatSend } from "./chatSender.mjs";
 import { loadChatMessages, readChatStreaks } from "./chatViewer.mjs";
+import { CreatorCenter } from "./creatorCenter.mjs";
 import { LiveRooms } from "./liveRoom.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
@@ -1106,6 +1107,7 @@ export class DouyinCollector {
     this.videoDownloadControllers = new Set();
     this.videoDownloadActive = null;
     this.liveRooms = new LiveRooms(this);
+    this.creatorCenter = new CreatorCenter(this);
     this.statusRevision = 0;
     this.statusListeners = new Set();
     this.status = {
@@ -1450,7 +1452,7 @@ export class DouyinCollector {
       if (job.released) this.retireVideoDownloadJob(job);
       if (ownsContext && context) {
         // 聊天接收或无界面读取可能中途加入了同一个会话，别把它们一起关掉
-        const shared = this.context === context && (this.chat?.active || this.syncMode === "direct_records" || this.liveRooms.size > 0);
+        const shared = this.context === context && (this.chat?.active || this.syncMode === "direct_records" || this.liveRooms.size > 0 || this.creatorCenter.active);
         if (!shared) {
           if (this.context === context) {
             this.context = null;
@@ -1699,7 +1701,7 @@ export class DouyinCollector {
 
   // 还有别的无头任务在用这个共享会话吗
   headlessWorkRunning() {
-    return this.syncMode === "direct_records" || this.hasActiveVideoDownload() || this.liveRooms.size > 0;
+    return this.syncMode === "direct_records" || this.hasActiveVideoDownload() || this.liveRooms.size > 0 || this.creatorCenter.active;
   }
 
   async releaseHeadlessContextIfIdle() {
@@ -3201,6 +3203,7 @@ export class DouyinCollector {
   async shutdown() {
     clearTimeout(this.liveRooms.releaseTimer);
     await this.liveRooms.closeAll({ release: false });
+    clearTimeout(this.creatorCenter.idleTimer);
     await this.close();
     await Promise.allSettled([
       this.syncPromise,
