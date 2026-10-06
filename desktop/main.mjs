@@ -19,6 +19,9 @@ const BACKGROUND_SYNC_MS = 3 * 60 * 60 * 1000;
 // Windows 的开机启动项靠这个参数认出自己，读写登录项设置时也要带同一组参数
 const HIDDEN_ARG = "--hidden";
 const LOGIN_ITEM = { args: [HIDDEN_ARG] };
+// 页面的设置（风格、自动补读等）存在 localStorage 里，而 localStorage 按 origin（含端口）分开存：
+// 端口每次随机的话，重启后就读不到上次的设置。所以页面服务优先用固定端口，绑不上（被占用、被系统保留）才退回随机端口。
+const WEB_PORT = 47651;
 
 let mainWindow = null;
 let desktopRuntime = null;
@@ -232,7 +235,15 @@ async function startDesktopRuntime() {
     signerDirectory: app.isPackaged ? path.join(process.resourcesPath, "direct-signer") : undefined,
   });
   try {
-    const web = await startStaticServer({ rootDirectory: path.join(projectDirectory, "dist") });
+    const rootDirectory = path.join(projectDirectory, "dist");
+    const web = await startStaticServer({ rootDirectory, port: WEB_PORT })
+      .catch((error) => {
+        // Windows 上端口落在 Hyper-V / WinNAT 保留段或被独占时报的是 EACCES，不只 EADDRINUSE；
+        // 只认 listen 失败，dist 缺文件（ENOENT）这类错误照常抛出
+        if (error?.syscall !== "listen") throw error;
+        console.warn(`页面服务固定端口 ${WEB_PORT} 不可用（${error.code}），这次改用随机端口，设置不会跨重启保留`);
+        return startStaticServer({ rootDirectory });
+      });
     return { collector, web };
   } catch (error) {
     await collector.close();
