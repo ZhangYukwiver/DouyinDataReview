@@ -8,7 +8,7 @@ import {
 } from "../../domain/creatorCenter";
 import { readCreator, type CreatorQuery } from "../../services/creatorCenter";
 import type { ExploreConnection } from "../../services/explorer";
-import { Bars, BarList, Donut, LineChart, Radar } from "./CreatorCharts";
+import { Bars, BarList, chartPalette, Donut, LineChart, Radar } from "./CreatorCharts";
 import { clearCreatorCache, Empty, ErrorLine, kit, Loading, MetricTile, Panel, Segmented, SmallButton, Tabs, useCreator, type Raw } from "./CreatorKit";
 import { CreatorWorkDetail } from "./CreatorWorkDetail";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -41,7 +41,7 @@ export function CreatorWorkspace({ connection, collectorBusy, onOpenSettings, on
       <Text style={kit.body}>创作者中心的数据用的是采集器里登录的账号，只读不写。</Text><SmallButton label="前往连接" onPress={onOpenSettings} /></View>
   </View></View>;
 
-  return <ScrollView ref={scrollRef} style={styles.root} contentContainerStyle={[styles.content, narrow && styles.contentNarrow]}>
+  return <ScrollView ref={scrollRef} testID="creator-workspace" style={styles.root} contentContainerStyle={[styles.content, narrow && styles.contentNarrow]}>
     {collectorBusy ? <Text style={kit.muted}>采集器正在用浏览器读取记录，读完就能看创作者数据。</Text> : null}
     {account.error ? <ErrorLine text={account.error} onRetry={refresh} /> : null}
     {info ? <View {...ws("e-box")} style={styles.profile}>
@@ -118,7 +118,7 @@ function Overview({ connection, onOpenWork, onShowWorks }: { connection: Explore
           return <MetricTile key={item.key} label={block.label} value={block.value} note={block.rankText} tag={selected === item.key ? block.tag : null} selected={selected === item.key} onPress={() => setSelected(item.key)} />;
         })}</View>
         <Radar axes={axisScale} />
-        <View style={kit.row}><View style={[styles.dot, { backgroundColor: color.accent }]} /><Text style={kit.muted}>我的指标</Text><View style={[styles.dot, { backgroundColor: color.textMuted }]} /><Text style={kit.muted}>同类作者</Text></View>
+        <View style={kit.row}><View style={[styles.dot, { backgroundColor: chartPalette[0] }]} /><Text style={kit.muted}>我的指标</Text><View style={[styles.dot, { backgroundColor: color.textMuted }]} /><Text style={kit.muted}>同类作者</Text></View>
       </View>
       <View style={kit.column}>
         <Text style={kit.subhead}>{config.label}分析</Text>
@@ -438,9 +438,9 @@ function WorkRow({ card, onPress }: { card: WorkCard; onPress: () => void }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={`查看作品数据：${card.desc || "无作品描述"}`} onPress={onPress} {...ws("e-box")} style={styles.work}>
     <View style={styles.workCover}>
       {card.cover ? <Image source={{ uri: card.cover }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : null}
-      {card.pinned ? <Text style={[styles.coverTag, { top: 6, left: 6 }]}>置顶</Text> : null}
-      {card.isPrivate ? <View style={[styles.coverTag, styles.coverPrivate]}><Lock size={10} color="#fff" /><Text style={styles.coverTagText}> 私密</Text></View> : null}
-      {card.badge ? <Text style={[styles.coverTag, { right: 6, bottom: 6 }]}>{card.badge}</Text> : null}
+      {card.pinned ? <Text {...ws("cr-badge")} style={[styles.coverTag, { top: 6, left: 6 }]}>置顶</Text> : null}
+      {card.isPrivate ? <View style={[styles.coverTag, styles.coverPrivate]}><Lock size={10} color="#fff" /><Text {...ws("cr-badge")} style={styles.coverTagText}> 私密</Text></View> : null}
+      {card.badge ? <Text {...ws("cr-badge")} style={[styles.coverTag, { right: 6, bottom: 6 }]}>{card.badge}</Text> : null}
     </View>
     <View style={{ flex: 1, minWidth: 0, gap: 8 }}>
       <Text numberOfLines={2} style={[kit.body, { color: card.desc ? color.text : color.textMuted }]}>{card.desc || "无作品描述"}</Text>

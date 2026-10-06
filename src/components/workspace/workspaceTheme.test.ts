@@ -4,9 +4,15 @@ vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 
 import { alpha, palettes, themeCss, webPalettes, workspaceColors, workspaceRadii } from "./workspaceTheme";
 import { archiveCss } from "./archiveCss";
+import { HEAVY_WEIGHT_HASHES, minimalCss } from "./minimalCss";
 import { posterCss } from "./posterCss";
 import { traceCss } from "./traceCss";
 import { fx, ws } from "./motion";
+
+// RN-web 自己的样式编译器：拿它现算字重原子类的类名，和 minimalCss 里写死的哈希核对（内部模块，没有类型声明）
+// @ts-expect-error -- react-native-web 没给 StyleSheet/compiler 出 .d.ts
+import { atomic as atomicUntyped } from "react-native-web/dist/cjs/exports/StyleSheet/compiler";
+const atomic = atomicUntyped as (style: Record<string, unknown>) => [Record<string, unknown>, unknown];
 
 describe("workspace theme", () => {
   it("exposes every token as a CSS variable on web", () => {
@@ -16,15 +22,20 @@ describe("workspace theme", () => {
     expect(workspaceRadii.pill).toBe("var(--ws-radius-pill)");
     expect(Object.keys(palettes.trace.colors)).toEqual(Object.keys(palettes.archive.colors));
     expect(Object.keys(palettes.poster.colors)).toEqual(Object.keys(palettes.archive.colors));
+    expect(Object.keys(palettes.minimal.colors)).toEqual(Object.keys(palettes.archive.colors));
+    for (const key of ["heat", "slices", "avatars", "tints"] as const) {
+      expect(palettes.minimal.colors[key]).toHaveLength(palettes.archive.colors[key].length);
+    }
     expect(Object.keys(webPalettes.archive.colors)).toEqual(Object.keys(palettes.archive.colors));
     for (const key of ["heat", "slices", "avatars", "tints"] as const) {
       expect(webPalettes.archive.colors[key]).toHaveLength(palettes.archive.colors[key].length);
     }
   });
 
-  it("writes both palettes so <html data-style> can switch them", () => {
+  it("writes every palette so <html data-style> can switch them, minimal as the bare default", () => {
     const css = themeCss();
-    expect(css).toContain(`:root{--ws-canvas:${palettes.trace.colors.canvas}`);
+    expect(css).toContain(`:root{--ws-canvas:${palettes.minimal.colors.canvas}`);
+    expect(css).toContain(`:root[data-style="trace"]{--ws-canvas:${palettes.trace.colors.canvas}`);
     expect(css).toContain(`:root[data-style="archive"]{--ws-canvas:${webPalettes.archive.colors.canvas}`);
     expect(css).toContain(`:root[data-style="poster"]{--ws-canvas:${palettes.poster.colors.canvas}`);
     expect(css).toContain("--ws-font-serif:Anton");
@@ -105,6 +116,70 @@ describe("workspace theme", () => {
     const dusted = rules.filter(({ body }) => body.includes("radial-gradient(circle at"));
     expect(dusted.length).toBeGreaterThan(0);
     for (const { selector } of dusted) expect(selector).toMatch(/d-empty|e-empty|d-swarm|"void"/u);
+  });
+
+  it("ships the minimal layout layer between archive and trace, scoped so the other three never match it", () => {
+    const css = themeCss();
+    expect(css).toContain(minimalCss);
+    expect(css.indexOf(minimalCss)).toBeGreaterThan(css.indexOf(archiveCss));
+    expect(css.indexOf(minimalCss)).toBeLessThan(css.indexOf(traceCss));
+    const rules = [...minimalCss.matchAll(/([^{};]+)\{([^{}]*)\}/gu)].map((match) => ({ selector: match[1]!.trim(), body: match[2]! }));
+    expect(rules.length).toBeGreaterThan(100);
+    // 按括号深度切逗号：:where(a, b:not(c)) 里的逗号不算分隔
+    const split = (selector: string) => {
+      const parts: string[] = [];
+      let depth = 0;
+      let start = 0;
+      for (let index = 0; index < selector.length; index += 1) {
+        const char = selector[index];
+        if (char === "(") depth += 1;
+        else if (char === ")") depth -= 1;
+        else if (char === "," && depth === 0) {
+          parts.push(selector.slice(start, index));
+          start = index + 1;
+        }
+      }
+      return [...parts, selector.slice(start)];
+    };
+    for (const { selector } of rules) {
+      if (/^(?:[\d.]+%\s*,?\s*)+$|^(?:from|to)$/u.test(selector)) continue;
+      for (const part of split(selector)) expect(part.trim().startsWith(':root[data-style="minimal"]')).toBe(true);
+    }
+    // 极简的语言：不发光、不铺渐变、没有投影（只有 none 和描边用的 inset 1px），字重不超过 600
+    expect(minimalCss).not.toMatch(/gradient\(/u);
+    expect(minimalCss).not.toContain("text-shadow");
+    // 只看声明：选择器里认行内重字重的 [style*="font-weight: 700"] 不算
+    expect(rules.map(({ body }) => body).join(";")).not.toMatch(/font-weight:\s*(?:[7-9]00|bold)/u);
+    for (const [, value] of minimalCss.matchAll(/box-shadow:([^;!}]+)/gu)) expect(value!.trim()).toMatch(/^(?:none|inset 0 0 0 1px #[0-9A-F]{6})$/u);
+    // 为衬线调的 700–900 字重在工作台里收成 600：RN-web 打包版的类名只有 r-<哈希>，不带属性名，
+    // 所以按哈希段认，开发版和打包版两种类名都要写；RN-web 升级后哈希变了，这里会先报错
+    for (const weight of ["700", "800", "900", "bold"] as const) {
+      const className = String(atomic({ fontWeight: weight })[0].fontWeight);
+      const hash = className.slice(className.lastIndexOf("-") + 1);
+      expect(HEAVY_WEIGHT_HASHES[weight]).toBe(hash);
+      expect(minimalCss).toContain(`.r-${hash}`);
+      expect(minimalCss).toContain(`.r-fontWeight-${hash}`);
+    }
+    expect(minimalCss).not.toContain('[class*="r-');
+    // 装饰性的英文小标、编号水印收掉；采集器页和设置面板各有自己的样式，这里不碰
+    expect(minimalCss).toMatch(/\[data-ws~="d-en"\],:root\[data-style="minimal"\] \[data-ws~="d-latin"\]\{display:none/u);
+    expect(minimalCss).toContain('[data-ws~="w-bignum"]{display:none');
+    expect(minimalCss).not.toContain("setup-workspace");
+  });
+
+  it("gives the minimal style the same token names as the archive, white ground and one quiet grey for missing covers", () => {
+    const { colors, fonts, radii } = palettes.minimal;
+    expect(Object.keys(colors)).toEqual(Object.keys(palettes.archive.colors));
+    for (const key of ["heat", "slices", "avatars", "tints"] as const) expect(colors[key]).toHaveLength(palettes.archive.colors[key].length);
+    expect(Object.keys(fonts)).toEqual(Object.keys(palettes.archive.fonts));
+    expect(Object.keys(radii)).toEqual(Object.keys(palettes.archive.radii));
+    expect(colors.canvas).toBe("#FFFFFF");
+    expect(colors.shadow).toBe("none");
+    expect(new Set(colors.tints)).toEqual(new Set(["#F4F4F5"]));
+    expect(webPalettes.minimal).toBe(palettes.minimal);
+    // 图表分类色不用墨黑（选中、主按钮），也不借绿 / 琥珀 / 红（状态）；创作者中心的图表接的就是这一组
+    for (const reserved of [colors.accent, colors.green, colors.amber, colors.danger]) expect(colors.slices).not.toContain(reserved);
+    expect(minimalCss).toContain("--ws-chart-0:var(--ws-slices-0)");
   });
 
   it("ships the trace layout layer last, scoped so archive and poster never match it", () => {

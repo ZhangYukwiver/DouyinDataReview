@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { APP_STYLES, applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle } from "./appStyle";
+import { APP_STYLES, applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveStoryStyle, STORY_STYLES } from "./appStyle";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const data = new Map(Object.entries(initial));
@@ -19,21 +19,56 @@ function fakeDocument() {
 }
 
 describe("app style", () => {
-  it("defaults to the trace style and keeps an explicit archive choice", () => {
+  it("defaults to the minimal style and keeps an explicit earlier choice", () => {
     const storage = memoryStorage();
-    expect(loadAppStyle(storage)).toBe("trace");
-    expect(loadAppStyle(undefined)).toBe("trace");
+    expect(loadAppStyle(storage)).toBe("minimal");
+    expect(loadAppStyle(undefined)).toBe("minimal");
     saveAppStyle("archive", storage);
     expect(loadAppStyle(storage)).toBe("archive");
-    expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "garbage" }))).toBe("trace");
+    expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "garbage" }))).toBe("minimal");
+    expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "trace" }))).toBe("trace");
     saveAppStyle("poster", storage);
     expect(loadAppStyle(storage)).toBe("poster");
+    saveAppStyle("minimal", storage);
+    expect(loadAppStyle(storage)).toBe("minimal");
+    expect(APP_STYLES[0]?.key).toBe("minimal");
+  });
+
+  it("lets the minimal style borrow one of the three story pages", () => {
+    const storage = memoryStorage();
+    expect(STORY_STYLES.map((item) => item.key)).toEqual(["trace", "archive", "poster"]);
+    expect(loadStoryStyle(storage)).toBe("trace");
+    saveStoryStyle("poster", storage);
+    expect(loadStoryStyle(storage)).toBe("poster");
+    // 不认识的值（包括 minimal 自己）退回内容年志
+    expect(loadStoryStyle(memoryStorage({ "content-insights.story-style": "minimal" }))).toBe("trace");
+    expect(resolveStoryStyle("minimal", "archive")).toBe("archive");
+    expect(resolveStoryStyle("poster", "archive")).toBe("poster");
+  });
+
+  it("remembers the auto-sync switch, on by default", () => {
+    const storage = memoryStorage();
+    expect(loadAutoSync(storage)).toBe(true);
+    saveAutoSync(false, storage);
+    expect(loadAutoSync(storage)).toBe(false);
+    saveAutoSync(true, storage);
+    expect(loadAutoSync(storage)).toBe(true);
+    expect(loadAutoSync(undefined)).toBe(true);
   });
 
   it("survives a storage that throws", () => {
     const broken = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
-    expect(loadAppStyle(broken)).toBe("trace");
+    expect(loadAppStyle(broken)).toBe("minimal");
+    expect(loadStoryStyle(broken)).toBe("trace");
     expect(() => saveAppStyle("trace", broken)).not.toThrow();
+    expect(() => saveStoryStyle("trace", broken)).not.toThrow();
+  });
+
+  it("needs no web font for the minimal style", () => {
+    const doc = fakeDocument();
+    applyAppStyle("minimal", doc);
+    expect(doc.documentElement.dataset.style).toBe("minimal");
+    expect(doc.nodes.size).toBe(0);
   });
 
   it("stamps the style on <html> and loads the trace fonts once", () => {

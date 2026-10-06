@@ -146,26 +146,41 @@ function openedAtLogin() {
     || (process.platform === "darwin" && app.getLoginItemSettings().wasOpenedAtLogin);
 }
 
-function createTray() {
-  tray = new Tray(nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 }));
-  tray.setToolTip(APP_NAME);
-  const buildMenu = () => Menu.buildFromTemplate([
+// 「开机后在后台运行」：托盘菜单和页面设置面板读写同一个登录项，改完把托盘里的勾重画一遍
+function openAtLogin() {
+  return app.getLoginItemSettings(LOGIN_ITEM).openAtLogin;
+}
+
+function setOpenAtLogin(enabled) {
+  app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: enabled });
+  refreshTrayMenu();
+  return openAtLogin();
+}
+
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
     { label: "打开工作台", click: showMainWindow },
     { label: "现在读取一次新记录", click: () => requestBackgroundSync({ manual: true }) },
     { type: "separator" },
     {
       label: "开机后在后台运行",
       type: "checkbox",
-      checked: app.getLoginItemSettings(LOGIN_ITEM).openAtLogin,
-      click: (item) => {
-        app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: item.checked });
-        tray?.setContextMenu(buildMenu());
-      },
+      checked: openAtLogin(),
+      click: (item) => setOpenAtLogin(item.checked),
     },
     { type: "separator" },
     { label: "退出", click: () => app.quit() },
   ]);
-  tray.setContextMenu(buildMenu());
+}
+
+function refreshTrayMenu() {
+  tray?.setContextMenu(buildTrayMenu());
+}
+
+function createTray() {
+  tray = new Tray(nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 }));
+  tray.setToolTip(APP_NAME);
+  refreshTrayMenu();
   // macOS 点图标本来就弹菜单；Windows 习惯左键直接打开窗口
   if (process.platform === "win32") tray.on("click", showMainWindow);
 }
@@ -308,6 +323,14 @@ async function launch() {
   ipcMain.handle("desktop:install-app-update", () => appUpdateController?.install() ?? false);
   // 正常启动时页面挂载比窗口 show() 早，这时直接看 isVisible() 会答「不可见」，被当成后台启动
   ipcMain.handle("desktop:is-window-visible", () => lastOnScreen ?? !launchedHidden);
+  // 设置面板里的「开机后在后台运行」；登录项只有 macOS 和 Windows 有，别的平台答 null，页面就不显示这一行
+  const loginItemSupported = process.platform === "darwin" || process.platform === "win32";
+  ipcMain.handle("desktop:get-open-at-login", () => (loginItemSupported ? openAtLogin() : null));
+  ipcMain.handle("desktop:set-open-at-login", (_event, enabled) => {
+    if (!loginItemSupported) return null;
+    if (typeof enabled !== "boolean") return openAtLogin();
+    return setOpenAtLogin(enabled);
+  });
   // 后台读取碰到要重新登录、要可见浏览器的情况，不替用户弹浏览器，只提醒一次，等用户打开窗口再处理
   ipcMain.on("desktop:background-sync-blocked", (_event, message) => {
     if (isOnScreen(mainWindow) || backgroundBlockedNotified) return;

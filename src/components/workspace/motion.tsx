@@ -30,6 +30,8 @@ ${Array.from({ length: 16 }, (_, index) => `[data-i="${index + 1}"]{animation-de
 [data-hover="raise"]:hover{transform:translateY(-1px)}
 [data-hover="raise"]:hover svg{transform:translateX(3px)}
 [data-hover="tint"]:hover{background-color:color-mix(in srgb,var(--ws-text) 7%,transparent)}
+@keyframes ws-side-more{0%,99%{-webkit-mask-image:linear-gradient(180deg,#000 calc(100% - 64px),transparent calc(100% - 6px));mask-image:linear-gradient(180deg,#000 calc(100% - 64px),transparent calc(100% - 6px))}100%{-webkit-mask-image:none;mask-image:none}}
+@supports (animation-timeline:scroll()){[data-sidenav]{animation:ws-side-more linear both;animation-timeline:scroll(self)}}
 @media (prefers-reduced-motion:reduce){[data-motion],[data-reveal]{animation:none!important;opacity:1!important}[data-hover],[data-hover] svg{transition:none!important}}
 `;
 

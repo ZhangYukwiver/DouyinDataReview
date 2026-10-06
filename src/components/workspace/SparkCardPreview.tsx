@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import type { ChatMemorial } from "../../domain/chatMemorial";
-import { loadAppStyle } from "../../services/appStyle";
+import { loadAppStyle, loadStoryStyle, resolveStoryStyle } from "../../services/appStyle";
 import type { SparkCardStyle } from "./sparkCard";
 import { renderSparkCard, saveSparkCard } from "./sparkCardThemes";
 import { ws } from "./motion";
@@ -13,9 +13,9 @@ const STYLES: ReadonlyArray<{ key: SparkCardStyle; label: string }> = [
   { key: "poster", label: "海报" },
 ];
 
-/** 火花纪念卡预览：左边是画好的卡，右边换风格、存成 PNG。默认跟工作台当前的风格。 */
+/** 火花纪念卡预览：左边是画好的卡，右边换风格、存成 PNG。默认跟报告的风格（极简用设置里选的那套报告）。 */
 export function SparkCardPreview({ memorial, onClose }: { memorial: ChatMemorial; onClose: () => void }) {
-  const current = useRef(loadAppStyle()).current;
+  const current = useRef(resolveStoryStyle(loadAppStyle(), loadStoryStyle())).current;
   const [style, setStyle] = useState<SparkCardStyle>(current);
   const [image, setImage] = useState<{ style: SparkCardStyle; url: string; canvas: HTMLCanvasElement } | null>(null);
   const [error, setError] = useState<string | null>(null);

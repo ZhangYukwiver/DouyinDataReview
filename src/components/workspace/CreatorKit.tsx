@@ -52,7 +52,7 @@ export function Panel({ title, tip, extra, subtitle, children, style }: { title?
       <View style={styles.panelTitleRow}>
         <Text {...ws("e-section")} style={styles.panelTitle}>{title}</Text>
         {tips.length ? <Pressable accessibilityRole="button" accessibilityLabel={`${title}说明`} onPress={() => setShowTip((value) => !value)} hitSlop={8}><Info size={14} color={color.textMuted} /></Pressable> : null}
-        {subtitle ? <Text style={styles.muted}>{subtitle}</Text> : null}
+        {subtitle ? <Text {...ws("cr-note")} style={styles.muted}>{subtitle}</Text> : null}
       </View>
       {extra}
     </View> : null}
@@ -67,7 +67,7 @@ export function Segmented<T extends string | number>({ options, value, onChange,
       const selected = option.value === value;
       return <Pressable key={String(option.value)} accessibilityRole="tab" accessibilityState={{ selected }} onPress={() => onChange(option.value)} {...ws("e-tab", selected && "on")}
         style={[styles.segment, small && styles.segmentSmall, selected && styles.segmentOn]}>
-        <Text style={[styles.segmentText, small && styles.segmentTextSmall, selected && styles.segmentTextOn]}>{option.label}</Text>
+        <Text {...ws(small && "cr-note")} style={[styles.segmentText, small && styles.segmentTextSmall, selected && styles.segmentTextOn]}>{option.label}</Text>
       </Pressable>;
     })}
   </View>;
@@ -89,9 +89,9 @@ export function MetricTile({ label, value, unit, note, noteTone, selected, onPre
   label: string; value: string; unit?: string; note?: string | null; noteTone?: "up" | "down" | null; selected?: boolean; onPress?: () => void; tip?: string; tag?: string | null; wide?: boolean;
 }) {
   const body = <>
-    <View style={styles.tileHead}><Text numberOfLines={1} style={styles.tileLabel}>{label}</Text>{tip ? <Text accessibilityLabel={tip} style={styles.tileTip}>ⓘ</Text> : null}{tag ? <Text style={styles.tag}>{tag}</Text> : null}</View>
+    <View style={styles.tileHead}><Text numberOfLines={1} style={styles.tileLabel}>{label}</Text>{tip ? <Text {...ws("cr-note")} accessibilityLabel={tip} style={styles.tileTip}>ⓘ</Text> : null}{tag ? <Text {...ws("cr-note")} style={styles.tag}>{tag}</Text> : null}</View>
     <Text style={styles.tileValue}>{value}{unit ? <Text style={styles.tileUnit}> {unit}</Text> : null}</Text>
-    {note ? <Text style={[styles.tileNote, noteTone === "up" && { color: color.danger }, noteTone === "down" && { color: color.green }]}>{note}</Text> : null}
+    {note ? <Text {...ws("cr-note")} style={[styles.tileNote, noteTone === "up" && { color: color.danger }, noteTone === "down" && { color: color.green }]}>{note}</Text> : null}
   </>;
   const style = [styles.tile, wide && styles.tileWide, selected && styles.tileOn];
   return onPress
@@ -104,7 +104,7 @@ export function Empty({ text, lines, small = false }: { text?: string; lines?: s
 }
 
 export function Loading({ label }: { label?: string }) {
-  return <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={color.cyan} />{label ? <Text style={styles.muted}>{label}</Text> : null}</View>;
+  return <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={color.cyan} />{label ? <Text {...ws("cr-note")} style={styles.muted}>{label}</Text> : null}</View>;
 }
 
 export function ErrorLine({ text, onRetry }: { text: string; onRetry?: () => void }) {
@@ -123,10 +123,10 @@ export function SmallButton({ label, onPress, disabled = false, children }: { la
 /** 名次 + 名称 + 值的两列表（地域、兴趣、热词、搜索词这类）。 */
 export function RankTable({ headers, rows, ranked = false, maxHeight }: { headers: [string, string]; rows: Array<[string, string]>; ranked?: boolean; maxHeight?: number }) {
   return <View>
-    <View style={[styles.tableRow, styles.tableHead]}><Text style={[styles.tableCell, styles.tableHeadText]}>{headers[0]}</Text><Text style={[styles.tableValue, styles.tableHeadText]}>{headers[1]}</Text></View>
+    <View style={[styles.tableRow, styles.tableHead]}><Text {...ws("cr-note")} style={[styles.tableCell, styles.tableHeadText]}>{headers[0]}</Text><Text {...ws("cr-note")} style={[styles.tableValue, styles.tableHeadText]}>{headers[1]}</Text></View>
     <View style={maxHeight ? { maxHeight, overflow: "scroll" as any } : null}>
       {rows.map(([name, value], index) => <View key={`${name}${index}`} style={styles.tableRow}>
-        {ranked ? <Text style={[styles.rank, index < 3 && styles.rankTop]}>{index + 1}</Text> : null}
+        {ranked ? <Text {...ws("cr-note")} style={[styles.rank, index < 3 && styles.rankTop]}>{index + 1}</Text> : null}
         <Text numberOfLines={1} style={styles.tableCell}>{name}</Text>
         <Text style={styles.tableValue}>{value}</Text>
       </View>)}

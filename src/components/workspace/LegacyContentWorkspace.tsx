@@ -13,6 +13,7 @@ import {
   type TextProps,
   useWindowDimensions,
   View,
+  type ViewStyle,
 } from "react-native";
 import {
   ArrowUpRight,
@@ -35,6 +36,8 @@ import {
   Radio,
   RefreshCw,
   Search,
+  Plug,
+  Settings,
   Settings2,
   Sparkles,
   Star,
@@ -54,7 +57,7 @@ import type {
 } from "../../domain/personalRecords";
 import type { CollectorStatus } from "../../services/localCollector";
 import type { ExploreConnection } from "../../services/explorer";
-import { DEFAULT_APP_STYLE, type AppStyle } from "../../services/appStyle";
+import { DEFAULT_APP_STYLE, DEFAULT_STORY_STYLE, resolveStoryStyle, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import Svg, { Circle } from "react-native-svg";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { RecordVideoPlayer, type RecordVideoLoader } from "./RecordVideoPlayer";
@@ -101,6 +104,10 @@ export interface ContentWorkspaceProps {
   privacy: boolean;
   /** 整体风格：文案与纸纹装饰跟着走，配色本身由 workspaceTheme 的 CSS 变量切换 */
   appStyle?: AppStyle;
+  /** 极简风格打开报告时借用的那套故事页（决定「重看」按钮叫什么） */
+  storyStyle?: StoryStyle;
+  /** 打开设置面板；不传就不显示侧栏的「设置」 */
+  onOpenPreferences?: () => void;
 }
 
 export type RecordDownloadState = "idle" | "queued" | "running" | "complete" | "failed";
@@ -170,12 +177,15 @@ export function ContentWorkspace({
   onTogglePrivacy,
   privacy,
   appStyle = DEFAULT_APP_STYLE,
+  storyStyle = DEFAULT_STORY_STYLE,
+  onOpenPreferences,
 }: ContentWorkspaceProps) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const mobile = width < 720;
-  // 年志与海报的报告都是 /story 下的静态页，工作台不铺档案馆的纸纹
-  const trace = appStyle !== "archive";
-  const replayLabel = appStyle === "poster" ? "重看年度海报" : trace ? "重读内容年志" : "重翻年度档案";
+  // 只有档案馆的工作台铺纸纹；年志、海报、极简都不铺
+  const archive = appStyle === "archive";
+  const story = resolveStoryStyle(appStyle, storyStyle);
+  const replayLabel = story === "poster" ? "重看年度海报" : story === "trace" ? "重读内容年志" : "重翻年度档案";
   const reportView = isReportView(activeView);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // 持续报告首次打开时自动收起；用户仍可用左上角按钮临时展开。
@@ -190,6 +200,24 @@ export function ContentWorkspace({
   const [reportUpdateNotice, setReportUpdateNotice] = useState(false);
   // 侧栏当前项的指示条：一根，随选中项滑动（各按钮 onLayout 报自己的 y）
   const [navTops, setNavTops] = useState<Record<string, number>>({});
+  // 侧栏导航段：放得下时不设 overflow（年志选中项的外发光照旧溢出、像素同以前），放不下才变成滚动容器
+  const sidebarBodyRef = useRef<View>(null);
+  const [sidebarOverflow, setSidebarOverflow] = useState(false);
+  const measureSidebar = () => {
+    const body = sidebarBodyRef.current as unknown as HTMLElement | null;
+    if (body && typeof body.scrollHeight === "number") setSidebarOverflow(body.scrollHeight > body.clientHeight + 1);
+  };
+  // 滚动时当前项被裁掉就把它滚进来（往下多滚半格，让下一项露个头）
+  useEffect(() => {
+    if (Platform.OS !== "web" || !sidebarOverflow) return;
+    const body = sidebarBodyRef.current as unknown as HTMLElement | null;
+    const item = body?.querySelector<HTMLElement>(`[data-testid="workspace-nav-${activeView}"]`);
+    if (!body || !item) return;
+    const frame = body.getBoundingClientRect();
+    const rect = item.getBoundingClientRect();
+    if (rect.top < frame.top) body.scrollTop += rect.top - frame.top;
+    else if (rect.bottom > frame.bottom) body.scrollTop += rect.bottom - frame.bottom + 24;
+  }, [activeView, sidebarOverflow, height]);
   const reportNavTop = (id: string, y: number) => setNavTops((current) => (current[id] === y ? current : { ...current, [id]: y }));
   const seenUpdatedAtRef = useRef<string | null>(updatedAt);
   const totalRecords = records.watch_history.length + records.liked_videos.length + records.favorite_videos.length;
@@ -251,8 +279,8 @@ export function ContentWorkspace({
       {!mobile ? <SidebarToggle collapsed={compactSidebar} onPress={toggleSidebar} /> : null}
       {!mobile ? (
         <View {...ws("w-side g-ink")} testID="workspace-sidebar" style={[styles.sidebar, collapseWidth, compactSidebar && styles.sidebarCompact]}>
-          <View style={styles.sidebarBody}>
-          <View accessibilityRole="tablist" style={styles.sidebarNav}>
+          <View {...SIDENAV} onLayout={measureSidebar} ref={sidebarBodyRef} style={[styles.sidebarBody, sidebarOverflow && sidebarScroll]}>
+          <View accessibilityRole="tablist" onLayout={measureSidebar} style={styles.sidebarNav}>
             {Platform.OS === "web" && navTops[activeView] !== undefined ? (
               <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[activeView]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
@@ -271,6 +299,21 @@ export function ContentWorkspace({
           <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} />
           </View>
           <View style={styles.sidebarFooter}>
+            {onOpenPreferences ? (
+              <Pressable
+                accessibilityLabel="打开设置"
+                accessibilityRole="button"
+                {...fx({ hover: "tint", ws: "w-nav w-replay w-prefs" })}
+                onPress={() => onOpenPreferences()}
+                style={({ pressed }) => [styles.navButton, pressed && styles.buttonPressed, webPointer]}
+                testID="workspace-preferences"
+              >
+                <View style={styles.navIconWrap}><Settings color={color.textSecondary} size={20} strokeWidth={2} /></View>
+                <View style={[styles.navMeta, collapseCopy, compactSidebar && styles.sidebarCopyHidden]}>
+                  <Text numberOfLines={1} style={styles.navLabel}>设置</Text>
+                </View>
+              </Pressable>
+            ) : null}
             <Pressable
               accessibilityLabel={replayLabel}
               accessibilityRole="button"
@@ -296,7 +339,7 @@ export function ContentWorkspace({
               onPress={onOpenSettings}
               style={({ pressed }) => [styles.settingsButton, pressed && styles.buttonPressed, webPointer]}
             >
-              <View style={styles.settingsIcon}><Settings2 color={color.textSecondary} size={19} strokeWidth={2} /></View>
+              <View style={styles.settingsIcon}><Plug color={color.textSecondary} size={19} strokeWidth={2} /></View>
               <Text numberOfLines={1} style={[styles.settingsButtonText, collapseCopy, compactSidebar && styles.sidebarCopyHidden]}>连接与采集</Text>
             </Pressable>
           </View>
@@ -306,7 +349,8 @@ export function ContentWorkspace({
       <View style={[styles.main, mobile && styles.mainMobile]}>
         <View {...ws("w-top")} testID="workspace-topbar" style={[styles.topbar, mobile && styles.topbarMobile]}>
           <View style={styles.topbarHeading}>
-            <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : trace ? "CONTENT STREAMS" : "CONTENT ARCHIVE"}</Text>
+            {/* 极简不要装饰性的英文眉题 */}
+            {appStyle !== "minimal" ? <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : archive ? "CONTENT ARCHIVE" : "CONTENT STREAMS"}</Text> : null}
             <View style={styles.topbarTitleRow}>
               <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{currentNav.label}</Text>
               {!toolView(activeView) ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
@@ -390,7 +434,7 @@ export function ContentWorkspace({
         ) : activeView === "summary" ? (
           model.status === "empty"
             ? <SummaryEmpty />
-            : <ReportDashboard mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} square={appStyle !== "trace"} width={mainWidth} />
+            : <ReportDashboard mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} square={appStyle === "archive" || appStyle === "poster"} width={mainWidth} />
         ) : activeView === "highlights" ? (
           livingReport
             ? <LivingHighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={livingReport} />
@@ -419,7 +463,7 @@ export function ContentWorkspace({
         )}
       </View>
 
-      {Platform.OS === "web" && !trace ? (
+      {Platform.OS === "web" && archive ? (
         <>
           <View {...ws("w-grain")} pointerEvents="none" style={styles.paperGrain}>
             <Image resizeMode="repeat" source={require("./assets/paper-grain.png")} style={styles.paperGrainImg} />
@@ -730,7 +774,7 @@ function RecordsGallery({
             onPress={onOpenSettings}
             style={({ pressed }) => [styles.emptyButton, pressed && styles.buttonPressed, webPointer]}
           >
-            <Settings2 color={color.black} size={18} />
+            <Plug color={color.black} size={18} />
             <Text style={styles.emptyButtonText}>连接与采集</Text>
           </Pressable>
         </View>
@@ -1384,6 +1428,11 @@ function fallbackColor(value: string): string {
   return color.tints[hashString(value) % color.tints.length]!;
 }
 
+// 矮窗口（如 900×612）里导航项 + 活跃环放不下：让这一段自己滚，别压到底部的设置 / 重看 / 连接与采集。
+// 横向必须 hidden：收起态文字只是透明、仍占宽度，auto 会让整列图标能被横着滚走。没滚到底时底边渐隐（motionCss 的 data-sidenav）
+const sidebarScroll = (Platform.OS === "web" ? { overflowY: "auto", overflowX: "hidden", scrollbarWidth: "none" } : {}) as ViewStyle;
+const SIDENAV: object = Platform.OS === "web" ? { dataSet: { sidenav: "1" } } : {};
+
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: "100%", padding: 18, backgroundColor: color.canvas },
   rootMobile: { padding: 0 },
@@ -1402,7 +1451,9 @@ const styles = StyleSheet.create({
   sidebarCompact: { width: 82 },
   sidebarCopyHidden: { opacity: 0 },
   sidebarToggle: { position: "absolute", left: 14, top: 2, width: 32, height: 32, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface, zIndex: 5 },
-  sidebarBody: { flex: 1, paddingTop: 46 },
+  // 左右各伸出 14 再垫回来：导航能滚时，贴在侧栏左边缘的选中条（left:-14）不会被裁掉
+  // 顶上 46 用 margin 而不是 padding：滚动时导航从折叠按钮下面滑过，而不是从它背后露出来
+  sidebarBody: { flex: 1, marginTop: 46, marginHorizontal: -14, paddingHorizontal: 14 },
   sidebarNav: { gap: 4 },
   activeDays: { flexDirection: "row", alignItems: "center", minHeight: 44, marginTop: 26, paddingHorizontal: 8 },
   activeDaysText: { flex: 1, color: color.textMuted, fontSize: 10, marginLeft: 7 },

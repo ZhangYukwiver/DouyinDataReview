@@ -2,12 +2,14 @@ import { Platform } from "react-native";
 
 import type { AppStyle } from "../../services/appStyle";
 import { archiveCss } from "./archiveCss";
+import { minimalCss } from "./minimalCss";
 import { motionCss } from "./motion";
 import { posterCss } from "./posterCss";
 import { traceCss } from "./traceCss";
 
 /**
- * 三套整体风格共用一份 token 名：
+ * 四套整体风格共用一份 token 名：
+ * - 极简（默认）：白底、发丝灰线、系统字体，墨黑做选中、一种蓝做数据和可点的东西，见 minimal
  * - 档案馆：暖金 + 冷青 + 近黑纸面（与 ReportWorkspace 十二章同源）；web 上同一套颜色，
  *   只把弱化字提亮到能读、字体换成宋体 + Cormorant 古典衬线数字，见 archiveWeb
  * - 内容年志：入口卡的墨夜 / 玻璃 / 奶油字 / 信号蓝 / 琥珀光（prototype/story-entry.html）
@@ -154,6 +156,56 @@ const poster: WorkspacePalette = {
   tints: ["#F1EEE6", "#FFFFFF", "#E4E0D4", "#FF4A1C", "#F1EEE6", "#FFFFFF"],
 };
 
+// 极简：白底、#E7E7E7 发丝线、系统字体；墨黑是选中和主按钮，蓝只给数据和可点的字，
+// 绿 / 琥珀 / 红只在状态上出现。不铺纹理、不发光、不投影，和另外三套（暗色玻璃 / 暗室卷宗 / 新闻纸）都不一样。
+const minimal: WorkspacePalette = {
+  canvas: "#FFFFFF",
+  sidebar: "#FAFAFA",
+  surface: "#FFFFFF",
+  surfaceRaised: "#FAFAFA",
+  surfaceMuted: "#F4F4F5",
+  border: "#E4E4E7",
+  borderSoft: "#EFEFF1",
+  frame: "#D4D4D8",
+  text: "#18181B",
+  textSecondary: "#3F3F46",
+  // #71717A 在白底上约 4.8:1，小字也够读
+  textMuted: "#71717A",
+  accent: "#18181B",
+  accentPressed: "#000000",
+  accentAction: "#2563EB",
+  accentSoft: "#F1F1F3",
+  figure: "#18181B",
+  cyan: "#2563EB",
+  cyanSoft: "#EEF3FE",
+  green: "#15803D",
+  greenSoft: "#EBF6EE",
+  amber: "#B45309",
+  amberSoft: "#FDF4E6",
+  danger: "#C9372C",
+  dangerSoft: "#FCEDEB",
+  white: "#FFFFFF",
+  black: "#18181B",
+  scrim: "rgba(24,24,27,0.28)",
+  button: "#18181B",
+  buttonText: "#FFFFFF",
+  signal: "#15803D",
+  // 漏斗四档：浅蓝 → 中蓝 → cyan → 深蓝（第四档组件里取 accent，minimalCss 在漏斗格里把它换成 #1E40AF），单调加深
+  funnel0: "#DBEAFE",
+  funnel1: "#93C5FD",
+  vennWatch: "#2563EB",
+  vennFavorite: "#93C5FD",
+  shadow: "none",
+  // 第 5 档上压的字由 minimalCss 改成白色
+  heat: ["#F4F4F5", "#DBEAFE", "#BFDBFE", "#93C5FD", "#3B82F6", "#1D4ED8"],
+  // 蓝的深浅档交替，最后两档是中性灰；墨黑只留给选中和主按钮。创作者中心的图表也取这一组（minimalCss 的 --ws-chart-N）
+  slices: ["#2563EB", "#93C5FD", "#1E40AF", "#BFDBFE", "#A1A1AA", "#D4D4D8"],
+  // 头像缩写既当前景又在自己 19% 的底上，所以都取深色
+  avatars: ["#1D4ED8", "#18181B", "#3F3F46", "#1E3A8A", "#52525B", "#27272A"],
+  // 封面缺图时的底：一律同一块浅灰，不分色
+  tints: ["#F4F4F5", "#F4F4F5", "#F4F4F5", "#F4F4F5", "#F4F4F5", "#F4F4F5"],
+};
+
 // 档案馆（只在 web）：就是上面这套近黑纸面 + 暖金 + 冷青（主题色块、热力、饼图照旧用 slices / heat / tints）。
 // 只改两处能不能读的：弱化字 #7C7266 在纸面上只有 3.8:1，提到 #A09383（各层纸面上都 ≥5:1）；
 // 砖红 #B4664F 做报错字不到 4.5:1，提一档。native 看不到这组值，仍用上面的 archive。
@@ -198,11 +250,17 @@ const archiveWebFonts: typeof archiveFonts = {
   mono: "'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif",
 };
 
+// 极简：整页一种系统无衬线，数字用等宽数位（见 minimalCss）；不取任何网络字体
+const minimalSans = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', 'Segoe UI', 'Microsoft YaHei', sans-serif";
+const minimalFonts: typeof archiveFonts = { serif: minimalSans, didot: minimalSans, body: minimalSans, sans: minimalSans, mono: minimalSans };
+
 // 档案页面是直角的；年志跟入口卡：卡片 24、按钮是胶囊
 const archiveRadii = { small: 0, medium: 0, large: 0, pill: 0 };
 const traceRadii: typeof archiveRadii = { small: 10, medium: 16, large: 24, pill: 50 };
+const minimalRadii: typeof archiveRadii = { small: 6, medium: 10, large: 12, pill: 999 };
 
 export const palettes: Record<AppStyle, { colors: WorkspacePalette; fonts: typeof archiveFonts; radii: typeof archiveRadii }> = {
+  minimal: { colors: minimal, fonts: minimalFonts, radii: minimalRadii },
   archive: { colors: archive, fonts: archiveFonts, radii: archiveRadii },
   trace: { colors: trace, fonts: traceFonts, radii: traceRadii },
   poster: { colors: poster, fonts: posterFonts, radii: archiveRadii },
@@ -254,8 +312,8 @@ function declarations(style: AppStyle): string {
 }
 
 export function themeCss(): string {
-  // 默认内容年志：:root 直接发年志令牌，档案馆靠 data-style 覆盖。
-  return `:root{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\n:root[data-style="poster"]{${declarations("poster")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}\n${posterCss}\n${archiveCss}\n${traceCss}`;
+  // 默认极简：:root 直接发极简令牌，另外三套靠 data-style 覆盖。
+  return `:root{${declarations("minimal")}}\n:root[data-style="trace"]{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\n:root[data-style="poster"]{${declarations("poster")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}\n${posterCss}\n${archiveCss}\n${minimalCss}\n${traceCss}`;
 }
 
 const STYLE_ID = "content-insights-theme";
