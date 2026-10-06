@@ -16,6 +16,7 @@ import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
+import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
@@ -579,6 +580,21 @@ export async function startCollectorServer({
         await sendVideoFile(response, filePath, job.fileName);
       } else {
         sendJson(response, 200, { job });
+      }
+    } else if (url.pathname === "/v1/creator/read") {
+      // 创作者中心的数据：工作台一次传一批白名单里的查询，原样带回抖音的结果（只读）
+      try {
+        if (request.method !== "POST") { sendJson(response, 405, { error: "method_not_allowed" }); return; }
+        const requests = (await readJsonBody(request))?.requests;
+        if (rejectWhileSwitching(response)) return;
+        sendJson(response, 200, { results: await collector.creatorCenter.read(requests) });
+      } catch (error) {
+        const known = error instanceof CreatorCenterError;
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        if (!response.headersSent) sendJson(response, known ? error.status : malformed ? 400 : 500, {
+          error: known ? error.code : malformed ? "invalid_request" : "creator_failed",
+          message: known ? error.message : malformed ? "请求无效，请重试。" : "没读到创作者中心的数据，请稍后重试。",
+        });
       }
     } else if (url.pathname === "/v1/live/following" || url.pathname === "/v1/live/rooms" || /^\/v1\/live\/rooms\/[0-9a-f-]{36}$/u.test(url.pathname)) {
       // 直播间：POST 进房（换台会收掉上一个），GET 取新弹幕，DELETE 退出；following 是关注的人谁在播

@@ -97,6 +97,7 @@ import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEnt
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
+import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 
 type ViewKey = "summary" | "highlights" | "records" | "chat" | "sources";
 
@@ -1681,6 +1682,7 @@ function AppContent() {
       ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
           explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
+          creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           activeView={dashboardView}
           appStyle={appStyle}
           busy={collectorBusy}
