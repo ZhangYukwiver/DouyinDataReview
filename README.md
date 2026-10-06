@@ -1,9 +1,9 @@
 <div align="center">
   <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="build/icon.png" alt="内容数据工作台" width="160" /></a>
-  <h1>DouyinDataReview | 内容数据工作台</h1>
+  <h1>DouyinDataReview | 抖音内容数据工作台</h1>
   <p><strong>把抖音这一年，留在自己的电脑上</strong></p>
-  <p>一个面向开发者和个人用户的<strong>本地优先</strong>抖音数据回顾工作台。<br>
-  它把观看、喜欢、收藏和聊天记录带到本机离线查看，生成可交互的持续报告与年度回顾，也支持聊天实时接收、探索工作台和桌面安装包。</p>
+  <p>一个<strong>本地优先</strong>的抖音数据回顾工具：把抖音观看历史、喜欢、收藏和聊天记录导出到本机离线查看，<br>
+  生成可交互的持续报告和抖音年度报告；也能实时接收聊天、续火花、下载视频，有 Windows / macOS 桌面安装包。</p>
   <p>不接外部 AI：标题、作者、封面、Cookie 和报告都不会发送到任何外部分析服务。</p>
   <p>问题反馈与交流请联系 QQ 940537208，或加入 QQ 群 DDDouyin（群号 1124211302），见<a href="#交流与反馈">交流与反馈</a>。</p>
   <p>
@@ -147,6 +147,10 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ## 常见问题
 
+### 能把抖音观看历史和聊天记录导出成文件吗？
+
+能。连上采集器后，在「连接与采集」页点「导出数据」，观看历史、喜欢、收藏和聊天记录会一起存成一个 JSON 文件。换电脑时在新电脑上「选择文件」导入，再点「并入本机记录」就能接着用。
+
 ### macOS 打开时提示应用已损坏？
 
 安装包没有开发者签名。在终端执行一次 `xattr -cr "/Applications/内容数据工作台.app"`，再打开就行。
@@ -280,6 +284,10 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 >    本项目按现状提供，不对功能的准确性、完整性、稳定性或持续可用性作出明示或默示保证。在适用法律允许的范围内，因使用、误用、版本不兼容、操作中断或第三方策略变化产生的损失和后果，由使用者自行承担。
 >
 > 使用或继续使用本项目，即表示使用者已经阅读、理解并同意以上内容，并愿意对自己的操作及其结果负责。
+
+## English
+
+DouyinDataReview is a local-first desktop app for Windows and macOS that works with Douyin, the Chinese version of TikTok. It reads your own watch history, likes, favorites and chat messages through the Douyin web client, keeps everything on your computer, and turns it into a rolling report and a year-in-review (a "Douyin Wrapped"). You can also export all records as JSON, receive chats in real time, keep chat streaks going, play and download videos, and view your Creator Center stats read-only. Nothing is sent to an external AI or analytics service. The interface is in Chinese. Get the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest); Chrome, Edge, Brave or Chromium must be installed.
 
 ## 交流与反馈
 
