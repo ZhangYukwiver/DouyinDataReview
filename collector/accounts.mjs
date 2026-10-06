@@ -156,7 +156,10 @@ export class AccountRegistry {
       let id;
       do id = randomBytes(6).toString("hex");
       while (this.data.accounts.some((account) => account.id === id));
-      const account = newAccount(id);
+      // 默认账号的时间取自文件夹的创建时间，和程序时钟不是一个来源（Windows 上能差几毫秒）；
+      // 新账号一律排在已有账号之后，「按创建先后」才不会乱
+      const latest = Math.max(0, ...this.data.accounts.map((account) => Date.parse(account.createdAt ?? "") || 0));
+      const account = newAccount(id, new Date(Math.max(Date.now(), latest + 1)).toISOString());
       await mkdir(this.directory(account), { recursive: true, mode: 0o700 });
       await this.commit({ ...this.data, accounts: [...this.data.accounts, account] });
       return { ...account };
