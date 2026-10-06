@@ -560,7 +560,7 @@ function Figure({ sub, value }: { sub: string; value: string | number }) {
   return (
     <View style={styles.figure}>
       <Text {...ws("d-figure")} style={styles.figureValue}>{typeof value === "number" ? count.toLocaleString("en-US") : value}</Text>
-      <Text {...ws("mono")} numberOfLines={1} style={styles.figureSub}>{sub}</Text>
+      <Text {...ws("mono", /^[a-z]+$/iu.test(sub) && "d-latin")} numberOfLines={1} style={styles.figureSub}>{sub}</Text>
     </View>
   );
 }
@@ -572,7 +572,7 @@ function HeatGrid({ heatmap }: { heatmap: number[] }) {
     <View style={styles.heatWrap}>
       {weekLetters.map((letter, day) => (
         <View key={`${letter}:${day}`} style={styles.heatRow}>
-          <Text style={styles.heatLetter}>{letter}</Text>
+          <Text {...ws("d-wk")} style={styles.heatLetter}>{letter}</Text>
           <View style={styles.heatCells}>
             {Array.from({ length: 24 }, (_, hour) => {
               const value = heatmap[day * 24 + hour] ?? 0;

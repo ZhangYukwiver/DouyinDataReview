@@ -19,6 +19,9 @@ const BACKGROUND_SYNC_MS = 3 * 60 * 60 * 1000;
 // Windows 的开机启动项靠这个参数认出自己，读写登录项设置时也要带同一组参数
 const HIDDEN_ARG = "--hidden";
 const LOGIN_ITEM = { args: [HIDDEN_ARG] };
+// 页面的设置（风格、自动补读等）存在 localStorage 里，而 localStorage 按 origin（含端口）分开存：
+// 端口每次随机的话，重启后就读不到上次的设置。所以页面服务优先用固定端口，绑不上（被占用、被系统保留）才退回随机端口。
+const WEB_PORT = 47651;
 
 let mainWindow = null;
 let desktopRuntime = null;
@@ -143,26 +146,41 @@ function openedAtLogin() {
     || (process.platform === "darwin" && app.getLoginItemSettings().wasOpenedAtLogin);
 }
 
-function createTray() {
-  tray = new Tray(nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 }));
-  tray.setToolTip(APP_NAME);
-  const buildMenu = () => Menu.buildFromTemplate([
+// 「开机后在后台运行」：托盘菜单和页面设置面板读写同一个登录项，改完把托盘里的勾重画一遍
+function openAtLogin() {
+  return app.getLoginItemSettings(LOGIN_ITEM).openAtLogin;
+}
+
+function setOpenAtLogin(enabled) {
+  app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: enabled });
+  refreshTrayMenu();
+  return openAtLogin();
+}
+
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
     { label: "打开工作台", click: showMainWindow },
     { label: "现在读取一次新记录", click: () => requestBackgroundSync({ manual: true }) },
     { type: "separator" },
     {
       label: "开机后在后台运行",
       type: "checkbox",
-      checked: app.getLoginItemSettings(LOGIN_ITEM).openAtLogin,
-      click: (item) => {
-        app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: item.checked });
-        tray?.setContextMenu(buildMenu());
-      },
+      checked: openAtLogin(),
+      click: (item) => setOpenAtLogin(item.checked),
     },
     { type: "separator" },
     { label: "退出", click: () => app.quit() },
   ]);
-  tray.setContextMenu(buildMenu());
+}
+
+function refreshTrayMenu() {
+  tray?.setContextMenu(buildTrayMenu());
+}
+
+function createTray() {
+  tray = new Tray(nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 }));
+  tray.setToolTip(APP_NAME);
+  refreshTrayMenu();
   // macOS 点图标本来就弹菜单；Windows 习惯左键直接打开窗口
   if (process.platform === "win32") tray.on("click", showMainWindow);
 }
@@ -232,7 +250,15 @@ async function startDesktopRuntime() {
     signerDirectory: app.isPackaged ? path.join(process.resourcesPath, "direct-signer") : undefined,
   });
   try {
-    const web = await startStaticServer({ rootDirectory: path.join(projectDirectory, "dist") });
+    const rootDirectory = path.join(projectDirectory, "dist");
+    const web = await startStaticServer({ rootDirectory, port: WEB_PORT })
+      .catch((error) => {
+        // Windows 上端口落在 Hyper-V / WinNAT 保留段或被独占时报的是 EACCES，不只 EADDRINUSE；
+        // 只认 listen 失败，dist 缺文件（ENOENT）这类错误照常抛出
+        if (error?.syscall !== "listen") throw error;
+        console.warn(`页面服务固定端口 ${WEB_PORT} 不可用（${error.code}），这次改用随机端口，设置不会跨重启保留`);
+        return startStaticServer({ rootDirectory });
+      });
     return { collector, web };
   } catch (error) {
     await collector.close();
@@ -297,6 +323,14 @@ async function launch() {
   ipcMain.handle("desktop:install-app-update", () => appUpdateController?.install() ?? false);
   // 正常启动时页面挂载比窗口 show() 早，这时直接看 isVisible() 会答「不可见」，被当成后台启动
   ipcMain.handle("desktop:is-window-visible", () => lastOnScreen ?? !launchedHidden);
+  // 设置面板里的「开机后在后台运行」；登录项只有 macOS 和 Windows 有，别的平台答 null，页面就不显示这一行
+  const loginItemSupported = process.platform === "darwin" || process.platform === "win32";
+  ipcMain.handle("desktop:get-open-at-login", () => (loginItemSupported ? openAtLogin() : null));
+  ipcMain.handle("desktop:set-open-at-login", (_event, enabled) => {
+    if (!loginItemSupported) return null;
+    if (typeof enabled !== "boolean") return openAtLogin();
+    return setOpenAtLogin(enabled);
+  });
   // 后台读取碰到要重新登录、要可见浏览器的情况，不替用户弹浏览器，只提醒一次，等用户打开窗口再处理
   ipcMain.on("desktop:background-sync-blocked", (_event, message) => {
     if (isOnScreen(mainWindow) || backgroundBlockedNotified) return;

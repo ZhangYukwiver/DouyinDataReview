@@ -9,7 +9,7 @@ import {
 } from "../../domain/creatorCenter";
 import { readCreator, type CreatorQuery } from "../../services/creatorCenter";
 import type { ExploreConnection } from "../../services/explorer";
-import { Bars, BarList, Donut, LineChart } from "./CreatorCharts";
+import { Bars, BarList, chartPalette, Donut, LineChart } from "./CreatorCharts";
 import { Empty, ErrorLine, kit, Loading, MetricTile, Panel, RankTable, Segmented, SmallButton, Tabs, useCreator, type Raw } from "./CreatorKit";
 import { renderEmojiText } from "./emojiText";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -55,7 +55,7 @@ export function CreatorWorkDetail({ connection, itemId, followers, onBack }: { c
     <View {...ws("e-box")} style={styles.head}>
       <View style={styles.headCover}>
         {item.cover?.url_list?.[0] ? <Image source={{ uri: item.cover.url_list[0] }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : null}
-        {type !== "LONG_ARTICLE" ? <Text style={styles.badge}>{pictures ? `${pictures}张` : detailDuration(Number(item.video_info?.duration ?? 0))}</Text> : null}
+        {type !== "LONG_ARTICLE" ? <Text {...ws("cr-badge")} style={styles.badge}>{pictures ? `${pictures}张` : detailDuration(Number(item.video_info?.duration ?? 0))}</Text> : null}
       </View>
       <View style={{ flex: 1, minWidth: 0, gap: 8 }}>
         <Text style={[kit.body, { color: item.description ? color.text : color.textMuted }]}>{item.description || "无视频描述"}</Text>
@@ -247,7 +247,7 @@ function AnalysisChart({ payload, isPic, labels: [mine, other], bucketed = false
   const titles = keys.map((key, index) => isPic ? `第${key}张` : ranged ? `${index === 0 ? "00:00" : keys[index - 1]}-${key}` : key);
   const valleys = Object.values(payload?.valley_list ?? {}).flat().filter(Boolean).sort((a: any, b: any) => Number(a.start) - Number(b.start)) as Raw[];
   return <View style={{ gap: 8 }}>
-    <View style={kit.row}><View style={[styles.dot, { backgroundColor: color.accent }]} /><Text style={kit.muted}>当前作品</Text><View style={[styles.dot, { backgroundColor: color.textMuted }]} /><Text style={kit.muted}>同类作品</Text></View>
+    <View style={kit.row}><View style={[styles.dot, { backgroundColor: chartPalette[0] }]} /><Text style={kit.muted}>当前作品</Text><View style={[styles.dot, { backgroundColor: color.textMuted }]} /><Text style={kit.muted}>同类作品</Text></View>
     <LineChart height={height} labels={isPic ? keys.map((key) => `${key}`) : keys} titles={titles} fixedMax={1}
       series={[{ label: mine, values: current.map((point) => Number(point.value)) }, { label: other, values: keys.map((key) => { const hit = similar.find((point) => String(point.key) === key); return hit ? Number(hit.value) : null; }), color: color.textMuted, dashed: true }]}
       format={(value) => pct(value, 2)} axisFormat={(value) => pct(value, 1)} />
@@ -512,7 +512,7 @@ function CommentBody({ comment }: { comment: CreatorComment }) {
   return <View style={styles.commentRow}>
     {comment.avatar ? <Image source={{ uri: comment.avatar }} style={styles.commentAvatar} /> : <View style={[styles.commentAvatar, { backgroundColor: color.surfaceMuted }]} />}
     <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
-      <View style={kit.row}><Text style={styles.commentName}>{comment.name}</Text>{comment.isAuthor ? <Text style={styles.author}>作者</Text> : null}</View>
+      <View style={kit.row}><Text style={styles.commentName}>{comment.name}</Text>{comment.isAuthor ? <Text {...ws("cr-note")} style={styles.author}>作者</Text> : null}</View>
       <Text style={kit.body}>{comment.folded ? "该评论被折叠" : <>{comment.replyTo ? `回复 ${comment.replyTo}：` : ""}{renderEmojiText(comment.text)}</>}</Text>
       {comment.images.length ? <View style={kit.row}>{comment.images.map((uri) => <Image key={uri} source={{ uri }} style={styles.commentImage} />)}</View> : null}
       <View style={kit.row}><Text style={kit.muted}>{comment.createTime ? commentTime(comment.createTime) : ""}</Text><ThumbsUp size={12} color={color.textMuted} /><Text style={kit.muted}>{comment.likes}</Text></View>

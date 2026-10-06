@@ -26,4 +26,6 @@ contextBridge.exposeInMainWorld("desktopRuntime", Object.freeze({
     return () => ipcRenderer.removeListener("desktop:window-visibility", handler);
   },
   notifyBackgroundSyncBlocked: (message) => ipcRenderer.send("desktop:background-sync-blocked", String(message ?? "")),
+  getOpenAtLogin: () => ipcRenderer.invoke("desktop:get-open-at-login"),
+  setOpenAtLogin: (enabled) => ipcRenderer.invoke("desktop:set-open-at-login", enabled === true),
 }));

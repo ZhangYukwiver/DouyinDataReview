@@ -12,13 +12,16 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
   ContentWorkspace,
   LegacyContentWorkspace,
+  SettingsDialog,
   SetupWorkspace,
   StoryFrame,
   ensureThemeStyles,
   type LegacyWorkspaceViewKey,
   type RecordDownloadState,
+  type SettingsSection,
   workspaceColors,
 } from "./src/components/workspace";
+import { accountBlockedReason, activeAccountName, isCollectorSyncing } from "./src/components/workspace/setupModel";
 import { buildPersonalSummary } from "./src/domain/annualReport";
 import { buildLivingReport } from "./src/domain/livingReport";
 import {
@@ -93,7 +96,7 @@ import { shouldAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { createSyncRecovery } from "./src/services/syncRecovery";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, saveAppStyle, type AppStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
@@ -233,7 +236,7 @@ function AppContent() {
   const [collectorSnapshot, setCollectorSnapshot] = useState<CollectorSnapshot | null>(null);
   const [collectorBusy, setCollectorBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
-  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   const [collectorAccounts, setCollectorAccounts] = useState<CollectorAccounts | null>(null);
@@ -250,6 +253,10 @@ function AppContent() {
   const [storySrc, setStorySrc] = useState<string | null>(null);
   // 采集进行中，报告与内容库用这次采集开始前的快照；采集结束（busy 落下）再换成新数据
   const [frozenSnapshot, setFrozenSnapshot] = useState<CollectorSnapshot | null>(null);
+  // 极简风格没有自己的报告页，打开报告时借用这里选的一套（设置面板里改）
+  const [storyStyle, setStoryStyle] = useState<StoryStyle>(() => (Platform.OS === "web" ? loadStoryStyle() : "archive"));
+  // 设置面板开着时是要先滚到的那一节，关着是 null
+  const [preferences, setPreferences] = useState<SettingsSection | null>(null);
   // 内容年志开着时读的是打开那一刻写好的数据，外层先不拉整份快照（见 pollCollector），关掉时补一次
   const storyOpenRef = useRef(false);
   const storySnapshotStaleRef = useRef(false);
@@ -352,7 +359,7 @@ function AppContent() {
     }
   }
 
-  // 整体风格：主题 CSS 变量挂在 <html data-style> 上，内容库与持续报告一起换；采集器页固定一套浅色样式，不跟着换。
+  // 整体风格：主题 CSS 变量挂在 <html data-style> 上，内容库与持续报告一起换；采集器页在极简下换成极简版式，其余风格是那套手绘纸面。
   // 用 layout effect 是为了在首帧绘制前就把变量表和 data-style 挂上，否则第一帧没有颜色。
   useLayoutEffect(() => {
     if (Platform.OS !== "web" || typeof document === "undefined") return;
@@ -1559,7 +1566,9 @@ function AppContent() {
         archive: source === "archive" && selectedArchive?.data ? { parsedFileCount: selectedArchive.data.parsedFileCount, ignoredFileCount: selectedArchive.data.ignoredFileCount } : null,
       });
       writeStoryData(story);
-      setStorySrc(appStyle === "poster" ? buildPosterStoryUrl({ motion: "full" }) : appStyle === "archive" ? buildArchiveStoryUrl({ motion: "full" }) : buildStoryEntryUrl({
+      // 极简没有自己的报告页，借用设置里选的那套
+      const page = resolveStoryStyle(appStyle, storyStyle);
+      setStorySrc(page === "poster" ? buildPosterStoryUrl({ motion: "full" }) : page === "archive" ? buildArchiveStoryUrl({ motion: "full" }) : buildStoryEntryUrl({
         watch: workspaceRecords.watch_history.length,
         liked: workspaceRecords.liked_videos.length,
         favorite: workspaceRecords.favorite_videos.length,
@@ -1587,11 +1596,22 @@ function AppContent() {
     setActiveView("summary");
   }
 
+  // 「连接与采集」：回到采集器页（历史上叫 settings，各页的「去连接」按钮都调它）
   function openSettings() {
     setStorySrc(null);
     setDashboardOpen(false);
     setActiveView("sources");
   }
+
+  // 设置面板：采集器页和工作台共用一个 App 级模态
+  const openPreferences = (section: SettingsSection = "appearance") => setPreferences(section);
+  const toggleAutoSync = () => setAutoSyncEnabled((value) => {
+    saveAutoSync(!value);
+    return !value;
+  });
+  const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus), collectorStatus);
+  const recordDownloading = batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running");
+  const accountName = activeAccountName(collectorToken !== null, collectorStatus, collectorAccounts);
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
@@ -1650,18 +1670,15 @@ function AppContent() {
             }
           }}
           accounts={collectorAccounts}
-          downloading={batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running")}
+          downloading={recordDownloading}
           sparkRenewing={sparkRenewing}
           onActivateAccount={(id) => void changeAccount({ id })}
           onAddAccount={() => void changeAccount({ add: true })}
           onRemoveAccount={confirmRemoveAccount}
           autoSyncEnabled={autoSyncEnabled}
-          onToggleAutoSync={() => setAutoSyncEnabled((value) => !value)}
+          onToggleAutoSync={toggleAutoSync}
           appStyle={appStyle}
-          onChangeAppStyle={(style) => {
-            setAppStyle(style);
-            saveAppStyle(style);
-          }}
+          onOpenPreferences={openPreferences}
           chatBusy={chatControlBusy}
           chatCollecting={isChatReceiving(collectorStatus)}
           observing={collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus)}
@@ -1685,6 +1702,8 @@ function AppContent() {
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           activeView={dashboardView}
           appStyle={appStyle}
+          storyStyle={storyStyle}
+          onOpenPreferences={openPreferences}
           busy={collectorBusy}
           chatConversations={displaySnapshot?.chatConversations ?? []}
           chatMessages={displaySnapshot?.chatMessages ?? []}
@@ -1748,6 +1767,48 @@ function AppContent() {
         />
       )}
       {storySrc && storyMode ? <StoryFrame src={storySrc} /> : null}
+      <SettingsDialog
+        visible={preferences !== null}
+        section={preferences ?? undefined}
+        onClose={() => setPreferences(null)}
+        appStyle={appStyle}
+        onChangeAppStyle={(style) => {
+          setAppStyle(style);
+          saveAppStyle(style);
+        }}
+        storyStyle={storyStyle}
+        onChangeStoryStyle={(style) => {
+          setStoryStyle(style);
+          saveStoryStyle(style);
+        }}
+        autoSyncEnabled={autoSyncEnabled}
+        onToggleAutoSync={toggleAutoSync}
+        privacy={privacy}
+        onTogglePrivacy={() => setPrivacy((value) => !value)}
+        connected={collectorToken !== null}
+        accounts={collectorAccounts}
+        activeAccountName={accountName}
+        switchingAccount={switchingAccount}
+        accountBlocked={accountBlockedReason({
+          switchingAccount,
+          observing: collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus),
+          syncing: syncingRecords,
+          busy: collectorBusy,
+          downloading: recordDownloading,
+          sparkRenewing,
+        })}
+        onActivateAccount={(id) => void changeAccount({ id })}
+        onAddAccount={() => void changeAccount({ add: true })}
+        onRemoveAccount={confirmRemoveAccount}
+        onExportData={exportCurrentData}
+        canClear={workspaceRecords.watch_history.length + workspaceRecords.liked_videos.length + workspaceRecords.favorite_videos.length + (chatCount ?? 0) > 0 && !collectorBusy}
+        onClearCache={clearCurrentRecords}
+        appUpdate={appUpdate}
+        installBlocked={collectorBusy || (collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus))}
+        onCheckAppUpdate={checkForAppUpdates}
+        onDownloadAppUpdate={downloadAppUpdate}
+        onInstallAppUpdate={installAppUpdate}
+      />
     </SafeAreaView>
   );
 }

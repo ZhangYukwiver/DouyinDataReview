@@ -1364,7 +1364,7 @@ function SparkRow({
 
 function SparkStrip({ days }: { days: SparkDay[] }) {
   return (
-    <View style={styles.sparkStrip}>
+    <View {...ws("c-sparkstrip")} style={styles.sparkStrip}>
       {days.map((day, index) => (
         <View key={index} style={[styles.sparkCell, day === "both" ? styles.sparkCellBoth : day !== "none" && styles.sparkCellHalf]} />
       ))}

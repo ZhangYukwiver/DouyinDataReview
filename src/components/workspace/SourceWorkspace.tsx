@@ -16,7 +16,7 @@ import {
   View,
   type ViewStyle,
 } from "react-native";
-import Svg, { Circle, Path } from "react-native-svg";
+import Svg, { Path } from "react-native-svg";
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -37,6 +37,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Settings,
   Trash2,
   Unplug,
   UserRound,
@@ -47,7 +48,26 @@ import {
 import type { PersonalRecordCollection } from "../../domain/personalRecords";
 import type { DesktopUpdateState } from "../../desktopRuntime";
 import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type CollectorAccount, type CollectorAccounts, type CollectorStatus } from "../../services/localCollector";
-import { APP_STYLES, type AppStyle } from "../../services/appStyle";
+import type { AppStyle } from "../../services/appStyle";
+import type { SettingsSection } from "./SettingsDialog";
+import { MinimalSetupWorkspace } from "./MinimalSetupWorkspace";
+import {
+  accountBlockedReason,
+  activeAccountLabel,
+  appUpdateAction,
+  deriveSetup,
+  formatDate,
+  formatDay,
+  formatLongDay,
+  formatWhen,
+  hourName,
+  readActions,
+  recordSummary,
+  runReadCommand,
+  tipNotes,
+  type ReadActionIcon,
+  type SetupTip,
+} from "./setupModel";
 import { ease, useCountUp } from "./motion";
 import {
   dayWindow,
@@ -117,8 +137,10 @@ export interface SetupWorkspaceProps {
   onOpenDashboard: () => void;
   autoSyncEnabled: boolean;
   onToggleAutoSync: () => void;
+  /** 极简风格下整页换成 MinimalSetupWorkspace，其余风格是这套手绘纸面 */
   appStyle: AppStyle;
-  onChangeAppStyle: (style: AppStyle) => void;
+  /** 打开设置面板（风格、自动补读、账号、数据、更新都在里面）；section 是先滚到哪一节 */
+  onOpenPreferences: (section?: SettingsSection) => void;
   appUpdate: DesktopUpdateState | null;
   onCheckAppUpdate: () => Promise<void>;
   onDownloadAppUpdate: () => Promise<void>;
@@ -129,6 +151,7 @@ const web = Platform.OS === "web";
 const pointer = web ? ({ cursor: "pointer" } as object) : null;
 // 圈注出现时像红笔现画一圈（CSS 描边动画，见 PAPER_CSS）；RN 的 View 类型里没有 dataSet，所以走展开
 const DRAW: object = web ? { dataSet: { draw: "1" } } : {};
+const SKETCH_SKIN: object = web ? { dataSet: { skin: "sketch" } } : {};
 
 // 采集器页只有这一套样式：纸面、墨水笔、铅笔灰，红笔圈重点、黄色荧光笔划重点、便签纸写提示。
 // 不跟整体风格走（整体风格只管报告和工作台），所以这里不用主题 token，也不打 data-ws 角色。
@@ -145,10 +168,10 @@ const SANS = web ? "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI'
 // 离线时西文退到系统里的手写体（Bradley Hand / Segoe Print），中文退到楷体，再不行就是苹方/雅黑。
 const HAND = web ? "'Caveat', 'Ma Shan Zheng', 'Bradley Hand', 'Segoe Print', 'Kaiti SC', 'STKaiti', 'KaiTi', 'PingFang SC', 'Microsoft YaHei', cursive" : undefined;
 const HAND_FONTS = "https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Ma+Shan+Zheng&display=swap";
-// 纸面：米色底 + 点阵 + 一层很淡的纸纹噪点（只在采集器页根节点上）
+// 纸面：米色底 + 点阵 + 一层很淡的纸纹噪点（只在手绘采集器页根节点上；极简版同一个 testID，靠 data-skin 分开）
 const NOISE = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .33 0 0 0 0 .27 0 0 0 0 .18 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")";
 const PAPER_CSS = `
-[data-testid="setup-workspace"]{background-color:${C.paper};background-image:radial-gradient(rgba(84,70,44,.17) 1px,transparent 1.35px),${NOISE};background-size:22px 22px,160px 160px}
+[data-testid="setup-workspace"][data-skin="sketch"]{background-color:${C.paper};background-image:radial-gradient(rgba(84,70,44,.17) 1px,transparent 1.35px),${NOISE};background-size:22px 22px,160px 160px}
 [data-testid="setup-workspace"] [data-draw] path{stroke-dasharray:420;stroke-dashoffset:420;animation:setup-draw 1s cubic-bezier(.3,.6,.3,1) .15s forwards}
 @keyframes setup-draw{to{stroke-dashoffset:0}}
 @media (prefers-reduced-motion:reduce){[data-testid="setup-workspace"] [data-draw] path{animation:none;stroke-dashoffset:0}}
@@ -197,9 +220,13 @@ function useSize(): [Size | null, (event: LayoutChangeEvent) => void] {
   return [size, onLayout];
 }
 
-export function SetupWorkspace({
+// 两套版式是两个组件：运行中切风格时整页重挂，各自的 hook 不会串
+export function SetupWorkspace(props: SetupWorkspaceProps) {
+  return props.appStyle === "minimal" ? <MinimalSetupWorkspace {...props} /> : <SketchSetupWorkspace {...props} />;
+}
+
+function SketchSetupWorkspace({
   accounts,
-  appStyle,
   archive,
   autoSyncEnabled,
   busy,
@@ -208,7 +235,6 @@ export function SetupWorkspace({
   connected,
   downloading,
   error,
-  onChangeAppStyle,
   onChangeCollectorUrl,
   onChangePairingCode,
   onClearCache,
@@ -217,6 +243,7 @@ export function SetupWorkspace({
   onDisconnect,
   onEnterWorkspace,
   onOpenDashboard,
+  onOpenPreferences,
   onActivateAccount,
   onAddAccount,
   onRemoveAccount,
@@ -257,38 +284,16 @@ export function SetupWorkspace({
   const roomy = height >= 880 && width >= 1300;
   const counts = { watch: records.watch_history.length, liked: records.liked_videos.length, favorite: records.favorite_videos.length, chat: chatCount ?? 0 };
   const total = counts.watch + counts.liked + counts.favorite + counts.chat;
-  const ready = total > 0 || status?.state === "complete" || snapshotSource === "archive";
-  const syncing = connected && !observing && ["launching_browser", "awaiting_login", "collecting"].includes(status?.state ?? "");
-  // 完整读取要独占可见浏览器；增量读取走无头，接收和下载照常
-  const visibleBusy = observing || status?.syncMode === "page";
-  // 读取中哪个按钮发起的就由哪个按钮停：完整读取走可见浏览器（syncMode=page），其余是增量
-  const pageSyncing = syncing && status?.syncMode === "page";
-  const directSyncing = syncing && !pageSyncing;
-  const chatProgress = status?.chat.progress ?? null;
-  // 聊天历史还在整理（起浏览器、逐个会话读）时，「采集聊天记录」变成停止键；停下就是停掉这一轮接收，已读到的照样留着
-  const chatReading = chatCollecting && (status?.chat.state !== "observing" || chatProgress !== null);
+  // 状态推导、五个读取按钮、提示文案都在 setupModel，极简版用的是同一套
+  const setup = deriveSetup({ connected, busy, observing, chatCollecting, status, snapshotSource, total });
+  const { ready, syncing, chatProgress, loginNeeded, fromArchive, flow } = setup;
   const [stoppingChat, setStoppingChat] = useState(false);
-  const source = snapshotSource === "archive" ? "备用文件导入" : connected ? "本地采集器" : "尚未连接";
-  const loginNeeded = status?.state === "awaiting_login" || status?.code === "login_required";
+  const actions = readActions({ connected, busy, observing, chatCollecting, chatBusy, stoppingSync, switchingAccount, stoppingChat }, setup);
+  const handlers = { onStartIncrementalSync, onStartFullSync, onStopSync, onStartObservation, onStopObservation, onStartChatObservation, onCollectChatHistory, setStoppingChat };
   const digest = useMemo(() => digestRecords(records, 24), [records]);
-  const fromArchive = snapshotSource === "archive";
 
-  // 数据流向图当前走到哪一步：0 抖音网页 → 1 本机采集器 → 2 本地记录 → 3 报告
-  const flow = fromArchive
-    ? { step: 3, done: [true, true, true], note: "可以看了" }
-    : loginNeeded
-      ? { step: 0, done: [false, connected, ready], note: "要登录" }
-      : !connected
-        ? { step: 1, done: [false, false, ready], note: "先连上" }
-        : syncing
-          ? { step: 2, done: [true, true, false], note: "读取中" }
-          : ready
-            ? { step: 3, done: [true, true, true], note: "可以看了" }
-            : { step: 2, done: [true, true, false], note: "去读取" };
-
-  const range = digest.first !== null ? `，最早到 ${formatLongDay(digest.first, true)}` : "";
-  const recordDetail = total ? `一共 ${total.toLocaleString("zh-CN")} 条${range}。` : "观看、喜欢、收藏与聊天";
-  const notes = tipNotes({ fromArchive, connected, loginNeeded, syncing, ready, autoSyncEnabled });
+  const recordDetail = recordSummary(total, digest.first);
+  const notes = tipNotes({ fromArchive, connected, loginNeeded, syncing, ready, autoSyncEnabled }).map((tip) => ({ ...tip, ...NOTE_LOOK[tip.key] }));
   const cardPad = narrow ? styles.cardNarrow : short ? styles.cardShort : roomy ? styles.cardRoomy : null;
 
   const [accountMenu, setAccountMenu] = useState(false);
@@ -296,27 +301,19 @@ export function SetupWorkspace({
   useEffect(() => { if (!connected) setAccountMenu(false); }, [connected]);
   const accountRows = accounts?.accounts ?? [];
   const activeAccountId = accounts?.activeId ?? status?.account?.id ?? null;
-  const activeIndex = accountRows.findIndex((account) => account.id === activeAccountId);
-  const accountLabel = !connected ? "抖音账号"
-    : status?.account?.nickname ?? (activeIndex >= 0 ? collectorAccountName(accountRows[activeIndex]!, activeIndex) : "抖音账号");
-  // 切换要先关掉旧账号的浏览器，读取和手动监听都用着它；聊天接收、看直播之类采集器会自己停
-  const accountBlocked = switchingAccount ? "正在切换账号，稍等一下。"
-    : observing ? "正在手动监听，先停下再切换账号。"
-      : syncing ? "正在读取记录，先停下再切换账号。"
-        : busy ? "采集器正在忙，等它忙完再切换账号。"
-          : downloading ? "正在下载视频，等下完再切换账号。"
-            : sparkRenewing ? "正在续火花，等发完或先停下再切换账号。"
-              : null;
+  const accountLabel = activeAccountLabel(connected, status, accounts);
+  const accountBlocked = accountBlockedReason({ switchingAccount, observing, syncing, busy, downloading, sparkRenewing });
 
   return (
-    <View testID="setup-workspace" style={styles.root}>
+    <View {...SKETCH_SKIN} testID="setup-workspace" style={styles.root}>
       <View style={[styles.topbar, narrow && styles.topbarNarrow]}>
         <View style={styles.brand}>
           <SketchBox seed="brand-mark" fill={C.card} passes={2} amp={1} style={styles.mark}><NotebookPen color={C.ink} size={17} strokeWidth={1.8} /></SketchBox>
           <Hand style={[styles.brandName, narrow && styles.brandNameNarrow]}>内容数据工作台</Hand>
         </View>
-        <View style={styles.topStatus}><View style={[styles.dot, connected && styles.dotOn]} /><Text numberOfLines={1} style={styles.statusText}>{busy && ready && snapshotSource === "collector" ? `${source} · 采集中，报告用采集前的数据` : source}</Text></View>
+        <View style={styles.topStatus}><View style={[styles.dot, connected && styles.dotOn]} /><Text numberOfLines={1} style={styles.statusText}>{setup.statusLine}</Text></View>
         <View style={styles.row8}>
+          <SketchButton seed="top-settings" icon={Settings} label="设置" onPress={() => onOpenPreferences()} />
           <SketchButton seed="top-dashboard" icon={LayoutDashboard} label="进入工作台" onPress={onOpenDashboard} />
           <SketchButton seed="top-report" disabled={!ready || switchingAccount} icon={ArrowRight} iconAfter kind="ink" label="打开报告" onPress={onEnterWorkspace} />
         </View>
@@ -336,19 +333,6 @@ export function SetupWorkspace({
               </View>
               <Text numberOfLines={1} style={styles.meta}>连接本地采集器，或导入一份个人档案；数据只留在这台设备上。</Text>
             </View>
-            {web ? (
-              <View testID="app-style" style={styles.styleBlock}>
-                <View style={styles.styleLabel}>
-                  <Hand style={styles.styleLabelText}>报告风格</Hand>
-                  <Svg height={14} width={34}><Path d={roughArrow(2, 9, 31, 6, "style-arrow", { bend: 3, head: 6 })} fill="none" stroke={C.muted} strokeLinecap="round" strokeWidth={1.3} /></Svg>
-                </View>
-                <View accessibilityRole="radiogroup" style={styles.segments}>
-                  {APP_STYLES.map((item) => (
-                    <StyleOption key={item.key} detail={item.detail} kind={item.key} label={item.label} on={appStyle === item.key} onPress={() => onChangeAppStyle(item.key)} size={roomy ? "large" : tight ? "small" : "medium"} />
-                  ))}
-                </View>
-              </View>
-            ) : null}
           </View>
 
           <SketchBox seed="flow-strip" fill={C.card} stroke={C.pencil} passes={2} amp={1.8} style={[styles.statusBar, narrow && styles.statusBarNarrow]}>
@@ -398,11 +382,9 @@ export function SetupWorkspace({
               <FitSlot style={styles.slotChart}>{(size) => <RecordSketches digest={digest} roomy={roomy} size={size} />}</FitSlot>
               <ChatProgress progress={chatProgress} />
               <View style={styles.actions}>
-                <ActionButton seed="act-incremental" compact={narrow} disabled={!connected || (busy && !directSyncing) || visibleBusy} icon={directSyncing ? Pause : Play} label={directSyncing ? "停止读取" : "增量读取"} onPress={directSyncing ? () => void onStopSync() : onStartIncrementalSync} busy={directSyncing ? stoppingSync : busy && !observing && !pageSyncing} />
-                <ActionButton seed="act-full" compact={narrow} disabled={!connected || (!pageSyncing && (busy || visibleBusy))} icon={pageSyncing ? Pause : RefreshCw} label={pageSyncing ? "停止读取" : "完整读取"} onPress={pageSyncing ? () => void onStopSync() : onStartFullSync} busy={pageSyncing && stoppingSync} />
-                <ActionButton seed="act-observe" compact={narrow} disabled={!connected || busy} icon={observing ? Pause : Eye} label={observing ? "停止监听" : "手动监听"} onPress={() => void (observing ? onStopObservation() : onStartObservation())} />
-                <ActionButton seed="act-chat" compact={narrow} disabled={!connected || chatBusy || switchingAccount || (!chatCollecting && (visibleBusy || busy))} icon={chatCollecting ? Pause : MessageCircle} label={chatCollecting ? "暂停接收" : "开始接收"} onPress={() => void (chatCollecting ? onStopObservation() : onStartChatObservation())} />
-                <ActionButton seed="act-history" compact={narrow} disabled={!connected || switchingAccount || (chatReading ? stoppingChat : chatBusy || visibleBusy || (busy && !chatCollecting))} icon={chatReading ? Pause : RefreshCw} label={chatReading ? "停止读取" : "采集聊天记录"} onPress={chatReading ? () => { setStoppingChat(true); void onStopObservation().finally(() => setStoppingChat(false)); } : () => void onCollectChatHistory()} busy={chatReading ? stoppingChat : chatBusy} />
+                {actions.map((action) => (
+                  <ActionButton key={action.key} seed={`act-${action.key}`} compact={narrow} disabled={action.disabled} icon={READ_ICONS[action.icon]} label={action.label} onPress={() => runReadCommand(action.command, handlers)} busy={action.busy} />
+                ))}
               </View>
               <Text style={styles.hint}>完整读取和手动监听会先暂停接收聊天。</Text>
               <HRule seed="auto-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />
@@ -483,7 +465,7 @@ function AccountMenu({ accounts, activeId, blocked, maxListHeight, onActivate, o
         <Tape seed="tape-account" />
         <View style={styles.menuHead}>
           <Hand style={styles.menuTitle}>抖音账号</Hand>
-          <Pressable accessibilityLabel="关掉账号面板" accessibilityRole="button" onPress={onClose} ref={closeRef} style={(state) => [styles.menuClose, hovered(state) && styles.segmentHover, pointer]}>
+          <Pressable accessibilityLabel="关掉账号面板" accessibilityRole="button" onPress={onClose} ref={closeRef} style={(state) => [styles.menuClose, hovered(state) && styles.menuCloseHover, pointer]}>
             <X color={C.text2} size={16} strokeWidth={1.9} />
           </Pressable>
         </View>
@@ -684,77 +666,6 @@ function SketchSwitch({ on }: { on: boolean }) {
       </View>
     </View>
   );
-}
-
-// ---------- 标题行里的报告风格 ----------
-
-function StyleOption({ detail, kind, label, on, onPress, size }: { detail: string; kind: AppStyle; label: string; on: boolean; onPress: () => void; size: "small" | "medium" | "large" }) {
-  const [box, onLayout] = useSize();
-  const [w, h] = size === "large" ? [70, 44] : size === "small" ? [50, 31] : [60, 38];
-  const ring = useMemo(() => (box ? roughEllipse(box.w / 2 + RING_X, box.h / 2 + RING_Y, (box.w / 2 + RING_X - 1) / 1.06, (box.h / 2 + RING_Y - 1) / 1.06, `ring-${kind}`, { turns: 1.14, jitter: 0.05 }) : ""), [box, kind]);
-  return (
-    <Pressable accessibilityLabel={`${label}：${detail}`} accessibilityRole="radio" aria-checked={on} onLayout={onLayout} onPress={onPress} style={(state) => [styles.segment, size === "small" && styles.segmentSmall, hovered(state) && !on && styles.segmentHover, state.pressed && styles.pressed, pointer]}>
-      {on && box ? (
-        <View key={kind} {...DRAW} style={[styles.ringLayer, { left: -RING_X, top: -RING_Y, width: box.w + RING_X * 2, height: box.h + RING_Y * 2 }]}>
-          <Svg height={box.h + RING_Y * 2} width={box.w + RING_X * 2}><Path d={ring} fill="none" stroke={C.red} strokeLinecap="round" strokeWidth={1.8} /></Svg>
-        </View>
-      ) : null}
-      <StylePreview h={h} kind={kind} w={w} />
-      <Text numberOfLines={1} style={[styles.segmentText, on && styles.segmentTextOn]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-// 三种报告风格的小样：内容年志是墨夜里一张斜插的卡，档案馆是暗室里的金色星图，海报是新闻纸上的黑块大标题
-function StylePreview({ h, kind, w }: { h: number; kind: AppStyle; w: number }) {
-  const art = useMemo(() => {
-    const frame = roughShape(w, h, `pv-${kind}`, { inset: 1.5, amp: 0.7 });
-    const border = roughRect(w, h, `pv-${kind}`, { inset: 1.5, amp: 0.8, passes: 1 });
-    const block = (x: number, y: number, bw: number, bh: number, seed: string) => roughShape(bw * w, bh * h, seed, { inset: 0, amp: 0.5, x: x * w, y: y * h });
-    if (kind === "trace") {
-      const rand = seeded("pv-stars");
-      const stars = Array.from({ length: 8 }, (_, index) => ({ key: index, cx: 5 + rand() * (w - 10), cy: 4 + rand() * h * 0.42, r: 0.55 + rand() * 0.55 }));
-      return { bg: "#1E2437", frame, border, parts: [
-        ...stars.map((star) => <Circle key={`s${star.key}`} cx={star.cx} cy={star.cy} fill="#F5E9C6" r={star.r} />),
-        <Path key="card" d={tilted(w * 0.52, h * 0.6, w * 0.36, h * 0.5, -10)} fill="rgba(255,255,255,.14)" stroke="#EEA44E" strokeWidth={1.1} />,
-        <Path key="line" d={roughLine(w * 0.42, h * 0.64, w * 0.6, h * 0.6, "pv-trace-line", { amp: 0.3 })} fill="none" stroke="#F5E9C6" strokeWidth={0.9} />,
-      ] };
-    }
-    if (kind === "archive") {
-      // 暗室里一张星图：金色刻度圈、一颗四角星、左边一行细金字
-      const cx = w * 0.64, cy = h * 0.5, r = Math.min(w, h) * 0.3;
-      const star = (x: number, y: number, s: number) => `M${x} ${y - s}C${x + s * 0.09} ${y - s * 0.16} ${x + s * 0.16} ${y - s * 0.09} ${x + s} ${y}C${x + s * 0.16} ${y + s * 0.09} ${x + s * 0.09} ${y + s * 0.16} ${x} ${y + s}C${x - s * 0.09} ${y + s * 0.16} ${x - s * 0.16} ${y + s * 0.09} ${x - s} ${y}C${x - s * 0.16} ${y - s * 0.09} ${x - s * 0.09} ${y - s * 0.16} ${x} ${y - s}Z`;
-      return { bg: "#15181A", frame, border, parts: [
-        <Circle key="ring" cx={cx} cy={cy} fill="none" r={r} stroke="#C59861" strokeWidth={0.9} />,
-        <Circle key="dots" cx={cx} cy={cy} fill="none" r={r * 0.62} stroke="#6E8C8F" strokeDasharray="0.6 2.2" strokeLinecap="round" strokeWidth={1} />,
-        <Path key="star" d={star(cx - r * 0.3, cy - r * 0.34, r * 0.34)} fill="#E3C8A6" />,
-        <Path key="t1" d={roughLine(w * 0.12, h * 0.36, w * 0.36, h * 0.36, "pv-a-t1", { amp: 0.2 })} fill="none" stroke="#E3C8A6" strokeWidth={1.6} />,
-        <Path key="t2" d={roughLine(w * 0.12, h * 0.5, w * 0.3, h * 0.5, "pv-a-t2", { amp: 0.2 })} fill="none" stroke="rgba(207,193,176,.55)" strokeWidth={0.9} />,
-        <Path key="t3" d={roughLine(w * 0.12, h * 0.62, w * 0.26, h * 0.62, "pv-a-t3", { amp: 0.2 })} fill="none" stroke="rgba(207,193,176,.55)" strokeWidth={0.9} />,
-      ] };
-    }
-    return { bg: "#EFE6D4", frame, border, parts: [
-      <Path key="h1" d={block(0.1, 0.16, 0.54, 0.18, "pv-p-h1")} fill="#17130F" />,
-      <Path key="h2" d={block(0.1, 0.4, 0.4, 0.12, "pv-p-h2")} fill="#17130F" />,
-      <Path key="or" d={block(0.7, 0.16, 0.2, 0.36, "pv-p-or")} fill="#EF6A1E" />,
-      ...[0.66, 0.76, 0.86].map((y, index) => <Path key={`l${index}`} d={roughLine(w * 0.1, h * y, w * (index === 2 ? 0.62 : 0.9), h * y, `pv-p-l${index}`, { amp: 0.3 })} fill="none" stroke="rgba(23,19,15,.55)" strokeWidth={0.9} />),
-    ] };
-  }, [h, kind, w]);
-  return (
-    <Svg height={h} width={w}>
-      <Path d={art.frame} fill={art.bg} />
-      {art.parts}
-      <Path d={art.border} fill="none" stroke={C.line} strokeLinecap="round" strokeWidth={1.1} />
-    </Svg>
-  );
-}
-
-function tilted(cx: number, cy: number, w: number, h: number, degrees: number): string {
-  const angle = (degrees * Math.PI) / 180;
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const corners = ([[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]] as const).map(([x, y]) => `${(cx + x * cos - y * sin).toFixed(1)} ${(cy + x * sin + y * cos).toFixed(1)}`);
-  return `M${corners.join("L")}Z`;
 }
 
 // ---------- 数据流向图 ----------
@@ -981,14 +892,6 @@ function RecordSketches({ digest, roomy, size }: { digest: RecordDigest; roomy: 
   );
 }
 
-function hourName(hour: number): string {
-  if (hour < 6) return `凌晨 ${hour} 点`;
-  if (hour < 12) return `上午 ${hour} 点`;
-  if (hour === 12) return "中午 12 点";
-  if (hour < 18) return `下午 ${hour - 12} 点`;
-  return `晚上 ${hour - 12} 点`;
-}
-
 /** 空数据时的占位草图：铅笔淡淡打的几根柱子（还没上墨），上面贴一句说明。 */
 function GhostChart({ bars, height: h, seed, text, width }: { bars?: number; height: number; seed: string; text: string; width: number }) {
   const paths = useMemo(() => {
@@ -1081,24 +984,14 @@ function GhostList({ seed, size, text }: { seed: string; size: Size; text: strin
 
 type Note = { key: string; title: string; body: string; color: string; tilt: number };
 
-function tipNotes(state: { fromArchive: boolean; connected: boolean; loginNeeded: boolean; syncing: boolean; ready: boolean; autoSyncEnabled: boolean }): Note[] {
-  const tip = state.fromArchive
-    ? { title: "用的是导入的文件", body: state.connected ? "报告和工作台都用这份文件。想换回采集器的数据，点右边的「移除」就行。" : "报告和工作台都用这份文件，关掉应用后要重新导入。" }
-    : state.loginNeeded
-      ? { title: "要先登录抖音", body: "在弹出的浏览器窗口里登录，登录好以后回来点「增量读取」。" }
-      : !state.connected
-        ? { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。第一次连接会弹出一个浏览器窗口，在里面登录抖音就行。" }
-        : state.syncing
-          ? { title: "正在读取", body: "随时可以点「停止读取」停下，已经读到的会先存好。" }
-          : state.ready
-            ? { title: "可以打开报告了", body: state.autoSyncEnabled ? "右上角「打开报告」看这些记录。应用回到前台时会自动补读新的记录。" : "右上角「打开报告」看这些记录。自动读取已暂停，想更新就点「增量读取」。" }
-            : { title: "连上了，下一步读取", body: "「增量读取」在后台读最近的记录，不弹窗口；「完整读取」会从头翻一遍，要久一些。" };
-  return [
-    { key: "tip", ...tip, color: C.noteYellow, tilt: -1.2 },
-    { key: "privacy", title: "只存在这台电脑上", body: "采集器只在本机运行，读到的记录都存在这台电脑里，不上传。", color: C.noteBlue, tilt: 0.9 },
-    { key: "carry", title: "换电脑怎么带走", body: "先「导出数据」存成文件，到新电脑上「选择文件」导入，再「并入本机记录」。", color: C.notePink, tilt: -0.6 },
-  ];
-}
+// 三条提示各贴一张颜色、歪度不同的便签（文案在 setupModel 的 tipNotes）
+const NOTE_LOOK: Record<SetupTip["key"], { color: string; tilt: number }> = {
+  tip: { color: C.noteYellow, tilt: -1.2 },
+  privacy: { color: C.noteBlue, tilt: 0.9 },
+  carry: { color: C.notePink, tilt: -0.6 },
+};
+
+const READ_ICONS: Record<ReadActionIcon, Icon> = { play: Play, pause: Pause, refresh: RefreshCw, eye: Eye, message: MessageCircle };
 
 /** 便签：按剩下的高度估算能贴几张（估行数：一行约放 宽÷字号 个字）。 */
 function NoteStack({ error, notes, roomy, size }: { error: string | null; notes: Note[]; roomy: boolean; size: Size }) {
@@ -1208,13 +1101,8 @@ function AppUpdatePanel({
 }) {
   const checking = state.phase === "checking";
   const downloading = state.phase === "downloading";
-  const action = state.phase === "available"
-    ? { label: state.manualDownload ? "去下载" : "下载更新", icon: Download, onPress: onDownload, disabled: false }
-    : state.phase === "downloaded"
-      ? { label: busy ? "采集完成后安装" : "重启并安装", icon: RefreshCw, onPress: onInstall, disabled: busy }
-      : state.phase === "unsupported"
-        ? null
-        : { label: state.phase === "error" ? "重试检查" : "检查更新", icon: RefreshCw, onPress: onCheck, disabled: checking || downloading };
+  const rule = appUpdateAction(state, busy);
+  const action = rule ? { ...rule, icon: rule.kind === "download" ? Download : RefreshCw, onPress: rule.kind === "download" ? onDownload : rule.kind === "install" ? onInstall : onCheck } : null;
   const percent = state.progress === null ? null : Math.round(Math.max(0, Math.min(100, state.progress)));
   const fresh = state.version && state.phase !== "up-to-date";
   return (
@@ -1236,26 +1124,6 @@ function AppUpdatePanel({
 }
 
 function BookmarkIcon({ color: iconColor, size, strokeWidth }: { color?: string; size?: number; strokeWidth?: number }) { return <Bookmark color={iconColor} size={size} strokeWidth={strokeWidth} />; }
-function formatDate(value: string): string { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : value; }
-function formatDay(time: number): string {
-  const date = new Date(time);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-// 「2025 年 8 月 1 日」；今年的日期省掉年份，除非明确要带
-function formatLongDay(time: number, withYear = false): string {
-  const date = new Date(time);
-  const year = withYear || date.getFullYear() !== new Date().getFullYear() ? `${date.getFullYear()} 年 ` : "";
-  return `${year}${date.getMonth() + 1} 月 ${date.getDate()} 日`;
-}
-// 今天的写几点几分，昨天写「昨天」，今年的写月/日，更早的带上年份
-function formatWhen(time: number): string {
-  const date = new Date(time);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  if (time >= today) return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-  if (time >= today - 86_400_000) return "昨天";
-  return date.getFullYear() === now.getFullYear() ? `${date.getMonth() + 1}/${date.getDate()}` : `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
-}
 
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: "100%", backgroundColor: C.paper },
@@ -1279,11 +1147,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", gap: 16 },
   titleRow: { flexDirection: "row", alignItems: "flex-end", flexWrap: "wrap" },
   title: { fontSize: 34, lineHeight: 42 }, titleRoomy: { fontSize: 40, lineHeight: 50 }, titleShort: { fontSize: 30, lineHeight: 38 }, titleTight: { fontSize: 27, lineHeight: 34 },
-  styleBlock: { flexDirection: "row", alignItems: "center", gap: 6 },
-  styleLabel: { alignItems: "flex-end" }, styleLabelText: { fontSize: 20, lineHeight: 22, color: C.text2 },
-  segments: { flexDirection: "row", gap: 2 },
-  segment: { alignItems: "center", gap: 3, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 6 }, segmentSmall: { paddingHorizontal: 7, paddingTop: 5, paddingBottom: 4, gap: 2 }, segmentHover: { transform: [{ translateY: -2 }] },
-  segmentText: { color: C.muted, fontSize: 12, lineHeight: 16, fontWeight: "500" }, segmentTextOn: { color: C.text, fontWeight: "700" },
+  menuCloseHover: { transform: [{ translateY: -2 }] },
   statusBar: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 16, paddingVertical: 8 }, statusBarNarrow: { gap: 8, paddingHorizontal: 10, paddingVertical: 6 },
   statusCopy: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 }, statusCopyNarrow: { gap: 8 },
   statusTitle: { fontSize: 21, lineHeight: 26, flexShrink: 0 },

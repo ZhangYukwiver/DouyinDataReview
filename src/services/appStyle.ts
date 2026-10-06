@@ -1,12 +1,20 @@
-export type AppStyle = "archive" | "trace" | "poster";
+export type AppStyle = "minimal" | "archive" | "trace" | "poster";
+/** 有自己报告页（/story 下的故事页）的风格；极简只换采集器和工作台，报告借用其中一套。 */
+export type StoryStyle = Exclude<AppStyle, "minimal">;
 
-// 整体风格：持续报告与报告本体共用同一个选择（采集器页只有一套样式，不跟它走）。默认内容年志。
-export const DEFAULT_APP_STYLE: AppStyle = "trace";
+// 整体风格：采集器页、工作台、报告共用同一个选择。默认极简：白底细线、系统字体，没有自己的报告页。
+// 采集器页在极简下是极简版式，其余三种风格下仍是那套手绘纸面（不跟风格换皮）。
+export const DEFAULT_APP_STYLE: AppStyle = "minimal";
 export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: string }> = [
+  { key: "minimal", label: "极简", detail: "白底细线 · 系统字体" },
   { key: "trace", label: "内容年志", detail: "墨夜玻璃 · 穿卡入口" },
   { key: "archive", label: "档案馆", detail: "暗室星图卷宗 · 点击翻页" },
   { key: "poster", label: "海报", detail: "黑橙新闻纸 · 硬切长卷" },
 ];
+
+// 极简下「打开报告」用哪套故事页，默认内容年志；另外三种风格各用自己的。
+export const DEFAULT_STORY_STYLE: StoryStyle = "trace";
+export const STORY_STYLES = APP_STYLES.filter((item): item is { key: StoryStyle; label: string; detail: string } => item.key !== "minimal");
 
 // 键名沿用“报告风格”时期的，用户之前保存的选择继续有效。
 const STORAGE_KEY = "content-insights.report-style";
@@ -18,30 +26,65 @@ const FONTS: Partial<Record<AppStyle, string>> = {
   // 档案馆：Cormorant Garamond 细衬线做数字和英文，宋体做中文，黑体只留给很小的注释
   archive: "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600&family=Noto+Serif+SC:wght@400;500;600;700;900&family=Noto+Sans+SC:wght@400;500&display=swap",
 };
+const STORY_STORAGE_KEY = "content-insights.story-style";
 const STORED: ReadonlySet<string> = new Set(APP_STYLES.map((item) => item.key));
+const STORED_STORY: ReadonlySet<string> = new Set(STORY_STYLES.map((item) => item.key));
 
 interface StyleStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
 
-// Native has no localStorage and private browsing may throw; both fall back to the default style.
-// 显式选过的风格照用，其余情况（没选过 / 存了旧值）都用默认的内容年志。
-export function loadAppStyle(storage: StyleStorage | undefined = globalThis.localStorage): AppStyle {
+function load<T extends string>(key: string, allowed: ReadonlySet<string>, fallback: T, storage: StyleStorage | undefined): T {
   try {
-    const stored = storage?.getItem(STORAGE_KEY) ?? "";
-    return STORED.has(stored) ? stored as AppStyle : DEFAULT_APP_STYLE;
+    const stored = storage?.getItem(key) ?? "";
+    return allowed.has(stored) ? stored as T : fallback;
   } catch {
-    return DEFAULT_APP_STYLE;
+    return fallback;
   }
 }
 
-export function saveAppStyle(style: AppStyle, storage: StyleStorage | undefined = globalThis.localStorage): void {
+function save(key: string, value: string, storage: StyleStorage | undefined): void {
   try {
-    storage?.setItem(STORAGE_KEY, style);
+    storage?.setItem(key, value);
   } catch {
     // Nothing to persist to; the in-memory choice still applies for this session.
   }
+}
+
+// Native has no localStorage and private browsing may throw; both fall back to the default style.
+// 显式选过的风格照用（老用户选过年志/档案馆/海报的不变），其余情况（没选过 / 存了旧值）都用默认的极简。
+export function loadAppStyle(storage: StyleStorage | undefined = globalThis.localStorage): AppStyle {
+  return load(STORAGE_KEY, STORED, DEFAULT_APP_STYLE, storage);
+}
+
+export function saveAppStyle(style: AppStyle, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(STORAGE_KEY, style, storage);
+}
+
+export function loadStoryStyle(storage: StyleStorage | undefined = globalThis.localStorage): StoryStyle {
+  return load(STORY_STORAGE_KEY, STORED_STORY, DEFAULT_STORY_STYLE, storage);
+}
+
+export function saveStoryStyle(style: StoryStyle, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(STORY_STORAGE_KEY, style, storage);
+}
+
+// 「自动补读新记录」开关（设置面板 / 采集器页）：以前不存，每次启动都回到开启；现在记住用户的选择
+const AUTO_SYNC_KEY = "content-insights.auto-sync";
+const AUTO_SYNC_VALUES: ReadonlySet<string> = new Set(["on", "off"]);
+
+export function loadAutoSync(storage: StyleStorage | undefined = globalThis.localStorage): boolean {
+  return load(AUTO_SYNC_KEY, AUTO_SYNC_VALUES, "on", storage) === "on";
+}
+
+export function saveAutoSync(enabled: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(AUTO_SYNC_KEY, enabled ? "on" : "off", storage);
+}
+
+/** 报告（故事页、分享图、纪念卡）实际用哪套：极简借用单独选的那套，其余风格就是自己。 */
+export function resolveStoryStyle(appStyle: AppStyle, storyStyle: StoryStyle): StoryStyle {
+  return appStyle === "minimal" ? storyStyle : appStyle;
 }
 
 interface StyleDocument {

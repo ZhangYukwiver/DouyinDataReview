@@ -41,6 +41,9 @@ interface DesktopRuntimeBridge {
   isWindowVisible(): Promise<unknown>;
   onWindowVisibility(listener: (visible: boolean) => void): () => void;
   notifyBackgroundSyncBlocked(message: string): void;
+  // 比上面晚加的：旧版外壳没有这两个，用前先看在不在
+  getOpenAtLogin?(): Promise<unknown>;
+  setOpenAtLogin?(enabled: boolean): Promise<unknown>;
 }
 
 declare global {
@@ -179,4 +182,28 @@ export function trackDesktopWindowVisibility(onShow: () => void, onHiddenStart: 
 
 export function notifyDesktopBackgroundSyncBlocked(message: string): void {
   getDesktopRuntime()?.notifyBackgroundSyncBlocked(message);
+}
+
+/** 「开机后在后台运行」现在开没开；浏览器里、旧版外壳或不支持登录项的系统上是 null（设置面板就不显示这一行） */
+export async function getDesktopOpenAtLogin(): Promise<boolean | null> {
+  const runtime = getDesktopRuntime();
+  if (typeof runtime?.getOpenAtLogin !== "function") return null;
+  try {
+    const value = await runtime.getOpenAtLogin();
+    return typeof value === "boolean" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 打开或关掉「开机后在后台运行」，答的是改完以后系统里实际的状态；没改成或没有这个接口时是 null */
+export async function setDesktopOpenAtLogin(enabled: boolean): Promise<boolean | null> {
+  const runtime = getDesktopRuntime();
+  if (typeof runtime?.setOpenAtLogin !== "function") return null;
+  try {
+    const value = await runtime.setOpenAtLogin(enabled);
+    return typeof value === "boolean" ? value : null;
+  } catch {
+    return null;
+  }
 }

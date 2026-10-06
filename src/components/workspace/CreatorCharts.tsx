@@ -1,12 +1,16 @@
 import React, { useRef, useState } from "react";
-import { StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
+import { Platform, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import Svg, { Circle, G, Line, Path, Polygon, Rect, Text as SvgText } from "react-native-svg";
 import { alpha, workspaceColors as color, workspaceFonts as font } from "./workspaceTheme";
+import { ws } from "./motion";
 
 // 创作者中心页用的几种图：折线（趋势）、环形（性别/活跃）、竖条（年龄）、横条（来源/地域）、雷达（五维诊断）。
 // 只画官方页面上有的那几种，颜色全走工作台 token，跟着整体风格换。
 
-export const chartPalette = [color.accent, color.cyan, color.amber, color.green, color.danger, color.textSecondary];
+// 数据色：web 上先取 --ws-chart-N（极简在 minimalCss 里定义成蓝的深浅档 + 中性灰），另外三种风格没定义，回退到原 token，像素不变
+const chartBase = [color.accent, color.cyan, color.amber, color.green, color.danger, color.textSecondary];
+export const chartPalette = Platform.OS === "web" ? chartBase.map((token, index) => `var(--ws-chart-${index}, ${token})`) : chartBase;
+const DATA = chartPalette[0]!;
 
 function useWidth(initial = 0): [number, (event: LayoutChangeEvent) => void] {
   const [width, setWidth] = useState(initial);
@@ -84,7 +88,7 @@ export function LineChart({ labels, series, height = 220, format = (value) => St
       </G> : null}
     </Svg> : null}
     {hover !== null && width ? <View pointerEvents="none" style={[styles.tooltip, x(hover) > width / 2 ? { right: width - x(hover) + 10 } : { left: x(hover) + 10 }]}>
-      <Text style={styles.tooltipTitle}>{titles?.[hover] ?? labels[hover]}</Text>
+      <Text {...ws("cr-note")} style={styles.tooltipTitle}>{titles?.[hover] ?? labels[hover]}</Text>
       {series.map((item, seriesIndex) => <View key={item.label} style={styles.tooltipRow}>
         <View style={[styles.dot, { backgroundColor: item.color ?? chartPalette[seriesIndex % chartPalette.length] }]} />
         <Text style={styles.tooltipText}>{item.label} {typeof item.values[hover] === "number" ? format(item.values[hover] as number) : "—"}</Text>
@@ -143,7 +147,7 @@ export function Bars({ items, height = 190 }: { items: Slice[]; height?: number 
         const barWidth = Math.min(28, slot * 0.5);
         const cx = left + slot * index + slot / 2;
         return <G key={item.label}>
-          <Rect x={cx - barWidth / 2} y={top + plotHeight - barHeight} width={barWidth} height={barHeight} fill={color.accent} rx={2} />
+          <Rect x={cx - barWidth / 2} y={top + plotHeight - barHeight} width={barWidth} height={barHeight} fill={DATA} rx={2} />
           <SvgText x={cx} y={height - 6} fill={color.textMuted} fontSize={10} textAnchor="middle">{item.label}</SvgText>
         </G>;
       })}
@@ -159,9 +163,9 @@ export function BarList({ rows, valueHeader, compareHeader, nameHeader }: {
   const max = Math.max(0, ...rows.map((row) => row.ratio));
   return <View style={styles.barList}>
     {nameHeader || valueHeader || compareHeader ? <View style={styles.barRow}>
-      <Text style={[styles.barName, styles.header]}>{nameHeader ?? ""}</Text>
-      <Text style={[styles.header, { flex: 1 }]}>{valueHeader ?? ""}</Text>
-      {compareHeader ? <Text style={[styles.barCompare, styles.header]}>{compareHeader}</Text> : null}
+      <Text {...ws("cr-note")} style={[styles.barName, styles.header]}>{nameHeader ?? ""}</Text>
+      <Text {...ws("cr-note")} style={[styles.header, { flex: 1 }]}>{valueHeader ?? ""}</Text>
+      {compareHeader ? <Text {...ws("cr-note")} style={[styles.barCompare, styles.header]}>{compareHeader}</Text> : null}
     </View> : null}
     {rows.map((row) => <View key={row.label} style={styles.barRow}>
       <Text numberOfLines={1} style={styles.barName}>{row.label}</Text>
@@ -193,8 +197,8 @@ export function Radar({ axes, size = 240 }: { axes: Array<{ label: string; own: 
       </G>;
     })}
     <Polygon points={axes.map((axis, index) => point(index, axis.similar).join(",")).join(" ")} fill={alpha(color.textMuted, 0.12)} stroke={color.textMuted} strokeWidth={1} />
-    <Polygon points={axes.map((axis, index) => point(index, axis.own).join(",")).join(" ")} fill={alpha(color.accent, 0.22)} stroke={color.accent} strokeWidth={2} />
-    {axes.map((axis, index) => { const [px, py] = point(index, axis.own); return <Circle key={axis.label} cx={px} cy={py} r={3} fill={color.accent} />; })}
+    <Polygon points={axes.map((axis, index) => point(index, axis.own).join(",")).join(" ")} fill={alpha(DATA, 0.22)} stroke={DATA} strokeWidth={2} />
+    {axes.map((axis, index) => { const [px, py] = point(index, axis.own); return <Circle key={axis.label} cx={px} cy={py} r={3} fill={DATA} />; })}
   </Svg>;
 }
 
@@ -213,7 +217,7 @@ const styles = StyleSheet.create({
   barRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   barName: { width: 84, fontFamily: font.body, fontSize: 12, color: color.textSecondary },
   barTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: color.surfaceMuted, overflow: "hidden" },
-  barFill: { height: 8, borderRadius: 4, backgroundColor: color.accent },
+  barFill: { height: 8, borderRadius: 4, backgroundColor: DATA },
   barValue: { width: 64, textAlign: "right", fontFamily: font.body, fontSize: 12, color: color.text },
   barCompare: { width: 64, textAlign: "right", fontFamily: font.body, fontSize: 12 },
   header: { fontFamily: font.body, fontSize: 11, color: color.textMuted },
