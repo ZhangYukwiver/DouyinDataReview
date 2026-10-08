@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  dayGap, formatChange, formatIndex, formatShare, indexKeyword, indexPageUrl, indexWindow, parseKeywordValid, parseLatestDay, parsePortrait, parseRelatedWords, parseScores, parseTrend, shiftDay, shortDay,
+  dayGap, formatChange, formatIndex, formatShare, indexKeyword, indexPageUrl, indexWindow, parseHotTopics, parseKeywordValid, parseLatestDay, parsePortrait, parseRelatedWords, parseScores, parseTrend, shiftDay, shortDay,
 } from "./douyinIndex";
 
 const ok = { BaseResp: { StatusCode: 0, StatusMessage: "" } };
@@ -152,5 +152,20 @@ describe("formatting", () => {
   });
   it("links to the official page with the word encoded", () => {
     expect(indexPageUrl("咖啡 & 拿铁")).toBe("https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?source=creator&keyword=%E5%92%96%E5%95%A1%20%26%20%E6%8B%BF%E9%93%81&tab=heat_index&appName=aweme");
+  });
+});
+
+describe("parseHotTopics", () => {
+  const entry = (rank: string, name: string, flag: string) => ({ rank, topic_name: name, topic_index: "12101718", rank_flag: flag, content_cnt: "3", vv: "547", category: "旅行" });
+  it("reads both boards, orders by rank and maps rank_flag to a direction", () => {
+    const topics = parseHotTopics({ ...ok, current: [entry("2", "B", "-1"), entry("1", "A", "1"), entry("3", " ", "0"), entry("4", "D", "0")], rocketing: [entry("1", "R", "0")] });
+    expect(topics?.current.map((item) => [item.rank, item.name, item.trend])).toEqual([[1, "A", 1], [2, "B", -1], [4, "D", 0]]);
+    expect(topics?.current[0]).toMatchObject({ index: 12101718, category: "旅行" });
+    expect(topics?.rocketing).toHaveLength(1);
+  });
+  it("treats a business error or two empty boards as not read", () => {
+    expect(parseHotTopics({ BaseResp: { StatusCode: 500 }, current: [entry("1", "A", "0")] })).toBeNull();
+    expect(parseHotTopics({ ...ok, current: [], rocketing: [] })).toBeNull();
+    expect(parseHotTopics(null)).toBeNull();
   });
 });

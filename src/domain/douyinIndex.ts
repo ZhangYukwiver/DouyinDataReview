@@ -167,3 +167,27 @@ export function shortDay(day: string): string {
 export function indexPageUrl(keyword: string): string {
   return `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?source=creator&keyword=${encodeURIComponent(keyword)}&tab=heat_index&appName=aweme`;
 }
+
+export interface HotTopic {
+  rank: number; name: string;
+  /** 热点指数（官方页面显示成「1210.2 万」） */
+  index: number;
+  /** 排名相对上一轮：1 上升、-1 下降、0 持平 */
+  trend: -1 | 0 | 1;
+  category: string;
+}
+export interface HotTopics { current: HotTopic[]; rocketing: HotTopic[] }
+
+const parseTopics = (list: unknown): HotTopic[] => (Array.isArray(list) ? list : []).flatMap((entry: Raw): HotTopic[] => {
+  const name = typeof entry?.topic_name === "string" ? entry.topic_name.trim() : "";
+  if (!name) return [];
+  const flag = number(entry?.rank_flag);
+  return [{ rank: number(entry?.rank), name, index: number(entry?.topic_index), trend: flag > 0 ? 1 : flag < 0 ? -1 : 0, category: typeof entry?.category === "string" ? entry.category : "" }];
+}).sort((a, b) => a.rank - b.rank);
+
+/** 抖音指数首页的「抖音实时热点」(current) 和「抖音飙升热点」(rocketing)；两个榜都是空的当没读到 */
+export function parseHotTopics(data: Raw): HotTopics | null {
+  if (!indexOk(data)) return null;
+  const topics = { current: parseTopics(data?.current), rocketing: parseTopics(data?.rocketing) };
+  return topics.current.length || topics.rocketing.length ? topics : null;
+}

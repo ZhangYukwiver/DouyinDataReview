@@ -2,8 +2,8 @@ import { LocalCollectorError } from "./localCollector";
 import type { ExploreConnection } from "./explorer";
 import { readCreatorResults, type CreatorQuery, type CreatorResult } from "./creatorCenter";
 import {
-  INDEX_RELATION_DAYS, indexOk, indexWindow, parseKeywordValid, parseLatestDay, parsePortrait, parseRelatedWords, parseRelationDay, parseScores, parseTrend, shiftDay,
-  type IndexPortrait, type IndexScores, type IndexTrend, type RelatedWord,
+  INDEX_RELATION_DAYS, indexOk, indexWindow, parseHotTopics, parseKeywordValid, parseLatestDay, parsePortrait, parseRelatedWords, parseRelationDay, parseScores, parseTrend, shiftDay,
+  type HotTopics, type IndexPortrait, type IndexScores, type IndexTrend, type RelatedWord,
 } from "../domain/douyinIndex";
 
 type Read = (connection: ExploreConnection, queries: CreatorQuery[], signal?: AbortSignal) => Promise<CreatorResult[]>;
@@ -28,6 +28,7 @@ function ensureReadable(items: CreatorResult[]): void {
 
 // 同一个词十分钟内不重复读：从作品详情返回搜索结果时卡片会重新挂载
 const CACHE_MS = 10 * 60_000;
+const HOT_CACHE_MS = 3 * 60_000;
 const cache = new Map<string, { at: number; value: KeywordIndex }>();
 const extrasCache = new Map<string, { at: number; value: KeywordExtras }>();
 export function clearKeywordIndexCache(): void { cache.clear(); extrasCache.clear(); }
@@ -80,5 +81,21 @@ export async function loadKeywordExtras(connection: ExploreConnection, keyword: 
   const value = { day, related: parseRelatedWords(relation!.data), portrait: parsePortrait(portrait!.data), relatedMissing: !relatedOk, portraitMissing: !portraitOk };
   // 只缓存完整的：缺了一半是临时没读到，不能让它卡住十分钟
   if (relatedOk && portraitOk) extrasCache.set(cacheKey, { at: now, value });
+  return value;
+}
+
+// 榜单官方是几分钟一更；切回探索页时不重复读
+const hotCache = new Map<string, { at: number; value: HotTopics }>();
+export function clearHotTopicsCache(): void { hotCache.clear(); }
+
+/** 创作者平台抖音指数首页的两个热点榜，一次请求。失败不缓存。 */
+export async function loadHotTopics(connection: ExploreConnection, signal?: AbortSignal, read: Read = readCreatorResults, now = Date.now()): Promise<HotTopics> {
+  const cached = hotCache.get(connection.baseUrl);
+  if (cached && now - cached.at < HOT_CACHE_MS) return cached.value;
+  const [result] = await read(connection, [{ key: "index_hot_topic" }], signal);
+  ensureReadable([result!]);
+  const value = result!.data ? parseHotTopics(result!.data) : null;
+  if (!value) throw new LocalCollectorError("index_unavailable", "没读到抖音热点榜，请稍后重试。");
+  hotCache.set(connection.baseUrl, { at: now, value });
   return value;
 }

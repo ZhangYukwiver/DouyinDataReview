@@ -67,6 +67,8 @@ export const CREATOR_ENDPOINTS = {
   // 抖音指数：搜索一个词只用这几个。查询窗口的结束日取 index_valid_date.keyword_latest_day（T-1），
   // 关联词和人群取 index_relation_valid_date.datetime（T-3）。响应多半是加密的，read() 里解开。
   // 订阅、历史、消息这些个人接口不放进来。shape 把工作台传的单个词整理成官方页面发的请求体
+  // 抖音指数首页的「抖音实时热点」「抖音飙升热点」两个榜，一个接口各 30 条
+  index_hot_topic: { path: "/api/v2/hot/get_current_hot_topic", query: {}, params: [] },
   index_valid_date: { path: "/api/v2/index/get_all_valid_date", query: {}, params: [] },
   index_relation_valid_date: { path: "/api/v2/index/get_valid_date_for_relation", query: {}, params: [] },
   index_keyword_valid: { method: "POST", path: "/api/v2/index/get_keyword_valid_date", query: {}, params: ["keyword"], body: true, require: ["keyword"],
