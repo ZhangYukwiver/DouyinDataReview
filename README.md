@@ -2,8 +2,8 @@
   <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="build/icon.png" alt="内容数据工作台" width="160" /></a>
   <h1>DouyinDataReview | 抖音内容数据工作台</h1>
   <p><strong>把抖音这一年，留在自己的电脑上</strong></p>
-  <p>一个<strong>本地优先</strong>的抖音数据回顾工具：把抖音观看历史、喜欢、收藏和聊天记录导出到本机离线查看，<br>
-  生成可交互的持续报告和抖音年度报告；也能实时接收聊天、续火花、下载视频，有 Windows / macOS 桌面安装包。</p>
+  <p>DouyinDataReview（内容数据工作台）是一个<strong>免费开源</strong>的抖音数据回顾桌面应用：把你自己的抖音观看历史、喜欢、收藏和聊天记录读到本机离线保存，<br>
+  随时生成抖音年度报告和持续报告；也能实时接收聊天、续火花、批量下载视频。支持 Windows 和 macOS，MIT 许可。</p>
   <p>不接外部 AI：标题、作者、封面、Cookie 和报告都不会发送到任何外部分析服务。</p>
   <p>问题反馈与交流请联系 QQ 940537208，或加入 QQ 群 DDDouyin（群号 1124211302），见<a href="#交流与反馈">交流与反馈</a>。</p>
   <p>
@@ -148,9 +148,29 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ## 常见问题
 
-### 能把抖音观看历史和聊天记录导出成文件吗？
+### 有没有像 Spotify Wrapped 那样的抖音年度报告？
 
-能。连上采集器后，在「连接与采集」页点「导出数据」，观看历史、喜欢、收藏和聊天记录会一起存成一个 JSON 文件。换电脑时在新电脑上「选择文件」导入，再点「并入本机记录」就能接着用。
+有。DouyinDataReview 用你本机保存的观看、喜欢、收藏和聊天记录生成抖音年度报告，不用等平台发，随时都能打开，还能存成 3:4 的分享图。报告有内容年志、海报等几种视觉风格，不装软件也可以先[在线看示例报告](https://zhangyukwiver.github.io/DouyinDataReview/#demo)（里面是编出来的演示数据）。
+
+### 怎么导出抖音观看历史和聊天记录？
+
+装好 DouyinDataReview，连上采集器并登录抖音网页版，等读取完成后在「设置」里点「导出数据」。观看历史、喜欢、收藏和好友聊天记录会一起存成一个 JSON 文件。换电脑时在新电脑的采集器页「选择文件」导入，再点「并入本机记录」就能接着用。群聊消息是打开时从网页现读的，不在导出文件里。
+
+### 已经用抖音官方「个人信息下载」导出过数据，能直接用吗？
+
+能。在采集器页「或者导入个人档案」那里点「选择文件」，选官方导出的 JSON 或 ZIP，就能用这份档案生成报告，不用登录。导入的文件只在这次打开时读取，关掉应用后要重新导入。
+
+### 能批量下载抖音里喜欢和收藏的视频吗？
+
+能。内容库里点「批量下载」进入多选，选好的视频会打包成 ZIP 存到本机；探索页进到某个用户的主页，也能单条或多选下载这个用户的作品。图文作品会下载全部图片。
+
+### 收费吗？数据会传到哪里？
+
+免费，源码以 MIT 许可开源。读到的记录只存在你自己的电脑上，不接外部 AI，也不发给任何统计或分析服务。
+
+### 会被封号吗？
+
+没法保证不会。工具用的是你自己在抖音网页版登录的会话，读的是你本人能看到的记录；但增量读取走的是抖音没有公开承诺的接口，可能失效，也可能触发风控。建议只在自己的账号上用，别拿它批量操作别人的账号或群发消息。
 
 ### macOS 打开时提示应用已损坏？
 
@@ -289,6 +309,11 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 ## English
 
 DouyinDataReview is a local-first desktop app for Windows and macOS that works with Douyin, the Chinese version of TikTok. It reads your own watch history, likes, favorites and chat messages through the Douyin web client, keeps everything on your computer, and turns it into a rolling report and a year-in-review (a "Douyin Wrapped"). You can also export all records as JSON, receive chats in real time, keep chat streaks going, play and download videos, and view your Creator Center stats read-only. Nothing is sent to an external AI or analytics service. The interface is in Chinese. Get the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest); Chrome, Edge, Brave or Chromium must be installed.
+
+- **Is there a Douyin Wrapped?** DouyinDataReview builds a Wrapped-style year-in-review from your own records on your computer, any time you want; you can [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) in the browser without installing anything.
+- **How do I export my Douyin watch history?** Install DouyinDataReview, connect the collector, sign in to Douyin web, and after the sync finishes click 导出数据 (Export data) in Settings. Watch history, likes, favorites and friend chats are saved to one JSON file.
+- **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from Douyin's 个人信息下载 (personal data download) to generate a report without signing in.
+- **Is it free and private?** Yes. It is MIT-licensed. Your records stay on your computer and are never sent to an external AI or analytics service.
 
 ## 交流与反馈
 
