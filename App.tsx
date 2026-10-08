@@ -1458,7 +1458,7 @@ function AppContent() {
     setDownloadStates((current) => ({ ...current, [recordId]: state }));
   }
 
-  async function downloadRecord(record: PersonalVideoRecord): Promise<void> {
+  async function downloadRecord(record: PersonalVideoRecord, keepExplore = false): Promise<void> {
     if (Platform.OS !== "web") {
       showAlert("暂不支持下载", "请在桌面 Web 工作台中将视频保存到本地。");
       return;
@@ -1482,7 +1482,7 @@ function AppContent() {
     downloadInFlightRef.current.add(record.id);
     markDownloadState(record.id, "queued");
     try {
-      let job = await startCollectorVideoDownload(baseUrl, token, sourceUrl);
+      let job = await startCollectorVideoDownload(baseUrl, token, sourceUrl, undefined, false, keepExplore);
       if (downloadRequestRef.current !== requestId) return;
       rememberDownloadJob(record.id, job);
 
@@ -1698,7 +1698,7 @@ function AppContent() {
         />
       ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
-          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
+          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           activeView={dashboardView}
           appStyle={appStyle}

@@ -284,6 +284,8 @@ const blocks: string[] = [
   rule(sel("e-empty"), `border:1px solid rgba(254,255,252,.22)!important;border-radius:28px!important;background:radial-gradient(50% 60% at 50% 38%,rgba(238,164,78,.2) 0%,rgba(238,164,78,0) 70%),${dots("rgba(246,241,228,.18)", 10, 1)},rgba(7,10,18,.36)!important;box-shadow:${INNER}!important;padding-top:64px!important;padding-bottom:64px!important;--ws-cyan:${AMBER}`),
   rule(sel("e-empty", " > svg"), "filter:drop-shadow(0 0 10px rgba(238,164,78,.7))"),
   rule(sel("e-box"), glass({ edge: 0.26, base: 0.46, radius: 20 })),
+  // 吸顶的栏下面有卡片滚过，底要接近实色字才读得清（这层不用毛玻璃，见上面的说明）
+  rule(sel("e-box sticky"), "background-color:rgba(9,13,24,.97)!important"),
   // 弹窗压在遮罩上，夜色要实一些
   rule(sel("e-modal,w-dialog"), `${glass({ halo: true })};background-color:rgba(9,13,24,.92)!important`),
   rule(sel("e-name"), serif(26, 1.2)),

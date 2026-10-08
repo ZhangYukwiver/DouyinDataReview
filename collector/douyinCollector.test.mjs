@@ -599,6 +599,37 @@ describe("video download jobs", () => {
     expect(collector.getStatus().revision).toBeGreaterThan(previousStatus.revision);
   });
 
+  it("tells the explore adapter after every download job settles, once the job no longer counts as active", async () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.ensureBrowser = vi.fn(async () => { throw new Error("headless_launch_failed"); });
+    const activeWhenCalled = [];
+    collector.afterVideoDownload = vi.fn(() => { activeWhenCalled.push(collector.hasActiveVideoDownload()); });
+    const job = { id: "download-hook", sourceUrl: "https://www.douyin.com/video/1234567890", status: "queued", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    collector.videoDownloadJobs.set(job.id, job);
+    await collector.runVideoDownloadJob(job);
+    expect(collector.getVideoDownloadJob(job.id)).toMatchObject({ status: "failed" });
+    expect(collector.afterVideoDownload).toHaveBeenCalledTimes(1);
+    expect(activeWhenCalled).toEqual([false]);
+    // 回调抛错也不影响任务结果
+    collector.afterVideoDownload = () => { throw new Error("boom"); };
+    const again = { ...job, id: "download-hook-2", status: "queued" };
+    collector.videoDownloadJobs.set(again.id, again);
+    await expect(collector.runVideoDownloadJob(again)).resolves.toBeUndefined();
+  });
+
+  it("only lets the last queued job see an idle collector", async () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.ensureBrowser = vi.fn(async () => { throw new Error("headless_launch_failed"); });
+    const seen = [];
+    collector.afterVideoDownload = () => seen.push(collector.hasActiveVideoDownload());
+    const first = collector.startVideoDownload("https://www.douyin.com/video/1234567890");
+    const second = collector.startVideoDownload("https://www.douyin.com/video/1234567891");
+    await collector.videoDownloadQueue;
+    expect(collector.getVideoDownloadJob(first.id)).toMatchObject({ status: "failed" });
+    expect(collector.getVideoDownloadJob(second.id)).toMatchObject({ status: "failed" });
+    expect(seen).toEqual([true, false]);
+  });
+
   it("restores the terminal collector status when headless launch fails", async () => {
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
     collector.status = {

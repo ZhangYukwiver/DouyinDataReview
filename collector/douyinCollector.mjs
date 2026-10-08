@@ -483,7 +483,7 @@ function safeMessage(error, fallback) {
   return fallback;
 }
 
-async function closeContextWithin(context) {
+export async function closeContextWithin(context) {
   if (!context || typeof context.close !== "function") return;
   const closeTask = Promise.resolve().then(() => context.close());
   closeTask.catch(() => undefined);
@@ -1106,6 +1106,9 @@ export class DouyinCollector {
     this.videoDownloadQueue = Promise.resolve();
     this.videoDownloadControllers = new Set();
     this.videoDownloadActive = null;
+    // 每个下载任务收尾后调一次：探索页发起的下载复用了探索的无头会话（不会自己关它），
+    // 探索页若已离开，由探索那边在这里补关
+    this.afterVideoDownload = null;
     this.liveRooms = new LiveRooms(this);
     this.creatorCenter = new CreatorCenter(this);
     this.statusRevision = 0;
@@ -1470,6 +1473,7 @@ export class DouyinCollector {
         if (canRestoreStatus) this.updateStatus(operation.previousStatus);
         this.videoDownloadActive = null;
       }
+      try { this.afterVideoDownload?.(); } catch { /* 回调出错不该影响下载结果 */ }
     }
   }
 

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DouyinExplorer, ExploreError } from "./explorer.mjs";
 import { downloadDouyinVideo } from "./videoDownloader.mjs";
+import { closeContextWithin } from "./douyinCollector.mjs";
 
 // Additive adapter. The original collector and its download jobs retain their
 // behavior and data format. Explore owns its tabs and temporary playback files.
@@ -25,6 +26,9 @@ export class ExplorerBridge {
       if (!await collector.hasLoginSession(context, null)) throw new ExploreError("login_required", "请先在手动监听中登录抖音，再重试搜索。");
       return context;
     });
+    // 下载（keepExplore）复用探索的会话，不会自己关；用户在下载中途离开探索页时，
+    // 那次 close 因为下载还在跑没关会话，所以每个下载收尾后再补一次空关闭：还有探索页面或别的任务在用就不动
+    collector.afterVideoDownload = () => { void this.close([]).catch(() => {}); };
   }
   get busy() { return this.pending !== null; }
   collectorBusy() {
@@ -61,7 +65,8 @@ export class ExplorerBridge {
       const shared = this.collector.observationPromise || this.collector.chatPromise || this.collector.headlessWorkRunning?.();
       if (!this.explorer.sessions.size && this.ownedContext && !shared && !this.collectorBusy()) {
         const context = this.ownedContext; this.ownedContext = null;
-        await context.close().catch(() => {});
+        // 下载收尾会在没人等着的时候触发这里，所以要和采集器其他关闭路径一样限时，卡住也不能让 pending 一直占着
+        await closeContextWithin(context);
       }
     })();
     this.pending = work;

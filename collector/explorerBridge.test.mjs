@@ -29,6 +29,58 @@ describe("additive explorer adapter", () => {
     await bridge.close();
     expect(context.close).toHaveBeenCalledTimes(1);
   });
+  it("closes its own browser once the download that was still using it finishes", async () => {
+    const { collector, context } = originalCollector(); const bridge = new ExplorerBridge(collector);
+    await bridge.explorer.getContext();
+    // 探索页在下载还没跑完时离开：会话页关掉了，但下载在用这个浏览器，所以先留着
+    collector.hasActiveVideoDownload = () => true;
+    bridge.explorer.sessions.set("profile", { page: { close: vi.fn(async () => {}) } });
+    await bridge.close(["profile"]);
+    expect(context.close).not.toHaveBeenCalled();
+    collector.afterVideoDownload(); await bridge.pending;
+    expect(context.close).not.toHaveBeenCalled();
+    collector.hasActiveVideoDownload = () => false;
+    collector.afterVideoDownload(); await bridge.pending;
+    expect(context.close).toHaveBeenCalledTimes(1);
+  });
+  it("leaves its browser alone after a download while an explore page is still open or chat is sharing it", async () => {
+    const { collector, context } = originalCollector(); const bridge = new ExplorerBridge(collector);
+    await bridge.explorer.getContext();
+    bridge.explorer.sessions.set("profile", { page: { close: vi.fn(async () => {}) } });
+    collector.afterVideoDownload(); await bridge.pending;
+    expect(context.close).not.toHaveBeenCalled();
+    bridge.explorer.sessions.clear(); collector.chatPromise = Promise.resolve();
+    collector.afterVideoDownload(); await bridge.pending;
+    expect(context.close).not.toHaveBeenCalled();
+  });
+  it("does not let a finished download close the browser while a read is still setting up its session", async () => {
+    const { collector, context } = originalCollector(); const bridge = new ExplorerBridge(collector);
+    let release; const gate = new Promise((resolve) => { release = resolve; });
+    bridge.explorer.read = vi.fn(async () => {
+      await bridge.explorer.getContext();
+      await gate; // 已经拿到浏览器、还没建好会话
+      bridge.explorer.sessions.set("profile", { page: { close: vi.fn(async () => {}) } });
+      return { kind: "profile", items: [] };
+    });
+    const reading = bridge.run({ kind: "profile", id: "abc" });
+    await vi.waitFor(() => expect(bridge.explorer.read).toHaveBeenCalled());
+    collector.afterVideoDownload();
+    release(); await reading; await bridge.pending;
+    expect(context.close).not.toHaveBeenCalled();
+    expect(bridge.explorer.sessions.has("profile")).toBe(true);
+  });
+  it("gives up on a browser that will not close instead of staying busy forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const { collector, context } = originalCollector(); const bridge = new ExplorerBridge(collector);
+      await bridge.explorer.getContext();
+      context.close = vi.fn(() => new Promise(() => {}));
+      collector.afterVideoDownload();
+      expect(bridge.busy).toBe(true);
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(bridge.busy).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
   it("closes its own tabs without closing a borrowed original browser", async () => {
     const { collector, context } = originalCollector(); collector.context = context; collector.contextHeadless = false;
     const bridge = new ExplorerBridge(collector); await bridge.explorer.getContext();
