@@ -31,6 +31,10 @@ describe("creatorRequest", () => {
 describe("creatorRequest for 抖音指数", () => {
   const window = { keyword: "咖啡", start_date: "20260906", end_date: "20261006" };
 
+  it("lets the hot topic boards through as a plain GET", () => {
+    expect(creatorRequest("index_hot_topic", {})).toMatchObject({ method: "GET", body: null, url: "https://creator.douyin.com/api/v2/hot/get_current_hot_topic?" });
+  });
+
   it("shapes the single keyword into the body the official page sends, dates kept as strings", () => {
     const trend = creatorRequest("index_hot_trend", window);
     expect(trend.method).toBe("POST");

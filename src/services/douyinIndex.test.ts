@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreatorQuery, CreatorResult } from "./creatorCenter";
-import { clearKeywordIndexCache, loadKeywordExtras, loadKeywordIndex } from "./douyinIndex";
+import { clearHotTopicsCache, clearKeywordIndexCache, loadHotTopics, loadKeywordExtras, loadKeywordIndex } from "./douyinIndex";
 
 const connection = { baseUrl: "http://127.0.0.1:4765", token: "t" };
 const ok = { BaseResp: { StatusCode: 0 } };
@@ -105,5 +105,23 @@ describe("loadKeywordExtras", () => {
     expect(await loadKeywordExtras(connection, "咖啡", undefined, fakeRead({ index_relation_valid_date: day, index_relation_word: hit({ search_relation_word_list: [{ relation_word: "拿铁", score_rank: "1", relation_score: 1, score_rate: "1%" }] }), index_portrait: businessError }))).toMatchObject({ portraitMissing: true, related: [{ word: "拿铁" }] });
     clearKeywordIndexCache();
     await expect(loadKeywordExtras(connection, "咖啡", undefined, fakeRead({ index_relation_valid_date: day }))).rejects.toMatchObject({ code: "index_unavailable", message: expect.stringContaining("关联词和人群") });
+  });
+});
+
+describe("loadHotTopics", () => {
+  const board = { current: [{ rank: "1", topic_name: "A", topic_index: "100", rank_flag: "1" }], rocketing: [] };
+  const reader = (data: any, calls: string[] = []): any => async (_c: unknown, queries: Array<{ key: string }>) => { calls.push(queries[0]!.key); return [{ data }]; };
+  it("reads once, caches successes briefly and never caches a miss", async () => {
+    clearHotTopicsCache();
+    const calls: string[] = [];
+    expect((await loadHotTopics(connection, undefined, reader(board, calls), 1_000)).current[0]).toMatchObject({ name: "A", trend: 1 });
+    await loadHotTopics(connection, undefined, reader(board, calls), 2_000);
+    expect(calls).toEqual(["index_hot_topic"]);
+    await loadHotTopics(connection, undefined, reader(board, calls), 1_000 + 4 * 60_000);
+    expect(calls).toHaveLength(2);
+    clearHotTopicsCache();
+    await expect(loadHotTopics(connection, undefined, reader({ BaseResp: { StatusCode: 500 } }))).rejects.toMatchObject({ code: "index_unavailable" });
+    await expect(loadHotTopics(connection, undefined, reader(null))).rejects.toMatchObject({ code: "index_unavailable" });
+    expect((await loadHotTopics(connection, undefined, reader(board))).current).toHaveLength(1);
   });
 });

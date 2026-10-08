@@ -6,6 +6,7 @@ import { loadCollectorVideo } from "../../services/localCollector";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
 import { DouyinIndexCard } from "./DouyinIndexCard";
+import { HotTopicsCard } from "./HotTopicsCard";
 import { indexKeyword } from "../../domain/douyinIndex";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
 import { RecordVideoPlayer } from "./RecordVideoPlayer";
@@ -158,6 +159,8 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
   }
   // 点抖音指数里的关联词：换个词接着搜
   function searchWord(word: string) { setQuery(word); void load({ kind: mode, query: word }, "results"); }
+  // 点热点榜里的热点：热点是内容话题，直接按内容搜
+  function searchHotTopic(topic: string) { setMode("videos"); setQuery(topic); void load({ kind: "videos", query: topic }, "results"); }
   function back() { setError(null); setNotice(null); setComments(null); if (detail) setDetail(null); else setProfile(null); scrollRef.current?.scrollTo({ y: 0, animated: false }); }
   async function commitAction() {
     const session = intent?.action === "follow" ? profile : detail;
@@ -297,6 +300,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
       {!results.items.length ? <View style={styles.empty}><Search size={30} color={color.textMuted} /><Text {...ws("e-section")} style={styles.sectionTitle}>没有找到相关结果</Text><Text style={styles.emptyText}>换一个更具体的名字或关键词试试。</Text></View> : null}
       {searchQuery ? moreButton(results, searchQuery, "results") : null}
     </> : null}
+    {connection && !page && !loading ? <HotTopicsCard connection={connection} disabled={busy} onSearch={searchHotTopic} /> : null}
     {connection && !page && !loading ? <View {...ws("e-empty")} style={styles.empty}><View {...ws("w-emptyicon")} style={styles.emptyIcon}><Search size={32} color={color.cyan} /></View><Text {...ws("w-emptytitle")} style={styles.sectionTitle}>下一次发现，从这里开始</Text><Text style={styles.emptyText}>搜索用户，浏览 TA 的公开作品；或搜索内容，打开详情与评论。</Text><Text style={styles.muted}>也可以粘贴抖音用户主页或作品链接。</Text></View> : null}
 
     <Modal transparent visible={Boolean(intent)} animationType="fade" onRequestClose={() => setIntent(null)}>
