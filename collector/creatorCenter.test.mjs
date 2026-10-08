@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createCipheriv } from "node:crypto";
 import { CreatorCenter, creatorRequest, parseCreatorJson } from "./creatorCenter.mjs";
 
 describe("creatorRequest", () => {
@@ -24,6 +25,34 @@ describe("creatorRequest", () => {
     expect(creatorRequest("item_portrait", { aweme_id: "1" })).toBeNull();
     expect(creatorRequest("item_portrait", { item_id: "1&x=2" })).toBeNull();
     expect(creatorRequest("item_portrait", [])).toBeNull();
+  });
+});
+
+describe("creatorRequest for 抖音指数", () => {
+  const window = { keyword: "咖啡", start_date: "20260906", end_date: "20261006" };
+
+  it("shapes the single keyword into the body the official page sends, dates kept as strings", () => {
+    const trend = creatorRequest("index_hot_trend", window);
+    expect(trend.method).toBe("POST");
+    expect(new URL(trend.url).pathname).toBe("/api/v2/index/get_multi_keyword_hot_trend");
+    expect(JSON.parse(trend.body)).toEqual({ keyword_list: ["咖啡"], start_date: "20260906", end_date: "20261006", app_name: "aweme", region: [] });
+    expect(JSON.parse(creatorRequest("index_relation_word", window).body)).toEqual({ param: { keyword: "咖啡", start_date: "20260906", end_date: "20261006", app_name: "aweme" } });
+    expect(JSON.parse(creatorRequest("index_portrait", { ...window, app_name: "toutiao" }).body).param).toMatchObject({ keyword: "咖啡", app_name: "toutiao" });
+    expect(JSON.parse(creatorRequest("index_keyword_valid", { keyword: "C++ & 咖啡" }).body)).toEqual({ keyword_list: ["C++ & 咖啡"] });
+    expect(creatorRequest("index_valid_date", {})).toMatchObject({ method: "GET", body: null });
+  });
+
+  it("rejects missing, blank, over-long or malformed inputs", () => {
+    expect(creatorRequest("index_hot_trend", { keyword: "咖啡" })).toBeNull();
+    expect(creatorRequest("index_hot_trend", { ...window, keyword: "  " })).toBeNull();
+    expect(creatorRequest("index_hot_trend", { ...window, keyword: "字".repeat(51) })).toBeNull();
+    expect(creatorRequest("index_hot_trend", { ...window, keyword: "a\nb" })).toBeNull();
+    expect(creatorRequest("index_hot_trend", { ...window, start_date: "2026-09-06" })).toBeNull();
+    expect(creatorRequest("index_hot_trend", { ...window, end_date: 20261006 })).not.toBeNull();
+    expect(creatorRequest("index_hot_trend", { ...window, app_name: "kuaishou" })).toBeNull();
+    expect(creatorRequest("index_hot_trend", { ...window, region: "北京" })).toBeNull();
+    // 订阅、个人信息这类接口没有入口
+    expect(creatorRequest("index_get_user_sub_word", {})).toBeNull();
   });
 });
 
@@ -74,6 +103,35 @@ describe("CreatorCenter", () => {
     await center.close();
     expect(center.active).toBe(false);
     expect(collector.releaseHeadlessContextIfIdle).toHaveBeenCalled();
+  });
+
+  it("decrypts index responses, and flags (not hides) ones it cannot decrypt", async () => {
+    const CURRENT = ["SjXbYTJb7zXoUToSicUL3A==", "OekMLjghRg8vlX/PemLc+Q=="];
+    const cipher = createCipheriv("aes-128-cbc", Buffer.from(CURRENT[0], "base64"), Buffer.from(CURRENT[1], "base64"));
+    const secret = Buffer.concat([cipher.update('{"keyword_latest_day":"20261006","BaseResp":{"StatusCode":0}}', "utf8"), cipher.final()]).toString("base64");
+    const { collector } = collectorWith([
+      { status: 200, text: JSON.stringify({ data: secret, msg: "", status: 0 }), encrypted: "2" },
+      { status: 200, text: JSON.stringify({ data: "AAAAAAAAAAAAAAAAAAAAAA==", msg: "", status: 0 }), encrypted: "2" },
+      { status: 422, text: '{"msg":"ValidateError","status":422}', encrypted: null },
+    ]);
+    const results = await new CreatorCenter(collector).read([{ key: "index_valid_date" }, { key: "index_valid_date" }, { key: "index_valid_date" }]);
+    expect(results).toEqual([
+      { ok: true, data: { keyword_latest_day: "20261006", BaseResp: { StatusCode: 0 } } },
+      { ok: false, status: 200, reason: "undecryptable" },
+      { ok: false, status: 422 },
+    ]);
+  });
+
+  it("still schedules an idle close when opening the page fails, so the browser it launched gets released", async () => {
+    vi.useFakeTimers();
+    try {
+      const { collector } = collectorWith([], { hasLoginSession: vi.fn(async () => false) });
+      const center = new CreatorCenter(collector);
+      await expect(center.read([{ key: "user_info" }])).rejects.toMatchObject({ code: "login_required" });
+      expect(collector.releaseHeadlessContextIfIdle).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(collector.releaseHeadlessContextIfIdle).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
   });
 
   it("reports login and busy states and rejects bad batches before opening a page", async () => {

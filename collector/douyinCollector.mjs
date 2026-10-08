@@ -483,7 +483,7 @@ function safeMessage(error, fallback) {
   return fallback;
 }
 
-async function closeContextWithin(context) {
+export async function closeContextWithin(context) {
   if (!context || typeof context.close !== "function") return;
   const closeTask = Promise.resolve().then(() => context.close());
   closeTask.catch(() => undefined);
@@ -1106,6 +1106,11 @@ export class DouyinCollector {
     this.videoDownloadQueue = Promise.resolve();
     this.videoDownloadControllers = new Set();
     this.videoDownloadActive = null;
+    // 每个下载任务收尾后调一次：探索页发起的下载复用了探索的无头会话（不会自己关它），
+    // 探索页若已离开，由探索那边在这里补关
+    this.afterVideoDownload = null;
+    // 探索那边告诉这里「我还有页面开着」：创作者页、直播间这些别的任务收尾时不能把共享会话关掉
+    this.exploreHoldsContext = null;
     this.liveRooms = new LiveRooms(this);
     this.creatorCenter = new CreatorCenter(this);
     this.statusRevision = 0;
@@ -1470,6 +1475,7 @@ export class DouyinCollector {
         if (canRestoreStatus) this.updateStatus(operation.previousStatus);
         this.videoDownloadActive = null;
       }
+      try { this.afterVideoDownload?.(); } catch { /* 回调出错不该影响下载结果 */ }
     }
   }
 
@@ -1665,7 +1671,7 @@ export class DouyinCollector {
       const context = this.context;
       const otherPages = context.pages().filter((page) => page !== chat.page && !page.isClosed?.());
       // 记录读取、播放和探索各有自己的标签页，只有没人再用这个会话时才关掉它
-      if (chat.page?.close && (otherPages.length > 0 || this.headlessWorkRunning())) {
+      if (chat.page?.close && (otherPages.length > 0 || this.headlessWorkRunning() || this.exploreHoldsContext?.())) {
         await chat.page.close().catch(() => undefined);
       } else {
         this.context = null;
@@ -1701,17 +1707,18 @@ export class DouyinCollector {
 
   // 还有别的无头任务在用这个共享会话吗
   headlessWorkRunning() {
-    return this.syncMode === "direct_records" || this.hasActiveVideoDownload() || this.liveRooms.size > 0 || this.creatorCenter.active;
+    return this.syncMode === "direct_records" || this.hasActiveVideoDownload() || this.liveRooms.size > 0 || this.liveRooms.inflight > 0 || this.creatorCenter.active;
   }
 
   async releaseHeadlessContextIfIdle() {
     if (!this.context || !this.contextHeadless) return;
-    if (this.chat?.active || this.headlessWorkRunning()) return;
+    if (this.chat?.active || this.headlessWorkRunning() || this.exploreHoldsContext?.()) return;
     const context = this.context;
     this.context = null;
     this.contextHeadless = null;
     await closeContextWithin(context);
-    this.updateStatus({ browserOpen: false });
+    // 关的时候要是别的任务已经起了新会话，别把状态写成没开
+    if (!this.context) this.updateStatus({ browserOpen: false });
   }
 
   isChatReceiving() {

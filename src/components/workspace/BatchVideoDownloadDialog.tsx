@@ -6,11 +6,14 @@ import { createVideoBatchZip, loadBatchVideoFile, runVideoBatch, type BatchItem 
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
 
-export function BatchVideoDownloadDialog({ records, connection, onClose, privacy }: {
+export function BatchVideoDownloadDialog({ records, connection, onClose, privacy, keepExplore = false }: {
   records: PersonalVideoRecord[];
   connection: ExploreConnection;
-  onClose: () => void;
+  /** 带上已经保存成 ZIP 的那些作品，调用方可以据此跳过它们 */
+  onClose: (saved: PersonalVideoRecord[]) => void;
   privacy: boolean;
+  /** 从探索页打开：下载期间不关探索会话 */
+  keepExplore?: boolean;
 }) {
   const [items, setItems] = useState<BatchItem[]>(() => records.map((record) => ({ record, status: "pending" })));
   const [running, setRunning] = useState(false);
@@ -19,6 +22,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const stop = useRef(false);
+  const savedRecords = useRef<PersonalVideoRecord[]>([]);
   const active = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const objectUrl = useRef<string | null>(null);
@@ -37,6 +41,8 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
   const failed = items.filter((item) => item.status === "failed").length;
   const pending = items.filter((item) => item.status === "pending").length;
   const bytes = items.reduce((total, item) => total + (item.file?.blob.size ?? 0), 0);
+  // 本批装满后再点「继续」只会把被拒的那个视频白下一遍，该做的是先存 ZIP、下一批再选
+  const full = items.some((item) => item.status === "failed" && item.code === "batch_size_limit");
   async function start() {
     if (active.current) return;
     active.current = true;
@@ -45,7 +51,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
     setRunning(true); setStopping(false); setError(""); setSaved(false);
     try {
       await runVideoBatch(items, {
-        load: (record, remaining) => loadBatchVideoFile(connection, record, remaining, controller.current!.signal),
+        load: (record, remaining) => loadBatchVideoFile(connection, record, remaining, controller.current!.signal, keepExplore),
         shouldStop: () => stop.current,
         onUpdate: (next) => { if (mounted.current) setItems(next); },
       });
@@ -63,14 +69,18 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
       objectUrl.current = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = objectUrl.current;
-      anchor.download = `抖音视频_${new Date().toISOString().slice(0, 10)}_${complete}个.zip`;
+      // 同一个作者的一批：名字放进文件名，分几次存的 ZIP 才分得清
+      const authors = new Set(records.map((record) => record.author));
+      const author = !privacy && authors.size === 1 ? Array.from(([...authors][0] ?? "").replace(/[\\/\u0000-\u001f<>:"|?*\s]+/gu, "_").replace(/^_+|_+$/gu, "")).slice(0, 30).join("") : "";
+      anchor.download = `抖音视频_${author ? `${author}_` : ""}${new Date().toISOString().slice(0, 10)}_${complete}个.zip`;
       document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      savedRecords.current = items.filter((item) => item.status === "complete").map((item) => item.record);
       setSaved(true);
     } catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : "打包失败，请重试。"); }
     finally { active.current = false; if (mounted.current) setPacking(false); }
   }
   const stopQueue = () => { stop.current = true; setStopping(true); };
-  return <Modal transparent visible animationType="fade" onRequestClose={() => { if (!running && !packing) onClose(); }}>
+  return <Modal transparent visible animationType="fade" onRequestClose={() => { if (!running && !packing) onClose(savedRecords.current); }}>
     <View style={styles.backdrop}>
       <View {...ws("w-dialog")} accessibilityViewIsModal style={styles.dialog} testID="batch-download-dialog">
         <Text accessibilityRole="header" style={styles.title}>批量下载视频</Text>
@@ -91,10 +101,11 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         {saved ? <Text accessibilityLiveRegion="polite" style={styles.meta}>已发起 ZIP 保存，请在浏览器下载列表中查看。</Text> : null}
         <View style={styles.actions}>
-          {running ? <Button label={stopping ? "正在停止…" : "停止后续下载"} disabled={stopping} onPress={stopQueue} /> : pending || failed ? <Button label={complete || failed ? (pending ? "继续未完成" : "重试失败项") : "开始下载"} disabled={packing} onPress={() => void start()} primary /> : null}
+          {running ? <Button label={stopping ? "正在停止…" : "停止后续下载"} disabled={stopping} onPress={stopQueue} /> : (pending || failed) && !full ? <Button label={complete || failed ? (pending ? "继续未完成" : "重试失败项") : "开始下载"} disabled={packing} onPress={() => void start()} primary /> : null}
           {complete > 0 ? <Button label={packing ? "正在打包…" : `保存 ZIP（${complete} 个 · ${(bytes / 1024 / 1024).toFixed(1)} MB）`} disabled={running || packing} onPress={() => void save()} primary /> : null}
-          <Button label="关闭" disabled={running || packing} onPress={onClose} />
+          <Button label="关闭" disabled={running || packing} onPress={() => onClose(savedRecords.current)} />
         </View>
+        {full && !running ? <Text style={styles.hint}>本批已装满，先保存 ZIP，再关闭窗口，把剩下的放到下一批。</Text> : null}
         {complete > 0 && !saved ? <Text style={styles.hint}>关闭前请保存 ZIP，关闭后将释放本批文件。</Text> : null}
       </View>
     </View>

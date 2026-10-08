@@ -5,11 +5,19 @@ import { fetchCollectorVideoFile, getCollectorVideoDownload, LocalCollectorError
 
 export const MAX_BATCH_VIDEOS = 50;
 export const MAX_BATCH_BYTES = 500 * 1024 * 1024;
+const BATCH_FULL = "本批已满 500 MB，请先保存 ZIP，剩下的放到下一批。";
+const ALONE_ONLY = "这个视频超过 500 MB，请单独下载。";
+// 单个视频自己超限只算它失败，后面的照常下；只有「本批已满」才是队列级的
+const sizeLimit = (bytes: number) => bytes > MAX_BATCH_BYTES ? new LocalCollectorError("video_too_large", ALONE_ONLY) : new LocalCollectorError("batch_size_limit", BATCH_FULL);
+// 这两种失败和某个视频本身无关，再往下排只会逐个失败（还会白白重下一遍），所以停队列等用户处理
+const STOPS_QUEUE = new Set(["collector_busy", "batch_size_limit"]);
 export type BatchItem = {
   record: PersonalVideoRecord;
   status: "pending" | "running" | "complete" | "failed";
   file?: VideoDownloadFile;
   error?: string;
+  /** 失败原因的代码，弹窗据此判断本批是不是已经装满 */
+  code?: string;
 };
 
 export function videoDownloadKey(record: PersonalVideoRecord): string | null {
@@ -25,7 +33,7 @@ export function videoDownloadKey(record: PersonalVideoRecord): string | null {
   } catch { return null; }
 }
 
-export function uniqueDownloadVideos(records: PersonalVideoRecord[]): PersonalVideoRecord[] {
+export function uniqueDownloadVideos<T extends PersonalVideoRecord>(records: T[]): T[] {
   const seen = new Set<string>();
   return records.filter((record) => {
     const key = videoDownloadKey(record);
@@ -44,11 +52,11 @@ function wait(signal: AbortSignal): Promise<void> {
   });
 }
 
-export async function loadBatchVideoFile(connection: ExploreConnection, record: PersonalVideoRecord, remainingBytes: number, signal: AbortSignal): Promise<VideoDownloadFile> {
+export async function loadBatchVideoFile(connection: ExploreConnection, record: PersonalVideoRecord, remainingBytes: number, signal: AbortSignal, keepExplore = false): Promise<VideoDownloadFile> {
   signal.throwIfAborted();
-  if (remainingBytes <= 0) throw new LocalCollectorError("batch_size_limit", "本批已达到 500 MB 上限，请保存后开启下一批。");
+  if (remainingBytes <= 0) throw new LocalCollectorError("batch_size_limit", BATCH_FULL);
   const deadline = Date.now() + 15 * 60 * 1000;
-  let job = await startCollectorVideoDownload(connection.baseUrl, connection.token, record.url!, signal);
+  let job = await startCollectorVideoDownload(connection.baseUrl, connection.token, record.url!, signal, false, keepExplore);
   while (job.status === "queued" || job.status === "running") {
     if (Date.now() >= deadline) throw new LocalCollectorError("timeout", "视频下载超时，请稍后重试。");
     await wait(signal);
@@ -56,9 +64,9 @@ export async function loadBatchVideoFile(connection: ExploreConnection, record: 
   }
   signal.throwIfAborted();
   if (job.status !== "complete") throw new LocalCollectorError(job.errorCode ?? "download_failed", job.error ?? "视频下载失败，请稍后重试。");
-  if (job.bytes !== null && job.bytes > remainingBytes) throw new LocalCollectorError("batch_size_limit", "超出本批 500 MB 上限，请单独下载此视频。");
+  if (job.bytes !== null && job.bytes > remainingBytes) throw sizeLimit(job.bytes);
   const file = await fetchCollectorVideoFile(connection.baseUrl, connection.token, job.id, Math.max(1, deadline - Date.now()), signal);
-  if (file.blob.size > remainingBytes) throw new LocalCollectorError("batch_size_limit", "超出本批 500 MB 上限，请单独下载此视频。");
+  if (file.blob.size > remainingBytes) throw sizeLimit(file.blob.size);
   return { ...file, fileName: file.fileName ?? job.fileName };
 }
 
@@ -79,11 +87,13 @@ export async function runVideoBatch(items: BatchItem[], options: {
     options.onUpdate([...next]);
     try {
       const file = await options.load(item.record, MAX_BATCH_BYTES - bytes);
-      if (file.blob.size > MAX_BATCH_BYTES - bytes) throw new Error("超出本批 500 MB 上限，请单独下载此视频。");
+      if (file.blob.size > MAX_BATCH_BYTES - bytes) throw sizeLimit(file.blob.size);
       bytes += file.blob.size;
       next[index] = { record: item.record, status: "complete", file };
     } catch (error) {
-      next[index] = { record: item.record, status: "failed", error: error instanceof Error ? error.message : "视频下载失败，请重试。" };
+      const code = error instanceof LocalCollectorError ? error.code : undefined;
+      next[index] = { record: item.record, status: "failed", error: error instanceof Error ? error.message : "视频下载失败，请重试。", code };
+      if (code && STOPS_QUEUE.has(code)) { options.onUpdate([...next]); break; }
     }
     options.onUpdate([...next]);
   }

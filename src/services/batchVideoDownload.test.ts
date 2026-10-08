@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { unzipSync } from "fflate";
 import type { PersonalVideoRecord } from "../domain/personalRecords";
+import { LocalCollectorError } from "./localCollector";
 import { createVideoBatchZip, loadBatchVideoFile, MAX_BATCH_BYTES, runVideoBatch, uniqueDownloadVideos, type BatchItem } from "./batchVideoDownload";
 
 const record = (id: string, extra: Partial<PersonalVideoRecord> = {}): PersonalVideoRecord => ({ id, title: `视频 ${id}`, author: null, occurredAt: null, mediaType: "video", url: `https://www.douyin.com/video/${id}`, ...extra });
@@ -68,6 +69,36 @@ describe("batch queue", () => {
   });
 });
 
+describe("batch queue stops", () => {
+  it("stops at a collector-wide failure and leaves the rest pending instead of failing them one by one", async () => {
+    const load = vi.fn()
+      .mockResolvedValueOnce(file("a"))
+      .mockRejectedValueOnce(new LocalCollectorError("collector_busy", "请先停止手动监听，再下载视频。"));
+    const result = await runVideoBatch(items(), { load, onUpdate: () => {}, shouldStop: () => false });
+    expect(result.map((item) => item.status)).toEqual(["complete", "failed", "pending"]);
+    expect(result[1]?.error).toContain("手动监听");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps going past a video that is too large on its own, but records why each failed", async () => {
+    const load = vi.fn()
+      .mockRejectedValueOnce(new LocalCollectorError("video_too_large", "这个视频超过 500 MB，请单独下载。"))
+      .mockRejectedValueOnce(new LocalCollectorError("batch_size_limit", "本批已满 500 MB，请先保存 ZIP，剩下的放到下一批。"));
+    const result = await runVideoBatch(items(), { load, onUpdate: () => {}, shouldStop: () => false });
+    expect(result.map((item) => [item.status, item.code])).toEqual([["failed", "video_too_large"], ["failed", "batch_size_limit"], ["pending", undefined]]);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("tells a full batch apart from a single video that is itself too large", async () => {
+    const connection = { baseUrl: "http://127.0.0.1:4765", token: "t" };
+    const id = "12345678-1234-1234-1234-123456789abc";
+    const done = (bytes: number) => new Response(JSON.stringify({ job: { id, status: "complete", sourceUrl: record("111").url, createdAt: "2026-09-16T00:00:00Z", bytes } }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(done(200)).mockResolvedValueOnce(done(MAX_BATCH_BYTES + 1)));
+    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal)).rejects.toMatchObject({ code: "batch_size_limit", message: expect.stringContaining("下一批") });
+    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal)).rejects.toMatchObject({ code: "video_too_large", message: expect.stringContaining("单独下载") });
+  });
+});
+
 describe("collector batch integration", () => {
   const id = "12345678-1234-1234-1234-123456789abc";
   const job = (status: string, extra = {}) => new Response(JSON.stringify({ job: { id, status, sourceUrl: record("111").url, createdAt: "2026-09-16T00:00:00Z", ...extra } }));
@@ -88,6 +119,15 @@ describe("collector batch integration", () => {
     expect(fetch.mock.calls[0]?.[1].body).toBe(JSON.stringify({ url: record("111").url }));
     expect(fetch.mock.calls.every(([, init]) => init.headers.Authorization === "Bearer test-token")).toBe(true);
     expect(fetch.mock.lastCall?.[0]).toBe(`${connection.baseUrl}/v1/downloads/${id}/file`);
+  });
+
+  it("asks the server to keep explore sessions only when started from an explore page", async () => {
+    const fetch = vi.fn().mockImplementation(async () => job("failed", { errorCode: "content_unavailable", error: "x" }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal, true)).rejects.toThrow("x");
+    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual({ url: record("111").url, keepExplore: true });
+    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal)).rejects.toThrow("x");
+    expect(JSON.parse(fetch.mock.calls[1]?.[1].body)).toEqual({ url: record("111").url });
   });
 
   it("does not fetch an oversized file or a failed job", async () => {

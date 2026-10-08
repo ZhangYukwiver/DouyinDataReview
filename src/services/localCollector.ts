@@ -931,11 +931,13 @@ export async function startCollectorVideoDownload(
   url: string,
   signal?: AbortSignal,
   playback = false,
+  /** 从探索页发起的下载：别关掉探索会话，回去还能接着加载更多 */
+  keepExplore = false,
 ): Promise<VideoDownloadJob> {
   if (!url.trim()) throw new LocalCollectorError("invalid_url", "该记录没有可下载的抖音链接。");
   const value = await requestJson(baseUrl, "/v1/downloads", {
     method: "POST",
-    body: JSON.stringify({ url: url.trim(), ...(playback ? { playback: true } : {}) }),
+    body: JSON.stringify({ url: url.trim(), ...(playback ? { playback: true } : {}), ...(keepExplore ? { keepExplore: true } : {}) }),
     signal,
   }, token);
   if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务未返回下载任务。");

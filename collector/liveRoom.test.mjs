@@ -1,5 +1,5 @@
 import { gzipSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { decodeLiveFrame, liveRoomIdFrom, LiveRooms, normalizeFollowingLive, normalizeLiveRoom } from "./liveRoom.mjs";
 
 // 按抖音直播 protobuf 的线格式拼测试帧（字段号是 09-26 实抓的帧里对出来的）
@@ -28,6 +28,22 @@ const chat = (id, roomId, user, text, method = "WebcastChatMessage") => envelope
   num(15, 1790436484),
 ));
 const pushFrame = (response) => msg(num(1, 1), num(3, 8888), bytes(5, msg(bytes(1, "compress_type"), bytes(2, "gzip"))), bytes(7, "msg"), bytes(8, gzipSync(response)));
+
+describe("live rooms use of the shared browser", () => {
+  it("counts reading who is live and entering a room as in-flight until they settle", async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const rooms = new LiveRooms({ visibleBrowserWorkRunning: () => false, ensureBrowser: vi.fn(async () => { await gate; throw new Error("stop here"); }) });
+    expect(rooms.inflight).toBe(0);
+    const following = rooms.following({ refresh: true }).catch(() => undefined);
+    await vi.waitFor(() => expect(rooms.inflight).toBe(1));
+    const entering = rooms.open("921169302662").catch(() => undefined);
+    await vi.waitFor(() => expect(rooms.inflight).toBe(2));
+    release();
+    await Promise.all([following, entering]);
+    expect(rooms.inflight).toBe(0);
+  });
+});
 
 describe("live room", () => {
   it("reads the room id from a link or a bare number", () => {

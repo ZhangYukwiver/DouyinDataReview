@@ -1,7 +1,9 @@
-// 创作者中心（creator.douyin.com）的数据，只读。
+// 创作者中心（creator.douyin.com）的数据，只读。同一套读法也读创作者平台里的「抖音指数」（/api/v2/index/*）。
 // 在共享无头会话里开一个 creator.douyin.com 的空白同源页，带着登录 cookie 直接请求接口：
 // 10-06 实测这些接口不用页面签名，结果和官方页面一致。不加载创作者中心页面本身，
 // 不点任何东西；能请求的只有下面白名单里的查询接口，发布、删除、回复这些写接口没有入口。
+
+import { decryptIndexData } from "./indexCrypto.mjs";
 
 const ORIGIN = "https://creator.douyin.com";
 const BLANK_URL = `${ORIGIN}/robots.txt`;
@@ -16,6 +18,8 @@ const COMMENT_READ = "/web/api/third_party/aweme/api/comment/read/aweme/v1/web/c
 const COMMENT_QUERY = { app_id: "2906", aid: "2906", device_platform: "webapp", channel_id: "618" };
 // 评论搜索词是用户输入的任意文字，单独放行（URLSearchParams 会编码），限长
 const TEXT_PARAMS = new Set(["keyword"]);
+// 抖音指数的日期是 YYYYMMDD、平台只有这两个
+const PARAM_CHECKS = { start_date: /^\d{8}$/u, end_date: /^\d{8}$/u, app_name: /^(?:aweme|toutiao)$/u };
 
 // key → 接口。params 是工作台可以传进来的参数名；body 为 true 的是 POST JSON 查询（官方页面也这样发）
 export const CREATOR_ENDPOINTS = {
@@ -60,6 +64,21 @@ export const CREATOR_ENDPOINTS = {
   comment_replies: { path: `${COMMENT_READ}/list/reply/`, query: COMMENT_QUERY, params: ["item_id", "comment_id", "cursor", "count"] },
   comment_list_old: { path: "/aweme/v1/creator/comment/list", query: { aid: "2906" }, params: ["item_id", "cursor", "count", "sort"] },
   comment_replies_old: { path: "/aweme/v1/creator/comment/reply/list", query: { aid: "2906" }, params: ["comment_id", "cursor", "count"] },
+  // 抖音指数：搜索一个词只用这几个。查询窗口的结束日取 index_valid_date.keyword_latest_day（T-1），
+  // 关联词和人群取 index_relation_valid_date.datetime（T-3）。响应多半是加密的，read() 里解开。
+  // 订阅、历史、消息这些个人接口不放进来。shape 把工作台传的单个词整理成官方页面发的请求体
+  index_valid_date: { path: "/api/v2/index/get_all_valid_date", query: {}, params: [] },
+  index_relation_valid_date: { path: "/api/v2/index/get_valid_date_for_relation", query: {}, params: [] },
+  index_keyword_valid: { method: "POST", path: "/api/v2/index/get_keyword_valid_date", query: {}, params: ["keyword"], body: true, require: ["keyword"],
+    shape: ({ keyword }) => ({ keyword_list: [keyword] }) },
+  index_hot_trend: { method: "POST", path: "/api/v2/index/get_multi_keyword_hot_trend", query: {}, params: ["keyword", "start_date", "end_date", "app_name"], body: true, require: ["keyword", "start_date", "end_date"],
+    shape: ({ keyword, start_date, end_date, app_name }) => ({ keyword_list: [keyword], start_date, end_date, app_name: app_name ?? "aweme", region: [] }) },
+  index_interpretation: { method: "POST", path: "/api/v2/index/get_multi_keyword_interpretation", query: {}, params: ["keyword", "start_date", "end_date", "app_name"], body: true, require: ["keyword", "start_date", "end_date"],
+    shape: ({ keyword, start_date, end_date, app_name }) => ({ keyword_list: [keyword], start_date, end_date, app_name: app_name ?? "aweme", region: [] }) },
+  index_relation_word: { method: "POST", path: "/api/v2/index/get_relation_word", query: {}, params: ["keyword", "start_date", "end_date", "app_name"], body: true, require: ["keyword", "start_date", "end_date"],
+    shape: ({ keyword, start_date, end_date, app_name }) => ({ param: { keyword, start_date, end_date, app_name: app_name ?? "aweme" } }) },
+  index_portrait: { method: "POST", path: "/api/v2/index/get_portrait", query: {}, params: ["keyword", "start_date", "end_date", "app_name"], body: true, require: ["keyword", "start_date", "end_date"],
+    shape: ({ keyword, start_date, end_date, app_name }) => ({ param: { keyword, app_name: app_name ?? "aweme", start_date, end_date } }) },
 };
 
 // 数字 id、逗号串、日期，以及 sec_item_id 这种 base64（带 @ / + =）
@@ -83,15 +102,16 @@ export function creatorRequest(key, params = {}) {
     if (value === undefined || value === null) continue;
     if (!endpoint.params.includes(name)) return null;
     const text = String(value);
-    if (TEXT_PARAMS.has(name) ? text.length > 50 || /[\u0000-\u001f]/u.test(text) : !PARAM_VALUE.test(text)) return null;
+    if (Object.hasOwn(PARAM_CHECKS, name) ? !PARAM_CHECKS[name].test(text) : TEXT_PARAMS.has(name) ? text.length > 50 || /[\u0000-\u001f]/u.test(text) : !PARAM_VALUE.test(text)) return null;
     picked[name] = text;
   }
+  if (endpoint.require?.some((name) => !picked[name]?.trim())) return null;
   const method = endpoint.method ?? "GET";
   const query = new URLSearchParams(endpoint.query);
   let body = null;
   if (endpoint.body) {
-    // 官方页面把查询条件放 JSON 体里，数字按数字传
-    body = JSON.stringify(Object.fromEntries(Object.entries(picked).map(([name, value]) => [name, /^\d+$/u.test(value) && value.length < 16 ? Number(value) : value])));
+    // 官方页面把查询条件放 JSON 体里，数字按数字传；shape 的是整理好结构的（日期必须保持字符串）
+    body = endpoint.shape ? JSON.stringify(endpoint.shape(picked)) : JSON.stringify(Object.fromEntries(Object.entries(picked).map(([name, value]) => [name, /^\d+$/u.test(value) && value.length < 16 ? Number(value) : value])));
   } else {
     for (const [name, value] of Object.entries(picked)) query.set(name, value);
   }
@@ -153,7 +173,14 @@ export class CreatorCenter {
     if (!Array.isArray(requests) || !requests.length || requests.length > MAX_BATCH) throw new CreatorCenterError("invalid_request", "请求无效，请重试。", 400);
     const prepared = requests.map((item) => creatorRequest(item?.key, item?.params ?? {}));
     if (prepared.some((item) => !item)) throw new CreatorCenterError("invalid_request", "请求无效，请重试。", 400);
-    const page = await this.ensurePage();
+    let page;
+    try {
+      page = await this.ensurePage();
+    } catch (error) {
+      // 没登录、连不上：浏览器可能已经启动了，不安排收尾就没人会释放它
+      this.scheduleIdleClose();
+      throw error;
+    }
     clearTimeout(this.idleTimer);
     try {
       const raw = await page.evaluate(async ({ list, timeout }) => Promise.all(list.map(async ({ method, url, body }) => {
@@ -167,17 +194,22 @@ export class CreatorCenter {
             headers: body === null ? { accept: "application/json" } : { accept: "application/json", "content-type": "application/json" },
             body: body ?? undefined,
           });
-          return { status: response.status, text: await response.text() };
+          return { status: response.status, text: await response.text(), encrypted: response.headers.get("x-encrypted") };
         } catch {
           return { status: 0, text: "" };
         } finally {
           clearTimeout(timer);
         }
       })), { list: prepared, timeout: REQUEST_TIMEOUT_MS });
-      const results = raw.map(({ status, text }) => ({ status, data: parseCreatorJson(text) }));
+      // 抖音指数的响应带 x-encrypted：外层 {data:<密文>}，解开才是业务 JSON。解不开要单独标出来，别当成「没数据」
+      const results = raw.map(({ status, text, encrypted }) => {
+        if (!encrypted) return { status, data: parseCreatorJson(text) };
+        const plain = decryptIndexData(parseCreatorJson(text)?.data);
+        return plain ? { status, data: parseCreatorJson(plain) } : { status, data: null, undecryptable: true };
+      });
       if (results.some(({ status, data }) => needsLogin(status, data))) throw new CreatorCenterError("login_required", "登录抖音以后，才能看创作者中心的数据。");
       if (results.every(({ status }) => status === 0)) throw new CreatorCenterError("creator_unavailable", "没连上抖音创作者中心，请检查网络后重试。", 502);
-      return results.map(({ status, data }) => (status >= 200 && status < 300 && data ? { ok: true, data } : { ok: false, status }));
+      return results.map(({ status, data, undecryptable }) => (status >= 200 && status < 300 && data ? { ok: true, data } : { ok: false, status, ...(undecryptable ? { reason: "undecryptable" } : {}) }));
     } finally {
       this.scheduleIdleClose();
     }

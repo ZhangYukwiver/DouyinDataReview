@@ -599,6 +599,52 @@ describe("video download jobs", () => {
     expect(collector.getStatus().revision).toBeGreaterThan(previousStatus.revision);
   });
 
+  it("tells the explore adapter after every download job settles, once the job no longer counts as active", async () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.ensureBrowser = vi.fn(async () => { throw new Error("headless_launch_failed"); });
+    const activeWhenCalled = [];
+    collector.afterVideoDownload = vi.fn(() => { activeWhenCalled.push(collector.hasActiveVideoDownload()); });
+    const job = { id: "download-hook", sourceUrl: "https://www.douyin.com/video/1234567890", status: "queued", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    collector.videoDownloadJobs.set(job.id, job);
+    await collector.runVideoDownloadJob(job);
+    expect(collector.getVideoDownloadJob(job.id)).toMatchObject({ status: "failed" });
+    expect(collector.afterVideoDownload).toHaveBeenCalledTimes(1);
+    expect(activeWhenCalled).toEqual([false]);
+    // 回调抛错也不影响任务结果
+    collector.afterVideoDownload = () => { throw new Error("boom"); };
+    const again = { ...job, id: "download-hook-2", status: "queued" };
+    collector.videoDownloadJobs.set(again.id, again);
+    await expect(collector.runVideoDownloadJob(again)).resolves.toBeUndefined();
+  });
+
+  it("only lets the last queued job see an idle collector", async () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.ensureBrowser = vi.fn(async () => { throw new Error("headless_launch_failed"); });
+    const seen = [];
+    collector.afterVideoDownload = () => seen.push(collector.hasActiveVideoDownload());
+    const first = collector.startVideoDownload("https://www.douyin.com/video/1234567890");
+    const second = collector.startVideoDownload("https://www.douyin.com/video/1234567891");
+    await collector.videoDownloadQueue;
+    expect(collector.getVideoDownloadJob(first.id)).toMatchObject({ status: "failed" });
+    expect(collector.getVideoDownloadJob(second.id)).toMatchObject({ status: "failed" });
+    expect(seen).toEqual([true, false]);
+  });
+
+  it("does not close the shared headless browser while an explore page is still open", async () => {
+    const context = { close: vi.fn(async () => undefined) };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    collector.context = context;
+    collector.contextHeadless = true;
+    collector.exploreHoldsContext = () => true;
+    await collector.releaseHeadlessContextIfIdle();
+    expect(context.close).not.toHaveBeenCalled();
+    expect(collector.context).toBe(context);
+    collector.exploreHoldsContext = () => false;
+    await collector.releaseHeadlessContextIfIdle();
+    expect(context.close).toHaveBeenCalledTimes(1);
+    expect(collector.context).toBeNull();
+  });
+
   it("restores the terminal collector status when headless launch fails", async () => {
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
     collector.status = {
@@ -1172,6 +1218,50 @@ describe("DouyinCollector manual observation", () => {
 
     await expect(collector.stopChatObservation()).resolves.toBe(true);
     expect(collector.getStatus().chat.progress).toBe(null);
+  });
+
+  it("keeps the shared browser when stopping chat while an explore page is about to use it", async () => {
+    const setup = () => {
+      const page = { url: () => "https://www.douyin.com/", close: vi.fn(async () => undefined), isClosed: () => false };
+      const context = { pages: () => [page], close: vi.fn(async () => undefined) };
+      const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore() });
+      collector.snapshot = emptySnapshot();
+      collector.context = context;
+      collector.contextHeadless = true;
+      collector.chat = { active: true, stopping: false, stop: vi.fn(), page };
+      collector.chatPromise = Promise.resolve();
+      return { collector, context, page };
+    };
+    // 探索马上要用这个会话：只收掉聊天自己的标签页，不连会话一起关
+    const held = setup();
+    held.collector.exploreHoldsContext = () => true;
+    await held.collector.stopChatObservation({ silent: true });
+    expect(held.page.close).toHaveBeenCalled();
+    expect(held.context.close).not.toHaveBeenCalled();
+    expect(held.collector.context).toBe(held.context);
+    // 没人用了才关会话
+    const idle = setup();
+    idle.collector.exploreHoldsContext = () => false;
+    await idle.collector.stopChatObservation({ silent: true });
+    expect(idle.context.close).toHaveBeenCalledTimes(1);
+    expect(idle.collector.context).toBeNull();
+  });
+
+  it("does not report the browser as closed when another task started a new one while the old one was closing", async () => {
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
+    const fresh = { close: vi.fn(async () => undefined) };
+    const old = { close: vi.fn(async () => { collector.context = fresh; }) };
+    collector.context = old;
+    collector.contextHeadless = true;
+    collector.updateStatus({ browserOpen: true });
+    await collector.releaseHeadlessContextIfIdle();
+    expect(collector.getStatus().browserOpen).toBe(true);
+    collector.context = null;
+    collector.contextHeadless = true;
+    const last = { close: vi.fn(async () => undefined) };
+    collector.context = last;
+    await collector.releaseHeadlessContextIfIdle();
+    expect(collector.getStatus().browserOpen).toBe(false);
   });
 
   it("clears chat state on a silent stop", async () => {

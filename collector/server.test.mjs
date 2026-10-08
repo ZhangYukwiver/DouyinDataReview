@@ -297,7 +297,7 @@ describe("collector account switching edge cases", () => {
 });
 
 describe("collector server runtime", () => {
-  it("keeps explore tabs such as open comments for a playback job, but not for a saved download", async () => {
+  it("keeps explore tabs such as open comments for a playback job and an explore-page download, but not for other saved downloads", async () => {
     const close = vi.spyOn(ExplorerBridge.prototype, "close");
     try {
       const dataDirectory = await mkdtemp(path.join(tmpdir(), "playback-explore-"));
@@ -312,7 +312,9 @@ describe("collector server runtime", () => {
       });
       expect((await post({ url: "https://www.douyin.com/video/1234567890", playback: true })).status).toBe(202);
       expect(close).not.toHaveBeenCalled();
-      await post({ url: "https://www.douyin.com/video/1234567891" });
+      await post({ url: "https://www.douyin.com/video/1234567891", keepExplore: true });
+      expect(close).not.toHaveBeenCalled();
+      await post({ url: "https://www.douyin.com/video/1234567892" });
       expect(close).toHaveBeenCalledTimes(1);
     } finally { close.mockRestore(); }
   });

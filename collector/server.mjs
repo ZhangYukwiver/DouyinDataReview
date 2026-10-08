@@ -446,6 +446,7 @@ export async function startCollectorServer({
       }
       // Release only the adapter's tabs before invoking an original workflow.
       // Downloads decide after reading the body: playback only opens its own tab, so open comments survive a prefetch.
+      // A download started from an explore page (keepExplore) does the same, so its profile tab can still page on.
       if (url.pathname !== "/v1/downloads") await explorer.close();
       if (rejectWhileSwitching(response)) return;
     }
@@ -537,7 +538,7 @@ export async function startCollectorServer({
     } else if (request.method === "POST" && url.pathname === "/v1/downloads") {
       try {
         const body = await readJsonBody(request);
-        if (body?.playback !== true) await explorer.close();
+        if (body?.playback !== true && body?.keepExplore !== true) await explorer.close();
         if (rejectWhileSwitching(response)) return;
         const job = collector.startVideoDownload(body?.url, { playback: body?.playback === true });
         sendJson(response, 202, { job });
