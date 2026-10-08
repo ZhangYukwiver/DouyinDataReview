@@ -191,6 +191,8 @@ export class LiveRooms {
     this.rooms = new Map();
     // 进房和收浏览器排同一个队：新的浏览器不能在旧的还没关完时起
     this.queue = Promise.resolve();
+    // 正在读「关注的人谁在播」或进房（还没登记进 rooms）的次数：这段时间也在用共享的无头会话
+    this.inflight = 0;
     this.releaseTimer = null;
     this.followingCache = null;
   }
@@ -205,19 +207,22 @@ export class LiveRooms {
     // 快速换台时上一个可能还在进房：先关掉它的页面让它尽快收尾，再排队进新的，免得两边同时去起浏览器
     for (const room of this.rooms.values()) void room.page.close().catch(() => {});
     clearTimeout(this.releaseTimer);
+    this.inflight += 1;
     const entered = this.queue.then(() => this.enter(webRid));
     this.queue = entered.catch(() => {});
-    return entered;
+    return entered.finally(() => { this.inflight -= 1; });
   }
 
   async following({ refresh = false } = {}) {
     if (!refresh && this.followingCache && Date.now() - this.followingCache.at < FOLLOWING_CACHE_MS) return this.followingCache.list;
     clearTimeout(this.releaseTimer);
+    this.inflight += 1;
     const work = this.queue.then(() => this.readFollowing());
     this.queue = work.catch(() => {});
     try {
       return await work;
     } finally {
+      this.inflight -= 1;
       this.scheduleRelease();
     }
   }

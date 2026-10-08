@@ -5,12 +5,20 @@ import type { ExploreConnection } from "./explorer";
 // key 和参数名必须在 collector/creatorCenter.mjs 的白名单里。
 
 export type CreatorKey =
-  "user_info" | "author_upgrade" | "diagnosis" | "contribution_top" | "dashboard" | "dashboard_mix" | "dashboard_fans" | "mix_list" | "live_dashboard" | "live_trends" | "live_gift_billboard" | "live_watch_billboard" | "live_fans_source" | "fans_summary" | "work_list" | "item_list" | "item_mget" | "item_summarize" | "item_compare" | "item_trend" | "item_realtime" | "item_progress" | "item_bullet" | "item_chapter" | "item_play_source" | "item_search_keyword" | "item_portrait" | "item_audience" | "comment_hotwords" | "comment_list" | "comment_replies" | "comment_list_old" | "comment_replies_old";
+  "user_info" | "author_upgrade" | "diagnosis" | "contribution_top" | "dashboard" | "dashboard_mix" | "dashboard_fans" | "mix_list" | "live_dashboard" | "live_trends" | "live_gift_billboard" | "live_watch_billboard" | "live_fans_source" | "fans_summary" | "work_list" | "item_list" | "item_mget" | "item_summarize" | "item_compare" | "item_trend" | "item_realtime" | "item_progress" | "item_bullet" | "item_chapter" | "item_play_source" | "item_search_keyword" | "item_portrait" | "item_audience" | "comment_hotwords" | "comment_list" | "comment_replies" | "comment_list_old" | "comment_replies_old"
+  | "index_valid_date" | "index_relation_valid_date" | "index_keyword_valid" | "index_hot_trend" | "index_interpretation" | "index_relation_word" | "index_portrait";
 export interface CreatorQuery { key: CreatorKey; params?: Record<string, string | number> }
 /** 抖音原样的 JSON；读失败的那一项是 null */
 export type CreatorData = Record<string, any> | null;
 
+/** 采集器对每一项的回答：读到了带 data，没读到带原因（undecryptable＝抖音指数的响应解不开） */
+export interface CreatorResult { data: CreatorData; reason?: "undecryptable" | "failed"; status?: number }
+
 export async function readCreator(connection: ExploreConnection, queries: CreatorQuery[], signal?: AbortSignal): Promise<CreatorData[]> {
+  return (await readCreatorResults(connection, queries, signal)).map((item) => item.data);
+}
+
+export async function readCreatorResults(connection: ExploreConnection, queries: CreatorQuery[], signal?: AbortSignal): Promise<CreatorResult[]> {
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal?.addEventListener("abort", abort, { once: true });
@@ -27,7 +35,8 @@ export async function readCreator(connection: ExploreConnection, queries: Creato
       response.status === 401 ? "连接已过期，请重新连接采集器。" : response.status === 404 ? "当前采集器还没有创作者中心模块，请重启应用。" : "没读到创作者中心的数据，请稍后重试。"));
     const results = value?.results;
     if (!Array.isArray(results) || results.length !== queries.length) throw new LocalCollectorError("invalid_response", "创作者中心数据格式不对，请更新应用。");
-    return results.map((item) => (item?.ok && item.data && typeof item.data === "object" ? item.data : null));
+    return results.map((item): CreatorResult => item?.ok && item.data && typeof item.data === "object" ? { data: item.data }
+      : { data: null, reason: item?.reason === "undecryptable" ? "undecryptable" : "failed", status: typeof item?.status === "number" ? item.status : undefined });
   } catch (error) {
     signal?.throwIfAborted();
     if (error instanceof LocalCollectorError) throw error;

@@ -5,6 +5,8 @@ import { closeExplore, interactExplore, readExplore, type ExploreAction, type Ex
 import { loadCollectorVideo } from "../../services/localCollector";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
+import { DouyinIndexCard } from "./DouyinIndexCard";
+import { indexKeyword } from "../../domain/douyinIndex";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
 import { RecordVideoPlayer } from "./RecordVideoPlayer";
 import { renderEmojiText } from "./emojiText";
@@ -154,6 +156,8 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
     else if (videoMatch?.[1] || /^\d{15,30}$/u.test(candidate)) void load({ kind: "detail", id: videoMatch?.[1] ?? candidate }, "detail");
     else void load({ kind: mode, query: candidate }, "results");
   }
+  // 点抖音指数里的关联词：换个词接着搜
+  function searchWord(word: string) { setQuery(word); void load({ kind: mode, query: word }, "results"); }
   function back() { setError(null); setNotice(null); setComments(null); if (detail) setDetail(null); else setProfile(null); scrollRef.current?.scrollTo({ y: 0, animated: false }); }
   async function commitAction() {
     const session = intent?.action === "follow" ? profile : detail;
@@ -286,6 +290,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
 
     {results && !profile && !detail ? <>
       <View style={styles.between}><Text {...ws("e-section")} style={styles.sectionTitle}>“{searchQuery?.query}”的{results.kind === "users" ? "用户" : "内容"}</Text><Text style={styles.muted}>已加载 {results.items.length} 条</Text></View>
+      {connection && indexKeyword(searchQuery?.query) ? <DouyinIndexCard key={searchQuery!.query} connection={connection} keyword={indexKeyword(searchQuery?.query)!} disabled={busy} onSearch={searchWord} onOpenPage={(url) => void onOpenRecord(url)} /> : null}
       {results.kind === "users" ? <View style={styles.userList}>{(results.items as ExploreUser[]).map((author) => <Pressable key={author.id} accessibilityRole="button" accessibilityLabel={`查看用户：${author.name}`} disabled={busy} onPress={() => openProfile(author)} {...ws("e-box e-user")} style={[styles.userCard, narrow && styles.userCardNarrow]}>
         <Avatar user={author} /><View style={styles.userCopy}><Text {...ws("e-name small")} numberOfLines={1} style={styles.userName}>{author.name}</Text><Text style={styles.muted}>抖音号：{author.handle || "未提供"}</Text><Text numberOfLines={2} style={styles.userBio}>{author.bio || "还没有个人简介"}</Text></View><View style={styles.userNumbers}><Text style={styles.cardTitle}>{count(author.followers)}</Text><Text style={styles.muted}>粉丝</Text></View><ChevronRight color={color.textMuted} size={18} />
       </Pressable>)}</View> : videoCards(results)}

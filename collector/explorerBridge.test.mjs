@@ -81,6 +81,55 @@ describe("additive explorer adapter", () => {
       expect(bridge.busy).toBe(false);
     } finally { vi.useRealTimers(); }
   });
+  it("gives a browser it only borrowed back to the collector once the last explore page is closed", async () => {
+    // 创作者页先把无头会话开起来，探索借用它（ownedContext 为空）；别的任务收尾时因为探索页还开着跳过了，探索关光后要补一次
+    const { collector, context } = originalCollector();
+    collector.context = context; collector.contextHeadless = true;
+    let holdSeenByRelease = null;
+    collector.releaseHeadlessContextIfIdle = vi.fn(async () => { holdSeenByRelease = collector.exploreHoldsContext(); });
+    const bridge = new ExplorerBridge(collector);
+    bridge.explorer.sessions.set("results", { page: { close: vi.fn(async () => {}), isClosed: () => false } });
+    await bridge.close(["results"]);
+    expect(context.close).not.toHaveBeenCalled();
+    expect(collector.releaseHeadlessContextIfIdle).toHaveBeenCalledTimes(1);
+    expect(holdSeenByRelease).toBe(false);
+  });
+  it("keeps new explore reads out while it is still releasing a borrowed browser", async () => {
+    const { collector, context } = originalCollector();
+    collector.context = context; collector.contextHeadless = true;
+    let finish; const closing = new Promise((resolve) => { finish = resolve; });
+    let busyDuringRelease = null, holdsDuringRelease = null, runDuringRelease = null;
+    const bridge = new ExplorerBridge(collector);
+    collector.releaseHeadlessContextIfIdle = vi.fn(async () => {
+      busyDuringRelease = bridge.busy; holdsDuringRelease = collector.exploreHoldsContext();
+      runDuringRelease = await bridge.run({ kind: "users", query: "x" }).then(() => "ran", (error) => error.code);
+      await closing;
+    });
+    bridge.explorer.sessions.set("results", { page: { close: vi.fn(async () => {}), isClosed: () => false } });
+    const closed = bridge.close(["results"]);
+    await vi.waitFor(() => expect(collector.releaseHeadlessContextIfIdle).toHaveBeenCalled());
+    // 关的时候新的读取要等：得到 collector_busy，而不是趁旧会话还没关完去起新的；但这个 pending 不算「探索还在用」
+    expect(busyDuringRelease).toBe(true);
+    expect(holdsDuringRelease).toBe(false);
+    await vi.waitFor(() => expect(runDuringRelease).toBe("collector_busy"));
+    finish(); await closed;
+    expect(bridge.busy).toBe(false);
+  });
+  it("does not count an explore page whose browser tab is already gone as holding the browser", () => {
+    const { collector } = originalCollector(); const bridge = new ExplorerBridge(collector);
+    bridge.explorer.sessions.set("dead", { page: { close: vi.fn(), isClosed: () => true } });
+    expect(collector.exploreHoldsContext()).toBe(false);
+    bridge.explorer.sessions.set("live", { page: { close: vi.fn(), isClosed: () => false } });
+    expect(collector.exploreHoldsContext()).toBe(true);
+  });
+  it("tells the collector when explore pages are open so other tasks leave the shared browser alone", async () => {
+    const { collector } = originalCollector(); const bridge = new ExplorerBridge(collector);
+    expect(collector.exploreHoldsContext()).toBe(false);
+    bridge.explorer.sessions.set("results", { page: { close: vi.fn(async () => {}) } });
+    expect(collector.exploreHoldsContext()).toBe(true);
+    await bridge.close(["results"]);
+    expect(collector.exploreHoldsContext()).toBe(false);
+  });
   it("closes its own tabs without closing a borrowed original browser", async () => {
     const { collector, context } = originalCollector(); collector.context = context; collector.contextHeadless = false;
     const bridge = new ExplorerBridge(collector); await bridge.explorer.getContext();
