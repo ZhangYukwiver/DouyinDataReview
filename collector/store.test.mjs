@@ -283,4 +283,20 @@ describe("CollectorStore", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("bumps the records revision only when the records themselves are replaced", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
+    try {
+      const store = new CollectorStore(directory);
+      const first = await store.save(createEmptyRecords());
+      const revision = store.recordsRevision;
+      // 聊天存盘把上次存好的记录原样传回来
+      await store.save(first.records, [], { chatMessages: [] });
+      expect(store.recordsRevision).toBe(revision);
+      await store.save(createEmptyRecords());
+      expect(store.recordsRevision).toBe(revision + 1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });

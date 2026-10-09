@@ -46,6 +46,7 @@ import {
   formatAccountAddedDay,
   getCollectorAccounts,
   getCollectorPairingCode,
+  getCollectorChat,
   getCollectorRecords,
   getCollectorStatus,
   getCollectorVideoDownload,
@@ -253,6 +254,8 @@ function AppContent() {
   const [storySrc, setStorySrc] = useState<string | null>(null);
   // 采集进行中，报告与内容库用这次采集开始前的快照；采集结束（busy 落下）再换成新数据
   const [frozenSnapshot, setFrozenSnapshot] = useState<CollectorSnapshot | null>(null);
+  // 冻结那一刻的采集状态：显示的是读取前那份记录，完整度也按那时的算
+  const [frozenState, setFrozenState] = useState<CollectorStatus["state"] | undefined>(undefined);
   // 极简风格没有自己的报告页，打开报告时借用这里选的一套（设置面板里改）
   const [storyStyle, setStoryStyle] = useState<StoryStyle>(() => (Platform.OS === "web" ? loadStoryStyle() : "archive"));
   // 设置面板开着时是要先滚到的那一节，关着是 null
@@ -260,6 +263,12 @@ function AppContent() {
   // 内容年志开着时读的是打开那一刻写好的数据，外层先不拉整份快照（见 pollCollector），关掉时补一次
   const storyOpenRef = useRef(false);
   const storySnapshotStaleRef = useRef(false);
+  // 内容库和报告正用着读取前冻结的那份记录（见 frozenSnapshot），pollCollector 这时不用拉新记录
+  const recordsFrozenRef = useRef(false);
+  // 界面手上这份记录是采集器第几版拉来的；轮询每次重开都靠它判断，别把没换的记录再整份拉一遍。
+  // 别处换掉快照时记录数组也跟着换，对不上引用就当没拉过
+  const loadedRecordsRef = useRef<{ records: PersonalRecordCollection; revision: number } | null>(null);
+  const collectorRecordsRef = useRef<PersonalRecordCollection | undefined>(undefined);
   const importRequest = useRef(0);
   const pollRequest = useRef(0);
   const statusPollAbortRef = useRef<AbortController | null>(null);
@@ -418,11 +427,14 @@ function AppContent() {
   useEffect(() => {
     // 只在 busy 翻转时取值：翻成 true 的那一刻 collectorSnapshot 还是采集前的数据
     setFrozenSnapshot(collectorBusy ? collectorSnapshot : null);
+    setFrozenState(collectorBusy ? collectorStatus?.state : undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectorBusy]);
 
   // 冻结的样本只在采集器忙的时候用；忙完那一帧 effect 还没清掉它，别让旧数字闪回来
   const shownSnapshot = (collectorBusy && frozenSnapshot) || collectorSnapshot;
+  recordsFrozenRef.current = Boolean(collectorBusy && frozenSnapshot);
+  collectorRecordsRef.current = collectorSnapshot?.records;
   // 导入的文件是用户刚明确选的，连着采集器也先用它；移除文件就换回采集器的数据
   const displaySnapshot: DisplaySnapshot | null = selectedArchive?.data
     ? {
@@ -446,38 +458,34 @@ function AppContent() {
   // 数据页和故事入口显示的聊天条数：采集器用服务端计数，导入的文件按同一个口径（好友消息加群聊统计）自己数
   const chatCount = displaySnapshot?.source === "archive" ? countChatMessages(displaySnapshot.chatMessages, displaySnapshot.chatConversations) : collectorStatus?.counts.chat_messages ?? null;
 
+  // 读取开始、结束时状态会变，但冻结期间记录没换；按冻结时的状态算，免得两份报告在开始、结束各白算一遍（上万条记录一次就一秒多）
+  const shownState = collectorBusy && frozenSnapshot ? frozenState : collectorStatus?.state;
+  const collectionState = displaySnapshot?.source !== "collector"
+    ? "unknown"
+    : shownState === "complete"
+      ? "complete"
+      : shownState && ["partial", "error", "collecting", "launching_browser", "awaiting_login", "observing"].includes(shownState)
+        ? "partial"
+        : "unknown";
+
   const personalSummary = useMemo(() => {
     if (!displaySnapshot) return null;
-    const collectionState = displaySnapshot?.source === "collector"
-      ? collectorStatus?.state === "complete"
-        ? "complete"
-        : collectorStatus && ["partial", "error", "collecting", "launching_browser", "awaiting_login", "observing"].includes(collectorStatus.state)
-          ? "partial"
-          : "unknown"
-      : "unknown";
     return buildPersonalSummary(displaySnapshot.records, {
       source: displaySnapshot?.source,
       collectionState,
       warnings: displaySnapshot?.warnings ?? [],
     });
-  }, [collectorStatus?.state, displaySnapshot?.records, displaySnapshot?.source, displaySnapshot?.warnings]);
+  }, [collectionState, displaySnapshot?.records, displaySnapshot?.source, displaySnapshot?.warnings]);
 
   const livingReport = useMemo(() => {
     if (!displaySnapshot) return null;
-    const collectionState = displaySnapshot.source === "collector"
-      ? collectorStatus?.state === "complete"
-        ? "complete"
-        : collectorStatus && ["partial", "error", "collecting", "launching_browser", "awaiting_login", "observing"].includes(collectorStatus.state)
-          ? "partial"
-          : "unknown"
-      : "unknown";
     return buildLivingReport(displaySnapshot.records, {
       source: displaySnapshot.source,
       sourceUpdatedAt: displaySnapshot.updatedAt,
       collectionState,
       warnings: displaySnapshot.warnings,
     });
-  }, [collectorStatus?.state, displaySnapshot?.records, displaySnapshot?.source, displaySnapshot?.updatedAt, displaySnapshot?.warnings]);
+  }, [collectionState, displaySnapshot?.records, displaySnapshot?.source, displaySnapshot?.updatedAt, displaySnapshot?.warnings]);
 
   useEffect(() => {
     const trigger = () => autoSyncTriggerRef.current();
@@ -525,10 +533,23 @@ function AppContent() {
     return () => clearTimeout(timer);
   }, [collectorBusy, collectorStatus?.state, collectorToken, collectorUrl, displaySnapshot?.source, switchingAccount]);
 
-  async function refreshCollectorSnapshot(baseUrl: string, token: string, requestId?: number): Promise<boolean> {
+  async function refreshCollectorSnapshot(baseUrl: string, token: string, requestId?: number): Promise<CollectorSnapshot | null> {
     const snapshot = await getCollectorRecords(baseUrl, token);
-    if (requestId !== undefined && pollRequest.current !== requestId) return false;
+    if (requestId !== undefined && pollRequest.current !== requestId) return null;
     setCollectorSnapshot(snapshot);
+    return snapshot;
+  }
+
+  // 记录没换、只来了聊天：记录数组和时间原样留着，报告、画像这些按记录算的东西就不会每条消息重算一遍
+  async function refreshCollectorChat(baseUrl: string, token: string, requestId: number): Promise<boolean> {
+    const chat = await getCollectorChat(baseUrl, token);
+    if (pollRequest.current !== requestId) return false;
+    setCollectorSnapshot((current) => current && {
+      ...current,
+      chatMessages: chat.chatMessages,
+      chatConversations: chat.chatConversations,
+      warnings: current.warnings.join("\n") === chat.warnings.join("\n") ? current.warnings : chat.warnings,
+    });
     return true;
   }
 
@@ -571,8 +592,22 @@ function AppContent() {
         if (snapshotVersion !== nextVersion && storyOpenRef.current) {
           storySnapshotStaleRef.current = true; // 关掉年志时那一次补拉会带上这个版本
           snapshotVersion = nextVersion;
-        } else if (snapshotVersion !== nextVersion) {
-          if (!await refreshCollectorSnapshot(baseUrl, token, requestId)) return;
+        } else if (!storyOpenRef.current) {
+          // 记录换了才整份重拉，只来了聊天就只取聊天。读取进行中报告和内容库用的是读取前那份，
+          // 新记录拉回来也不显示，等读完（终态）再一次拉齐；老版本采集器没有 recordsRevision，照旧整份拉
+          const recordsRevision = status.recordsRevision;
+          const loaded = loadedRecordsRef.current;
+          const recordsStale = recordsRevision === undefined
+            ? snapshotVersion !== nextVersion
+            : loaded?.revision !== recordsRevision || loaded.records !== collectorRecordsRef.current;
+          const holdRecords = recordsRevision !== undefined && recordsFrozenRef.current && !TERMINAL_COLLECTOR_STATES.has(status.state);
+          if (recordsStale && !holdRecords) {
+            const snapshot = await refreshCollectorSnapshot(baseUrl, token, requestId);
+            if (!snapshot) return;
+            if (recordsRevision !== undefined) loadedRecordsRef.current = { records: snapshot.records, revision: recordsRevision };
+          } else if (snapshotVersion !== nextVersion) {
+            if (!await refreshCollectorChat(baseUrl, token, requestId)) return;
+          }
           snapshotVersion = nextVersion;
         }
         if (pollRequest.current !== requestId) return;

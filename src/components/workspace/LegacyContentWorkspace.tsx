@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -648,7 +648,16 @@ function RecordsGallery({
   useEffect(() => { setPlayingRecord(null); setLiveTarget(null); setQuery(""); }, [label, privacy]);
   const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
   // 最后一行不满时 flex:1 会把卡片拉宽，限成一列宽（12 是 gridRow 的 gap）
-  const cellStyle = Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null;
+  const cellStyle = useMemo(() => Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null, [columns]);
+  // 卡片是 memo 的：读取、接收聊天时状态每变一次整页都要重渲染，几百张卡片跟着重画一遍要一两百毫秒。
+  // 外面传进来的回调每次都是新函数，这里换成引用不变、调用时取最新那份的版本
+  const latest = useRef({ onDownloadRecord, onOpenRecord, openLive });
+  latest.current = { onDownloadRecord, onOpenRecord, openLive };
+  const handlers = useMemo(() => ({
+    download: (record: PersonalVideoRecord) => latest.current.onDownloadRecord!(record),
+    open: (url: string) => latest.current.onOpenRecord(url),
+    live: (record: PersonalVideoRecord) => { latest.current.openLive?.(record); },
+  }), []);
   // 播放器的上一条/下一条和批量下载都跟着搜索结果走
   const shownRecords = useMemo(() => searchRecords(records, query), [records, query]);
   const searching = query.trim().length > 0;
@@ -785,14 +794,14 @@ function RecordsGallery({
             cellStyle={cellStyle}
             selection={selectionFor(item)}
             downloadState={downloadStates[item.id] ?? "idle"}
-            onDownloadRecord={item.mediaType === "live" ? undefined : onDownloadRecord}
-            onPlayRecord={item.mediaType === "live" ? openLive : onLoadVideo ? setPlayingRecord : undefined}
-            onOpenRecord={onOpenRecord}
+            onDownloadRecord={item.mediaType === "live" || !onDownloadRecord ? undefined : handlers.download}
+            onPlayRecord={item.mediaType === "live" ? openLive && handlers.live : onLoadVideo ? setPlayingRecord : undefined}
+            onOpenRecord={handlers.open}
             privacy={privacy}
             record={item}
             type={activeType}
           />
-        : <RecordRow selection={selectionFor(item)} onOpenRecord={onOpenRecord} privacy={privacy} record={item} type={activeType} />}
+        : <RecordRow selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} />}
       showsVerticalScrollIndicator={false}
     />
     {Platform.OS === "web" && playingRecord && !privacy && onLoadVideo ? (
@@ -885,7 +894,7 @@ function SelectionMark({ selection }: { selection: RecordSelection }) {
   </View>;
 }
 
-function RecordTile({
+const RecordTile = memo(function RecordTile({
   cellStyle,
   selection,
   downloadState,
@@ -1057,9 +1066,9 @@ function RecordTile({
       ) : null}
     </View>
   );
-}
+});
 
-function RecordRow({ record, type, privacy, onOpenRecord, selection }: { record: PersonalVideoRecord; type: PersonalRecordType; privacy: boolean; onOpenRecord: (url: string) => Promise<void>; selection?: RecordSelection }) {
+const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, selection }: { record: PersonalVideoRecord; type: PersonalRecordType; privacy: boolean; onOpenRecord: (url: string) => Promise<void>; selection?: RecordSelection }) {
   const [imageFailed, setImageFailed] = useState(false);
   const accent = type === "liked_videos" ? color.accent : type === "favorite_videos" ? color.amber : color.cyan;
   const imageAvailable = Boolean(record.coverUrl && !privacy && !imageFailed);
@@ -1092,7 +1101,7 @@ function RecordRow({ record, type, privacy, onOpenRecord, selection }: { record:
       {record.url && !selection ? <ArrowUpRight color={color.textMuted} size={19} /> : null}
     </Pressable>
   );
-}
+});
 
 function isReportView(view: WorkspaceViewKey): boolean {
   return view === "summary" || view === "highlights";

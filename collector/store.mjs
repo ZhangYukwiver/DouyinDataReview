@@ -298,6 +298,7 @@ export class CollectorStore {
   constructor(dataDirectory) {
     this.dataDirectory = dataDirectory;
     this.filePath = path.join(dataDirectory, "records.json");
+    this.recordsRevision = 0;
   }
 
   async load() {
@@ -365,6 +366,9 @@ export class CollectorStore {
       directSync: normalizeDirectSyncState(directSync),
     };
     await this.writeSnapshot(snapshot);
+    // 聊天存盘会把上次存好的那份记录原样传回来，只有换了记录才加一；界面据此判断要不要重拉整份记录
+    if (records !== this.savedRecords) this.recordsRevision += 1;
+    this.savedRecords = snapshot.records;
     return snapshot;
   }
 

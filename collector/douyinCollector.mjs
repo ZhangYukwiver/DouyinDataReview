@@ -1167,7 +1167,7 @@ export class DouyinCollector {
   }
 
   getStatus() {
-    return { ...structuredClone(this.status), revision: this.statusRevision };
+    return { ...structuredClone(this.status), revision: this.statusRevision, recordsRevision: this.store?.recordsRevision };
   }
 
   subscribeStatus(listener) {
@@ -1177,6 +1177,12 @@ export class DouyinCollector {
 
   getSnapshot() {
     return structuredClone(this.snapshot);
+  }
+
+  // 只来了聊天时界面取这一份就够，不用每条消息都搬一遍几 MB 的记录
+  getChatSnapshot() {
+    const { schemaVersion, updatedAt, chatMessages, chatConversations, warnings } = this.snapshot;
+    return structuredClone({ schemaVersion, updatedAt, chatMessages, chatConversations, warnings });
   }
 
   // 存盘前核对浏览器里登录的还是不是这个账号：换成别的抖音号就抛 account_mismatch，两个人的记录不能混进一份；
