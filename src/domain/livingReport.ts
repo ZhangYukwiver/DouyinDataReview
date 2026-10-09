@@ -648,8 +648,11 @@ function parseDate(value: string | null | undefined): number | null {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+// 建一个格式化器比格式化一次贵得多，上万条记录每条新建一个要多花一秒
+const SHANGHAI_DATE = new Intl.DateTimeFormat("en-CA", { timeZone: ANNUAL_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" });
+
 function shanghaiDate(timestamp: number): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: ANNUAL_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(timestamp));
+  return SHANGHAI_DATE.format(new Date(timestamp));
 }
 
 function average(values: readonly number[]): number {

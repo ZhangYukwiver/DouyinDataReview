@@ -648,8 +648,11 @@ function dedupeKey(entry: AnnualIndexedRecord): string {
   return entry.comparisonKey;
 }
 
+// 带参数的 localeCompare 每比一次都要现建一个 Collator，排序上万条时很慢；结果和它一样
+const TEXT_COLLATOR = new Intl.Collator("zh-Hans", { sensitivity: "base", numeric: true });
+
 function compareText(left: string, right: string): number {
-  return left.localeCompare(right, "zh-Hans", { sensitivity: "base", numeric: true });
+  return TEXT_COLLATOR.compare(left, right);
 }
 
 function compareStableString(left: string, right: string): number {

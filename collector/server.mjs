@@ -626,7 +626,7 @@ export async function startCollectorServer({
         sendJson(response, 400, { error: "invalid_revision" });
       } else waitForStatus(response, Number(requestedRevision));
     } else if (request.method === "GET" && url.pathname === "/v1/records") {
-      sendJson(response, 200, collector.getSnapshot());
+      sendJson(response, 200, url.searchParams.get("part") === "chat" ? collector.getChatSnapshot() : collector.getSnapshot());
     } else if (request.method === "POST" && url.pathname === "/v1/sync") {
       const started = collector.startSync();
       sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });

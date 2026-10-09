@@ -37,6 +37,8 @@ export interface CollectorStatus {
   /** state 为 error 时的错误码，如 login_required */
   code?: string | null;
   revision?: number;
+  /** 记录本身换过几次（只存聊天不算）；老版本采集器没有这一项 */
+  recordsRevision?: number;
   chatConnection?: "connecting" | "connected" | "reconnecting" | null;
   /** page 要开可见浏览器，direct_records 走无头，接收和下载可以同时继续 */
   syncMode: "page" | "direct_records" | null;
@@ -693,6 +695,7 @@ function parseStatus(value: unknown): CollectorStatus {
     browserOpen: value.browserOpen === true,
     code: typeof value.code === "string" ? value.code : null,
     ...(typeof value.revision === "number" && Number.isSafeInteger(value.revision) && value.revision >= 0 ? { revision: value.revision } : {}),
+    ...(typeof value.recordsRevision === "number" && Number.isSafeInteger(value.recordsRevision) && value.recordsRevision >= 0 ? { recordsRevision: value.recordsRevision } : {}),
     chatConnection: value.chatConnection === "connecting" || value.chatConnection === "connected" || value.chatConnection === "reconnecting"
       ? value.chatConnection : null,
     syncMode: value.syncMode === "page" || value.syncMode === "direct_records" ? value.syncMode : null,
@@ -923,6 +926,13 @@ export async function getCollectorStatus(baseUrl: string, token: string, afterRe
 
 export async function getCollectorRecords(baseUrl: string, token: string): Promise<CollectorSnapshot> {
   return parseSnapshot(await requestJson(baseUrl, "/v1/records", {}, token));
+}
+
+// 只取聊天：记录没换时不用每来一条消息就搬一遍、解析一遍几 MB 的记录
+export async function getCollectorChat(baseUrl: string, token: string): Promise<Pick<CollectorSnapshot, "chatMessages" | "chatConversations" | "warnings">> {
+  const value = await requestJson(baseUrl, "/v1/records?part=chat", {}, token);
+  const { chatMessages, chatConversations, warnings } = parseSnapshot(isObject(value) ? { ...value, records: createEmptyPersonalRecords() } : value);
+  return { chatMessages, chatConversations, warnings };
 }
 
 export async function startCollectorVideoDownload(

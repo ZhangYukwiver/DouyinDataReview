@@ -3080,7 +3080,10 @@ export function buildReportModel(
     slotRow.slots[slot] = (slotRow.slots[slot] ?? 0) + 1;
   }
 
-  const replayIds = new Set(watchIds.filter((id, index) => watchIds.indexOf(id) !== index));
+  // 不能用 indexOf 找重复：上万条观看记录就是上亿次比较，每次重算卡好几秒
+  const seenIds = new Set<string>();
+  const replayIds = new Set<string>();
+  for (const id of watchIds) (seenIds.has(id) ? replayIds : seenIds).add(id);
   const daily = new Map<string, { watch: number; chat: number; night: number; kept: number; depthSum: number; depthN: number; revisit: number }>();
   const dayOf = (value: string) => {
     let dayRow = daily.get(dateKey(value));
