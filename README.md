@@ -1,7 +1,7 @@
 <div align="center">
   <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="build/icon.png" alt="内容数据工作台" width="160" /></a>
   <h1>DouyinDataReview | 抖音内容数据工作台</h1>
-  <p><strong>把抖音这一年，留在自己的电脑上</strong></p>
+  <p><strong>把你的抖音数据，留在自己的电脑上</strong></p>
   <p>DouyinDataReview（内容数据工作台）是一个<strong>免费开源</strong>的抖音数据采集桌面应用：把你自己的抖音观看历史、喜欢、收藏和聊天记录读到本机离线保存，聊天可实时接收，还能续火花、批量下载视频；<br>
   同时在工作台里看自己的创作者中心数据（数据总览、作品数据、粉丝画像、评论分析）和抖音热点榜、抖音指数；攒够了数据，也能随时生成抖音年度报告。支持 Windows 和 macOS，MIT 许可。</p>
   <p>不接外部 AI：标题、作者、封面、Cookie 和报告都不会发送到任何外部分析服务。</p>
@@ -17,11 +17,13 @@
   </p>
 </div>
 
-https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
+<table>
+  <tr><td><img src="docs/screenshots/setup-trace.jpg" alt="连接与采集" width="400"/></td><td><img src="docs/screenshots/records-trace.jpg" alt="内容库" width="400"/></td></tr>
+</table>
+
+<p align="center"><sub>连接与采集、内容库。截图都是合成示例数据。</sub></p>
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/">国内下载（加速线路）</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/#demo">在线看示例报告</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
-
-<p align="center"><sub>海报风格的年度回顾，从封面一路滚到落款。视频和截图都是合成示例数据；这是可切换的其中一种视觉风格。</sub></p>
 
 > **先看什么？** 想安装，直接打开[最新 Release](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest)；想了解实现，查看[面向开发者](#面向开发者)；想比较另一种视觉风格，继续看下面的[年度回顾](#年度回顾)。
 
@@ -45,7 +47,11 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 在「设置」的「界面风格」里挑一种，再点「打开报告」。风格同时决定采集器页和工作台的样子；默认的极简风格只管这两页，没有单独的报告页，打开报告时用设置里选的一套。
 
 - **内容年志**（默认）：先看到一张入口卡，写着观看、喜欢、收藏、聊天各有多少条；点卡片穿过去，是一卷十章的夜色长卷，天色随章节在五个时辰的油画之间变换。
-- **海报**：墨黑、新闻纸配信号橙的展览海报，十章硬切长卷，就是上面演示视频中的一种视觉风格。
+- **海报**：墨黑、新闻纸配信号橙的展览海报，十章硬切长卷，就是下面演示视频中的一种视觉风格。
+
+https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
+
+<p align="center"><sub>海报风格的年度回顾，从封面一路滚到落款。视频和截图都是合成示例数据；这是可切换的其中一种视觉风格。</sub></p>
 
 <table>
   <tr><td><img src="docs/screenshots/story-entry.jpg" alt="内容年志 · 入口卡" width="400"/></td><td><img src="docs/screenshots/trace-arrive.jpg" alt="内容年志 · 抵达" width="400"/></td></tr>
