@@ -1,21 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  dayGap, formatChange, formatIndex, formatShare, indexKeyword, indexPageUrl, indexWindow, parseHotTopics, parseKeywordValid, parseLatestDay, parsePortrait, parseRelatedWords, parseScores, parseTrend, shiftDay, shortDay,
+  darenPageUrl, formatChange, formatIndex, formatShare, parseDaren, parseDarenDay, parseFans, parseHotTopics, parseTopVideos, parseWorkAverages, pickDaren, shiftDay, shortDay,
 } from "./douyinIndex";
 
 const ok = { BaseResp: { StatusCode: 0, StatusMessage: "" } };
-
-describe("indexKeyword", () => {
-  it("only lets plain words through, not links or work ids", () => {
-    expect(indexKeyword("  咖啡 ")).toBe("咖啡");
-    expect(indexKeyword("C++ & 咖啡")).toBe("C++ & 咖啡");
-    expect(indexKeyword("")).toBeNull();
-    expect(indexKeyword("https://www.douyin.com/video/7690508847588330798")).toBeNull();
-    expect(indexKeyword("7690508847588330798")).toBeNull();
-    expect(indexKeyword("字".repeat(31))).toBeNull();
-    expect(indexKeyword("a\nb")).toBeNull();
-  });
-});
+// 达人接口：业务数据和 BaseResp 都包在 data 里（10-10 实抓的结构，数字多半是字符串）
+const wrap = (data: object) => ({ data: { ...data, ...ok }, msg: "", status: 0 });
 
 describe("dates", () => {
   it("shifts across month and year ends", () => {
@@ -23,116 +13,89 @@ describe("dates", () => {
     expect(shiftDay("20260105", -10)).toBe("20251226");
     expect(shiftDay("20240301", -1)).toBe("20240229");
   });
-  it("ends at the latest day and never starts before the word has data", () => {
-    expect(indexWindow("20261006", "20190101")).toEqual({ start: "20260906", end: "20261006" });
-    expect(indexWindow("20261006", "20261001")).toEqual({ start: "20261001", end: "20261006" });
-    expect(indexWindow("20261006", null)).toEqual({ start: "20260906", end: "20261006" });
-  });
   it("short labels", () => { expect(shortDay("20261006")).toBe("10/06"); });
-  it("counts the days between two dates", () => {
-    expect(dayGap("20261006", "20261004")).toBe(2);
-    expect(dayGap("20260301", "20260228")).toBe(1);
-    expect(dayGap("20261004", "20261006")).toBe(-2);
+  it("reads the daren data day and ignores business errors", () => {
+    expect(parseDarenDay(wrap({ datetime: "20261008", update_time: "20261008" }))).toBe("20261008");
+    expect(parseDarenDay({ data: { BaseResp: { StatusCode: -1 } }, msg: "", status: 0 })).toBeNull();
+    expect(parseDarenDay(null)).toBeNull();
   });
 });
 
-describe("parseLatestDay / parseKeywordValid", () => {
-  it("reads the latest day and ignores business errors", () => {
-    expect(parseLatestDay({ keyword_latest_day: "20261006", ...ok })).toBe("20261006");
-    expect(parseLatestDay({ keyword_latest_day: "20261006", BaseResp: { StatusCode: -1 } })).toBeNull();
-    expect(parseLatestDay(null)).toBeNull();
+describe("pickDaren", () => {
+  const list = wrap({ userlist: [
+    { user_id: "jhaibfhhedc", aweme_id: "Wangyukai0701z", aweme_url: "https://www.douyin.com/user/MS4wLjABAAAA8f1g" },
+    { user_id: "fdebcgidigb", aweme_id: "WangYuKai0701", aweme_url: "https://www.douyin.com/user/MS4wLjABAAAASVa?from=x" },
+  ] });
+  it("matches the profile link first, then the handle (case-insensitive)", () => {
+    expect(pickDaren(list, { id: "MS4wLjABAAAASVa", handle: "" })).toBe("fdebcgidigb");
+    expect(pickDaren(list, { id: "unknown", handle: "wangyukai0701" })).toBe("fdebcgidigb");
   });
-  it("tells a word with an index from one without", () => {
-    expect(parseKeywordValid({ 咖啡: { status: 0, valid_day: "20190101" } }, "咖啡")).toEqual({ hasData: true, validDay: "20190101" });
-    expect(parseKeywordValid({ 冷门: { status: 2, valid_day: "" } }, "冷门")).toEqual({ hasData: false, validDay: null });
-    // 服务端会把词归一化（去空格、转小写），键对不上时取唯一那一项
-    expect(parseKeywordValid({ iphone: { status: 0, valid_day: "20210920" } }, "iPhone")).toEqual({ hasData: true, validDay: "20210920" });
-    expect(parseKeywordValid({}, "x")).toEqual({ hasData: false, validDay: null });
-  });
-});
-
-describe("parseTrend", () => {
-  const item = (keyword: string, scale = 1) => ({
-    keyword,
-    // 故意乱序：官方不保证逐日顺序
-    hot_list: [{ datetime: "20261002", index: String(300 * scale) }, { datetime: "20261001", index: String(100 * scale) }],
-    search_hot_list: [{ datetime: "20261001", index: String(10 * scale) }, { datetime: "20261002", index: String(30 * scale) }],
-    average: { average: String(200 * scale), search_average: String(20 * scale) },
-    last_average: { average: String(250 * scale), search_average: String(10 * scale) },
-    last_year_average: { average: "0", search_average: String(16 * scale) },
-    top_point_list: [{ date: "20261002", style: "1" }, { date: "20261001", style: "0" }],
-    // 搜索指数有自己的飙升/波峰点，和综合指数的不是同一批日子
-    search_top_point_list: [{ date: "20260930", style: "1" }, { date: "20260930", style: "1" }, { date: "20261001", style: "0" }],
-  });
-
-  it("matches the keyword, sorts days, and works out mom/yoy from the averages", () => {
-    const trend = parseTrend({ hot_list: [item("拿铁", 7), item("咖啡")], ...ok }, "咖啡")!;
-    expect(trend.days).toEqual(["20261001", "20261002"]);
-    expect(trend.comprehensive).toEqual([100, 300]);
-    expect(trend.search).toEqual([10, 30]);
-    expect(trend.averages).toEqual({ comprehensive: 200, search: 20 });
-    expect(trend.mom.comprehensive).toBeCloseTo(-0.2);
-    expect(trend.mom.search).toBeCloseTo(1);
-    expect(trend.yoy.comprehensive).toBeNull();
-    expect(trend.yoy.search).toBeCloseTo(0.25);
-    expect(trend.highlights.comprehensive).toEqual({ rises: ["20261001"], peaks: ["20261002"] });
-    expect(trend.highlights.search).toEqual({ rises: ["20261001"], peaks: ["20260930"] });
-  });
-
-  it("returns null for a word without an index", () => {
-    expect(parseTrend({ hot_list: [], ...ok }, "冷门")).toBeNull();
-    expect(parseTrend({ hot_list: [{ keyword: "冷门", hot_list: [] }], ...ok }, "冷门")).toBeNull();
-    expect(parseTrend({ hot_list: [item("咖啡")], BaseResp: { StatusCode: 414 } }, "咖啡")).toBeNull();
+  it("does not guess when nothing matches or the id looks wrong", () => {
+    expect(pickDaren(list, { id: "MS4wLjABAAAASV", handle: "WangYuKai070" })).toBeNull();
+    expect(pickDaren(wrap({ userlist: [{ user_id: "a b", aweme_url: "https://www.douyin.com/user/X" }] }), { id: "X", handle: "" })).toBeNull();
+    expect(pickDaren(null, { id: "X", handle: "x" })).toBeNull();
   });
 });
 
-describe("parseScores", () => {
-  const entry = (keyword: string, overview: object, diffs: object) => ({ keyword, overview, last_period_diff: diffs, last_year_diff: diffs });
-  it("maps content/spread/search scores", () => {
-    const scores = parseScores({
-      keyword_index_interpretations: [
-        entry("拿铁", { content_index: 1, consume_index: 1, search_index: 1 }, {}),
-        entry("咖啡", { content_index: 871830, consume_index: 1088312, search_index: 11021526 }, { content_diff: 0.029, consume_diff: -0.157, search_diff: -1 }),
-      ], ...ok,
-    }, "咖啡")!;
-    expect(scores).toEqual({ content: 871830, spread: 1088312, search: 11021526 });
+describe("parseDaren", () => {
+  const info = wrap({
+    user_id: "fdebcgidigb", user_name: "脱缰凯✨", fans_count: "36284966", like_count: "1180882631", item_count: "1004", first_tag_name: "剧情", second_tag_name: "",
+    fans_milestone: { first_1000w_fans_date: "20230805", first_1w_fans_date: "20191020", first_100w_fans_date: "20200227", create_time: "1501979661" },
   });
-  it("treats all-zero scores as no data", () => {
-    expect(parseScores({ keyword_index_interpretations: [entry("冷门", { content_index: 0, consume_index: 0, search_index: 0 }, { content_diff: -1 })], ...ok }, "冷门")).toBeNull();
+  const trend = wrap({
+    like_info: { new_like_count_by_day: "1330136", new_like_count_by_month: "52985618", exchange_by_day: -0.33531784798924225, exchange_by_month: -0.115 },
+    fans_info: { new_fans_count_by_week: "245568" },
+    likelistday: [{ date: "20261008", count: "1330136", average: 0 }, { date: "20261006", count: "2298629" }, { date: "20261007", count: "2001161" }, { date: "bad", count: "1" }],
+    fanslistday: [{ date: "20261008", count: "14809" }],
+  });
+  it("reads the header, milestones, every period's stats and the daily series in date order", () => {
+    const daren = parseDaren(info, trend)!;
+    expect(daren).toMatchObject({ id: "fdebcgidigb", name: "脱缰凯✨", tags: ["剧情"], fans: 36284966, likes: 1180882631, works: 1004 });
+    expect(daren.milestones).toEqual([{ label: "1万粉", day: "20191020" }, { label: "100万粉", day: "20200227" }, { label: "1000万粉", day: "20230805" }]);
+    expect(daren.stats.day.like).toEqual({ value: 1330136, change: -0.33531784798924225 });
+    expect(daren.stats.month.like).toEqual({ value: 52985618, change: -0.115 });
+    expect(daren.stats.week.fans).toEqual({ value: 245568, change: null });
+    expect(daren.daily.days).toEqual(["20261006", "20261007", "20261008"]);
+    expect(daren.daily.like).toEqual([2298629, 2001161, 1330136]);
+    // 别的指标缺了那天就记 0，横轴跟点赞走
+    expect(daren.daily.fans).toEqual([0, 0, 14809]);
+    expect(parseDaren(info, trend, 2)!.daily.days).toEqual(["20261007", "20261008"]);
+  });
+  it("is null when either half is missing or failed", () => {
+    expect(parseDaren(info, null)).toBeNull();
+    expect(parseDaren({ data: { BaseResp: { StatusCode: -1, StatusMessage: "系统异常" } }, msg: "", status: 0 }, trend)).toBeNull();
+    expect(parseDaren(info, wrap({ like_info: {} }))).toBeNull();
   });
 });
 
-describe("parseRelatedWords", () => {
-  const row = (relation_word: string, score_rank: string, relation_score: number, score_rate = "1.2%", correlation_change = false) => ({ relation_word, score_rank, relation_score, score_rate, correlation_change });
-  it("sorts by rank and marks only the words the official page calls new", () => {
-    // correlation_change 实测是「关联度没降」，老词（涨幅是正数）也常为 true，不能当成新词
-    const words = parseRelatedWords({ search_relation_word_list: [row("c", "3", 0.0025), row("a", "1", 0.01, "14.10%", true), row("b", "2", 0.0064, "新", true), { relation_word: "" }], ...ok });
-    expect(words).toEqual([{ word: "a", fresh: false }, { word: "b", fresh: true }, { word: "c", fresh: false }]);
+describe("works and fans", () => {
+  it("reads per-work averages for both windows", () => {
+    const works = parseWorkAverages(wrap({ like_info: [{ like_average_count_by_week: 1910913.5, like_average_count_by_month: 1766250.3, exchange_by_week: 0.0069, exchange_by_month: 0.041 }], fans_info: [{ fans_average_count_by_week: 55550 }] }));
+    expect(works?.week.like).toEqual({ value: 1910913.5, change: 0.0069 });
+    expect(works?.month.fans).toEqual({ value: 0, change: null });
+    expect(parseWorkAverages(wrap({}))).toBeNull();
   });
-  it("is empty for a cold word and honours the limit", () => {
-    expect(parseRelatedWords({ ...ok })).toEqual([]);
-    const many = Array.from({ length: 20 }, (_, index) => row(`w${index}`, String(index + 1), 1 / (index + 1)));
-    expect(parseRelatedWords({ search_relation_word_list: many, ...ok }, 5)).toHaveLength(5);
+  it("keeps each ranking, skips rows without a real work id and reads the misspelt comment field", () => {
+    const videos = parseTopVideos(wrap({
+      like_list: [{ item_id: "7688236298419630438", video_text: " 复仇者联盟 ", picture: "https://p3-sign.douyinpic.com/a.jpeg", like_cnt: "2508371", coment_cnt: "18633", share_cnt: "207593", follow_cnt: "262039", create_time: "20260922" }, { item_id: "x", video_text: "坏数据" }],
+      create_time_list: [],
+    }))!;
+    expect(videos.like_list).toEqual([{ id: "7688236298419630438", title: "复仇者联盟", cover: "https://p3-sign.douyinpic.com/a.jpeg", day: "20260922", likes: 2508371, comments: 18633, shares: 207593, follows: 262039 }]);
+    expect(videos.create_time_list).toEqual([]);
+    expect(parseTopVideos(wrap({ like_list: [] }))).toBeNull();
   });
-});
-
-describe("parsePortrait", () => {
-  const group = (name_en: string, label_list: object[]) => ({ name_en, label_list });
-  it("keeps age and gender whole and the biggest few provinces", () => {
-    const portrait = parsePortrait({
-      data: [
-        group("age", [{ name_zh: "18-23", value: 0.2137, tgi: 105.5 }, { name_zh: "24-30", value: 0.3, tgi: 120 }]),
-        group("gender", [{ name_zh: "男", value: 0.4, tgi: 90 }, { name_zh: "女", value: 0.6, tgi: 110 }]),
-        group("province", [{ name_zh: "A", value: 0.05 }, { name_zh: "B", value: 0.2 }, { name_zh: "C", value: 0.1 }]),
-      ], ...ok,
-    }, 2)!;
-    expect(portrait.age[0]).toEqual({ label: "18-23", share: 0.2137 });
-    expect(portrait.gender.map((row) => row.label)).toEqual(["男", "女"]);
-    expect(portrait.provinces.map((row) => row.label)).toEqual(["B", "C"]);
-  });
-  it("is null when the word has no portrait", () => {
-    expect(parsePortrait({ BaseResp: { StatusCode: 500, StatusMessage: "关键词不为空" } })).toBeNull();
-    expect(parsePortrait({ data: [], ...ok })).toBeNull();
+  it("pairs shares with TGI by name, orders ages by age and drops the 'unclassified' interests", () => {
+    const fans = parseFans(wrap({
+      Gender: JSON.stringify([{ name: "male", value: 0.67 }, { name: "female", value: 0.33 }]), Gender_Tgi: JSON.stringify([{ name: "female", value: 71.2 }, { name: "male", value: 126.7 }]),
+      Age: JSON.stringify([{ name: "31-40", value: 0.28 }, { name: "50-", value: 0.21 }, { name: "18-23", value: 0.24 }]),
+      FirstTag: JSON.stringify([{ name: "随拍", value: 0.048 }, { name: "未分类（投稿数不足）", value: 0.045 }, { name: "剧情", value: 0.046 }]),
+      SecondTag: "", City: "not json",
+    }))!;
+    expect(fans.map((group) => group.title)).toEqual(["性别", "年龄", "兴趣"]);
+    expect(fans[0]!.rows).toEqual([{ label: "男", share: 0.67, tgi: 126.7 }, { label: "女", share: 0.33, tgi: 71.2 }]);
+    expect(fans[1]!.rows.map((row) => row.label)).toEqual(["18-23", "31-40", "50 以上"]);
+    expect(fans[2]!.rows.map((row) => row.label)).toEqual(["随拍", "剧情"]);
+    expect(parseFans(wrap({ SecondTag: "" }))).toBeNull();
   });
 });
 
@@ -150,8 +113,8 @@ describe("formatting", () => {
     expect(formatShare(0.2137)).toBe("21%");
     expect(formatShare(0.05)).toBe("5.0%");
   });
-  it("links to the official page with the word encoded", () => {
-    expect(indexPageUrl("咖啡 & 拿铁")).toBe("https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?source=creator&keyword=%E5%92%96%E5%95%A1%20%26%20%E6%8B%BF%E9%93%81&tab=heat_index&appName=aweme");
+  it("links to the official daren page", () => {
+    expect(darenPageUrl("fdebcgidigb")).toBe("https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/daren/detail?uid=fdebcgidigb");
   });
 });
 

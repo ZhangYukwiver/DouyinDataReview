@@ -6,7 +6,7 @@ import type { ExploreConnection } from "./explorer";
 
 export type CreatorKey =
   "user_info" | "author_upgrade" | "diagnosis" | "contribution_top" | "dashboard" | "dashboard_mix" | "dashboard_fans" | "mix_list" | "live_dashboard" | "live_trends" | "live_gift_billboard" | "live_watch_billboard" | "live_fans_source" | "fans_summary" | "work_list" | "item_list" | "item_mget" | "item_summarize" | "item_compare" | "item_trend" | "item_realtime" | "item_progress" | "item_bullet" | "item_chapter" | "item_play_source" | "item_search_keyword" | "item_portrait" | "item_audience" | "comment_hotwords" | "comment_list" | "comment_replies" | "comment_list_old" | "comment_replies_old"
-  | "index_valid_date" | "index_relation_valid_date" | "index_keyword_valid" | "index_hot_trend" | "index_interpretation" | "index_relation_word" | "index_portrait" | "index_hot_topic";
+  | "index_hot_topic" | "daren_suggest" | "daren_valid_date" | "daren_info" | "daren_trend" | "daren_work_average" | "daren_top_videos" | "daren_fans";
 export interface CreatorQuery { key: CreatorKey; params?: Record<string, string | number> }
 /** 抖音原样的 JSON；读失败的那一项是 null */
 export type CreatorData = Record<string, any> | null;

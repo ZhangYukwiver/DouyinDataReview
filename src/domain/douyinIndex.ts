@@ -1,37 +1,12 @@
-// 抖音指数（创作者平台 creator_count，前身是巨量算数）：搜索一个词时用到的取数窗口、解析和展示格式。
-// 字段规则来自 10-07 在登录态下对官方页面的实抓（接口和参数见 collector/creatorCenter.mjs 里的 index_*）。
+// 抖音指数（创作者平台 creator_count，前身是巨量算数）：热点榜和达人详情的解析与展示格式。
+// 字段规则来自登录态下对官方页面的实抓（热点榜 10-07、达人详情 10-10；接口见 collector/creatorCenter.mjs）。
 
 type Raw = Record<string, any> | null | undefined;
-
-/** 官方页面默认看最近 31 天（含首尾）；这个词上线更晚的话从它上线那天起 */
-export const INDEX_SPAN_DAYS = 30;
-/** 关联词和人群只有 7 天的窗口，页面也是这么发的 */
-export const INDEX_RELATION_DAYS = 6;
-
-/** 搜索框里的内容能不能拿去查指数：链接、作品 id 之类不是词，太长的官方也没有 */
-export function indexKeyword(query: string | null | undefined): string | null {
-  const text = (query ?? "").trim();
-  if (!text || text.length > 30 || /[\u0000-\u001f]/u.test(text)) return null;
-  if (/^https?:\/\//iu.test(text) || /^\d{15,}$/u.test(text)) return null;
-  return text;
-}
 
 export function shiftDay(day: string, days: number): string {
   const year = Number(day.slice(0, 4)), month = Number(day.slice(4, 6)), date = Number(day.slice(6, 8));
   const moved = new Date(Date.UTC(year, month - 1, date + days));
   return `${moved.getUTCFullYear()}${String(moved.getUTCMonth() + 1).padStart(2, "0")}${String(moved.getUTCDate()).padStart(2, "0")}`;
-}
-
-/** 两个 YYYYMMDD 相差几天（later 比 earlier 晚为正） */
-export function dayGap(later: string, earlier: string): number {
-  const at = (day: string) => Date.UTC(Number(day.slice(0, 4)), Number(day.slice(4, 6)) - 1, Number(day.slice(6, 8)));
-  return Math.round((at(later) - at(earlier)) / 86_400_000);
-}
-
-/** 结束日取官方给的最新日（超过它官方会补零），开始日往前推，不早于这个词有数据的第一天 */
-export function indexWindow(latestDay: string, earliestDay: string | null, span = INDEX_SPAN_DAYS): { start: string; end: string } {
-  const start = shiftDay(latestDay, -span);
-  return { start: earliestDay && earliestDay > start ? earliestDay : start, end: latestDay };
 }
 
 const isDay = (value: unknown): value is string => typeof value === "string" && /^\d{8}$/u.test(value);
@@ -41,110 +16,6 @@ const number = (value: unknown): number => {
 };
 /** 业务错误放在 BaseResp.StatusCode 里，HTTP 仍是 200 */
 export const indexOk = (data: Raw): boolean => Boolean(data) && Number(data?.BaseResp?.StatusCode ?? 0) === 0;
-
-export function parseLatestDay(data: Raw): string | null {
-  return indexOk(data) && isDay(data?.keyword_latest_day) ? data!.keyword_latest_day : null;
-}
-export function parseRelationDay(data: Raw): string | null {
-  return indexOk(data) && isDay(data?.datetime) ? data!.datetime : null;
-}
-
-/** 响应是以关键词为键的对象；status 0 才有指数 */
-export function parseKeywordValid(data: Raw, keyword: string): { hasData: boolean; validDay: string | null } {
-  if (!indexOk(data)) return { hasData: false, validDay: null };
-  const entry = data?.[keyword] ?? Object.values(data ?? {}).find((value) => value && typeof value === "object" && "status" in (value as object));
-  const hasData = Number(entry?.status) === 0 && isDay(entry?.valid_day);
-  return { hasData, validDay: hasData ? entry.valid_day : null };
-}
-
-export interface IndexTrend {
-  keyword: string;
-  days: string[];
-  /** 综合指数（平台声量）逐日 */ comprehensive: number[];
-  /** 搜索指数（用户搜索热度）逐日 */ search: number[];
-  averages: { comprehensive: number; search: number };
-  /** 比上一个等长区间的涨跌，小数；没有可比数据是 null */
-  mom: { comprehensive: number | null; search: number | null };
-  /** 比去年同期 */ yoy: { comprehensive: number | null; search: number | null };
-  /** 增长最快的日子和最高的日子，按日期排；综合指数和搜索指数官方各给一份 */
-  highlights: { comprehensive: IndexHighlights; search: IndexHighlights };
-}
-export interface IndexHighlights { rises: string[]; peaks: string[] }
-
-/** top_point_list / search_top_point_list：style "0" 是飙升点，"1" 是波峰点 */
-function parseHighlights(list: unknown): IndexHighlights {
-  const points = (Array.isArray(list) ? list : []).filter((point: Raw) => isDay(point?.date)) as Array<{ date: string; style: unknown }>;
-  const days = (style: string) => [...new Set(points.filter((point) => String(point.style) === style).map((point) => point.date))].sort();
-  return { rises: days("0"), peaks: days("1") };
-}
-
-const ratio = (now: number, before: unknown): number | null => {
-  const base = number(before);
-  return base > 0 ? now / base - 1 : null;
-};
-
-/** 返回项的顺序不保证和请求一致，按词对号；没有指数的词 hot_list 是空的 */
-export function parseTrend(data: Raw, keyword: string): IndexTrend | null {
-  if (!indexOk(data) || !Array.isArray(data?.hot_list)) return null;
-  const item = data!.hot_list.find((entry: Raw) => entry?.keyword === keyword) ?? data!.hot_list[0];
-  const list: Array<{ datetime?: string; index?: string }> = Array.isArray(item?.hot_list) ? item.hot_list : [];
-  if (!list.length) return null;
-  const search: Array<{ datetime?: string; index?: string }> = Array.isArray(item?.search_hot_list) ? item.search_hot_list : [];
-  const searchByDay = new Map(search.map((point) => [point.datetime, number(point.index)]));
-  const days = list.map((point) => String(point.datetime)).filter(isDay).sort();
-  const byDay = new Map(list.map((point) => [point.datetime, number(point.index)]));
-  const averages = { comprehensive: number(item.average?.average), search: number(item.average?.search_average) };
-  return {
-    keyword: String(item.keyword ?? keyword),
-    days,
-    comprehensive: days.map((day) => byDay.get(day) ?? 0),
-    search: days.map((day) => searchByDay.get(day) ?? 0),
-    averages,
-    mom: { comprehensive: ratio(averages.comprehensive, item.last_average?.average), search: ratio(averages.search, item.last_average?.search_average) },
-    yoy: { comprehensive: ratio(averages.comprehensive, item.last_year_average?.average), search: ratio(averages.search, item.last_year_average?.search_average) },
-    highlights: { comprehensive: parseHighlights(item.top_point_list), search: parseHighlights(item.search_top_point_list) },
-  };
-}
-
-export interface IndexScores { content: number; spread: number; search: number }
-
-/** 内容分、传播分、搜索分（官方「综合指数解读」）。三项全 0 说明这个词没有数据 */
-export function parseScores(data: Raw, keyword: string): IndexScores | null {
-  if (!indexOk(data) || !Array.isArray(data?.keyword_index_interpretations)) return null;
-  const item = data!.keyword_index_interpretations.find((entry: Raw) => entry?.keyword === keyword) ?? data!.keyword_index_interpretations[0];
-  if (!item?.overview) return null;
-  const scores = { content: number(item.overview.content_index), spread: number(item.overview.consume_index), search: number(item.overview.search_index) };
-  // 没数据的词官方回三个 0（环比同比是 -1 哨兵）
-  return scores.content || scores.spread || scores.search ? scores : null;
-}
-
-export interface RelatedWord { word: string; /** 官方标了「新」的新进榜词 */ fresh: boolean }
-
-/** 搜索关联词，按关联度名次排（数组本身不排序）。注意 correlation_change 不是「新」：实测它是「关联度没降」，老词也常为 true */
-export function parseRelatedWords(data: Raw, limit = 12): RelatedWord[] {
-  if (!indexOk(data) || !Array.isArray(data?.search_relation_word_list)) return [];
-  const rows = (data!.search_relation_word_list as Array<Record<string, any>>)
-    .filter((row) => typeof row?.relation_word === "string" && row.relation_word)
-    .sort((a, b) => number(a.score_rank) - number(b.score_rank))
-    .slice(0, limit);
-  return rows.map((row) => ({ word: row.relation_word, fresh: row.score_rate === "新" }));
-}
-
-export interface PortraitRow { label: string; /** 占比 0–1 */ share: number }
-export interface IndexPortrait { age: PortraitRow[]; gender: PortraitRow[]; provinces: PortraitRow[] }
-
-/** 年龄、性别和占比最高的几个省；冷门词整个接口只回一个 BaseResp */
-export function parsePortrait(data: Raw, provinceLimit = 5): IndexPortrait | null {
-  if (!indexOk(data) || !Array.isArray(data?.data)) return null;
-  const rows = (name: string): PortraitRow[] => {
-    const group = (data!.data as Array<Record<string, any>>).find((entry) => entry?.name_en === name);
-    return (Array.isArray(group?.label_list) ? group.label_list : [])
-      .filter((label: Raw) => typeof label?.name_zh === "string")
-      .map((label: Record<string, any>) => ({ label: label.name_zh as string, share: number(label.value) }));
-  };
-  const result = { age: rows("age"), gender: rows("gender"), provinces: rows("province").sort((a, b) => b.share - a.share).slice(0, provinceLimit) };
-  return result.age.length || result.gender.length || result.provinces.length ? result : null;
-}
 
 /** 官方页面的数字习惯：≥1 万显示成「494.0 万」 */
 export function formatIndex(value: number): string {
@@ -163,10 +34,6 @@ export function shortDay(day: string): string {
   return `${day.slice(4, 6)}/${day.slice(6, 8)}`;
 }
 
-/** 去创作者平台看这个词的完整指数页 */
-export function indexPageUrl(keyword: string): string {
-  return `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?source=creator&keyword=${encodeURIComponent(keyword)}&tab=heat_index&appName=aweme`;
-}
 
 export interface HotTopic {
   rank: number; name: string;
@@ -190,4 +57,148 @@ export function parseHotTopics(data: Raw): HotTopics | null {
   if (!indexOk(data)) return null;
   const topics = { current: parseTopics(data?.current), rocketing: parseTopics(data?.rocketing) };
   return topics.current.length || topics.rocketing.length ? topics : null;
+}
+
+// ——— 达人详情（抖音指数里搜达人 → 达人详情页的作者分析 / 作品分析 / 粉丝分析）———
+// 达人接口的业务数据和 BaseResp 都包在 data 里：{ data: {..., BaseResp}, msg, status }
+
+const darenData = (raw: Raw): Raw => raw && Number(raw.status ?? 0) === 0 && indexOk(raw.data) ? raw.data : null;
+const rate = (value: unknown): number | null => typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/** 达人库的最新数据日（一般是 T-2） */
+export function parseDarenDay(raw: Raw): string | null {
+  const data = darenData(raw);
+  return isDay(data?.datetime) ? data!.datetime : null;
+}
+
+/**
+ * 在达人搜索结果里找到主页上这个人：先按主页链接里的 sec_uid 对号，对不上再比抖音号。
+ * 返回达人库自己的 user_id（一串字母编码，不是抖音 uid）；找不到说明这个人没进达人库。
+ */
+export function pickDaren(raw: Raw, user: { id: string; handle: string }): string | null {
+  const data = darenData(raw);
+  const list: Raw[] = Array.isArray(data?.userlist) ? data!.userlist : [];
+  const handle = user.handle.trim().toLowerCase();
+  const hit = list.find((row) => typeof row?.aweme_url === "string" && row.aweme_url.split("?")[0]!.endsWith(`/user/${user.id}`))
+    ?? (handle ? list.find((row) => String(row?.aweme_id ?? "").toLowerCase() === handle) : undefined);
+  return typeof hit?.user_id === "string" && /^[a-z0-9]+$/u.test(hit.user_id) ? hit.user_id : null;
+}
+
+export const DAREN_PERIODS = [{ key: "day", label: "昨日" }, { key: "week", label: "近 7 天" }, { key: "half_month", label: "近 15 天" }, { key: "month", label: "近 30 天" }] as const;
+export const DAREN_METRICS = [{ key: "like", label: "新增点赞量" }, { key: "fans", label: "净增粉丝量" }, { key: "share", label: "新增分享量" }, { key: "comment", label: "新增评论量" }, { key: "item", label: "新增作品量" }] as const;
+export const WORK_METRICS = [{ key: "like", label: "篇均点赞量" }, { key: "fans", label: "篇均涨粉量" }, { key: "share", label: "篇均分享量" }, { key: "comment", label: "篇均评论量" }] as const;
+export type DarenPeriod = typeof DAREN_PERIODS[number]["key"];
+export type DarenMetric = typeof DAREN_METRICS[number]["key"];
+export type WorkMetric = typeof WORK_METRICS[number]["key"];
+/** change 是比上一个等长区间的涨跌（小数），官方没给是 null */
+export interface DarenStat { value: number; change: number | null }
+
+export interface DarenDetail {
+  id: string; name: string; tags: string[];
+  fans: number; likes: number; works: number;
+  /** 涨粉里程碑：「10万粉」哪天达成，按粉丝数排 */
+  milestones: Array<{ label: string; day: string }>;
+  stats: Record<DarenPeriod, Record<DarenMetric, DarenStat>>;
+  /** 最近 31 天逐日（含首尾），日期升序 */
+  daily: { days: string[] } & Record<DarenMetric, number[]>;
+}
+
+/** 达人基本信息 + 作者分析（核心指标和逐日趋势）。两样缺一样就算没读到 */
+export function parseDaren(infoRaw: Raw, trendRaw: Raw, span = 31): DarenDetail | null {
+  const info = darenData(infoRaw), trend = darenData(trendRaw);
+  if (!info || !trend || typeof info.user_id !== "string") return null;
+  const series = (key: DarenMetric) => new Map((Array.isArray(trend[`${key}listday`]) ? trend[`${key}listday`] : [])
+    .filter((point: Raw) => isDay(point?.date)).map((point: Raw) => [point!.date as string, number(point!.count)]));
+  const lines = Object.fromEntries(DAREN_METRICS.map(({ key }) => [key, series(key)])) as Record<DarenMetric, Map<string, number>>;
+  const days = [...lines.like.keys()].sort().slice(-span);
+  if (!days.length) return null;
+  const stats = Object.fromEntries(DAREN_PERIODS.map(({ key: period }) => [period, Object.fromEntries(DAREN_METRICS.map(({ key }) => {
+    const block = trend[`${key}_info`];
+    return [key, { value: number(block?.[`new_${key}_count_by_${period}`]), change: rate(block?.[`exchange_by_${period}`]) }];
+  }))])) as DarenDetail["stats"];
+  const milestones = Object.entries(info.fans_milestone ?? {}).flatMap(([key, day]) => {
+    const match = /^first_(\d+)w_fans_date$/u.exec(key);
+    return match && isDay(day) ? [{ count: Number(match[1]), label: `${match[1]}万粉`, day }] : [];
+  }).sort((a, b) => a.count - b.count).map(({ label, day }) => ({ label, day }));
+  return {
+    id: info.user_id, name: String(info.user_name ?? ""),
+    tags: [info.first_tag_name, info.second_tag_name].filter((tag): tag is string => typeof tag === "string" && Boolean(tag.trim())),
+    fans: number(info.fans_count), likes: number(info.like_count), works: number(info.item_count),
+    milestones, stats,
+    daily: { days, ...Object.fromEntries(DAREN_METRICS.map(({ key }) => [key, days.map((day) => lines[key].get(day) ?? 0)])) } as DarenDetail["daily"],
+  };
+}
+
+export type WorkAverages = Record<"week" | "month", Record<WorkMetric, DarenStat>>;
+
+/** 作品分析的「篇均」：近 7 天 / 近 30 天每条作品平均带来多少 */
+export function parseWorkAverages(raw: Raw): WorkAverages | null {
+  const data = darenData(raw);
+  if (!data) return null;
+  const block = (key: WorkMetric) => (Array.isArray(data[`${key}_info`]) ? data[`${key}_info`][0] : data[`${key}_info`]) as Raw;
+  if (!WORK_METRICS.some(({ key }) => block(key))) return null;
+  const period = (span: "week" | "month") => Object.fromEntries(WORK_METRICS.map(({ key }) => [key, {
+    value: number(block(key)?.[`${key}_average_count_by_${span}`]), change: rate(block(key)?.[`exchange_by_${span}`]),
+  }])) as Record<WorkMetric, DarenStat>;
+  return { week: period("week"), month: period("month") };
+}
+
+export const TOP_VIDEO_ORDERS = [
+  { key: "create_time_list", label: "最新发布" }, { key: "like_list", label: "点赞最多" }, { key: "comment_list", label: "评论最多" },
+  { key: "share_list", label: "分享最多" }, { key: "follow_list", label: "涨粉最多" },
+] as const;
+export type TopVideoOrder = typeof TOP_VIDEO_ORDERS[number]["key"];
+export interface DarenVideo { id: string; title: string; cover: string | null; day: string | null; likes: number; comments: number; shares: number; follows: number }
+
+/** 时间窗口内的作品，官方按几种口径各排好一份（每份最多 20 条）。全空当没读到 */
+export function parseTopVideos(raw: Raw): Record<TopVideoOrder, DarenVideo[]> | null {
+  const data = darenData(raw);
+  if (!data) return null;
+  const lists = Object.fromEntries(TOP_VIDEO_ORDERS.map(({ key }) => [key, (Array.isArray(data[key]) ? data[key] : []).flatMap((row: Raw): DarenVideo[] => {
+    const id = String(row?.item_id ?? "");
+    if (!/^\d{15,30}$/u.test(id)) return [];
+    return [{
+      id, title: String(row?.video_text ?? "").trim(), cover: typeof row?.picture === "string" && row.picture.startsWith("https://") ? row.picture : null,
+      day: isDay(row?.create_time) ? row!.create_time : null,
+      // 官方字段名就拼成 coment_cnt
+      likes: number(row?.like_cnt), comments: number(row?.coment_cnt ?? row?.comment_cnt), shares: number(row?.share_cnt), follows: number(row?.follow_cnt),
+    }];
+  })])) as Record<TopVideoOrder, DarenVideo[]>;
+  return Object.values(lists).some((list) => list.length) ? lists : null;
+}
+
+export interface FanRow { label: string; /** 占比 0–1 */ share: number; /** 偏好度，100 是平均水平 */ tgi: number | null }
+export interface FanGroup { key: string; title: string; rows: FanRow[] }
+
+const FAN_GROUPS: Array<{ key: string; title: string; limit?: number; order?: "label" }> = [
+  { key: "Gender", title: "性别" }, { key: "Age", title: "年龄", order: "label" }, { key: "Province", title: "省份", limit: 10 },
+  { key: "CityLabel", title: "城市级别" }, { key: "DeviceBrand", title: "手机品牌", limit: 8 }, { key: "DevicePrice", title: "手机价格", order: "label" },
+  { key: "FirstTag", title: "兴趣", limit: 8 },
+];
+const FAN_LABELS: Record<string, string> = { male: "男", female: "女", "50-": "50 以上" };
+const pairs = (text: unknown): Array<{ name: string; value: number }> => {
+  try {
+    const list = typeof text === "string" ? JSON.parse(text) : text;
+    return (Array.isArray(list) ? list : []).filter((item) => typeof item?.name === "string" && Number.isFinite(Number(item?.value))).map((item) => ({ name: item.name, value: Number(item.value) }));
+  } catch { return []; }
+};
+const leadingNumber = (label: string) => Number(/\d+/u.exec(label)?.[0] ?? Infinity);
+
+/** 粉丝画像：各维度的占比和 TGI（官方两份数组分开给，按名字对上）。「未分类」那几项不是兴趣，去掉 */
+export function parseFans(raw: Raw): FanGroup[] | null {
+  const data = darenData(raw);
+  if (!data) return null;
+  const groups = FAN_GROUPS.flatMap(({ key, title, limit, order }): FanGroup[] => {
+    const tgi = new Map(pairs(data[`${key}_Tgi`]).map((item) => [item.name, item.value]));
+    let rows = pairs(data[key]).filter((item) => !item.name.startsWith("未分类")).map((item) => ({ label: FAN_LABELS[item.name] ?? item.name, share: item.value, tgi: tgi.get(item.name) ?? null }));
+    rows = order === "label" ? rows.sort((a, b) => leadingNumber(a.label) - leadingNumber(b.label)) : rows.sort((a, b) => b.share - a.share);
+    rows = rows.slice(0, limit ?? rows.length);
+    return rows.length ? [{ key, title, rows }] : [];
+  });
+  return groups.length ? groups : null;
+}
+
+/** 去创作者平台看这个达人的完整详情页 */
+export function darenPageUrl(id: string): string {
+  return `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/daren/detail?uid=${encodeURIComponent(id)}`;
 }

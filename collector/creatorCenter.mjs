@@ -1,4 +1,4 @@
-// 创作者中心（creator.douyin.com）的数据，只读。同一套读法也读创作者平台里的「抖音指数」（/api/v2/index/*）。
+// 创作者中心（creator.douyin.com）的数据，只读。同一套读法也读创作者平台里的「抖音指数」（热点榜、达人详情）。
 // 在共享无头会话里开一个 creator.douyin.com 的空白同源页，带着登录 cookie 直接请求接口：
 // 10-06 实测这些接口不用页面签名，结果和官方页面一致。不加载创作者中心页面本身，
 // 不点任何东西；能请求的只有下面白名单里的查询接口，发布、删除、回复这些写接口没有入口。
@@ -16,10 +16,13 @@ const CREATOR_QUERY = { aid: "2906", app_name: "aweme_creator_platform", device_
 const WORK_LIST_QUERY = { aid: "1128", scene: "star_atlas", device_platform: "android" };
 const COMMENT_READ = "/web/api/third_party/aweme/api/comment/read/aweme/v1/web/comment";
 const COMMENT_QUERY = { app_id: "2906", aid: "2906", device_platform: "webapp", channel_id: "618" };
-// 评论搜索词是用户输入的任意文字，单独放行（URLSearchParams 会编码），限长
+// 评论搜索词、达人搜索词是用户输入的任意文字，单独放行（URLSearchParams 会编码），限长
 const TEXT_PARAMS = new Set(["keyword"]);
-// 抖音指数的日期是 YYYYMMDD、平台只有这两个
-const PARAM_CHECKS = { start_date: /^\d{8}$/u, end_date: /^\d{8}$/u, app_name: /^(?:aweme|toutiao)$/u };
+// 抖音指数的日期是 YYYYMMDD
+const PARAM_CHECKS = { start_date: /^\d{8}$/u, end_date: /^\d{8}$/u };
+// 达人详情的查询都是 {user_id}；user_id 是达人库自己的编码（一串小写字母），不是抖音 uid。
+// 请求体原样按字符串发（官方页面就这样），不走数字转换
+const darenQuery = (name, params = ["user_id"]) => ({ method: "POST", path: `/api/v2/daren/${name}`, query: {}, params, body: true, require: params, shape: (picked) => picked });
 
 // key → 接口。params 是工作台可以传进来的参数名；body 为 true 的是 POST JSON 查询（官方页面也这样发）
 export const CREATOR_ENDPOINTS = {
@@ -64,23 +67,19 @@ export const CREATOR_ENDPOINTS = {
   comment_replies: { path: `${COMMENT_READ}/list/reply/`, query: COMMENT_QUERY, params: ["item_id", "comment_id", "cursor", "count"] },
   comment_list_old: { path: "/aweme/v1/creator/comment/list", query: { aid: "2906" }, params: ["item_id", "cursor", "count", "sort"] },
   comment_replies_old: { path: "/aweme/v1/creator/comment/reply/list", query: { aid: "2906" }, params: ["comment_id", "cursor", "count"] },
-  // 抖音指数：搜索一个词只用这几个。查询窗口的结束日取 index_valid_date.keyword_latest_day（T-1），
-  // 关联词和人群取 index_relation_valid_date.datetime（T-3）。响应多半是加密的，read() 里解开。
-  // 订阅、历史、消息这些个人接口不放进来。shape 把工作台传的单个词整理成官方页面发的请求体
-  // 抖音指数首页的「抖音实时热点」「抖音飙升热点」两个榜，一个接口各 30 条
+  // 抖音指数首页的「抖音实时热点」「抖音飙升热点」两个榜，一个接口各 30 条；响应是加密的，read() 里解开
   index_hot_topic: { path: "/api/v2/hot/get_current_hot_topic", query: {}, params: [] },
-  index_valid_date: { path: "/api/v2/index/get_all_valid_date", query: {}, params: [] },
-  index_relation_valid_date: { path: "/api/v2/index/get_valid_date_for_relation", query: {}, params: [] },
-  index_keyword_valid: { method: "POST", path: "/api/v2/index/get_keyword_valid_date", query: {}, params: ["keyword"], body: true, require: ["keyword"],
-    shape: ({ keyword }) => ({ keyword_list: [keyword] }) },
-  index_hot_trend: { method: "POST", path: "/api/v2/index/get_multi_keyword_hot_trend", query: {}, params: ["keyword", "start_date", "end_date", "app_name"], body: true, require: ["keyword", "start_date", "end_date"],
-    shape: ({ keyword, start_date, end_date, app_name }) => ({ keyword_list: [keyword], start_date, end_date, app_name: app_name ?? "aweme", region: [] }) },
-  index_interpretation: { method: "POST", path: "/api/v2/index/get_multi_keyword_interpretation", query: {}, params: ["keyword", "start_date", "end_date", "app_name"], body: true, require: ["keyword", "start_date", "end_date"],
-    shape: ({ keyword, start_date, end_date, app_name }) => ({ keyword_list: [keyword], start_date, end_date, app_name: app_name ?? "aweme", region: [] }) },
-  index_relation_word: { method: "POST", path: "/api/v2/index/get_relation_word", query: {}, params: ["keyword", "start_date", "end_date", "app_name"], body: true, require: ["keyword", "start_date", "end_date"],
-    shape: ({ keyword, start_date, end_date, app_name }) => ({ param: { keyword, start_date, end_date, app_name: app_name ?? "aweme" } }) },
-  index_portrait: { method: "POST", path: "/api/v2/index/get_portrait", query: {}, params: ["keyword", "start_date", "end_date", "app_name"], body: true, require: ["keyword", "start_date", "end_date"],
-    shape: ({ keyword, start_date, end_date, app_name }) => ({ param: { keyword, app_name: app_name ?? "aweme", start_date, end_date } }) },
+  // 抖音指数的「达人详情」（creator-count 的 /arithmetic-index/daren/detail）：先用抖音号或昵称搜到达人，
+  // 再按 user_id 读。10-10 实测这组接口不加密、不用签名。对比达人、订阅这些不放进来
+  daren_suggest: { method: "POST", path: "/api/v2/daren/get_sug_great_user_list", query: {}, params: ["keyword"], body: true, require: ["keyword"],
+    shape: ({ keyword }) => ({ keyword, total: "20" }) },
+  daren_valid_date: { path: "/api/v2/daren/get_greater_users_valid_date", query: {}, params: [] },
+  daren_info: darenQuery("get_author_info"),
+  // 新增点赞/粉丝/分享/评论/作品：昨日、近 7/15/30 天的量和环比，外加约 90 天的逐日序列
+  daren_trend: darenQuery("get_great_user_mile_Info"),
+  daren_work_average: darenQuery("get_great_item_mile_Info"),
+  daren_top_videos: darenQuery("get_great_user_top_video", ["user_id", "start_date", "end_date"]),
+  daren_fans: darenQuery("get_great_user_fans_info"),
 };
 
 // 数字 id、逗号串、日期，以及 sec_item_id 这种 base64（带 @ / + =）
