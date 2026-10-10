@@ -5,9 +5,8 @@ import { closeExplore, interactExplore, readExplore, type ExploreAction, type Ex
 import { loadCollectorVideo } from "../../services/localCollector";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
-import { DouyinIndexCard } from "./DouyinIndexCard";
+import { DarenCard } from "./DarenCard";
 import { HotTopicsCard } from "./HotTopicsCard";
-import { indexKeyword } from "../../domain/douyinIndex";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
 import { RecordVideoPlayer } from "./RecordVideoPlayer";
 import { renderEmojiText } from "./emojiText";
@@ -157,8 +156,6 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
     else if (videoMatch?.[1] || /^\d{15,30}$/u.test(candidate)) void load({ kind: "detail", id: videoMatch?.[1] ?? candidate }, "detail");
     else void load({ kind: mode, query: candidate }, "results");
   }
-  // 点抖音指数里的关联词：换个词接着搜
-  function searchWord(word: string) { setQuery(word); void load({ kind: mode, query: word }, "results"); }
   // 点热点榜里的热点：热点是内容话题，直接按内容搜
   function searchHotTopic(topic: string) { setMode("videos"); setQuery(topic); void load({ kind: "videos", query: topic }, "results"); }
   function back() { setError(null); setNotice(null); setComments(null); if (detail) setDetail(null); else setProfile(null); scrollRef.current?.scrollTo({ y: 0, animated: false }); }
@@ -246,6 +243,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
         <View style={styles.actions}>{user.self ? null : <Button label={pending.includes(pendingKey("follow")) ? "关注待核验" : user.followed ? "已关注" : "关注"} disabled={busy || pending.includes(pendingKey("follow"))} primary={!user.followed} onPress={() => setIntent({ action: "follow", label: user.followed ? "取消关注" : "关注", desired: !user.followed })} />}
           <Button label="抖音主页" onPress={() => void onOpenRecord(user.url)}><ArrowUpRight size={15} color={color.text} /></Button></View>
       </View>
+      {connection ? <DarenCard key={user.id} connection={connection} user={user} disabled={busy} onOpenVideo={(id) => void load({ kind: "detail", id }, "detail")} onOpenPage={(url) => void onOpenRecord(url)} /> : null}
       <View style={styles.between}><Text {...ws("e-section")} style={styles.sectionTitle}>{user.self ? "我的作品" : "TA 的作品"}</Text>
         <View style={styles.row}><Text style={styles.muted}>已加载 {profile?.items.length ?? 0} 条</Text>
           {onDownloadRecord && (selecting || candidates.length > 0) ? <Button label={selecting ? "退出多选" : "批量下载"} disabled={busy} onPress={() => { setSelecting(!selecting); setSelected(new Set()); }}><Download size={15} color={color.text} /></Button> : null}</View></View>
@@ -293,7 +291,6 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
 
     {results && !profile && !detail ? <>
       <View style={styles.between}><Text {...ws("e-section")} style={styles.sectionTitle}>“{searchQuery?.query}”的{results.kind === "users" ? "用户" : "内容"}</Text><Text style={styles.muted}>已加载 {results.items.length} 条</Text></View>
-      {connection && indexKeyword(searchQuery?.query) ? <DouyinIndexCard key={searchQuery!.query} connection={connection} keyword={indexKeyword(searchQuery?.query)!} disabled={busy} onSearch={searchWord} onOpenPage={(url) => void onOpenRecord(url)} /> : null}
       {results.kind === "users" ? <View style={styles.userList}>{(results.items as ExploreUser[]).map((author) => <Pressable key={author.id} accessibilityRole="button" accessibilityLabel={`查看用户：${author.name}`} disabled={busy} onPress={() => openProfile(author)} {...ws("e-box e-user")} style={[styles.userCard, narrow && styles.userCardNarrow]}>
         <Avatar user={author} /><View style={styles.userCopy}><Text {...ws("e-name small")} numberOfLines={1} style={styles.userName}>{author.name}</Text><Text style={styles.muted}>抖音号：{author.handle || "未提供"}</Text><Text numberOfLines={2} style={styles.userBio}>{author.bio || "还没有个人简介"}</Text></View><View style={styles.userNumbers}><Text style={styles.cardTitle}>{count(author.followers)}</Text><Text style={styles.muted}>粉丝</Text></View><ChevronRight color={color.textMuted} size={18} />
       </Pressable>)}</View> : videoCards(results)}

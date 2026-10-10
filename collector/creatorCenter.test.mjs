@@ -29,34 +29,33 @@ describe("creatorRequest", () => {
 });
 
 describe("creatorRequest for 抖音指数", () => {
-  const window = { keyword: "咖啡", start_date: "20260906", end_date: "20261006" };
-
-  it("lets the hot topic boards through as a plain GET", () => {
+  it("lets the hot topic boards and the daren valid date through as plain GETs", () => {
     expect(creatorRequest("index_hot_topic", {})).toMatchObject({ method: "GET", body: null, url: "https://creator.douyin.com/api/v2/hot/get_current_hot_topic?" });
+    expect(creatorRequest("daren_valid_date", {})).toMatchObject({ method: "GET", body: null, url: "https://creator.douyin.com/api/v2/daren/get_greater_users_valid_date?" });
   });
 
-  it("shapes the single keyword into the body the official page sends, dates kept as strings", () => {
-    const trend = creatorRequest("index_hot_trend", window);
-    expect(trend.method).toBe("POST");
-    expect(new URL(trend.url).pathname).toBe("/api/v2/index/get_multi_keyword_hot_trend");
-    expect(JSON.parse(trend.body)).toEqual({ keyword_list: ["咖啡"], start_date: "20260906", end_date: "20261006", app_name: "aweme", region: [] });
-    expect(JSON.parse(creatorRequest("index_relation_word", window).body)).toEqual({ param: { keyword: "咖啡", start_date: "20260906", end_date: "20261006", app_name: "aweme" } });
-    expect(JSON.parse(creatorRequest("index_portrait", { ...window, app_name: "toutiao" }).body).param).toMatchObject({ keyword: "咖啡", app_name: "toutiao" });
-    expect(JSON.parse(creatorRequest("index_keyword_valid", { keyword: "C++ & 咖啡" }).body)).toEqual({ keyword_list: ["C++ & 咖啡"] });
-    expect(creatorRequest("index_valid_date", {})).toMatchObject({ method: "GET", body: null });
+  it("sends daren queries the way the official page does, numbers kept as strings", () => {
+    const search = creatorRequest("daren_suggest", { keyword: "WangYuKai0701" });
+    expect(search.method).toBe("POST");
+    expect(new URL(search.url).pathname).toBe("/api/v2/daren/get_sug_great_user_list");
+    expect(JSON.parse(search.body)).toEqual({ keyword: "WangYuKai0701", total: "20" });
+    expect(JSON.parse(creatorRequest("daren_trend", { user_id: "fdebcgidigb" }).body)).toEqual({ user_id: "fdebcgidigb" });
+    expect(JSON.parse(creatorRequest("daren_top_videos", { user_id: "fdebcgidigb", start_date: "20260908", end_date: "20261008" }).body))
+      .toEqual({ user_id: "fdebcgidigb", start_date: "20260908", end_date: "20261008" });
   });
 
   it("rejects missing, blank, over-long or malformed inputs", () => {
-    expect(creatorRequest("index_hot_trend", { keyword: "咖啡" })).toBeNull();
-    expect(creatorRequest("index_hot_trend", { ...window, keyword: "  " })).toBeNull();
-    expect(creatorRequest("index_hot_trend", { ...window, keyword: "字".repeat(51) })).toBeNull();
-    expect(creatorRequest("index_hot_trend", { ...window, keyword: "a\nb" })).toBeNull();
-    expect(creatorRequest("index_hot_trend", { ...window, start_date: "2026-09-06" })).toBeNull();
-    expect(creatorRequest("index_hot_trend", { ...window, end_date: 20261006 })).not.toBeNull();
-    expect(creatorRequest("index_hot_trend", { ...window, app_name: "kuaishou" })).toBeNull();
-    expect(creatorRequest("index_hot_trend", { ...window, region: "北京" })).toBeNull();
-    // 订阅、个人信息这类接口没有入口
+    expect(creatorRequest("daren_suggest", { keyword: "  " })).toBeNull();
+    expect(creatorRequest("daren_suggest", { keyword: "字".repeat(51) })).toBeNull();
+    expect(creatorRequest("daren_suggest", { keyword: "a\nb" })).toBeNull();
+    expect(creatorRequest("daren_info", {})).toBeNull();
+    expect(creatorRequest("daren_info", { user_id: "a b" })).toBeNull();
+    expect(creatorRequest("daren_top_videos", { user_id: "fdebcgidigb", start_date: "2026-09-08", end_date: "20261008" })).toBeNull();
+    expect(creatorRequest("daren_top_videos", { user_id: "fdebcgidigb" })).toBeNull();
+    // 关键词指数、订阅、对比这类接口没有入口
+    expect(creatorRequest("index_hot_trend", { keyword: "咖啡", start_date: "20260906", end_date: "20261006" })).toBeNull();
     expect(creatorRequest("index_get_user_sub_word", {})).toBeNull();
+    expect(creatorRequest("daren_compare_users_lines", {})).toBeNull();
   });
 });
 
@@ -118,7 +117,7 @@ describe("CreatorCenter", () => {
       { status: 200, text: JSON.stringify({ data: "AAAAAAAAAAAAAAAAAAAAAA==", msg: "", status: 0 }), encrypted: "2" },
       { status: 422, text: '{"msg":"ValidateError","status":422}', encrypted: null },
     ]);
-    const results = await new CreatorCenter(collector).read([{ key: "index_valid_date" }, { key: "index_valid_date" }, { key: "index_valid_date" }]);
+    const results = await new CreatorCenter(collector).read([{ key: "index_hot_topic" }, { key: "index_hot_topic" }, { key: "index_hot_topic" }]);
     expect(results).toEqual([
       { ok: true, data: { keyword_latest_day: "20261006", BaseResp: { StatusCode: 0 } } },
       { ok: false, status: 200, reason: "undecryptable" },
