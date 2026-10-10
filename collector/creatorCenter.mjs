@@ -227,9 +227,11 @@ export class CreatorCenter {
       if (!await collector.hasLoginSession(context, null)) throw new CreatorCenterError("login_required", "登录抖音以后，才能看创作者中心的数据。");
       const page = await context.newPage();
       // 本机解析 creator.douyin.com 偶尔卡十几秒（10-06 冷启动第一次超时、紧接着重试就通），所以失败再试一次
+      // 只等到文档提交：这个「空白页」其实是创作者中心整个前端壳，同步脚本要下约 4MB，
+      // 静态资源 CDN 慢的时候（10-10 实测 40KB/s）等 DOMContentLoaded 会超时，而我们只需要同源的 cookie 环境发 fetch
       let opened = false;
       for (let attempt = 0; attempt < 2 && !opened; attempt += 1) {
-        opened = await page.goto(BLANK_URL, { waitUntil: "domcontentloaded", timeout: REQUEST_TIMEOUT_MS }).then(() => true, () => false);
+        opened = await page.goto(BLANK_URL, { waitUntil: "commit", timeout: REQUEST_TIMEOUT_MS }).then(() => true, () => false);
       }
       if (!opened) {
         await page.close().catch(() => {});
