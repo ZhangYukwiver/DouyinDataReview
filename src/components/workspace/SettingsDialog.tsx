@@ -10,7 +10,7 @@ import { ease, ws } from "./motion";
 import { appUpdateAction } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 
-export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "about";
+export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "features" | "about";
 
 export interface SettingsDialogProps {
   visible: boolean;
@@ -24,6 +24,9 @@ export interface SettingsDialogProps {
   onChangeStoryStyle: (style: StoryStyle) => void;
   autoSyncEnabled: boolean;
   onToggleAutoSync: () => void;
+  /** 可选功能「视频解析」装没装 */
+  analysisInstalled: boolean;
+  onToggleAnalysis: () => void;
   privacy: boolean;
   onTogglePrivacy: () => void;
   connected: boolean;
@@ -57,6 +60,7 @@ const SECTIONS: ReadonlyArray<{ key: SettingsSection; title: string }> = [
   { key: "privacy", title: "隐私" },
   { key: "account", title: "账号" },
   { key: "data", title: "数据" },
+  { key: "features", title: "可选功能" },
   { key: "about", title: "关于" },
 ];
 
@@ -160,6 +164,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     : key === "privacy" ? <Privacy {...props} />
                       : key === "account" ? <Account {...props} />
                         : key === "data" ? <Data {...props} />
+                          : key === "features" ? <Features {...props} />
                           : <About {...props} />}
               </View>
             ))}
@@ -344,6 +349,20 @@ function Data({ appStyle, canClear, connected, onClearCache, onExportData }: Set
         <Button appStyle={appStyle} disabled={!canClear} icon={Trash2} kind="danger" label="清除本地记录" onPress={onClearCache} testID="settings-clear" />
       </View>
     </>
+  );
+}
+
+function Features({ analysisInstalled, appStyle, onToggleAnalysis }: SettingsDialogProps) {
+  return (
+    <View style={styles.row}>
+      <RowCopy
+        detail={analysisInstalled
+          ? "已安装，在侧栏的「解析库」里用。移除后入口会收起来，解析过的结果和填过的 Key 都还留着。"
+          : "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备火山方舟的 API Key。"}
+        title="视频解析"
+      />
+      <Button appStyle={appStyle} icon={analysisInstalled ? undefined : Download} label={analysisInstalled ? "移除" : "安装"} onPress={onToggleAnalysis} testID="settings-analysis" />
+    </View>
   );
 }
 

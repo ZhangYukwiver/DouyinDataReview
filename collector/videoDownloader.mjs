@@ -241,9 +241,15 @@ export function extractDouyinMetadata(payload, canonicalUrl = "") {
   const title = String(detail.desc ?? "").trim().slice(0, MAX_TITLE_LENGTH);
   const duration = numberOrZero(detail.duration ?? detail.video?.duration);
   const createTime = numberOrZero(detail.create_time);
+  const tags = [...new Set((Array.isArray(detail.text_extra) ? detail.text_extra : [])
+    .map((item) => String(item?.hashtag_name ?? "").trim()).filter(Boolean))].slice(0, 20);
+  const cover = [detail.video?.cover, detail.video?.origin_cover].flatMap((image) => image?.url_list ?? [])
+    .find((url) => typeof url === "string" && url.startsWith("https://")) ?? null;
   return {
     videoId,
     title,
+    tags,
+    cover,
     author: String(author.nickname ?? "").trim().slice(0, MAX_TITLE_LENGTH) || null,
     // The web detail payload reports duration in milliseconds; a few older
     // responses use seconds. Values at or above one second in the millisecond
@@ -270,9 +276,15 @@ function candidateScore(candidate) {
   ];
 }
 
-export function selectDouyinMediaCandidate(candidates) {
+/** smallest：挑码率最低、带声音的一档（交给 AI 解析时体积越小越好），挑不出就按默认挑最好的。 */
+export function selectDouyinMediaCandidate(candidates, { smallest = false } = {}) {
   const playable = (Array.isArray(candidates) ? candidates : [])
     .filter((candidate) => candidate?.type !== "audio" && isAllowedMediaUrl(candidate?.url));
+  if (smallest) {
+    const small = playable.filter((candidate) => candidate.type === "video+audio" && candidate.bitrate > 0)
+      .sort((left, right) => left.bitrate - right.bitrate)[0];
+    if (small) return small;
+  }
   playable.sort((left, right) => {
     const a = candidateScore(left);
     const b = candidateScore(right);
@@ -422,6 +434,8 @@ export async function discoverDouyinVideo(context, sourceUrl, {
       durationSeconds: detailMeta.durationSeconds || null,
       publishedAt: detailMeta.publishedAt ?? null,
       stats: detailMeta.stats ?? null,
+      tags: detailMeta.tags ?? [],
+      cover: detailMeta.cover ?? null,
       media: selected,
       ...album,
       candidates: candidates.map((candidate) => ({ ...candidate })),
@@ -633,9 +647,11 @@ export async function downloadDouyinVideo({
   pageTimeoutMs,
   mediaWaitMs,
   timeoutMs,
+  smallest = false,
 } = {}) {
   const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal });
   signal?.throwIfAborted();
+  if (smallest && parsed.media) parsed.media = selectDouyinMediaCandidate(parsed.candidates, { smallest }) ?? parsed.media;
   const fileName = makeVideoFileName({
     title: parsed.title,
     videoId: parsed.videoId,

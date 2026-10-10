@@ -44,6 +44,7 @@ interface DesktopRuntimeBridge {
   // 比上面晚加的：旧版外壳没有这两个，用前先看在不在
   getOpenAtLogin?(): Promise<unknown>;
   setOpenAtLogin?(enabled: boolean): Promise<unknown>;
+  takeInstallChoice?(): Promise<unknown>;
 }
 
 declare global {
@@ -203,6 +204,18 @@ export async function setDesktopOpenAtLogin(enabled: boolean): Promise<boolean |
   try {
     const value = await runtime.setOpenAtLogin(enabled);
     return typeof value === "boolean" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 安装时选没选「视频解析」（Windows 安装向导勾选、Mac 第一次打开时问）；只在装完第一次打开时有，之后和浏览器里是 null */
+export async function takeDesktopAnalysisChoice(): Promise<boolean | null> {
+  const runtime = getDesktopRuntime();
+  if (typeof runtime?.takeInstallChoice !== "function") return null;
+  try {
+    const value = await runtime.takeInstallChoice() as { analysis?: unknown } | null;
+    return typeof value?.analysis === "boolean" ? value.analysis : null;
   } catch {
     return null;
   }

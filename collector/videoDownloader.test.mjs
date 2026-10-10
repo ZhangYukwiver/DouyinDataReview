@@ -86,6 +86,17 @@ describe("media candidate selection", () => {
     });
   });
 
+  it("picks the lowest-bitrate stream with sound when asked for the smallest copy", () => {
+    const candidates = [
+      { url: "https://p3.douyinvod.com/hd.mp4", type: "video+audio", width: 1080, height: 1920, bitrate: 3_000_000 },
+      { url: "https://p3.douyinvod.com/sd.mp4", type: "video+audio", width: 540, height: 960, bitrate: 700_000 },
+      { url: "https://p3.douyinvod.com/media-video-ld.mp4", type: "video", width: 360, height: 640, bitrate: 300_000 },
+    ];
+    expect(selectDouyinMediaCandidate(candidates).url).toBe("https://p3.douyinvod.com/hd.mp4");
+    expect(selectDouyinMediaCandidate(candidates, { smallest: true }).url).toBe("https://p3.douyinvod.com/sd.mp4");
+    expect(selectDouyinMediaCandidate([candidates[0]].map((item) => ({ ...item, bitrate: 0 })), { smallest: true }).url).toBe("https://p3.douyinvod.com/hd.mp4");
+  });
+
   it("takes an image post as all of its pictures and zips every one, live clips included", async () => {
     // 真实图文的形状：video.play_addr 是配乐，实况照片各带一段短视频，页面还会顺带请求这些短视频
     const picture = (n) => `https://p3-pc-sign.douyinpic.com/tos/p${n}~tplv-dy-aweme-images:q75`;

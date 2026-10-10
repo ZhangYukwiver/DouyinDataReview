@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Download, Heart, MessageCircle, Play, Search, UserRound, Users, X } from "lucide-react-native";
+import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Clapperboard, Download, Heart, MessageCircle, Play, Search, UserRound, Users, X } from "lucide-react-native";
 import { closeExplore, interactExplore, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo } from "../../services/explorer";
 import { loadCollectorVideo } from "../../services/localCollector";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
@@ -19,6 +19,8 @@ type ActionIntent = { action: ExploreAction["action"]; label: string; desired?: 
 type Props = {
   connection: ExploreConnection | null; collectorBusy: boolean; onOpenSettings: () => void; onOpenRecord: (url: string) => Promise<void>;
   onDownloadRecord?: (record: ExploreVideo) => Promise<void>; downloadStates?: Record<string, RecordDownloadState>; onBatchDownloadActiveChange?: (active: boolean) => void;
+  /** 交给解析库；返回 true 表示已经开始、页面留在原地 */
+  onAnalyzeRecord?: (record: ExploreVideo) => Promise<boolean> | void;
 };
 // 正在下载以实际状态为准；否则存过 ZIP 的算已下载，哪怕之前单条下载失败过
 const downloadState = (state: RecordDownloadState | undefined, savedZip: boolean): RecordDownloadState => state === "queued" || state === "running" ? state : savedZip ? "complete" : state ?? "idle";
@@ -47,7 +49,7 @@ function DownloadChip({ state, title, disabled, onPress }: { state: RecordDownlo
   </Pressable>;
 }
 
-export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, onOpenRecord, onDownloadRecord, downloadStates = {}, onBatchDownloadActiveChange }: Props) {
+export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, onOpenRecord, onDownloadRecord, downloadStates = {}, onBatchDownloadActiveChange, onAnalyzeRecord }: Props) {
   const { width } = useWindowDimensions();
   const narrow = width < 760;
   const [mode, setMode] = useState<"users" | "videos">("users");
@@ -70,6 +72,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [batch, setBatch] = useState<ExploreVideo[] | null>(null);
+  const [analyzed, setAnalyzed] = useState<Set<string>>(new Set());
   const requestRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
   const sessions = useRef(new Set<string>());
@@ -156,6 +159,12 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
     else if (videoMatch?.[1] || /^\d{15,30}$/u.test(candidate)) void load({ kind: "detail", id: videoMatch?.[1] ?? candidate }, "detail");
     else void load({ kind: mode, query: candidate }, "results");
   }
+  // 解析在后台跑，页面留在原地接着翻；它先要下一遍视频，下好之前探索读取会被采集器拒掉
+  async function analyze(item: ExploreVideo) {
+    if (!await onAnalyzeRecord?.(item)) return;
+    setAnalyzed((current) => new Set(current).add(item.id));
+    setNotice(`开始解析“${item.title}”了，结果在侧栏「解析库」。视频下好之前（一般几秒）先别翻页。`);
+  }
   // 点热点榜里的热点：热点是内容话题，直接按内容搜
   function searchHotTopic(topic: string) { setMode("videos"); setQuery(topic); void load({ kind: "videos", query: topic }, "results"); }
   function back() { setError(null); setNotice(null); setComments(null); if (detail) setDetail(null); else setProfile(null); scrollRef.current?.scrollTo({ y: 0, animated: false }); }
@@ -208,7 +217,12 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
       <View style={styles.cardBody}><Pressable accessibilityRole="button" tabIndex={picking ? -1 : undefined} disabled={picking ? blocked : busy} onPress={open}><Text numberOfLines={2} style={styles.cardTitle}>{item.title}</Text></Pressable>
         <View style={styles.between}>
           <Pressable style={styles.authorName} accessibilityRole="button" accessibilityLabel={`查看作者：${item.author ?? "抖音用户"}`} disabled={busy || picking || !item.authorProfile} onPress={() => item.authorProfile && openProfile(item.authorProfile)}><Text numberOfLines={1} style={styles.muted}>@{item.author ?? "抖音用户"}</Text></Pressable>
-          {!picking && onDownloadRecord && item.url ? <DownloadChip state={downloadState(downloadStates[item.id], Boolean(savedKey && saved.has(savedKey)))} title={item.title} disabled={exploring} onPress={() => void onDownloadRecord(item)} /> : null}
+          {!picking ? <View style={styles.row}>
+            {onDownloadRecord && item.url ? <DownloadChip state={downloadState(downloadStates[item.id], Boolean(savedKey && saved.has(savedKey)))} title={item.title} disabled={exploring} onPress={() => void onDownloadRecord(item)} /> : null}
+            {onAnalyzeRecord && item.url && item.mediaType !== "image" ? <Pressable accessibilityRole="button" accessibilityLabel={`${analyzed.has(item.id) ? "已开始解析" : "解析"}：${item.title}`} disabled={exploring || analyzed.has(item.id)} onPress={() => void analyze(item)} style={[styles.chip, (exploring || analyzed.has(item.id)) && styles.disabled]}>
+              <Clapperboard size={12} color={color.textSecondary} /><Text style={styles.chipText}>{analyzed.has(item.id) ? "已提交" : "解析"}</Text>
+            </Pressable> : null}
+          </View> : null}
         </View>
         <View style={styles.between}><Text style={styles.muted}>{date(item.publishedAt)}</Text><View style={styles.row}><Heart size={13} color={color.textMuted} /><Text style={styles.muted}>{count(item.stats?.diggCount)}</Text></View></View>
       </View>
@@ -235,6 +249,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
     {loading || sending ? <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={color.cyan} /><Text style={styles.muted}>{sending ? "正在提交并核验操作…" : "正在读取抖音页面…"}</Text>{loading && !sending ? <Button label="取消读取" onPress={cancelLoad} /> : null}</View> : null}
     {detail || profile ? <View style={styles.breadcrumb}><Button label={detail && profile ? "返回用户作品" : "返回搜索结果"} disabled={busy} onPress={back}><ArrowLeft color={color.text} size={16} /></Button><ChevronRight size={14} color={color.textMuted} /><Text numberOfLines={1} style={[styles.muted, { flex: 1 }]}>{video ? "作品详情" : user?.name}</Text>{onDownloadRecord && video?.url ? <Button label={({ queued: "下载中…", running: "下载中…", complete: "已下载，再下载一次", failed: "下载失败，重试" } as Partial<Record<RecordDownloadState, string>>)[downloadStates[video.id] ?? "idle"] ?? (video.images.length ? "下载全部图片" : "下载视频")}
             disabled={exploring || downloadStates[video.id] === "queued" || downloadStates[video.id] === "running"} onPress={() => void onDownloadRecord(video)}><Download size={15} color={color.text} /></Button> : null}
+          {onAnalyzeRecord && video?.url && !video.images.length ? <Button label={analyzed.has(video.id) ? "已提交解析" : "解析"} disabled={exploring || analyzed.has(video.id)} onPress={() => void analyze(video)}><Clapperboard size={15} color={color.text} /></Button> : null}
 <Button label="刷新" disabled={busy} onPress={() => video ? void load({ kind: "detail", id: video.videoId! }, "detail") : user && void load({ kind: "profile", id: user.id }, "profile")} /></View> : null}
     {downloading && !loading ? <Text accessibilityLiveRegion="polite" style={styles.notice}>正在下载视频，下完之前先不能搜索或翻页。</Text> : null}
 
