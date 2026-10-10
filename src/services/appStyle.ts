@@ -72,14 +72,25 @@ export function saveStoryStyle(style: StoryStyle, storage: StyleStorage | undefi
 
 // 「自动补读新记录」开关（设置面板 / 采集器页）：以前不存，每次启动都回到开启；现在记住用户的选择
 const AUTO_SYNC_KEY = "content-insights.auto-sync";
-const AUTO_SYNC_VALUES: ReadonlySet<string> = new Set(["on", "off"]);
+const ON_OFF: ReadonlySet<string> = new Set(["on", "off"]);
 
 export function loadAutoSync(storage: StyleStorage | undefined = globalThis.localStorage): boolean {
-  return load(AUTO_SYNC_KEY, AUTO_SYNC_VALUES, "on", storage) === "on";
+  return load(AUTO_SYNC_KEY, ON_OFF, "on", storage) === "on";
 }
 
 export function saveAutoSync(enabled: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
   save(AUTO_SYNC_KEY, enabled ? "on" : "off", storage);
+}
+
+// 视频解析是可选功能，默认不装；在设置里装或移除，Windows 安装时勾过的由桌面外壳交过来
+const ANALYSIS_KEY = "content-insights.analysis";
+
+export function loadAnalysisInstalled(storage: StyleStorage | undefined = globalThis.localStorage): boolean {
+  return load<"on" | "off">(ANALYSIS_KEY, ON_OFF, "off", storage) === "on";
+}
+
+export function saveAnalysisInstalled(installed: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(ANALYSIS_KEY, installed ? "on" : "off", storage);
 }
 
 /** 报告（故事页、分享图、纪念卡）实际用哪套：极简借用单独选的那套，其余风格就是自己。 */

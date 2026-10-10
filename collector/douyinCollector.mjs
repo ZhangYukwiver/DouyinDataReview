@@ -1291,6 +1291,7 @@ export class DouyinCollector {
       updatedAt: job.updatedAt,
       startedAt: job.startedAt,
       completedAt: job.completedAt,
+      ...(job.video ? { video: job.video } : {}),
       ...(job.playback ? { streamKey: job.streamKey } : {}),
       // 图文播放：图片和配乐由播放器直接加载，实况短视频只给个有无，地址走 /stream?live=序号
       ...(job.stream?.images ? {
@@ -1305,7 +1306,8 @@ export class DouyinCollector {
     return this.publicVideoDownloadJob(job);
   }
 
-  startVideoDownload(sourceUrl, { playback = false } = {}) {
+  /** smallest：下最低一档清晰度，给 AI 解析用 */
+  startVideoDownload(sourceUrl, { playback = false, smallest = false } = {}) {
     const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
     if (this.visibleBrowserWorkRunning()) {
       throw new VideoDownloadError("collector_busy", "采集器正在执行其他任务，请稍后再试。", { retryable: true });
@@ -1315,6 +1317,7 @@ export class DouyinCollector {
     const job = {
       id: randomUUID(),
       playback,
+      smallest,
       ...(playback ? { streamKey: randomBytes(24).toString("base64url") } : {}),
       sourceUrl: normalizedSourceUrl,
       status: "queued",
@@ -1434,10 +1437,15 @@ export class DouyinCollector {
         sourceUrl: job.sourceUrl,
         outputDirectory: path.join(this.dataDirectory, "downloads"),
         signal: controller.signal,
+        smallest: job.smallest,
         onProgress: (bytes) => this.touchVideoDownloadJob(job, { bytes }),
       });
       this.touchVideoDownloadJob(job, {
         status: "complete",
+        video: result.videoId === undefined ? null : {
+          videoId: result.videoId, title: result.title, author: result.author, durationSeconds: result.durationSeconds,
+          publishedAt: result.publishedAt, stats: result.stats, tags: result.tags, cover: result.cover,
+        },
         fileName: result.fileName ?? null,
         filePath: result.filePath ?? null,
         bytes: result.bytes ?? null,

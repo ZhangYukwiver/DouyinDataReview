@@ -20,6 +20,7 @@ import {
   Bookmark,
   ChartColumn,
   Check,
+  Clapperboard,
   Download,
   Eye,
   EyeOff,
@@ -72,11 +73,12 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator" | "analysis";
 
 export interface ContentWorkspaceProps {
   explore?: React.ReactNode;
   creator?: React.ReactNode;
+  analysis?: React.ReactNode;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
   chatMessages?: ChatMessage[];
@@ -93,6 +95,8 @@ export interface ContentWorkspaceProps {
   onChangeView: (view: WorkspaceViewKey) => void;
   onOpenRecord: (url: string) => Promise<void>;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
+  /** 交给解析库：采集器下载视频给 AI 拆解 */
+  onAnalyzeRecord?: (record: PersonalVideoRecord) => void;
   onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
@@ -122,6 +126,7 @@ type IconComponent = React.ComponentType<{
 const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent; accent: string }> = [
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
+  { id: "analysis", label: "解析库", icon: Clapperboard, accent: color.amber },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
@@ -132,8 +137,8 @@ const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent
 ];
 
 
-// 探索和创作者中心是工具页：不显示条数、隐私和重新读取
-const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator";
+// 探索、创作者中心和解析库是工具页：不显示条数、隐私和重新读取
+const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator" || view === "analysis";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -151,6 +156,7 @@ function Text({ style, ...rest }: TextProps) {
 export function ContentWorkspace({
   explore,
   creator,
+  analysis,
   activeView,
   records,
   chatMessages = [],
@@ -167,6 +173,7 @@ export function ContentWorkspace({
   onChangeView,
   onOpenRecord,
   onDownloadRecord,
+  onAnalyzeRecord,
   onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
@@ -196,7 +203,9 @@ export function ContentWorkspace({
   const sidebarWidth = mobile ? 0 : compactSidebar ? 82 : 224;
   // root 的桌面内边距与 stage 边框会占掉 36px，使用同一个主区宽度供各内容页计算。
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
-  const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
+  // 解析库是可选功能，没装（App 不给 analysis）就不进侧栏
+  const nav = analysis ? navItems : navItems.filter((item) => item.id !== "analysis");
+  const currentNav = nav.find((item) => item.id === activeView) ?? nav[0]!;
   const [reportUpdateNotice, setReportUpdateNotice] = useState(false);
   // 侧栏当前项的指示条：一根，随选中项滑动（各按钮 onLayout 报自己的 y）
   const [navTops, setNavTops] = useState<Record<string, number>>({});
@@ -234,6 +243,7 @@ export function ContentWorkspace({
   const counts: Record<WorkspaceViewKey, number> = {
     explore: 0,
     creator: 0,
+    analysis: 0,
     watch_history: watchedVideos.length,
     live: watchedLives.length,
     liked_videos: records.liked_videos.length,
@@ -284,7 +294,7 @@ export function ContentWorkspace({
             {Platform.OS === "web" && navTops[activeView] !== undefined ? (
               <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[activeView]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
-            {navItems.map((item) => (
+            {nav.map((item) => (
               <NavButton
                 key={item.id}
                 compact={compactSidebar}
@@ -415,7 +425,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "chat" ? (
+        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "analysis" ? analysis : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
@@ -449,6 +459,7 @@ export function ContentWorkspace({
             downloadStates={downloadStates}
             mobile={mobile}
             onDownloadRecord={onDownloadRecord}
+            onAnalyzeRecord={onAnalyzeRecord}
             onBatchDownloadActiveChange={onBatchDownloadActiveChange}
             onLoadVideo={onLoadVideo}
             commentsConnection={commentsConnection}
@@ -482,9 +493,9 @@ export function ContentWorkspace({
       {mobile ? (
         <View {...ws("w-bottom g-ink")} accessibilityRole="tablist" style={styles.bottomNav}>
           {Platform.OS === "web" ? (
-            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(navItems.findIndex((item) => item.id === activeView) + 0.5) / navItems.length * 100}%`, backgroundColor: currentNav.accent }]} />
+            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(nav.findIndex((item) => item.id === activeView) + 0.5) / nav.length * 100}%`, backgroundColor: currentNav.accent }]} />
           ) : null}
-          {navItems.map((item) => {
+          {nav.map((item) => {
             const selected = item.id === activeView;
             const Icon = item.icon;
             return (
@@ -599,6 +610,7 @@ function RecordsGallery({
   downloadStates,
   mobile,
   onDownloadRecord,
+  onAnalyzeRecord,
   onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
@@ -617,6 +629,7 @@ function RecordsGallery({
   downloadStates: Record<string, RecordDownloadState>;
   mobile: boolean;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
+  onAnalyzeRecord?: (record: PersonalVideoRecord) => void;
   onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
@@ -651,10 +664,11 @@ function RecordsGallery({
   const cellStyle = useMemo(() => Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null, [columns]);
   // 卡片是 memo 的：读取、接收聊天时状态每变一次整页都要重渲染，几百张卡片跟着重画一遍要一两百毫秒。
   // 外面传进来的回调每次都是新函数，这里换成引用不变、调用时取最新那份的版本
-  const latest = useRef({ onDownloadRecord, onOpenRecord, openLive });
-  latest.current = { onDownloadRecord, onOpenRecord, openLive };
+  const latest = useRef({ onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive });
+  latest.current = { onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive };
   const handlers = useMemo(() => ({
     download: (record: PersonalVideoRecord) => latest.current.onDownloadRecord!(record),
+    analyze: (record: PersonalVideoRecord) => latest.current.onAnalyzeRecord!(record),
     open: (url: string) => latest.current.onOpenRecord(url),
     live: (record: PersonalVideoRecord) => { latest.current.openLive?.(record); },
   }), []);
@@ -795,6 +809,7 @@ function RecordsGallery({
             selection={selectionFor(item)}
             downloadState={downloadStates[item.id] ?? "idle"}
             onDownloadRecord={item.mediaType === "live" || !onDownloadRecord ? undefined : handlers.download}
+            onAnalyzeRecord={item.mediaType === "live" || !onAnalyzeRecord ? undefined : handlers.analyze}
             onPlayRecord={item.mediaType === "live" ? openLive && handlers.live : onLoadVideo ? setPlayingRecord : undefined}
             onOpenRecord={handlers.open}
             privacy={privacy}
@@ -899,6 +914,7 @@ const RecordTile = memo(function RecordTile({
   selection,
   downloadState,
   onDownloadRecord,
+  onAnalyzeRecord,
   onPlayRecord,
   record,
   type,
@@ -909,6 +925,7 @@ const RecordTile = memo(function RecordTile({
   selection?: RecordSelection;
   downloadState: RecordDownloadState;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
+  onAnalyzeRecord?: (record: PersonalVideoRecord) => void;
   onPlayRecord?: (record: PersonalVideoRecord) => void;
   record: PersonalVideoRecord;
   type: PersonalRecordType;
@@ -1061,6 +1078,18 @@ const RecordTile = memo(function RecordTile({
               {downloading ? <ActivityIndicator color={color.white} size="small" /> : <Download color={color.white} size={14} strokeWidth={2.2} />}
               <Text style={styles.tileActionText}>{downloadLabel}</Text>
             </Pressable>
+            {onAnalyzeRecord && record.mediaType !== "image" ? <Pressable
+              accessibilityLabel="解析视频"
+              accessibilityRole="button"
+              onFocus={markFocused}
+              onBlur={checkFocusBoundary}
+              onPress={() => onAnalyzeRecord(record)}
+              {...ws("btn-sig w-tileaction")}
+              style={({ pressed }) => [styles.tileAction, pressed && styles.tileActionPressed, webPointer]}
+            >
+              <Clapperboard color={color.white} size={14} strokeWidth={2.2} />
+              <Text style={styles.tileActionText}>解析</Text>
+            </Pressable> : null}
           </View>
         </View>
       ) : null}

@@ -90,6 +90,7 @@ import {
   notifyDesktopBackgroundSyncBlocked,
   subscribeDesktopBackgroundSync,
   subscribeDesktopUpdateState,
+  takeDesktopAnalysisChoice,
   trackDesktopWindowVisibility,
   type DesktopUpdateState,
 } from "./src/desktopRuntime";
@@ -97,11 +98,13 @@ import { shouldAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { createSyncRecovery } from "./src/services/syncRecovery";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAnalysisInstalled, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAnalysisInstalled, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
+import { AnalysisWorkspace } from "./src/components/workspace/AnalysisWorkspace";
+import { loadAnalysisConfig, startAnalysis } from "./src/services/videoAnalysis";
 
 type ViewKey = "summary" | "highlights" | "records" | "chat" | "sources";
 
@@ -238,6 +241,8 @@ function AppContent() {
   const [collectorBusy, setCollectorBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
+  // 视频解析是可选功能：没装时侧栏和卡片上都不出现入口
+  const [analysisInstalled, setAnalysisInstalled] = useState(() => Platform.OS === "web" && loadAnalysisInstalled());
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   const [collectorAccounts, setCollectorAccounts] = useState<CollectorAccounts | null>(null);
@@ -505,6 +510,13 @@ function AppContent() {
     return () => subscription.remove();
   }, []);
 
+  useEffect(() => {
+    void takeDesktopAnalysisChoice().then((choice) => {
+      if (choice === null) return;
+      saveAnalysisInstalled(choice);
+      setAnalysisInstalled(choice);
+    });
+  }, []);
   useEffect(() => subscribeDesktopBackgroundSync((manual) => autoSyncTriggerRef.current({ manual, timer: !manual })), []);
   // 从托盘叫回窗口等于回到前台；开机后台启动时窗口一直不出来，也要先连上采集器读一次
   useEffect(() => trackDesktopWindowVisibility(() => autoSyncTriggerRef.current(), () => autoSyncTriggerRef.current()), []);
@@ -1493,6 +1505,24 @@ function AppContent() {
     setDownloadStates((current) => ({ ...current, [recordId]: state }));
   }
 
+  // 卡片上的「解析」：交给采集器开始解析，再切到解析库看进度；还没填 Key 就直接去解析库填。
+  // stay：探索页一切走，刚翻到的主页和作品就没了，所以开始后留在原地（返回 true 让它自己提示）
+  async function analyzeRecord(record: { url?: string | null }, stay = false): Promise<boolean> {
+    const url = record.url?.trim();
+    if (!url) return false;
+    if (!collectorToken) { openSettings(); return false; }
+    const config = loadAnalysisConfig();
+    if (!config.apiKey) { setDashboardView("analysis"); return false; }
+    try {
+      await startAnalysis({ baseUrl: collectorUrl, token: collectorToken }, url, config);
+    } catch (error) {
+      showAlert("解析没开始", error instanceof Error ? error.message : "请稍后重试。");
+      return false;
+    }
+    if (!stay) setDashboardView("analysis");
+    return stay;
+  }
+
   async function downloadRecord(record: PersonalVideoRecord, keepExplore = false): Promise<void> {
     if (Platform.OS !== "web") {
       showAlert("暂不支持下载", "请在桌面 Web 工作台中将视频保存到本地。");
@@ -1644,6 +1674,13 @@ function AppContent() {
     saveAutoSync(!value);
     return !value;
   });
+  // 移除只收起入口，解析过的结果和填过的 Key 都留着，重新安装就回来
+  const toggleAnalysis = () => {
+    const next = !analysisInstalled;
+    saveAnalysisInstalled(next);
+    setAnalysisInstalled(next);
+    if (!next && dashboardView === "analysis") setDashboardView("summary");
+  };
   const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus), collectorStatus);
   const recordDownloading = batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running");
   const accountName = activeAccountName(collectorToken !== null, collectorStatus, collectorAccounts);
@@ -1733,8 +1770,10 @@ function AppContent() {
         />
       ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
-          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
+          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onAnalyzeRecord={analysisInstalled ? (record) => analyzeRecord(record, true) : undefined} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
+          analysis={analysisInstalled ? <AnalysisWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} /> : undefined}
+          onAnalyzeRecord={analysisInstalled ? analyzeRecord : undefined}
           activeView={dashboardView}
           appStyle={appStyle}
           storyStyle={storyStyle}
@@ -1818,6 +1857,8 @@ function AppContent() {
         }}
         autoSyncEnabled={autoSyncEnabled}
         onToggleAutoSync={toggleAutoSync}
+        analysisInstalled={analysisInstalled}
+        onToggleAnalysis={toggleAnalysis}
         privacy={privacy}
         onTogglePrivacy={() => setPrivacy((value) => !value)}
         connected={collectorToken !== null}

@@ -19,7 +19,8 @@ import { ChatSendError } from "./chatSender.mjs";
 import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
-import { fetchMediaStream } from "./videoDownloader.mjs";
+import { AnalysisError, AnalysisLibrary, parseAnalysisConfig, startAnalysis } from "./videoAnalysis.mjs";
+import { VideoDownloadError, fetchMediaStream } from "./videoDownloader.mjs";
 
 const DEFAULT_PORT = 4765;
 const MAX_BODY_BYTES = 4 * 1024;
@@ -286,6 +287,9 @@ export async function startCollectorServer({
   };
   let collector = await openCollector(accounts.active());
   let explorer = new ExplorerBridge(collector);
+  // 解析库不分账号，放在根数据目录
+  const analyses = new AnalysisLibrary(path.join(dataDirectory, "analyses.json"));
+  await analyses.load();
   // 账号操作（切换、新建、删除）一次只做一个；切换期间旧采集器在关、新的还没接上
   let accountWork = null;
   let switching = false;
@@ -581,6 +585,25 @@ export async function startCollectorServer({
         await sendVideoFile(response, filePath, job.fileName);
       } else {
         sendJson(response, 200, { job });
+      }
+    } else if (url.pathname === "/v1/analyses" || /^\/v1\/analyses\/[0-9a-f-]{36}$/u.test(url.pathname)) {
+      // 解析库：GET 全部，POST 开始解析一条（带链接和接口配置），DELETE 删一条
+      try {
+        if (request.method === "GET" && url.pathname === "/v1/analyses") sendJson(response, 200, { analyses: analyses.list() });
+        else if (request.method === "POST" && url.pathname === "/v1/analyses") {
+          const body = await readJsonBody(request, 16 * 1024);
+          if (explorer.busy) { sendJson(response, 409, { error: "collector_busy", message: "请等待当前探索操作完成后继续。" }); return; }
+          if (rejectWhileSwitching(response)) return;
+          sendJson(response, 202, { analysis: startAnalysis({ library: analyses, collector, url: body?.url, config: parseAnalysisConfig(body?.config) }) });
+        } else if (request.method === "DELETE" && url.pathname !== "/v1/analyses") sendJson(response, 200, { removed: await analyses.remove(url.pathname.split("/").at(-1)) });
+        else sendJson(response, 405, { error: "method_not_allowed" });
+      } catch (error) {
+        const known = error instanceof AnalysisError || error instanceof VideoDownloadError;
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        if (!response.headersSent) sendJson(response, known ? (error.code === "collector_busy" ? 409 : error.status ?? 400) : malformed ? 400 : 500, {
+          error: known ? error.code : malformed ? "invalid_request" : "analysis_failed",
+          message: known ? error.message : malformed ? "请求无效，请重试。" : "解析没开始，请稍后重试。",
+        });
       }
     } else if (url.pathname === "/v1/creator/read") {
       // 创作者中心的数据：工作台一次传一批白名单里的查询，原样带回抖音的结果（只读）

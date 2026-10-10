@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, session, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -243,6 +243,38 @@ function createMainWindow(appUrl, { hidden = false } = {}) {
   return window;
 }
 
+function takeInstallChoice() {
+  if (!app.isPackaged) return null;
+  const file = path.join(process.resourcesPath, "install-options.json");
+  let choice;
+  try {
+    choice = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+  // ponytail: 删不掉的话每次启动都会再交一次、盖掉设置里的选择；按用户安装（perMachine: false）目录可写，不另记状态
+  try { rmSync(file); } catch { /* 见上 */ }
+  return { analysis: choice?.analysis === true };
+}
+
+// Mac 用 dmg 拖进「应用程序」就装完了，没有安装向导：第一次打开时问一次，当作安装时的选项。
+// 开机后台启动时不弹，等下次正常打开再问
+async function askInstallChoiceOnMac() {
+  if (process.platform !== "darwin" || !app.isPackaged || openedAtLogin()) return null;
+  const marker = path.join(app.getPath("userData"), "install-choice-asked");
+  if (existsSync(marker)) return null;
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    buttons: ["安装", "暂不安装"],
+    defaultId: 1,
+    cancelId: 1,
+    message: "要安装可选功能「视频解析」吗？",
+    detail: "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备火山方舟的 API Key。\n\n现在不装的话，以后也可以在设置里安装。",
+  });
+  try { writeFileSync(marker, ""); } catch { /* 记不下就下次再问 */ }
+  return { analysis: response === 0 };
+}
+
 async function startDesktopRuntime() {
   const collector = await startCollectorServer({
     port: 0,
@@ -312,6 +344,14 @@ async function launch() {
       // failed installer launch leaves the current session usable.
       updateInstallRequested = true;
     },
+  });
+  // 「视频解析」装不装：Windows 看安装向导里勾没勾（build/installer.nsh 写的），Mac 第一次打开时问；
+  // 只交给页面一次，页面记进设置后就以设置为准
+  let installChoice = takeInstallChoice() ?? await askInstallChoiceOnMac();
+  ipcMain.handle("desktop:take-install-choice", () => {
+    const choice = installChoice;
+    installChoice = null;
+    return choice;
   });
   ipcMain.handle("desktop:get-collector-config", () => ({
     baseUrl: desktopRuntime?.collector.baseUrl,
