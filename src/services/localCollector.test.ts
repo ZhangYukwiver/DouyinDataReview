@@ -23,11 +23,9 @@ import {
   pairCollector,
   startCollectorSync,
   startDirectRecordsSync,
-  startCollectorObservation,
   startCollectorChatObservation,
   startCollectorVideoDownload,
   stopCollectorSync,
-  stopCollectorObservation,
   stopCollectorChatObservation,
 } from "./localCollector";
 
@@ -194,6 +192,14 @@ describe("parseLaunchPairingCode", () => {
 });
 
 describe("local collector client", () => {
+  it.each(["ready", "exporting", "reconnect_required"])("keeps imported-credential state %s separate from a disconnected CDP transport", async credentials => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      state: "idle", message: "状态", counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0 }, updatedAt: null,
+      browserSource: { mode: "cdp", browser: "chrome", connected: false, credentials },
+    }))));
+    const status = await getCollectorStatus("http://127.0.0.1:4765", "synthetic-token");
+    expect(status.browserSource).toEqual({ mode: "cdp", browser: "chrome", connected: false, credentials });
+  });
   it("uses the nested chat state even while the shared collector is idle", () => {
     expect(isChatReceiving({
       state: "idle",
@@ -338,31 +344,6 @@ describe("local collector client", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://127.0.0.1:4765/v1/records/import?account=default");
     await expect(clearCollectorRecords("http://127.0.0.1:4765", "session-secret", "../x")).rejects.toMatchObject({ code: "invalid_account" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("starts and stops manual observation through local authenticated endpoints", async () => {
-    const statusPayload = {
-      state: "observing",
-      phase: null,
-      message: "监听中",
-      counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0 },
-      updatedAt: null,
-      browserOpen: true,
-    };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ started: true, status: statusPayload }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ stopped: true, status: { ...statusPayload, state: "idle" } }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(startCollectorObservation("http://127.0.0.1:4765", "session-secret"))
-      .resolves.toMatchObject({ state: "observing" });
-    await expect(stopCollectorObservation("http://127.0.0.1:4765", "session-secret"))
-      .resolves.toMatchObject({ state: "idle" });
-
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "http://127.0.0.1:4765/v1/observe",
-      "http://127.0.0.1:4765/v1/observe/stop",
-    ]);
   });
 
   it("starts and stops chat observation through dedicated endpoints", async () => {

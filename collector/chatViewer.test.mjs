@@ -54,15 +54,18 @@ describe("group messages", () => {
 });
 
 describe("collector gate", () => {
-  it("reads only while receiving and never pages older during a send", async () => {
+  it("requires reception and reads HTTP messages independently of a pending send", async () => {
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
     await expect(collector.readChatMessages({ conversationId: GROUP })).rejects.toMatchObject({ code: "not_receiving" });
     collector.contextHeadless = true;
     collector.status = { ...collector.status, chat: { ...collector.status.chat, state: "observing", connection: "connected" } };
     const { page } = fakeChatPage();
-    collector.chat = { active: true, mode: "chat", page: { ...page, isClosed: () => false }, historyReady: true };
+    collector.chat = { active: true, mode: "chat", direct: true, client: {
+      messages: vi.fn(async () => ({ messages: [], hasMore: true, pageMessages: [] })),
+      streaks: vi.fn(async () => ({ streaks: [] })),
+    }, historyReady: true };
     collector.chatSendPromise = new Promise(() => {});
-    await expect(collector.readChatMessages({ conversationId: GROUP, older: true })).rejects.toMatchObject({ code: "collector_busy" });
+    await expect(collector.readChatMessages({ conversationId: GROUP, older: true })).resolves.toMatchObject({ hasMore: true });
     await expect(collector.readChatMessages({ conversationId: GROUP })).resolves.toMatchObject({ hasMore: true });
     await expect(collector.readChatStreaks()).resolves.toEqual({ streaks: [] });
   });

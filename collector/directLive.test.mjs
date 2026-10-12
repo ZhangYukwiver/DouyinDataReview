@@ -165,16 +165,4 @@ describe("workspace integration", () => {
     collector.liveRooms.closeAll = vi.fn(async () => {});
     await collector.close(); expect(collector.liveRooms.closeAll).toHaveBeenCalled();
   });
-  it("native rooms allow an idle credential browser to close, while legacy pages hold it", async () => {
-    const collector = new DouyinCollector({ dataDirectory: "output/direct-live-test", store: {} });
-    const context = { close: vi.fn(async () => {}) };
-    collector.context = context; collector.contextHeadless = true;
-    collector.liveRooms.rooms.set("native", { id: "native", page: null, transport: { close: vi.fn() } });
-    expect(collector.liveRooms.usesBrowser).toBe(false);
-    await collector.releaseHeadlessContextIfIdle();
-    expect(context.close).toHaveBeenCalledOnce(); expect(collector.context).toBeNull();
-    collector.liveRooms.rooms.set("legacy", { id: "legacy", page: { close: vi.fn(async () => {}) } });
-    expect(collector.liveRooms.usesBrowser).toBe(true);
-    await collector.close();
-  });
 });

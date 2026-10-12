@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { constants, createReadStream } from "node:fs";
-import { access, chmod, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { access, chmod, mkdir, stat, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,58 +27,6 @@ let appMonitor = null;
 
 function tail(value, limit = 2_000) {
   return value.length > limit ? value.slice(-limit) : value;
-}
-
-async function firstExecutable(candidates) {
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    try {
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Try the next standard browser path.
-    }
-  }
-  return null;
-}
-
-async function findChromeExecutable() {
-  const homeDirectory = homedir();
-  const candidates = [
-    process.env.DOUYIN_CHROME_PATH,
-    // Any Chromium-based browser works; same order as collector/server.mjs.
-    ...[
-      "Google Chrome.app/Contents/MacOS/Google Chrome",
-      "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-      "Brave Browser.app/Contents/MacOS/Brave Browser",
-      "Chromium.app/Contents/MacOS/Chromium",
-      "Comet.app/Contents/MacOS/Comet",
-    ].flatMap((relative) => [path.join("/Applications", relative), path.join(homeDirectory, "Applications", relative)]),
-    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-  ];
-
-  const cacheDirectory = path.join(homeDirectory, "Library", "Caches", "ms-playwright");
-  try {
-    const versions = (await readdir(cacheDirectory, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory() && /^chromium-\d+$/u.test(entry.name))
-      .sort((left, right) => Number(right.name.slice(9)) - Number(left.name.slice(9)));
-    for (const version of versions) {
-      for (const platformDirectory of process.arch === "arm64" ? ["chrome-mac-arm64", "chrome-mac"] : ["chrome-mac"]) {
-        candidates.push(path.join(
-          cacheDirectory,
-          version.name,
-          platformDirectory,
-          "Google Chrome for Testing.app",
-          "Contents",
-          "MacOS",
-          "Google Chrome for Testing",
-        ));
-      }
-    }
-  } catch {
-    // A Playwright browser cache is optional.
-  }
-  return firstExecutable(candidates);
 }
 
 async function assertPortAvailable(port, label) {
@@ -132,13 +79,13 @@ async function runExport() {
   });
 }
 
-function startCollector(executablePath) {
+function startCollector() {
   let lineBuffer = "";
   let resolveFirstCode;
   const firstCode = new Promise((resolve) => { resolveFirstCode = resolve; });
   collectorProcess = spawn(process.execPath, [path.join(projectDirectory, "collector", "server.mjs")], {
     cwd: projectDirectory,
-    env: { ...process.env, DOUYIN_CHROME_PATH: executablePath },
+    env: { ...process.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   collectorProcess.stdout.on("data", (chunk) => {
@@ -316,10 +263,8 @@ async function main() {
   await chmod(errorFile, 0o600);
   await assertPortAvailable(COLLECTOR_PORT, "采集器");
   await assertPortAvailable(WEB_PORT, "网页");
-  const executablePath = await findChromeExecutable();
-  if (!executablePath) throw new Error("未找到 Chrome、Edge、Brave 或 Chromium 浏览器。请先安装其中一个，再重新打开应用。");
   await runExport();
-  await startCollector(executablePath);
+  await startCollector();
   await startWebServer();
   openPage();
 }

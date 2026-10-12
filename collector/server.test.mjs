@@ -184,7 +184,7 @@ describe("collector accounts", () => {
 
   it("refuses to switch while records are being read or another account operation runs", async () => {
     let finishRun;
-    const runSync = vi.spyOn(DouyinCollector.prototype, "runSync").mockImplementation(() => new Promise((resolve) => { finishRun = resolve; }));
+    const runSync = vi.spyOn(DouyinCollector.prototype, "runDirectRecords").mockImplementation(() => new Promise((resolve) => { finishRun = resolve; }));
     try {
       const { call } = await startPaired("accounts-busy-");
       expect((await call("/v1/sync", "POST")).status).toBe(202);
@@ -238,18 +238,6 @@ describe("collector account switching edge cases", () => {
       expect((await call("/v1/records")).body.records.liked_videos).toHaveLength(1);
     } finally {
       spy.mockRestore();
-    }
-  });
-
-  it("refuses to switch during manual observation", async () => {
-    const runObservation = vi.spyOn(DouyinCollector.prototype, "runObservation").mockImplementation((_runId, observation) => observation.stopPromise);
-    try {
-      const { call } = await startPaired("accounts-observing-");
-      expect((await call("/v1/observe", "POST")).status).toBe(202);
-      const refused = await call("/v1/accounts", "POST");
-      expect(refused).toMatchObject({ status: 409, body: { error: "collector_busy", message: expect.stringContaining("监听") } });
-    } finally {
-      runObservation.mockRestore();
     }
   });
 

@@ -358,7 +358,7 @@ export async function discoverDouyinVideo(context, sourceUrl, {
   signal?.throwIfAborted();
   const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
   if (!context || typeof context.newPage !== "function") {
-    throw new VideoDownloadError("browser_unavailable", "无头浏览器当前不可用。");
+    throw new VideoDownloadError("browser_unavailable", "登录会话当前不可用。");
   }
 
   const page = await context.newPage();

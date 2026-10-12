@@ -38,14 +38,14 @@ function status(over: Partial<CollectorStatus> = {}): CollectorStatus {
   };
 }
 
-const base: SetupInput = { connected: true, busy: false, observing: false, chatCollecting: false, status: status(), snapshotSource: "collector", total: 120 };
-const buttons: Omit<ReadActionInput, "connected" | "busy" | "observing" | "chatCollecting"> = { chatBusy: false, stoppingSync: false, switchingAccount: false, stoppingChat: false };
+const base: SetupInput = { connected: true, busy: false, chatCollecting: false, status: status(), snapshotSource: "collector", total: 120 };
+const buttons: Omit<ReadActionInput, "connected" | "busy" | "chatCollecting"> = { chatBusy: false, stoppingSync: false, switchingAccount: false, stoppingChat: false };
 
-/** 按某个状态推一遍五个按钮，按 key 取出来 */
+/** 按某个状态推一遍四个按钮，按 key 取出来 */
 function actionsFor(input: Partial<SetupInput> = {}, extra: Partial<ReadActionInput> = {}) {
   const setup = { ...base, ...input };
   const state = deriveSetup(setup);
-  const list = readActions({ ...buttons, connected: setup.connected, busy: setup.busy, observing: setup.observing, chatCollecting: setup.chatCollecting, ...extra }, state);
+  const list = readActions({ ...buttons, connected: setup.connected, busy: setup.busy, chatCollecting: setup.chatCollecting, ...extra }, state);
   return Object.fromEntries(list.map((action) => [action.key, action]));
 }
 
@@ -72,23 +72,17 @@ describe("采集器页状态", () => {
 
   it("增量读取和完整读取靠 syncMode 分开", () => {
     const direct = deriveSetup({ ...base, status: status({ state: "collecting", syncMode: "direct_records" }) });
-    expect([direct.syncing, direct.directSyncing, direct.pageSyncing, direct.visibleBusy]).toEqual([true, true, false, false]);
-    const page = deriveSetup({ ...base, status: status({ state: "collecting", syncMode: "page" }) });
-    expect([page.syncing, page.directSyncing, page.pageSyncing, page.visibleBusy]).toEqual([true, false, true, true]);
+    expect([direct.syncing, direct.directSyncing, direct.fullSyncing, direct.visibleBusy]).toEqual([true, true, false, false]);
+    const page = deriveSetup({ ...base, status: status({ state: "collecting", syncMode: "direct_records", syncFull: true }) });
+    expect([page.syncing, page.directSyncing, page.fullSyncing, page.visibleBusy]).toEqual([true, false, true, false]);
     expect(page.flow.note).toBe("读取中");
-  });
-
-  it("手动监听不算读取，但占着可见浏览器", () => {
-    const state = deriveSetup({ ...base, observing: true, status: status({ state: "observing" }) });
-    expect(state.syncing).toBe(false);
-    expect(state.visibleBusy).toBe(true);
   });
 
   it("要登录时流向回到第一步", () => {
     expect(deriveSetup({ ...base, status: status({ state: "awaiting_login" }) }).flow.step).toBe(0);
     const coded = deriveSetup({ ...base, status: status({ state: "error", code: "login_required" }) });
     expect(coded.loginNeeded).toBe(true);
-    expect(coded.flow).toEqual({ step: 0, done: [false, true, true], note: "要登录" });
+    expect(coded.flow).toEqual({ step: 0, done: [false, true, true], note: "要导入凭据" });
   });
 
   it("聊天：有整理进度或还没进入接收就算在读历史，单纯接收不算", () => {
@@ -100,31 +94,30 @@ describe("采集器页状态", () => {
   });
 });
 
-describe("五个读取按钮", () => {
+describe("四个读取按钮", () => {
   it("没连上：全部禁用，文案是开始态", () => {
     const actions = actionsFor({ connected: false, status: null, total: 0 });
     expect(Object.values(actions).every((action) => action.disabled)).toBe(true);
-    expect(Object.values(actions).map((action) => action.label)).toEqual(["增量读取", "完整读取", "手动监听", "开始接收", "采集聊天记录"]);
+    expect(Object.values(actions).map((action) => action.label)).toEqual(["增量读取", "完整读取", "开始接收", "采集聊天记录"]);
   });
 
-  it("连上了闲着：五个都能点，按下去各自开始", () => {
+  it("连上了闲着：四个都能点，按下去各自开始", () => {
     const actions = actionsFor();
-    expect(Object.values(actions).map((action) => action.disabled)).toEqual([false, false, false, false, false]);
-    expect(Object.values(actions).map((action) => action.command)).toEqual(["start-incremental", "start-full", "start-observation", "start-chat", "collect-chat-history"]);
+    expect(Object.values(actions).map((action) => action.disabled)).toEqual([false, false, false, false]);
+    expect(Object.values(actions).map((action) => action.command)).toEqual(["start-incremental", "start-full", "start-chat", "collect-chat-history"]);
     expect(Object.values(actions).some((action) => action.busy)).toBe(false);
   });
 
-  it("增量读取中：增量变停止键，完整读取和手动监听让开", () => {
+  it("增量读取中：增量变停止键，完整读取和其他读取让开", () => {
     const actions = actionsFor({ busy: true, status: status({ state: "collecting", syncMode: "direct_records" }) });
     expect(actions.incremental).toMatchObject({ label: "停止读取", icon: "pause", disabled: false, command: "stop-sync", busy: false });
     expect(actions.full!.disabled).toBe(true);
-    expect(actions.observe!.disabled).toBe(true);
     // 正在停：停止键转圈
     expect(actionsFor({ busy: true, status: status({ state: "collecting", syncMode: "direct_records" }) }, { stoppingSync: true }).incremental!.busy).toBe(true);
   });
 
   it("完整读取中：完整变停止键，增量和聊天都让开", () => {
-    const actions = actionsFor({ busy: true, status: status({ state: "collecting", syncMode: "page" }) });
+    const actions = actionsFor({ busy: true, status: status({ state: "collecting", syncMode: "direct_records", syncFull: true }) });
     expect(actions.full).toMatchObject({ label: "停止读取", icon: "pause", disabled: false, command: "stop-sync" });
     expect(actions.incremental).toMatchObject({ label: "增量读取", disabled: true, busy: false });
     expect(actions.chat!.disabled).toBe(true);
@@ -135,18 +128,9 @@ describe("五个读取按钮", () => {
     expect(actionsFor({ busy: true }).incremental).toMatchObject({ label: "增量读取", busy: true, disabled: true });
   });
 
-  it("手动监听中：监听变停止键，读取和聊天都等它", () => {
-    const actions = actionsFor({ observing: true, status: status({ state: "observing" }) });
-    expect(actions.observe).toMatchObject({ label: "停止监听", icon: "pause", disabled: false, command: "stop-observation" });
-    expect(actions.incremental!.disabled).toBe(true);
-    expect(actions.full!.disabled).toBe(true);
-    expect(actions.chat!.disabled).toBe(true);
-    expect(actions.history!.disabled).toBe(true);
-  });
-
   it("聊天接收中：开始接收变暂停接收，采集聊天记录照样能点", () => {
     const actions = actionsFor({ chatCollecting: true, status: status({ chat: { state: "observing", connection: "connected", message: null, progress: null, code: null } }) });
-    expect(actions.chat).toMatchObject({ label: "暂停接收", icon: "pause", disabled: false, command: "stop-observation" });
+    expect(actions.chat).toMatchObject({ label: "暂停接收", icon: "pause", disabled: false, command: "stop-chat" });
     expect(actions.history).toMatchObject({ label: "采集聊天记录", disabled: false, command: "collect-chat-history" });
   });
 
@@ -174,8 +158,7 @@ describe("按钮按下去调哪个回调", () => {
       onStartIncrementalSync: vi.fn(),
       onStartFullSync: vi.fn(),
       onStopSync: vi.fn(async () => undefined),
-      onStartObservation: vi.fn(async () => undefined),
-      onStopObservation: vi.fn(async () => undefined),
+      onStopChatObservation: vi.fn(async () => undefined),
       onStartChatObservation: vi.fn(async () => undefined),
       onCollectChatHistory: vi.fn(async () => undefined),
       setStoppingChat: vi.fn(),
@@ -186,8 +169,7 @@ describe("按钮按下去调哪个回调", () => {
     ["start-incremental", "onStartIncrementalSync"],
     ["start-full", "onStartFullSync"],
     ["stop-sync", "onStopSync"],
-    ["start-observation", "onStartObservation"],
-    ["stop-observation", "onStopObservation"],
+    ["stop-chat", "onStopChatObservation"],
     ["start-chat", "onStartChatObservation"],
     ["collect-chat-history", "onCollectChatHistory"],
   ])("%s → %s", (command, name) => {
@@ -199,7 +181,7 @@ describe("按钮按下去调哪个回调", () => {
   it("停止读取聊天：先置成正在停，停完再放开", async () => {
     const h = handlers();
     let finish: () => void = () => undefined;
-    h.onStopObservation.mockImplementation(() => new Promise<undefined>((resolve) => { finish = () => resolve(undefined); }));
+    h.onStopChatObservation.mockImplementation(() => new Promise<undefined>((resolve) => { finish = () => resolve(undefined); }));
     runReadCommand("stop-chat-history", h);
     expect(h.setStoppingChat.mock.calls).toEqual([[true]]);
     finish();
@@ -240,7 +222,7 @@ describe("账号与更新", () => {
   });
 
   it("换号被挡住的原因按先后排", () => {
-    const none = { switchingAccount: false, observing: false, syncing: false, busy: false, downloading: false, sparkRenewing: false };
+    const none = { switchingAccount: false, syncing: false, busy: false, downloading: false, sparkRenewing: false };
     expect(accountBlockedReason(none)).toBeNull();
     expect(accountBlockedReason({ ...none, busy: true, syncing: true })).toContain("正在读取记录");
     expect(accountBlockedReason({ ...none, sparkRenewing: true })).toContain("续火花");

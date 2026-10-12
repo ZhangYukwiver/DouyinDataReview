@@ -9,7 +9,7 @@ import { extractFile as extractArchiveFile, listPackage, statFile as statArchive
 import { DIRECT_SIGNER_FILES, verifyDirectSigner } from "../collector/directHistory.mjs";
 
 const projectDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|records(?:\.json)?|direct-history-template\.json|direct-session\.json(?:\.[^/]+\.tmp)?|accounts\.json|cookies?(?:\.sqlite|\.db|\.json)?(?:-journal|-wal|-shm)?|login data(?:-journal|-wal|-shm)?|local state|web data(?:-journal|-wal|-shm)?|\.env(?:\..*)?|\.git|\.ssh)$/i;
+const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|records(?:\.json)?|direct-history-template\.json|direct-session\.json(?:\.[^/]+\.tmp)?|external-browser\.json(?:\.[^/]+\.tmp)?|accounts\.json|cookies?(?:\.sqlite|\.db|\.json)?(?:-journal|-wal|-shm)?|login data(?:-journal|-wal|-shm)?|local state|web data(?:-journal|-wal|-shm)?|\.env(?:\..*)?|\.git|\.ssh)$/i;
 const runtimeDependencyRoots = new Set([
   "ws",
   "fflate",
@@ -95,6 +95,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     "collector/directApi.mjs", "collector/directChat.mjs", "collector/directCredentials.mjs",
     "collector/directExplorer.mjs", "collector/directLive.mjs", "collector/directProto.mjs",
     "collector/directWrites.mjs", "collector/nativeSignature.mjs", "collector/sm3.mjs",
+    "collector/browserConnection.mjs", "collector/server.mjs",
     "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs",
     "node_modules/ws/index.js",
     "node_modules/ws/wrapper.mjs", "node_modules/ws/lib/websocket.js",
@@ -110,16 +111,21 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
   assert(distFiles.includes("index.html"), "Web build is missing index.html");
   const packedDist = entries.filter((entry) => entry.startsWith("dist/") && !("files" in statFile(archive, entry)));
   assert.deepEqual(packedDist.sort(), distFiles.map((entry) => `dist/${entry}`).sort(), "Packaged web file list differs from current build");
-  let recoveryBundled = false;
+  let credentialImportBundled = false;
   for (const relative of distFiles) {
     const contents = extractFile(archive, `dist/${relative}`);
     assert.deepEqual(contents, await readFile(path.join(sourceDirectory, "dist", relative)), `Outdated packaged web asset: ${relative}`);
     if (relative.endsWith(".js")) {
       const source = contents.toString("utf8");
-      recoveryBundled ||= source.includes("takeFallback") && /newSet\(\["login_required","template_missing","template_invalid","template_mismatch","session_incomplete"\]\)/.test(source.replace(/\s+/g, ""));
+      credentialImportBundled ||= ["browser-login-connect", "browser-login-confirm", "browser-login-status", "browser_reconnect_required"]
+        .every(marker => source.includes(marker));
+      assert(!source.includes("browser-login-independent"), "Web bundle still exposes the removed dedicated browser");
+      assert(!/["']\/v1\/observe(?:\/stop)?["']/u.test(source), "Web bundle still calls the removed manual observation API");
     }
   }
-  assert(recoveryBundled, "Web bundle is missing the sync recovery state machine");
+  assert(credentialImportBundled, "Web bundle is missing CDP credential import and reconnection guidance");
+  assert(!extractFile(archive, "collector/douyinCollector.mjs").toString("utf8").includes("launchPersistentContext"),
+    "Collector still launches a dedicated browser");
 
   const runner = "collector/directSignerRunner.cjs";
   assert.equal(statFile(archive, runner).unpacked, true, "Signer runner must be unpacked");
@@ -153,5 +159,5 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   if (!process.argv[2]) throw new Error("Usage: node scripts/verify-release-package.mjs <packaged resources directory>");
   const result = await verifyReleasePackage(process.argv[2]);
-  console.log(`Verified release ${result.version}: current collector, ${result.webFiles} web assets, recovery flow, signer and no private data paths.`);
+  console.log(`Verified release ${result.version}: current collector, ${result.webFiles} web assets, CDP import flow, signer and no private data paths.`);
 }

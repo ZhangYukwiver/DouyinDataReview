@@ -143,7 +143,7 @@ describe("collector send gate", () => {
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: {} });
     collector.contextHeadless = true;
     collector.status = { ...collector.status, chat: { ...collector.status.chat, state: "observing", connection: "connected" } };
-    collector.chat = { active: true, mode: "chat", page, historyReady: true, acceptSent: vi.fn(), ...overrides };
+    collector.chat = { active: true, mode: "chat", direct: true, client: { send: request => sendChatText(page, request) }, historyReady: true, acceptSent: vi.fn(), ...overrides };
     return collector;
   }
   const input = { requestId: "request-0000000001", conversationId: CONVERSATION, text: "早安" };

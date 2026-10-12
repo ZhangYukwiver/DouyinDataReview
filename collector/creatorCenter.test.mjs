@@ -91,39 +91,20 @@ describe("parseCreatorJson", () => {
 
 describe("CreatorCenter", () => {
   const collectorWith = (results, overrides = {}) => {
-    const page = {
-      closed: false,
-      isClosed() { return this.closed; },
-      context() { return context; },
-      goto: vi.fn(async () => {}),
-      on: vi.fn(),
-      close: vi.fn(async function close() { page.closed = true; }),
-      evaluate: vi.fn(async () => results),
-    };
-    const context = { newPage: vi.fn(async () => page) };
-    const collector = {
-      context,
-      visibleBrowserWorkRunning: () => false,
-      ensureBrowser: vi.fn(async () => context),
-      hasLoginSession: vi.fn(async () => true),
-      releaseHeadlessContextIfIdle: vi.fn(async () => {}),
-      ...overrides,
-    };
-    return { collector, page };
+    let cursor = 0;
+    const api = { readCreator: vi.fn(async () => results[cursor++ % results.length]) };
+    const collector = { ensureDirectApi: vi.fn(async () => api), ...overrides };
+    return { collector, api };
   };
 
-  it("reads a batch in one blank page and reuses it", async () => {
-    const { collector, page } = collectorWith([{ status: 200, text: '{"status_code":0,"total":1}' }, { status: 500, text: "" }]);
+  it("reads a batch over HTTP without creating pages", async () => {
+    const { collector, api } = collectorWith([{ status: 200, text: '{"status_code":0,"total":1}' }, { status: 500, text: "" }]);
     const center = new CreatorCenter(collector);
-    const results = await center.read([{ key: "user_info" }, { key: "dashboard", params: { recent_days: 7 } }]);
-    expect(results).toEqual([{ ok: true, data: { status_code: 0, total: 1 } }, { ok: false, status: 500 }]);
+    expect(await center.read([{ key: "user_info" }, { key: "dashboard", params: { recent_days: 7 } }]))
+      .toEqual([{ ok: true, data: { status_code: 0, total: 1 } }, { ok: false, status: 500 }]);
     await center.read([{ key: "user_info" }]);
-    expect(collector.context.newPage).toHaveBeenCalledTimes(1);
-    expect(page.goto).toHaveBeenCalledWith("https://creator.douyin.com/robots.txt", expect.anything());
-    expect(center.active).toBe(true);
-    await center.close();
-    expect(center.active).toBe(false);
-    expect(collector.releaseHeadlessContextIfIdle).toHaveBeenCalled();
+    expect(api.readCreator).toHaveBeenCalledTimes(3);
+    expect(collector.ensureDirectApi).toHaveBeenCalledTimes(2);
   });
 
   it("decrypts index responses, and flags (not hides) ones it cannot decrypt", async () => {
@@ -143,25 +124,10 @@ describe("CreatorCenter", () => {
     ]);
   });
 
-  it("still schedules an idle close when opening the page fails, so the browser it launched gets released", async () => {
-    vi.useFakeTimers();
-    try {
-      const { collector } = collectorWith([], { hasLoginSession: vi.fn(async () => false) });
-      const center = new CreatorCenter(collector);
-      await expect(center.read([{ key: "user_info" }])).rejects.toMatchObject({ code: "login_required" });
-      expect(collector.releaseHeadlessContextIfIdle).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(61_000);
-      expect(collector.releaseHeadlessContextIfIdle).toHaveBeenCalledTimes(1);
-    } finally { vi.useRealTimers(); }
-  });
-
-  it("reports login and busy states and rejects bad batches before opening a page", async () => {
+  it("reports login failures and rejects invalid batches before HTTP requests", async () => {
     const { collector } = collectorWith([{ status: 200, text: '{"status_code":8}' }]);
     await expect(new CreatorCenter(collector).read([{ key: "user_info" }])).rejects.toMatchObject({ code: "login_required" });
     await expect(new CreatorCenter(collector).read([{ key: "publish" }])).rejects.toMatchObject({ code: "invalid_request" });
     await expect(new CreatorCenter(collector).read([])).rejects.toMatchObject({ code: "invalid_request" });
-    const busy = collectorWith([], { context: null, visibleBrowserWorkRunning: () => true }).collector;
-    await expect(new CreatorCenter(busy).read([{ key: "user_info" }])).rejects.toMatchObject({ code: "collector_busy" });
-    expect(busy.ensureBrowser).not.toHaveBeenCalled();
   });
 });

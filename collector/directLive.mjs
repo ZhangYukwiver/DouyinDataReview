@@ -100,7 +100,7 @@ export class DirectLiveClient {
     url.search = new URLSearchParams({ aid: "6383", app_name: "douyin_web", live_id: "1", language: "zh-CN", enter_from: "link_share",
       ...liveBrowserParameters(this.api.session), web_rid: webRid, msToken: this.api.session.security?.msToken || this.api.cookie("msToken") }).toString();
     const response = await this.api.raw(url.href, { referer: `${ORIGIN}/${webRid}`, signal: this.controller.signal });
-    if (response.text.trim() === "blocked") fail("verification_required", "抖音要求验证，请在专用浏览器完成后重试。");
+    if (response.text.trim() === "blocked") fail("verification_required", "抖音要求验证，请在日常浏览器完成后重新导入凭据。");
     let payload;
     try { payload = JSON.parse(response.text); } catch { fail("room_unavailable", "直播间没有返回有效资料。"); }
     if (payload.status_code === 8) fail("login_required", "抖音登录已失效，请重新登录。");
@@ -129,7 +129,7 @@ export class DirectLiveClient {
       ...liveBrowserParameters(this.api.session), msToken: this.api.session.security?.msToken || this.api.cookie("msToken") }).toString();
     const result = await this.api.raw(url.href, { referer: `${ORIGIN}/${this.webRid}`, signal: this.controller.signal,
       headers: { Accept: "application/x-protobuf", Origin: ORIGIN } });
-    if (result.text.trim() === "blocked") fail("verification_required", "直播消息接口要求安全验证，请在专用浏览器完成后重试。");
+    if (result.text.trim() === "blocked") fail("verification_required", "直播消息接口要求安全验证，请在日常浏览器完成后重新导入凭据。");
     const response = decodeLiveResponse(result.buffer);
     this.onResponse(response.bytes);
     return response;

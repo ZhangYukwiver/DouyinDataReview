@@ -40,12 +40,32 @@ export interface CollectorStatus {
   /** 记录本身换过几次（只存聊天不算）；老版本采集器没有这一项 */
   recordsRevision?: number;
   chatConnection?: "connecting" | "connected" | "reconnecting" | null;
-  /** page 要开可见浏览器，direct_records 走无头，接收和下载可以同时继续 */
+  /** 当前读取走 direct_records；page 仅兼容旧采集器状态。 */
   syncMode: "page" | "direct_records" | null;
+  syncFull?: boolean;
   /** 聊天接收自己的一份状态，和记录读取、视频下载互不影响 */
   chat: CollectorChatStatus;
   /** 正在用的抖音账号；老版本采集器没有这一项 */
   account?: { id: string; nickname: string | null; avatar: string | null } | null;
+  browserSource?: { mode: "independent" | "cdp"; browser: "chrome" | "edge" | "comet" | null; connected: boolean;
+    credentials?: "ready" | "exporting" | "reconnect_required" };
+}
+
+export interface BrowserLoginSource {
+  id: "chrome" | "edge" | "comet";
+  label: string;
+  available: boolean;
+  debugging: boolean;
+  inspectUrl: string;
+}
+
+export interface BrowserLoginCandidate {
+  id: string;
+  browser: BrowserLoginSource["id"];
+  nickname: string | null;
+  uid: string;
+  accountId: string | null;
+  newAccount: boolean;
 }
 
 export interface CollectorAccount {
@@ -699,8 +719,16 @@ function parseStatus(value: unknown): CollectorStatus {
     chatConnection: value.chatConnection === "connecting" || value.chatConnection === "connected" || value.chatConnection === "reconnecting"
       ? value.chatConnection : null,
     syncMode: value.syncMode === "page" || value.syncMode === "direct_records" ? value.syncMode : null,
+    syncFull: value.syncFull === true,
     chat: parseChatStatus(value.chat, validStates),
     account: parseStatusAccount(value.account),
+    ...(isObject(value.browserSource) && ["independent", "cdp"].includes(String(value.browserSource.mode)) ? {
+      browserSource: { mode: value.browserSource.mode as "independent" | "cdp",
+        browser: ["chrome", "edge", "comet"].includes(String(value.browserSource.browser)) ? value.browserSource.browser as BrowserLoginSource["id"] : null,
+        connected: value.browserSource.connected === true,
+        ...(["ready", "exporting", "reconnect_required"].includes(String(value.browserSource.credentials))
+          ? { credentials: value.browserSource.credentials as "ready" | "exporting" | "reconnect_required" } : {}) },
+    } : {}),
   };
 }
 
@@ -867,7 +895,7 @@ async function requestJson(
           ? "自动获取配对码仅支持当前电脑，请输入采集器显示的配对码。"
         : errorCode === "not_paired"
           ? "连接已过期，请重新配对。"
-          : (["download_start_failed", "import_busy", "import_failed", "collector_busy"].includes(errorCode) || errorCode.startsWith("account_")) && serverMessage
+          : (["download_start_failed", "import_busy", "import_failed", "collector_busy"].includes(errorCode) || errorCode.startsWith("account_") || errorCode.startsWith("browser_")) && serverMessage
             ? serverMessage
           : errorCode === "collector_busy"
             ? "采集器正在忙，等它做完再试。"
@@ -1097,21 +1125,9 @@ export async function startDirectRecordsSync(baseUrl: string, token: string): Pr
   return parseStatus(value.status);
 }
 
-export async function startCollectorObservation(baseUrl: string, token: string): Promise<CollectorStatus> {
-  const value = await requestJson(baseUrl, "/v1/observe", { method: "POST" }, token);
-  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务未返回监听状态。");
-  return parseStatus(value.status);
-}
-
 export async function startCollectorChatObservation(baseUrl: string, token: string): Promise<CollectorStatus> {
   const value = await requestJson(baseUrl, "/v1/chat/observe", { method: "POST" }, token);
   if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务未返回聊天读取状态。");
-  return parseStatus(value.status);
-}
-
-export async function stopCollectorObservation(baseUrl: string, token: string): Promise<CollectorStatus> {
-  const value = await requestJson(baseUrl, "/v1/observe/stop", { method: "POST" }, token);
-  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务未返回监听状态。");
   return parseStatus(value.status);
 }
 
@@ -1123,6 +1139,39 @@ export async function stopCollectorChatObservation(baseUrl: string, token: strin
 
 export async function getCollectorAccounts(baseUrl: string, token: string): Promise<CollectorAccounts> {
   return parseAccounts(await requestJson(baseUrl, "/v1/accounts", {}, token));
+}
+
+export async function getBrowserLoginSources(baseUrl: string, token: string): Promise<BrowserLoginSource[]> {
+  const value = await requestJson(baseUrl, "/v1/browser/sources", {}, token);
+  if (!isObject(value) || !Array.isArray(value.sources)) throw new LocalCollectorError("invalid_response", "浏览器列表无效。");
+  return value.sources.flatMap((item): BrowserLoginSource[] => {
+    if (!isObject(item) || !["chrome", "edge", "comet"].includes(String(item.id)) || typeof item.label !== "string") return [];
+    const id = item.id as BrowserLoginSource["id"];
+    return [{ id, label: item.label, available: item.available === true, debugging: item.debugging === true, inspectUrl: `${id}://inspect/#remote-debugging` }];
+  });
+}
+
+export async function inspectBrowserLogin(baseUrl: string, token: string, browser: BrowserLoginSource["id"], accountId?: string | null): Promise<BrowserLoginCandidate> {
+  const value = await requestJson(baseUrl, withAccount("/v1/browser/connect", accountId), { method: "POST", body: JSON.stringify({ browser }) }, token, 115_000);
+  const candidate = isObject(value) && isObject(value.candidate) ? value.candidate : null;
+  if (!candidate || typeof candidate.id !== "string" || !/^[0-9a-f-]{36}$/u.test(candidate.id)
+    || !["chrome", "edge", "comet"].includes(String(candidate.browser)) || typeof candidate.uid !== "string" || !/^\d{1,30}$/u.test(candidate.uid))
+    throw new LocalCollectorError("invalid_response", "浏览器登录账号无效。");
+  return { id: candidate.id, browser: candidate.browser as BrowserLoginSource["id"], uid: candidate.uid,
+    nickname: cleanRecordString(candidate.nickname, 100), accountId: typeof candidate.accountId === "string" && ACCOUNT_ID.test(candidate.accountId) ? candidate.accountId : null,
+    newAccount: candidate.newAccount === true };
+}
+
+export async function confirmBrowserLogin(baseUrl: string, token: string, id: string, accountId?: string | null): Promise<CollectorAccountChange> {
+  return parseAccountChange(await requestJson(baseUrl, withAccount("/v1/browser/confirm", accountId), { method: "POST", body: JSON.stringify({ id }) }, token, 5 * 60_000));
+}
+
+export async function cancelBrowserLogin(baseUrl: string, token: string, id: string): Promise<void> {
+  await requestJson(baseUrl, "/v1/browser/pending", { method: "DELETE", body: JSON.stringify({ id }) }, token);
+}
+
+export async function disconnectBrowserLogin(baseUrl: string, token: string, accountId?: string | null): Promise<CollectorAccountChange> {
+  return parseAccountChange(await requestJson(baseUrl, withAccount("/v1/browser/disconnect", accountId), { method: "POST", body: "{}" }, token, ACCOUNT_CHANGE_TIMEOUT_MS));
 }
 
 export interface CollectorAccountChange {

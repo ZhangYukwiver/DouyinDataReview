@@ -6,7 +6,7 @@ const SCHEMA_VERSION = 1;
 const ACCOUNT_ID_PATTERN = /^(default|[0-9a-f]{12})$/u;
 const NESTED_ID_PATTERN = /^[0-9a-f]{12}$/u;
 // 根目录本身就是 default 账号；删它时只动这几样，direct-signer、backups 这些是全局共用的
-const ROOT_ACCOUNT_ENTRIES = ["browser-profile", "records.json", "direct-history-template.json", "direct-session.json", "downloads"];
+const ROOT_ACCOUNT_ENTRIES = ["browser-profile", "records.json", "direct-history-template.json", "direct-session.json", "external-browser.json", "downloads"];
 const RECORDS_TEMPORARY_PATTERN = /^records\.json\..+\.tmp$/u;
 
 export function isAccountId(value) {
