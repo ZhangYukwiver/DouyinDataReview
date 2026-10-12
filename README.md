@@ -27,7 +27,7 @@
 > **先看什么？** 想安装，直接打开[最新 Release](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest)；想了解实现，查看[面向开发者](#面向开发者)；想比较另一种视觉风格，继续看下面的[年度回顾](#年度回顾)。
 
 > [!NOTE]
-> 本机需要已安装 Chrome、Edge、Brave 或 Chromium 中的任意一个（Windows 自带的 Edge 即可；macOS 上也能自动识别 Comet）。工具只读取你本人登录账号在网页端当前可见的记录；增量读取走的是抖音未公开承诺的私有接口，可能失效或触发账号风控，只用于本机个人账号。
+> 登录凭据导入支持 Chrome 144+、提供远程调试开关的 Edge，以及 macOS Comet。导入成功后，凭据有效时可关闭调试及浏览器；失效后重新连接并导入。无需安装扩展，不再启动专用浏览器。工具只读取你本人登录账号在网页端当前可见的记录；采集使用抖音未公开承诺的私有接口，可能失效或触发账号风控，只用于本机个人账号。
 
 ## 主要功能
 
@@ -44,9 +44,13 @@
 
 ### 本次改造
 
-登录初始化完成后，记录采集、搜索与互动、创作者中心、视频解析与下载主要通过 HTTP 接口完成；聊天和直播弹幕通过 WebSocket 接收。浏览器用于本人登录、验证码处理、首次凭据初始化和浏览器绑定会话的续期，不需要常驻聊天或直播页面。源码运行和桌面版共用静态服务的媒体策略，允许播放本机采集器提供的视频。
+v1.13.0 统一使用日常浏览器的 CDP 凭据导入：核对账号后一次性导出 Cookie、接口参数和签名凭据，成功后自动断开连接。有效凭据按账号保存，重启工作台也可继续使用；凭据失效或平台要求验证时，再由本人完成登录或验证并重新导入。专用浏览器及网页手动监听入口已移除。
 
-2026 年 10 月 12 日已在 macOS 本地实测首次登录、完整及重复增量读取、账号切换、批量 ZIP、导出导入、一键发送、真实 AI 解析、报告与设置。一键发送成功不等于火花天数已经增加；跨天增长仍需双方在真实日期内持续互聊，再以抖音官方状态确认。
+记录采集、搜索与互动、创作者中心、视频解析与下载通过 HTTP 接口完成，聊天和直播弹幕通过 WebSocket 接收；完整和增量读取均不要求滚动网页。源码运行和桌面版共用静态服务的媒体策略，允许播放本机采集器提供的视频。
+
+2026 年 10 月 12 日已在 macOS 本地实测 Chrome 凭据导入、断开 CDP 并关闭调试后读取观看／喜欢／收藏，以及重启采集器后复用凭据；本地模拟短期令牌过期验证了重新导入提示，该模拟不代表自然失效周期。移除旧入口后通过页面验收，旧记录保持不变。本轮 CDP 验证未发消息或互动。
+
+此前 HTTP／WebSocket 改造已在 macOS 实测完整及重复增量读取、账号切换、批量 ZIP、导出导入、一键发送、真实 AI 解析、报告与设置。一键发送成功不等于火花天数已经增加；跨天增长仍需双方在真实日期内持续互聊，再以抖音官方状态确认。Windows 构建校验与真实设备登录验收分别报告。
 
 ## 年度回顾
 
@@ -97,8 +101,16 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
    **macOS 首次打开前需在终端执行一次 `xattr -cr "/Applications/内容数据工作台.app"`，否则会提示应用已损坏；Windows 可能出现 SmartScreen 提示，点「更多信息」，再点「仍要运行」。**
 
 2. 启动「内容数据工作台」，点击「连接采集器」。应用会从本机采集器自动取一次性配对码完成连接，之后默认在前台自动读取新记录，也可以手动点「增量读取」。关掉窗口应用会留在托盘里接着每 3 小时读一次，要完全退出就在托盘图标的菜单里点「退出」。
-3. 首次连接时独立浏览器还没登录，会自动开始一次完整读取并弹出浏览器窗口，在里面登录自己的抖音账号；登录后自动继续，之后整理聊天历史并保持实时接收。
+3. 首次使用请在「设置 → 账号」连接已登录抖音的 Chrome、Edge 或 macOS Comet，核对昵称并导入凭据。导入后自动断开 CDP，可以关闭浏览器，再读取记录或开始接收聊天。凭据失效时重新连接并导入。
 4. 进入内容库，在观看历史、喜欢、收藏、聊天和持续报告之间切换；在「设置」里换界面风格、选报告用哪一套，点「打开报告」看年度回顾。
+
+### 导入已有浏览器登录凭据
+
+先在准备连接的浏览器个人资料里登录抖音。在「设置 → 账号 → 导入浏览器登录凭据」选择 Chrome、Edge 或 macOS 的 Comet，开启对应浏览器 `chrome://inspect/#remote-debugging`、`edge://inspect/#remote-debugging` 或 `comet://inspect/#remote-debugging` 中的远程调试，再点击「连接浏览器」。浏览器弹出确认框时本人允许连接，核对应用显示的抖音昵称后点击「确认导入」。工作台会导出 Cookie、接口参数和配套签名凭据，成功后自动断开 CDP；此后可关闭调试开关及浏览器。已有账号会复用自己的记录目录，首次连接的其他账号会单独保存。首次使用或添加账号也使用此入口，不再启动专用浏览器。
+
+Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供远程调试开关的版本。工作台自动检测默认安装的稳定版用户目录和有效本机调试端口，并核对监听进程属于该浏览器，避免旧端口文件接到另一个实例；自定义用户目录、其他浏览器渠道和 Firefox 暂不支持此入口。无需安装浏览器扩展，也无需手填端口。
+
+远程调试授权覆盖整个浏览器实例；工作台只读取抖音域 Cookie，并仅在自己创建的抖音标签页初始化凭据，不清理日常浏览器缓存、不修改原有标签页。凭据有效时，接口读取和实时接收不依赖 CDP，重启工作台也可继续使用已导入的凭据。读取仍使用 HTTP 分页，不要求滚动页面。断开连接、切换账号或退出应用只清理工作台创建的标签页并断开调试连接，保留浏览器进程。调试开关需由本人在浏览器中关闭。短期令牌过期、登录失效或平台要求验证时，工作台会提示重新连接浏览器并导入，不会自动启动专用浏览器兜底；凭据有效期由抖音控制，不保证固定时长。专用浏览器和网页手动监听已移除，未导入凭据时也不会自动弹出登录窗口。
 
 > 安装包只含应用代码、Web 页面和已校验的签名器，不含本地记录、登录状态或浏览器配置。采集记录保存在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录，升级不会覆盖。
 >
@@ -115,8 +127,9 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 从源码运行时数据在项目里的 `.local-data/`（已被 git 忽略）；桌面版在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录。
 
-- 独立浏览器配置目录：`.local-data/browser-profile/`，保存着抖音登录态
-- 代码请求登录会话：`.local-data/direct-session.json`，从本人已登录的专用浏览器导出，按账号隔离并以仅当前用户可读写的权限保存；不包含在安装包中
+- 旧版的 `.local-data/browser-profile/` 不再使用；升级保留原目录和已有记录，不会自动删除
+- 代码请求登录会话：`.local-data/direct-session.json`，从本人确认连接的日常浏览器导出，按账号隔离并以仅当前用户可读写的权限保存；不包含在安装包中
+- 浏览器来源：每个账号目录中的 `external-browser.json` 只记录浏览器类型，不包含连接地址或凭据；重启后复用该账号已导入的有效凭据，失效时才要求重新连接，不会自动改用另一个浏览器的登录态
 - 直接读取模板：`.local-data/direct-history-template.json`，只含浏览器标识和白名单里的查询参数，不含 Cookie
 - 归一化记录：`.local-data/records.json`
 - 多账号：上面这几样属于第一个账号；之后添加的账号各自在 `.local-data/accounts/<12 位编号>/` 下有自己的浏览器配置、记录、代码请求会话和直接读取模板。账号列表在 `.local-data/accounts.json`，记着各账号的昵称、头像和抖音 uid
@@ -146,12 +159,13 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 | `/v1/downloads` | 只在你点下载或播放时启动。通过代码解析作品地址并下载；播放只解析地址，不落盘。DELETE 释放播放任务 |
 | `/v1/analyses` · DELETE `/v1/analyses/:id` | 只在你点「解析」时启动：通过代码下载最低一档清晰度的视频，连同拆解提示词发给你在解析库里填的 AI 接口（默认火山方舟），答案存进数据目录的 `analyses.json`；Key 随每次请求带来，不落盘。GET 列出解析库，DELETE 删一条 |
 | `/v1/downloads/:id/stream` | 播放器边下边播用的转发地址，凭每个播放任务单独的 key 访问，不带登录令牌；任务释放后立即失效 |
-| `/v1/observe` · `/v1/observe/stop` | 打开独立浏览器手动监听 · 停止监听 |
 | `/v1/status` · `/v1/records` | 读取状态与归一化记录，DELETE 清除本地记录；清除和 `/v1/records/import` 可带 `?account=<id>`，采集器已切到别的账号时返回 409 `account_changed`，不动记录 |
-| `/v1/accounts` · `/v1/accounts/:id/activate` · DELETE `/v1/accounts/:id` | 列出账号、新建并切换过去（201）· 切换 · 删除不在用的账号；读取、手动监听、存文件的下载、探索进行中或正在切换时返回 409 |
-| `/v1/browser/close` | 关闭独立浏览器 |
+| `/v1/accounts` · `/v1/accounts/:id/activate` · DELETE `/v1/accounts/:id` | 列出账号、新建并切换过去（201）· 切换 · 删除不在用的账号；读取、存文件的下载、探索进行中或正在切换时返回 409 |
+| `/v1/browser/sources` | 仅本机可用，检测 Chrome、Edge、macOS Comet 默认目录和有效调试端口，不读取 Cookie |
+| `/v1/browser/connect` · `/v1/browser/confirm` · DELETE `/v1/browser/pending` | 预览浏览器登录账号 · 本人确认后导出完整凭据并自动断开 · 取消待确认连接；确认前不保存登录凭据，待确认连接两分钟后自动释放 |
+| `/v1/browser/disconnect` | 仅断开外部连接，保留有效凭据及接口任务 |
 
-代码请求复用当前账号的登录会话。首次初始化写操作凭据时会短暂打开后台浏览器，导出同一会话的 Cookie、签名密钥和设备凭据；完成后聊天和互动请求直接走代码。直播进房、弹幕接收、心跳、确认回执和断线重连也由代码完成，弹幕只在内存保留最近 300 条。启用浏览器绑定登录的账号还会在短期令牌过期时通过后台浏览器刷新会话。登录、验证码及登录失效后的恢复仍在专用浏览器中完成。
+代码请求复用当前账号导入的登录会话。CDP 导入时一次性导出 Cookie、请求参数、签名密钥和设备凭据，之后记录、聊天、互动、创作者中心和直播都走 HTTP 或 WebSocket。直播弹幕只在内存保留最近 300 条。没有凭据、短期令牌过期或需要验证时，提示本人在所选浏览器中完成登录或验证并重新导入，不启动后台浏览器。
 
 应用内取视频、读评论和用探索页时，会先禁止远端自动播放并拦截观看历史写入，视频只在应用内播放。
 
@@ -198,21 +212,17 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 点「更多信息」，再点「仍要运行」。
 
-### 提示「未找到 Chrome、Edge、Brave 或 Chromium 浏览器」？
+### 首次使用如何登录？
 
-装上 Chrome、Edge、Brave 或 Chromium 中的任意一个（Windows 自带的 Edge 即可；macOS 上也能自动识别 Comet）；浏览器装在非默认位置时，可用环境变量 `DOUYIN_CHROME_PATH` 指定可执行文件路径。
-
-### 首次连接弹出浏览器窗口，正常吗？
-
-正常。独立浏览器还没登录时，会自动开始一次完整读取并弹出窗口让你登录；登录后自动继续。
+先在 Chrome、Edge 或 macOS Comet 中登录抖音，再到「设置 → 账号」连接并导入凭据。采集器本身可在没有浏览器可执行文件时启动；凭据导入需要受支持且已开启远程调试的浏览器，成功后可关闭。
 
 ### 提示「采集器端口 4765 已被占用」？
 
 通常是旧实例仍在后台运行。先从旧版的托盘或菜单栏选择「退出」，再启动新版；从源码运行时，也要停止之前启动的采集器。只关闭窗口可能仍会留在后台，不需要删除本地记录或登录配置。
 
-### 已连接却提示「尚未捕获直接读取模板」？
+### 已连接却提示需要导入凭据或读取配置不完整？
 
-请从[最新 Release](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest)升级至 v0.1.1 或更新版本。旧版手动监听可能保存了记录，却没有建立增量读取所需的配置。新版会在监听观看历史时保存配置；增量读取缺少配置或配置失效时，会自动尝试一次完整读取。若仍提示初始化失败，点击「完整读取」，在专用浏览器中登录并等待观看历史加载完成。升级会保留本地记录。
+在「设置 → 账号」重新连接已登录的浏览器并确认导入。导入会建立 HTTP 分页所需的请求参数；导入完成后再点「增量读取」或「完整读取」。升级保留本地记录，旧版已有完整且有效的凭据也可以继续使用。
 
 ### 报告是空的，或提示「报告有更新」？
 
@@ -224,7 +234,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ### 探索页提示需要登录或验证？
 
-去「手动监听」里，在独立浏览器中把登录或验证做完，再回到探索页。
+在日常浏览器中完成抖音登录或验证，再到「设置 → 账号」重新连接并导入凭据，然后重试。
 
 ### 手机连不上？
 
@@ -297,7 +307,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 ## 安全说明
 
 1. **仅限个人使用**：此工具只读取你本人登录账号当前可见的记录，发消息、点赞、评论、转发等操作也只在你手动点击时进行（一键续火花也要你勾好对象、点开始才发这一轮，不做定时）；请勿用于他人账号，也别拿它群发营销或刷屏
-2. **登录态安全**：独立浏览器配置目录保存着抖音登录 Cookie，请妥善保管，不要拷贝或分享给他人
+2. **登录态安全**：账号目录保存着导出的 Cookie 和签名凭据，请妥善保管，不要拷贝或分享给他人
 3. **数据隐私**：本地记录和聊天快照包含个人隐私信息，请谨慎处理；仓库和安装包本身不含任何数据
 4. **合法使用**：请遵守相关法律法规和平台规则，不得用于非法目的
 
@@ -330,10 +340,12 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 
 ## English
 
-DouyinDataReview is a local-first desktop app for Windows and macOS that works with Douyin, the Chinese version of TikTok. It reads your own watch history, likes, favorites and chat messages using your Douyin login session, keeps these records on your computer, and turns them into a rolling report and a year-in-review (a "Douyin Wrapped"). You can also export all records as JSON, receive chats in real time, keep chat streaks going, play and download videos, and view your Creator Center stats read-only. Optional video analysis sends the selected video, its public metadata and a prompt to the AI endpoint you configure. The interface is in Chinese. Get the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest); Chrome, Edge, Brave or Chromium must be installed.
+DouyinDataReview is a local-first desktop app for Windows and macOS that works with Douyin, the Chinese version of TikTok. It reads your own watch history, likes, favorites and chat messages using your Douyin login session, keeps these records on your computer, and turns them into a rolling report and a year-in-review (a "Douyin Wrapped"). You can also export all records as JSON, receive chats in real time, keep chat streaks going, play and download videos, and view your Creator Center stats read-only. Optional video analysis sends the selected video, its public metadata and a prompt to the AI endpoint you configure. The interface is in Chinese. Get the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest).
+
+Since v1.13.0, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, enable that browser's remote debugging, connect, check the account name, and confirm the credential import. The app disconnects automatically after exporting the complete credentials. You can turn off debugging and close the browser; valid credentials work through HTTP and WebSocket, including after an app restart. If they expire or Douyin requires verification, reconnect and import again. No extension, dedicated browser or manual page-listening mode is required. Firefox, custom user-data directories and other browser channels are not supported.
 
 - **Is there a Douyin Wrapped?** DouyinDataReview builds a Wrapped-style year-in-review from your own records on your computer, any time you want; you can [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) in the browser without installing anything.
-- **How do I export my Douyin watch history?** Install DouyinDataReview, connect the collector, sign in to Douyin web, and after the sync finishes click 导出数据 (Export data) in Settings. Watch history, likes, favorites and friend chats are saved to one JSON file.
+- **How do I export my Douyin watch history?** Install DouyinDataReview, connect the collector, import credentials from your signed-in browser in Settings → Account, then run a full or incremental read. After it finishes, click 导出数据 (Export data) in Settings. Watch history, likes, favorites and friend chats are saved to one JSON file.
 - **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from Douyin's 个人信息下载 (personal data download) to generate a report without signing in.
 - **Is it free and private?** Yes. It is MIT-licensed. Personal records and reports stay on your computer. Optional video analysis sends only the selected video, public metadata and a prompt to your configured AI endpoint; it does not send your Douyin login cookies or complete personal records. The API key stays in this device's browser configuration and is used by the collector only for the requested analysis.
 
@@ -354,7 +366,7 @@ DouyinDataReview is a local-first desktop app for Windows and macOS that works w
 1. **[mafqla/douyin-api](https://github.com/mafqla/douyin-api)** — 固定版本签名器
 2. **[Expo](https://github.com/expo/expo)** / **[React Native](https://github.com/facebook/react-native)** / **[react-native-web](https://github.com/necolas/react-native-web)** — 工作台页面与原生端
 3. **[Electron](https://github.com/electron/electron)** / **[electron-builder](https://github.com/electron-userland/electron-builder)** — 桌面壳与安装包
-4. **[Playwright](https://github.com/microsoft/playwright)** — 驱动独立浏览器与无头会话
+4. **[Playwright](https://github.com/microsoft/playwright)** — 连接已授权的浏览器 CDP，并提供 HTTP 请求会话
 5. **[lucide](https://github.com/lucide-icons/lucide)** — 图标
 
 没有这些项目，这个工具做不出来，谢谢他们。
