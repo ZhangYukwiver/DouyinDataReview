@@ -1351,6 +1351,9 @@ export function normalizeChatSocketPayload(payload) {
   const frame = readProtoFields(bytes);
   const type = decodeText(firstField(frame, 7, 2)?.value);
   const framedPayload = firstField(frame, 8, 2)?.value;
+  if (type === "text/json" && framedPayload instanceof Uint8Array) {
+    return normalizeChatSocketPayload(decodeText(framedPayload, MAX_CHAT_FRAME_BYTES) ?? "");
+  }
   if (type === "pb" && framedPayload instanceof Uint8Array) {
     const encoding = decodeText(firstField(frame, 6, 2)?.value);
     if (encoding && encoding !== "__lz4") {

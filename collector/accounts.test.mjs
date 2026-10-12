@@ -69,7 +69,7 @@ describe("AccountRegistry", () => {
   it("removes only that account's data and never the active one", async () => {
     const root = await makeRoot();
     for (const name of ["browser-profile/Default", "downloads", "direct-signer", "backups"]) await mkdir(path.join(root, name), { recursive: true });
-    for (const name of ["records.json", "records.json.123.tmp", "direct-history-template.json", "launcher-error.txt", "direct-signer/signer.js", "backups/old.json"]) {
+    for (const name of ["records.json", "records.json.123.tmp", "direct-history-template.json", "direct-session.json", "launcher-error.txt", "direct-signer/signer.js", "backups/old.json"]) {
       await writeFile(path.join(root, name), "x");
     }
     const registry = new AccountRegistry(root);

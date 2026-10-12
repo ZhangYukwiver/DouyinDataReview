@@ -22,6 +22,7 @@ const PAGE_HOSTS = [
 
 const MEDIA_HOSTS = [
   "douyinvod.com",
+  "zjcdn.com",
   "ibytedtos.com",
   "byteimg.com",
   "snssdk.com",
@@ -320,15 +321,40 @@ function bodyText(page) {
   return locator.innerText({ timeout: 3_000 }).catch(() => "");
 }
 
-/**
- * Resolve one share/page URL to a fresh playable media URL using the supplied
- * persistent browser context. No private API signature is generated here.
- */
+/** Resolve through the signed HTTP client after login, without loading a page. */
+async function discoverDirectVideo(api, sourceUrl, { signal } = {}) {
+  let canonicalUrl = normalizeDouyinVideoUrl(sourceUrl);
+  let videoId;
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const url = new URL(canonicalUrl);
+    videoId = url.pathname.match(VIDEO_ID_PATTERN)?.[1] ?? url.searchParams.get("modal_id");
+    if (videoId) break;
+    signal?.throwIfAborted();
+    const context = await api.context();
+    const response = await context.get(canonicalUrl, { maxRedirects: 0, maxRetries: 0, timeout: 20_000 });
+    try {
+      const location = response.headers().location;
+      if (![301, 302, 303, 307, 308].includes(response.status()) || !location) throw invalidSource("分享链接未返回可识别的作品地址。");
+      canonicalUrl = normalizeDouyinVideoUrl(new URL(location, canonicalUrl).toString());
+    } finally { await response.dispose(); }
+  }
+  if (!/^\d{5,30}$/u.test(videoId ?? "")) throw invalidSource("分享链接未返回可识别的作品 ID。");
+  const payload = await api.request("/aweme/v1/web/aweme/detail/", { query: { aweme_id: videoId }, referer: canonicalUrl, signal });
+  if (String(payload.aweme_detail?.aweme_id) !== videoId) throw new VideoDownloadError("content_unavailable", "接口未返回这条作品，可能已删除或当前不可访问。", { retryable: false });
+  const metadata = extractDouyinMetadata(payload, canonicalUrl);
+  const candidates = collectDouyinMediaCandidates(payload);
+  const album = extractDouyinAlbum(payload);
+  const media = album ? null : selectDouyinMediaCandidate(candidates);
+  if (!media && !album) throw new VideoDownloadError("media_not_found", "作品接口没有返回可播放的媒体地址。");
+  return { sourceUrl: normalizeDouyinVideoUrl(sourceUrl), canonicalUrl, ...metadata, media, ...album, candidates };
+}
+
 export async function discoverDouyinVideo(context, sourceUrl, {
   pageTimeoutMs = DEFAULT_PAGE_TIMEOUT_MS,
   mediaWaitMs = DEFAULT_MEDIA_WAIT_MS,
   signal,
 } = {}) {
+  if (context?.directApi) return discoverDirectVideo(context, sourceUrl, { signal });
   signal?.throwIfAborted();
   const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
   if (!context || typeof context.newPage !== "function") {

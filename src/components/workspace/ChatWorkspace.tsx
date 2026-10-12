@@ -1287,7 +1287,7 @@ function SparkRenewPanel({ blocked, draft, onClear, onPick, onPickUnrenewed, onS
           ) : <Text style={styles.renewHint}>还没有喜欢或收藏的视频，可以直接粘贴链接。</Text>}
           <TextInput accessibilityLabel="视频链接" editable={!running} onChangeText={setLink} placeholder="或者粘贴抖音视频链接 / 作品 ID"
             placeholderTextColor={color.textMuted} {...ws("c-input")} style={[styles.composerInput, styles.renewInput]} value={link} />
-          <Text style={styles.renewHint}>视频只能发给抖音分享面板最上面、不用往下翻就看得到的那几位，其他人会跳过（往下翻会让抖音给沿路的人都建会话）。一句话和表情不受这个限制。</Text>
+          <Text style={styles.renewHint}>视频只能发给抖音分享名单里的人（最近聊过的和你关注的），不在名单里的会跳过。一句话和表情不受这个限制。</Text>
         </View>
       )}
 

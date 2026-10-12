@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { startStaticServer } from "./staticServer.mjs";
+import { startStaticServer as startSourceStaticServer } from "../staticServer.mjs";
 
 const temporaryDirectories = [];
 const runtimes = [];
@@ -46,13 +47,20 @@ describe("desktop static server", () => {
     expect(missingAsset.status).toBe(404);
   });
 
-  it.each(["/", "/annual/2025"])("allows authenticated video blobs on the app page at %s", async (pathname) => {
-    const runtime = await startStaticServer({ rootDirectory: await fixture() });
+  it.each([
+    ["desktop", "/", startStaticServer],
+    ["desktop", "/annual/2025", startStaticServer],
+    ["source", "/", startSourceStaticServer],
+    ["source", "/annual/2025", startSourceStaticServer],
+  ])("allows collector media and video blobs for %s at %s", async (_entry, pathname, startServer) => {
+    const runtime = await startServer({ rootDirectory: await fixture() });
     runtimes.push(runtime);
 
     const response = await fetch(`${runtime.url}${pathname}`, { headers: { Accept: "text/html" } });
     const directives = response.headers.get("content-security-policy").split(";").map((value) => value.trim().split(/\s+/u));
-    expect(directives.find(([name]) => name === "media-src")).toContain("blob:");
+    expect(directives.find(([name]) => name === "media-src")).toEqual([
+      "media-src", "'self'", "https:", "blob:", "http://127.0.0.1:*", "http://localhost:*",
+    ]);
     expect(directives.find(([name]) => name === "script-src")).not.toContain("blob:");
   });
 });

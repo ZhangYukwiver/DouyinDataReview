@@ -16,6 +16,7 @@ import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
+import { DirectHistoryError } from "./directHistory.mjs";
 import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
@@ -678,9 +679,9 @@ export async function startCollectorServer({
         const body = await readJsonBody(request, 128 * 1024);
         sendJson(response, 200, await collector.sendChatMessage(body));
       } catch (error) {
-        const known = error instanceof ChatSendError;
+        const known = error instanceof ChatSendError || error instanceof DirectHistoryError;
         const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
-        sendJson(response, known ? error.status : malformed ? 400 : 500, {
+        sendJson(response, known ? error.status || 409 : malformed ? 400 : 500, {
           error: known ? error.code : malformed ? "invalid_request" : "chat_send_failed",
           message: known ? error.message : malformed ? "发送请求无效，请重试。" : "消息没发出去，请稍后再试。",
         });
@@ -690,9 +691,9 @@ export async function startCollectorServer({
         const result = url.pathname.endsWith("/streaks") ? await collector.readChatStreaks() : await collector.readChatMessages(await readJsonBody(request));
         sendJson(response, 200, result);
       } catch (error) {
-        const known = error instanceof ChatSendError;
+        const known = error instanceof ChatSendError || error instanceof DirectHistoryError;
         const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
-        sendJson(response, known ? error.status : malformed ? 400 : 500, {
+        sendJson(response, known ? error.status || 409 : malformed ? 400 : 500, {
           error: known ? error.code : malformed ? "invalid_request" : "chat_read_failed",
           message: known ? error.message : malformed ? "请求无效，请重试。" : "暂时读不到，请稍后再试。",
         });

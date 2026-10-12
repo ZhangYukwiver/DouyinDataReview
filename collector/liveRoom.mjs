@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { gunzipSync } from "node:zlib";
 import { pageNeedsVerification } from "./readOnlyPage.mjs";
+import { DirectHistoryError } from "./directHistory.mjs";
+import { DirectLiveClient, decodeLivePush } from "./directLive.mjs";
 
-// 工作台看直播：采集器在共享无头会话里开一个直播间标签页，只做三件事——
-// 读直播间信息（拉流地址给工作台自己播）、听弹幕、别的都不碰。
-// 不点任何东西，所以发弹幕、送礼、点赞这些在这里根本没有入口。
+// 工作台看直播：当前账号的 HTTP 会话读进房资料，Node WebSocket 收弹幕。
+// 画面由工作台拉流播放；这里没有发弹幕、送礼、点赞的入口。
 
 const ENTER_PATH = "/webcast/room/web/enter/";
 const IM_FETCH_PATH = "/webcast/im/fetch/";
@@ -112,11 +112,8 @@ export function decodeLiveMessages(response) {
 
 /** WebSocket 的一帧：外面包一层 PushFrame，payload 一般 gzip 过；心跳帧没有消息。 */
 export function decodeLiveFrame(frame) {
-  const fields = readFields(frame);
-  if (text(field(fields, 7)) !== "msg") return [];
-  const payload = field(fields, 8);
-  if (!Buffer.isBuffer(payload)) return [];
-  return decodeLiveMessages(payload[0] === 0x1f && payload[1] === 0x8b ? gunzipSync(payload) : payload);
+  const response = decodeLivePush(frame);
+  return response ? decodeLiveMessages(response.bytes) : [];
 }
 
 // ---- 直播间信息 ----
@@ -201,11 +198,16 @@ export class LiveRooms {
     return this.rooms.size;
   }
 
+  get usesBrowser() {
+    return [...this.rooms.values()].some(room => room.page)
+      || (this.inflight > 0 && typeof this.collector.ensureDirectApi !== "function");
+  }
+
   async open(input) {
     const webRid = liveRoomIdFrom(input);
     if (!webRid) throw new LiveRoomError("invalid_room", "认不出这个直播间，请粘贴 live.douyin.com 的链接或房间号。", 400);
-    // 快速换台时上一个可能还在进房：先关掉它的页面让它尽快收尾，再排队进新的，免得两边同时去起浏览器
-    for (const room of this.rooms.values()) void room.page.close().catch(() => {});
+    // 快速换台时上一个可能还在进房：先取消旧连接，再排队进新的
+    for (const room of this.rooms.values()) void this.close(room.id, { release: false });
     clearTimeout(this.releaseTimer);
     this.inflight += 1;
     const entered = this.queue.then(() => this.enter(webRid));
@@ -230,6 +232,20 @@ export class LiveRooms {
   async readFollowing() {
     const collector = this.collector;
     if (collector.visibleBrowserWorkRunning()) throw new LiveRoomError("collector_busy", "采集器正在用浏览器读取记录，读完就能看到关注的人谁在播。");
+    if (typeof collector.ensureDirectApi === "function") {
+      try {
+        const api = await collector.ensureDirectApi();
+        const url = new URL(FOLLOWING_URL);
+        const payload = await api.request(url.pathname, { query: Object.fromEntries(url.searchParams) });
+        const list = normalizeFollowingLive(payload);
+        if (!list) throw new LiveRoomError("following_unavailable", "没读到关注的人的直播，请稍后重试。", 502);
+        this.followingCache = { at: Date.now(), list };
+        return list;
+      } catch (error) {
+        if (error instanceof DirectHistoryError) throw new LiveRoomError(error.code, error.message);
+        throw error;
+      }
+    }
     const context = await collector.ensureBrowser({ headless: true });
     if (!await collector.hasLoginSession(context, null)) throw new LiveRoomError("login_required", "登录抖音以后，才能看到关注的人谁在播。");
     const page = await context.newPage();
@@ -257,6 +273,7 @@ export class LiveRooms {
     await this.closeAll({ release: false });
     const collector = this.collector;
     if (collector.visibleBrowserWorkRunning()) throw new LiveRoomError("collector_busy", "采集器正在用浏览器读取记录，读完就能看直播。");
+    if (typeof collector.ensureDirectApi === "function") return this.enterDirect(webRid);
     const context = await collector.ensureBrowser({ headless: true });
     const page = await context.newPage();
     const room = {
@@ -318,13 +335,44 @@ export class LiveRooms {
     }
   }
 
+  async enterDirect(webRid) {
+    let room;
+    try {
+      room = { id: randomUUID(), webRid, page: null, transport: null, info: null, messages: [], seen: new Set(), seq: 0,
+        online: null, likes: null, ended: false, lastRead: Date.now(), timer: null, controller: new AbortController() };
+      this.rooms.set(room.id, room);
+      const api = await this.collector.ensureDirectApi({ signal: room.controller.signal });
+      room.controller.signal.throwIfAborted();
+      const client = new DirectLiveClient(api, {
+        onResponse: bytes => this.ingest(room, decodeLiveMessages(bytes)),
+        onClose: () => this.forget(room),
+        refreshApi: options => this.collector.ensureDirectApi(options),
+      });
+      room.transport = client; room.controller = client.controller;
+      const info = normalizeLiveRoom(await client.enter(webRid), webRid);
+      if (!info) throw new LiveRoomError("room_unavailable", "没读到这个直播间的信息，请稍后重试。", 502);
+      room.info = info; room.online = info.online; room.likes = info.likes;
+      if (info.live) await client.start();
+      else client.end();
+      room.timer = setInterval(() => {
+        if (Date.now() - room.lastRead > IDLE_CLOSE_MS) void this.close(room.id);
+      }, 10_000);
+      room.timer.unref?.();
+      return this.snapshot(room, -1);
+    } catch (error) {
+      if (room) await this.close(room.id);
+      if (error instanceof DirectHistoryError) throw new LiveRoomError(error.code, error.message);
+      throw error;
+    }
+  }
+
   ingest(room, events) {
     for (const event of events) {
       // 页面万一跳到了别的直播间，那边的消息不算
       if (event.roomId && room.info?.roomId && event.roomId !== room.info.roomId) continue;
       if (event.type === "online" && event.value !== null) room.online = event.value;
       else if (event.type === "likes" && event.value !== null) room.likes = event.value;
-      else if (event.type === "ended") room.ended = true;
+      else if (event.type === "ended") { room.ended = true; room.transport?.end(); }
       else if (event.type === "chat") {
         if (event.id && room.seen.has(event.id)) continue;
         if (event.id) room.seen.add(event.id);
@@ -349,7 +397,8 @@ export class LiveRooms {
 
   read(id, after) {
     const room = this.rooms.get(id);
-    if (!room || room.page.isClosed()) throw new LiveRoomError("session_expired", "和直播间的连接断了，请重新进入。", 410);
+    if (!room || room.page?.isClosed() || (room.info?.live && !room.ended && room.transport?.closed))
+      throw new LiveRoomError("session_expired", "和直播间的连接断了，请重新进入。", 410);
     room.lastRead = Date.now();
     return this.snapshot(room, Number.isSafeInteger(after) ? after : -1);
   }
@@ -363,7 +412,9 @@ export class LiveRooms {
     const room = this.rooms.get(id);
     if (!room) return false;
     this.forget(room);
-    await room.page.close().catch(() => {});
+    room.controller?.abort();
+    room.transport?.close();
+    await room.page?.close().catch(() => {});
     if (release) this.scheduleRelease();
     return true;
   }

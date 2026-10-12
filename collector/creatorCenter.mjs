@@ -1,9 +1,10 @@
 // 创作者中心（creator.douyin.com）的数据，只读。同一套读法也读创作者平台里的「抖音指数」（热点榜、达人详情）。
-// 在共享无头会话里开一个 creator.douyin.com 的空白同源页，带着登录 cookie 直接请求接口：
-// 10-06 实测这些接口不用页面签名，结果和官方页面一致。不加载创作者中心页面本身，
+// 使用按账号保存的 Cookie 直接请求；旧采集器适配器仍可使用空白同源页。
+// 这些查询接口不用页面签名，不加载创作者中心页面本身，
 // 不点任何东西；能请求的只有下面白名单里的查询接口，发布、删除、回复这些写接口没有入口。
 
 import { decryptIndexData } from "./indexCrypto.mjs";
+import { DirectHistoryError } from "./directHistory.mjs";
 
 const ORIGIN = "https://creator.douyin.com";
 const BLANK_URL = `${ORIGIN}/robots.txt`;
@@ -174,17 +175,25 @@ export class CreatorCenter {
     if (!Array.isArray(requests) || !requests.length || requests.length > MAX_BATCH) throw new CreatorCenterError("invalid_request", "请求无效，请重试。", 400);
     const prepared = requests.map((item) => creatorRequest(item?.key, item?.params ?? {}));
     if (prepared.some((item) => !item)) throw new CreatorCenterError("invalid_request", "请求无效，请重试。", 400);
-    let page;
+    let page, api;
     try {
-      page = await this.ensurePage();
+      if (typeof this.collector.ensureDirectApi === "function") api = await this.collector.ensureDirectApi();
+      else page = await this.ensurePage();
     } catch (error) {
       // 没登录、连不上：浏览器可能已经启动了，不安排收尾就没人会释放它
       this.scheduleIdleClose();
+      if (error instanceof DirectHistoryError) throw new CreatorCenterError(error.code, error.message);
       throw error;
     }
     clearTimeout(this.idleTimer);
     try {
-      const raw = await page.evaluate(async ({ list, timeout }) => Promise.all(list.map(async ({ method, url, body }) => {
+      const raw = api ? await Promise.all(prepared.map(async (item) => {
+        try { return await api.readCreator(item); }
+        catch (error) {
+          if (error?.code !== "request_failed") throw error;
+          return { status: 0, text: "" };
+        }
+      })) : await page.evaluate(async ({ list, timeout }) => Promise.all(list.map(async ({ method, url, body }) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
         try {
@@ -212,7 +221,7 @@ export class CreatorCenter {
       if (results.every(({ status }) => status === 0)) throw new CreatorCenterError("creator_unavailable", "没连上抖音创作者中心，请检查网络后重试。", 502);
       return results.map(({ status, data, undecryptable }) => (status >= 200 && status < 300 && data ? { ok: true, data } : { ok: false, status, ...(undecryptable ? { reason: "undecryptable" } : {}) }));
     } finally {
-      this.scheduleIdleClose();
+      if (page) this.scheduleIdleClose();
     }
   }
 

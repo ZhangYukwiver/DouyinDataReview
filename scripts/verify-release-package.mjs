@@ -9,8 +9,9 @@ import { extractFile as extractArchiveFile, listPackage, statFile as statArchive
 import { DIRECT_SIGNER_FILES, verifyDirectSigner } from "../collector/directHistory.mjs";
 
 const projectDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|records(?:\.json)?|direct-history-template\.json|accounts\.json|cookies?(?:\.sqlite|\.db|\.json)?(?:-journal|-wal|-shm)?|login data(?:-journal|-wal|-shm)?|local state|web data(?:-journal|-wal|-shm)?|\.env(?:\..*)?|\.git|\.ssh)$/i;
+const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|records(?:\.json)?|direct-history-template\.json|direct-session\.json(?:\.[^/]+\.tmp)?|accounts\.json|cookies?(?:\.sqlite|\.db|\.json)?(?:-journal|-wal|-shm)?|login data(?:-journal|-wal|-shm)?|local state|web data(?:-journal|-wal|-shm)?|\.env(?:\..*)?|\.git|\.ssh)$/i;
 const runtimeDependencyRoots = new Set([
+  "ws",
   "fflate",
   "electron-updater",
   "builder-util-runtime",
@@ -52,6 +53,12 @@ export function assertPublicUpdateMetadata(value, packageName) {
   }
 }
 
+export function assertPackagedWebSocketManifest(packed, source) {
+  // electron-builder strips these development metadata fields from ws.
+  const { scripts, keywords, bugs, ...expected } = source;
+  assert.deepEqual(packed, expected, "Packaged ws manifest differs from source runtime metadata");
+}
+
 async function filesUnder(directory, prefix = "") {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -83,9 +90,21 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     }
   }
 
-  for (const relative of ["collector/directHistory.mjs", "collector/douyinCollector.mjs", "desktop/main.mjs"]) {
+  for (const relative of [
+    "collector/directHistory.mjs", "collector/douyinCollector.mjs",
+    "collector/directApi.mjs", "collector/directChat.mjs", "collector/directCredentials.mjs",
+    "collector/directExplorer.mjs", "collector/directLive.mjs", "collector/directProto.mjs",
+    "collector/directWrites.mjs", "collector/nativeSignature.mjs", "collector/sm3.mjs",
+    "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs",
+    "node_modules/ws/index.js",
+    "node_modules/ws/wrapper.mjs", "node_modules/ws/lib/websocket.js",
+  ]) {
     assert.deepEqual(extractFile(archive, relative), await readFile(path.join(sourceDirectory, relative)), `Outdated packaged source: ${relative}`);
   }
+  assertPackagedWebSocketManifest(
+    JSON.parse(extractFile(archive, "node_modules/ws/package.json").toString("utf8")),
+    JSON.parse(await readFile(path.join(sourceDirectory, "node_modules/ws/package.json"), "utf8")),
+  );
 
   const distFiles = await filesUnder(path.join(sourceDirectory, "dist"));
   assert(distFiles.includes("index.html"), "Web build is missing index.html");
