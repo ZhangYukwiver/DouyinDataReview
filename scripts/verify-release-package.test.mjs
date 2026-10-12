@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { assertPublicPackagePath, assertPublicUpdateMetadata } from "./verify-release-package.mjs";
+import { assertPackagedWebSocketManifest, assertPublicPackagePath, assertPublicUpdateMetadata } from "./verify-release-package.mjs";
+
+describe("packaged WebSocket dependency", () => {
+  const runtime = { name: "ws", version: "8.18.3", main: "index.js", exports: { ".": { import: "./wrapper.mjs", require: "./index.js" } } };
+  const source = { ...runtime, scripts: { test: "mocha" }, keywords: ["WebSocket"], bugs: "https://github.com/websockets/ws/issues" };
+
+  it("accepts electron-builder's removal of development metadata", () => {
+    expect(() => assertPackagedWebSocketManifest(runtime, source)).not.toThrow();
+  });
+
+  it.each([
+    { ...runtime, version: "8.18.2" },
+    { ...runtime, exports: { ".": "./missing.js" } },
+  ])("rejects a stale version or altered entry point", (packed) => {
+    expect(() => assertPackagedWebSocketManifest(packed, source)).toThrow();
+  });
+});
 
 describe("release privacy boundary", () => {
   it("accepts generated public updater metadata and rejects credentials", () => {
