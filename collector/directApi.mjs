@@ -103,12 +103,13 @@ export function signSecsdkUrl(value, uifid, timestamp = Math.floor(Date.now() / 
 }
 
 export class DirectApiClient {
-  constructor(session, { dataDirectory, directory, requestFactory = playwrightRequest, signer = signDirectApiUrl } = {}) {
+  constructor(session, { dataDirectory, directory, requestFactory = playwrightRequest, signer = signDirectApiUrl, onSessionError } = {}) {
     this.session = validateSession(session);
     this.dataDirectory = dataDirectory;
     this.directory = directory;
     this.requestFactory = requestFactory;
     this.signer = signer;
+    this.onSessionError = onSessionError;
     this.currentUserAgent = session.userAgent;
     this.directApi = this;
     this.secUid = this.session.secUid;
@@ -116,6 +117,7 @@ export class DirectApiClient {
     this.contextLease = null;
     this.retiredContexts = new Set();
   }
+  sessionError(error) { return this.onSessionError?.(error) ?? error; }
   async cookies(...urls) {
     const all = sessionCookies(this.session.cookies);
     return !urls.length ? all : all.filter((cookie) => urls.some((value) => {
@@ -190,6 +192,8 @@ export class DirectApiClient {
         maxRedirects: 0, maxRetries: 0, timeout: 30_000, failOnStatusCode: false });
       signal?.throwIfAborted();
       const status = response.status();
+      if (allowErrorStatus && this.onSessionError && [401, 403].includes(status))
+        throw new DirectHistoryError("session_rejected", `抖音接口返回 HTTP ${status}，请重新导入登录凭据。`);
       if (!allowErrorStatus) {
         if (status === 401 || status === 403) throw new DirectHistoryError("session_rejected", `抖音接口返回 HTTP ${status}，请在登录浏览器中检查会话或验证提示。`);
         if (status === 429) throw new DirectHistoryError("rate_limited", "抖音接口触发限流，已停止读取。");
@@ -208,7 +212,8 @@ export class DirectApiClient {
       }
       return { status, text: buffer.toString("utf8"), buffer, headers: response.headers(), encrypted: response.headers()["x-encrypted"] ?? null };
     } catch (error) {
-      if (error instanceof DirectHistoryError || signal?.aborted) throw error;
+      if (error instanceof DirectHistoryError) throw this.sessionError(error);
+      if (signal?.aborted) throw error;
       throw new DirectHistoryError("request_failed", "抖音直接请求失败，请检查网络后重试。");
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -245,13 +250,13 @@ export class DirectApiClient {
     let signedUrl = WEB_SIGN_PATHS.has(pathname) ? signSecsdkUrl(signed, this.cookie("UIFID")) : String(signed);
     if (reply && this.cookie("s_v_web_id")) signedUrl += `&verifyFp=${encodeURIComponent(this.cookie("s_v_web_id"))}&fp=${encodeURIComponent(this.cookie("s_v_web_id"))}`;
     const response = await this.raw(signedUrl, { method, body: data, referer, signal });
-    if (response.text.trim() === "blocked") throw new DirectHistoryError("verification_required", "抖音要求安全验证，请在登录浏览器中完成后重试。");
+    if (response.text.trim() === "blocked") throw this.sessionError(new DirectHistoryError("verification_required", "抖音要求安全验证，请在登录浏览器中完成后重试。"));
     let payload;
     try { payload = JSON.parse(response.text); } catch { throw new DirectHistoryError("invalid_json", "抖音接口没有返回有效 JSON。"); }
     if (!payload || typeof payload !== "object") throw new DirectHistoryError("schema_changed", "抖音接口数据格式发生变化。");
     if ([payload.search_nil_info?.search_nil_type, payload.search_nil_info?.search_nil_item].includes("verify_check"))
-      throw new DirectHistoryError("verification_required", "抖音要求安全验证，请在登录浏览器中完成后重试。");
-    if (payload.status_code === 8) throw new DirectHistoryError("login_required", "抖音登录已失效，请重新登录后再试。");
+      throw this.sessionError(new DirectHistoryError("verification_required", "抖音要求安全验证，请在登录浏览器中完成后重试。"));
+    if (payload.status_code === 8) throw this.sessionError(new DirectHistoryError("login_required", "抖音登录已失效，请重新登录后再试。"));
     if (payload.status_code !== undefined && payload.status_code !== 0)
       throw new DirectHistoryError("platform_rejected", "抖音未确认本次请求，请检查登录状态或验证提示。");
     return payload;
@@ -264,19 +269,19 @@ export class DirectApiClient {
     if ([0, "0"].includes(payload.user_uid_type)) {
       const profile = await this.request("/aweme/v1/web/user/profile/self/", { signal });
       if (Object.hasOwn(profile, "user") && profile.user === null)
-        throw new DirectHistoryError("login_required", "抖音登录已失效，请重新登录后再试。");
+        throw this.sessionError(new DirectHistoryError("login_required", "抖音登录已失效，请重新登录后再试。"));
       const selfUid = String(profile.user?.uid ?? "");
       if (!/^[1-9]\d{0,29}$/u.test(selfUid))
         throw new DirectHistoryError("schema_changed", "账号资料缺少身份信息，已停止读取。");
       if (selfUid !== this.session.uid || (expectedUid && selfUid !== expectedUid))
-        throw new DirectHistoryError("account_mismatch", "接口登录账号与当前账号不一致，已停止读取。");
+        throw this.sessionError(new DirectHistoryError("account_mismatch", "接口登录账号与当前账号不一致，已停止读取。"));
       if (selfUid !== uid)
         throw new DirectHistoryError("schema_changed", "登录身份接口返回了不同的身份信息，请刷新登录会话后再试。");
     }
     if (!/^\d{1,30}$/u.test(uid) || /^0+$/u.test(uid))
       throw new DirectHistoryError("schema_changed", "账号资料缺少身份信息，已停止读取。");
     if (uid !== this.session.uid || (expectedUid && uid !== expectedUid))
-      throw new DirectHistoryError("account_mismatch", "接口登录账号与当前账号不一致，已停止读取。");
+      throw this.sessionError(new DirectHistoryError("account_mismatch", "接口登录账号与当前账号不一致，已停止读取。"));
     return { uid };
   }
   async collectRecordPages(type, onPage, { signal } = {}) {
@@ -317,6 +322,13 @@ export class DirectApiClient {
     const endpoint = Object.values(CREATOR_ENDPOINTS).find((item) => item.path === url.pathname && (item.method ?? "GET") === prepared.method);
     const ownInfo = url.pathname === "/web/api/media/user/info/" && prepared.method === "GET";
     if (url.origin !== "https://creator.douyin.com" || url.username || url.password || url.hash || (!endpoint && !ownInfo)) throw new DirectHistoryError("unsafe_url", "创作者请求不在查询白名单内。");
-    return this.raw(url.toString(), { method: prepared.method, body: prepared.body, contentType: "application/json", referer: "https://creator.douyin.com/", allowErrorStatus: true });
+    const response = await this.raw(url.toString(), { method: prepared.method, body: prepared.body, contentType: "application/json", referer: "https://creator.douyin.com/", allowErrorStatus: true });
+    if (this.onSessionError && !response.encrypted) {
+      let payload;
+      try { payload = JSON.parse(response.text); } catch { /* The caller validates the business response. */ }
+      if ([8, 2190008, 10008].includes(Number(payload?.status_code ?? payload?.code ?? payload?.BaseResp?.StatusCode)))
+        throw this.sessionError(new DirectHistoryError("login_required", "抖音登录已失效，请重新导入登录凭据。"));
+    }
+    return response;
   }
 }

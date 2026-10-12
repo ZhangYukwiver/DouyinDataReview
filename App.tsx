@@ -60,15 +60,14 @@ import {
   pairCollector,
   startCollectorSync,
   startDirectRecordsSync,
-  startCollectorObservation,
   startCollectorChatObservation,
   startCollectorVideoDownload,
   stopCollectorSync,
-  stopCollectorObservation,
   stopCollectorChatObservation,
   removeCollectorAccount,
   fetchCollectorVideoFile,
   type CollectorAccounts,
+  type CollectorAccountChange,
   type CollectorImportResult,
   type CollectorSnapshot,
   type CollectorStatus,
@@ -96,7 +95,6 @@ import {
 } from "./src/desktopRuntime";
 import { shouldAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
-import { createSyncRecovery } from "./src/services/syncRecovery";
 import { sparkRenewJob } from "./src/services/sparkRenew";
 import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAnalysisInstalled, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAnalysisInstalled, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
@@ -302,7 +300,6 @@ function AppContent() {
   const chatCollectionInFlightRef = useRef(false);
   const chatPollRequestRef = useRef<number | null>(null);
   const chatBusyRequestRef = useRef<number | null>(null);
-  const syncRecoveryRef = useRef(createSyncRecovery());
   const appUpdateActionRef = useRef(false);
 
   // 只记录新增探索页的位置；刷新可直接回来，原有页面的启动流程保持不变。
@@ -534,10 +531,11 @@ function AppContent() {
 
   useEffect(() => {
     if (!collectorToken || displaySnapshot?.source !== "collector" || !chatStartupRef.current.isReady()) return undefined;
+    if (collectorStatus?.browserSource?.credentials === "reconnect_required") return undefined;
     if (collectorBusy || switchingAccount || autoSyncInFlightRef.current || chatCollectionInFlightRef.current) return undefined;
     if (collectorStatus && !TERMINAL_COLLECTOR_STATES.has(collectorStatus.state)) return undefined;
 
-    // Resume reception after an operation that needs the shared browser.
+    // Resume reception after a completed collector operation.
     const timer = setTimeout(() => {
       if (!chatStartupRef.current.isReady() || !collectorToken || collectorBusy || switchingAccount || autoSyncInFlightRef.current || chatCollectionInFlightRef.current) return;
       void beginChatObservation(collectorUrl, collectorToken, true);
@@ -583,6 +581,7 @@ function AppContent() {
         setCollectorStatus(status);
         const chatPollOwnsRequest = chatPollRequestRef.current === requestId;
         const receiving = isChatReceiving(status);
+        if (status.browserSource?.credentials === "reconnect_required") chatStartupRef.current.cancel();
         const automaticChatFailure = chatAutomaticRequestRef.current.matches(requestId)
           && status.chat.state === "error";
         // A record poll can replace the chat poll while the automatic chat
@@ -642,17 +641,6 @@ function AppContent() {
             chatCollectionInFlightRef.current = false;
             chatPollRequestRef.current = null;
           }
-          // 每次增量读取最多回退一次完整读取；完整读取失败时不重复启动。
-          if (syncRecoveryRef.current.takeFallback(status)) {
-            // 收在托盘里或是定时读取时不替用户弹浏览器，提醒一次；用户回到窗口时的那次自动读取会再走到这里
-            if (!pageHidden() && !timerSyncRef.current) {
-              void beginSync(baseUrl, token);
-              return;
-            }
-            notifyDesktopBackgroundSyncBlocked(status.code === "login_required"
-              ? "抖音登录过期了，打开工作台重新登录后才能接着记录。"
-              : "读取新记录需要打开一次浏览器，打开工作台继续。");
-          }
           if (!chatOperation && chatStartupRef.current.isPending()) chatStartupRef.current.retry();
           if (chatStartupRef.current.isReady() && !chatCollectionInFlightRef.current) {
             void beginChatObservation(baseUrl, token, true);
@@ -701,33 +689,19 @@ function AppContent() {
     setChatBusy(false);
   }
 
-  async function pauseChatForOperation(baseUrl: string, token: string, requestId: number) {
-    if (!chatCollectionInFlightRef.current && !isChatReceiving(collectorStatus)) return true;
-    chatStartupRef.current.request();
-    chatAutomaticRequestRef.current.clear();
-    // The operation already owns the latest poll request. Release the chat
-    // control spinner immediately; the stop endpoint still drains the task
-    // before the shared browser is reused.
-    resetChatControlBusy();
-    const status = await stopCollectorChatObservation(baseUrl, token);
-    if (pollRequest.current !== requestId) return false;
-    chatCollectionInFlightRef.current = false;
-    chatPollRequestRef.current = null;
-    setCollectorStatus(status);
-    return true;
-  }
-
   async function beginSync(baseUrl: string, token: string, incremental = false, { timer = false }: { timer?: boolean } = {}) {
+    if (collectorStatus?.browserSource?.credentials === "reconnect_required") {
+      setCollectorError("请先连接浏览器并导入登录凭据。");
+      if (!timer) openPreferences("account");
+      return;
+    }
     timerSyncRef.current = timer;
     const requestId = pollRequest.current + 1;
     pollRequest.current = requestId;
-    syncRecoveryRef.current.begin(incremental);
     setCollectorBusy(true);
     setStoppingSync(false);
     setCollectorError(null);
     try {
-      // 增量读取和聊天接收共用同一个无头会话，不用打断接收；完整读取要可见浏览器，才需要让位
-      if (!incremental && !await pauseChatForOperation(baseUrl, token, requestId)) return;
       const status = incremental
         ? await startDirectRecordsSync(baseUrl, token)
         : await startCollectorSync(baseUrl, token);
@@ -751,6 +725,10 @@ function AppContent() {
     // page to launch a foreground history sync. 窗口收在托盘里时没人在看探索页，照常读
     if (!pageHidden() && activeView !== "sources" && dashboardOpen && dashboardView === "explore" && !storySrc) return;
     const token = collectorToken;
+    if (collectorStatus?.browserSource?.credentials === "reconnect_required") {
+      if (manual) notifyDesktopBackgroundSyncBlocked("请在设置 → 账号中连接浏览器并导入登录凭据。");
+      return;
+    }
     // 桌面版每次启动都是新端口新配对码，开机后台启动或没点连接就关窗时，后台读取得自己先连上；
     // 连上后监听 collectorToken 的那个 effect 会接着读
     if (!token && isDesktopApp() && (manual || (pageHidden() && autoSyncEnabled && !userDisconnectedRef.current))) {
@@ -786,8 +764,8 @@ function AppContent() {
       (collectorStatus?.chat.state !== "idle" && collectorStatus?.chat.state !== "observing")
       || collectorStatus?.chat.progress !== null
     ))
-    || (collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus))
-    || collectorStatus?.syncMode === "page";
+
+;
 
   async function endSync(baseUrl: string, token: string) {
     const requestId = pollRequest.current + 1;
@@ -818,26 +796,6 @@ function AppContent() {
       showAlert("无法停止读取", message);
     } finally {
       if (stopRequestRef.current === stopId) setStoppingSync(false);
-    }
-  }
-
-  async function beginObservation(baseUrl: string, token: string) {
-    const requestId = pollRequest.current + 1;
-    pollRequest.current = requestId;
-    setCollectorBusy(true);
-    setCollectorError(null);
-    try {
-      if (!await pauseChatForOperation(baseUrl, token, requestId)) return;
-      const status = await startCollectorObservation(baseUrl, token);
-      if (pollRequest.current !== requestId) return;
-      setCollectorStatus(status);
-      void pollCollector(baseUrl, token, requestId);
-    } catch (error) {
-      if (pollRequest.current !== requestId) return;
-      setCollectorBusy(false);
-      const message = collectorErrorMessage(error);
-      setCollectorError(message);
-      showAlert("无法启动手动监听", message);
     }
   }
 
@@ -902,28 +860,6 @@ function AppContent() {
     }
   }
 
-  async function endObservation(baseUrl: string, token: string) {
-    const requestId = pollRequest.current + 1;
-    pollRequest.current = requestId;
-    setCollectorBusy(true);
-    setCollectorError(null);
-    try {
-      const status = await stopCollectorObservation(baseUrl, token);
-      if (pollRequest.current !== requestId) return;
-      setCollectorStatus(status);
-      await refreshCollectorSnapshot(baseUrl, token, requestId);
-      if (pollRequest.current !== requestId) return;
-      if (chatStartupRef.current.isPending()) chatStartupRef.current.retry();
-      setCollectorBusy(false);
-    } catch (error) {
-      if (pollRequest.current !== requestId) return;
-      setCollectorBusy(false);
-      const message = collectorErrorMessage(error);
-      setCollectorError(message);
-      showAlert("无法停止手动监听", message);
-    }
-  }
-
   async function endChatObservation(baseUrl: string, token: string): Promise<boolean> {
     // 换号期间采集器会自己停掉旧账号的接收；这时再发停止会被 409 挡回，还会把换号的结果作废
     if (switchingAccount) return false;
@@ -978,7 +914,6 @@ function AppContent() {
     if (chatCollectionInFlightRef.current || isChatReceiving(collectorStatus)) {
       if (!await endChatObservation(baseUrl, token)) return;
     }
-    if (collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus)) return;
     await beginChatObservation(baseUrl, token);
   }
 
@@ -1040,7 +975,8 @@ function AppContent() {
       setCollectorUrl(normalizedUrl);
       setCollectorToken(pairedToken);
       setPairingCode("");
-      await adoptCollector(normalizedUrl, pairedToken, requestId);
+      const status = await adoptCollector(normalizedUrl, pairedToken, requestId);
+      if (revealSources && status?.browserSource?.credentials === "reconnect_required") openPreferences("account");
     } catch (error) {
       if (pollRequest.current !== requestId) return;
       if (!pairedToken) {
@@ -1075,6 +1011,9 @@ function AppContent() {
       chatAutomaticRequestRef.current.clear();
       chatCollectionInFlightRef.current = true;
       chatPollRequestRef.current = requestId;
+    } else if (status.browserSource?.credentials === "reconnect_required") {
+      chatStartupRef.current.cancel();
+      setCollectorError("请在设置 → 账号中连接已登录的浏览器并导入凭据。");
     } else {
       chatStartupRef.current.request();
     }
@@ -1087,11 +1026,12 @@ function AppContent() {
   }
 
   function confirmFullSync() {
-    if (!collectorToken || collectorBusy || (collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus)) || syncConfirmationOpenRef.current) return;
+    if (!collectorToken || collectorBusy || syncConfirmationOpenRef.current) return;
+    if (collectorStatus?.browserSource?.credentials === "reconnect_required") { openPreferences("account"); return; }
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "开始读取全部可见记录",
-      "将由专用浏览器依次打开观看、点赞和收藏列表，并持续滚动到各列表当前可见的末页。",
+      "使用已导入的凭据，通过接口分页读取观看历史、喜欢和收藏，全程无需打开浏览器。",
       "开始",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
@@ -1103,11 +1043,12 @@ function AppContent() {
   }
 
   function confirmIncrementalSync() {
-    if (!collectorToken || collectorBusy || (collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus)) || syncConfirmationOpenRef.current) return;
+    if (!collectorToken || collectorBusy || syncConfirmationOpenRef.current) return;
+    if (collectorStatus?.browserSource?.credentials === "reconnect_required") { openPreferences("account"); return; }
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "增量读取",
-      "尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。正常运行时不会弹出浏览器；如果增量配置尚未初始化或已失效，应用会先完成一次完整读取来建立配置。",
+      "尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。使用已导入的凭据读取，凭据失效时请到设置 → 账号中重新连接浏览器并导入。",
       "读取新记录",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
@@ -1136,7 +1077,6 @@ function AppContent() {
     setCollectorBusy(true);
     let stopError: string | null = null;
     try {
-      await stopCollectorObservation(collectorUrl, token);
       await stopCollectorChatObservation(collectorUrl, token);
     } catch (error) {
       stopError = collectorErrorMessage(error);
@@ -1184,8 +1124,6 @@ function AppContent() {
   function forgetPreviousAccount() {
     downloadRequestRef.current += 1;
     downloadInFlightRef.current.clear();
-    // 每个账号都重新有一次「读不了就弹浏览器登录」的机会
-    syncRecoveryRef.current = createSyncRecovery();
     sparkRenewJob.reset();
     storySnapshotStaleRef.current = false;
     setStorySrc(null);
@@ -1200,7 +1138,7 @@ function AppContent() {
   async function changeAccount(target: { add: true } | { id: string }) {
     const token = collectorToken;
     const baseUrl = collectorUrl;
-    if (!token || switchingAccount || collectorBusy || (collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus))) return;
+    if (!token || switchingAccount || collectorBusy) return;
     const adding = "add" in target;
     const blocker = accountChangeBlocker();
     if (blocker) {
@@ -1233,14 +1171,14 @@ function AppContent() {
       setCollectorSnapshot(null);
       applyCollectorAccounts(change.accounts);
       if (adding) {
-        // 新账号还没登录过，直接完整读取：专用浏览器打开等用户登录，登录后接着读，读完再开始接收聊天。
-        // 先接上它的空记录，完整读取没起来时界面也是这个账号的采集器数据，自动补读和聊天照常能接上
         const snapshot = await getCollectorRecords(baseUrl, token).catch(() => null);
         if (pollRequest.current !== requestId) return;
         setCollectorStatus(change.status);
         setCollectorSnapshot(snapshot);
-        chatStartupRef.current.request();
-        void beginSync(baseUrl, token);
+        chatStartupRef.current.cancel();
+        setCollectorBusy(false);
+        setAccountEpoch((value) => value + 1);
+        openPreferences("account");
         return;
       }
       if (await adoptCollector(baseUrl, token, requestId)) setAccountEpoch((value) => value + 1);
@@ -1277,6 +1215,28 @@ function AppContent() {
     }
     setCollectorBusy(false);
     void refreshCollectorAccounts(baseUrl, token);
+  }
+
+  async function adoptBrowserLogin(change: CollectorAccountChange) {
+    const token = collectorToken;
+    if (!token) return;
+    setCollectorError(null);
+    const requestId = ++pollRequest.current;
+    statusPollAbortRef.current?.abort();
+    chatStartupRef.current.cancel();
+    chatAutomaticRequestRef.current.clear();
+    autoSyncInFlightRef.current = false;
+    if (change.accounts.activeId !== collectorStatus?.account?.id) {
+      forgetPreviousAccount();
+      setCollectorSnapshot(null);
+      setAccountEpoch(value => value + 1);
+    }
+    applyCollectorAccounts(change.accounts);
+    setCollectorStatus(change.status);
+    await adoptCollector(collectorUrl, token, requestId);
+    // A login-source confirmation should not start reading chat history before
+    // the user has chosen a read action in the newly connected account.
+    chatStartupRef.current.defer();
   }
 
   function confirmRemoveAccount(id: string, name: string) {
@@ -1681,7 +1641,7 @@ function AppContent() {
     setAnalysisInstalled(next);
     if (!next && dashboardView === "analysis") setDashboardView("summary");
   };
-  const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus), collectorStatus);
+  const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus);
   const recordDownloading = batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running");
   const accountName = activeAccountName(collectorToken !== null, collectorStatus, collectorAccounts);
 
@@ -1716,11 +1676,6 @@ function AppContent() {
           onRemoveArchive={removeArchive}
           onMergeArchive={mergeArchive}
           onStartIncrementalSync={confirmIncrementalSync}
-          onStartObservation={() => {
-            if (!collectorToken) return Promise.resolve();
-            leaveArchiveView();
-            return beginObservation(collectorUrl, collectorToken);
-          }}
           onStartChatObservation={() => {
             chatStartupRef.current.cancel();
             chatAutomaticRequestRef.current.clear();
@@ -1731,16 +1686,7 @@ function AppContent() {
             : Promise.resolve()}
           onStartFullSync={confirmFullSync}
           onStopSync={() => collectorToken ? endSync(collectorUrl, collectorToken) : Promise.resolve()}
-          onStopObservation={async () => {
-            if (!collectorToken) return;
-            if (isChatReceiving(collectorStatus)) {
-              await endChatObservation(collectorUrl, collectorToken);
-            } else if (collectorStatus?.state === "observing") {
-              await endObservation(collectorUrl, collectorToken);
-            } else {
-              await endChatObservation(collectorUrl, collectorToken);
-            }
-          }}
+          onStopChatObservation={() => collectorToken ? endChatObservation(collectorUrl, collectorToken).then(() => undefined) : Promise.resolve()}
           accounts={collectorAccounts}
           downloading={recordDownloading}
           sparkRenewing={sparkRenewing}
@@ -1753,7 +1699,6 @@ function AppContent() {
           onOpenPreferences={openPreferences}
           chatBusy={chatControlBusy}
           chatCollecting={isChatReceiving(collectorStatus)}
-          observing={collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus)}
           pairingCode={pairingCode}
           pickingArchive={pickingArchive}
           records={workspaceRecords}
@@ -1867,7 +1812,6 @@ function AppContent() {
         switchingAccount={switchingAccount}
         accountBlocked={accountBlockedReason({
           switchingAccount,
-          observing: collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus),
           syncing: syncingRecords,
           busy: collectorBusy,
           downloading: recordDownloading,
@@ -1880,10 +1824,12 @@ function AppContent() {
         canClear={workspaceRecords.watch_history.length + workspaceRecords.liked_videos.length + workspaceRecords.favorite_videos.length + (chatCount ?? 0) > 0 && !collectorBusy}
         onClearCache={clearCurrentRecords}
         appUpdate={appUpdate}
-        installBlocked={collectorBusy || (collectorStatus?.state === "observing" && !isChatReceiving(collectorStatus))}
+        installBlocked={collectorBusy}
         onCheckAppUpdate={checkForAppUpdates}
         onDownloadAppUpdate={downloadAppUpdate}
         onInstallAppUpdate={installAppUpdate}
+        browserConnection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
+          onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined}
       />
     </SafeAreaView>
   );

@@ -4,24 +4,23 @@ import { collectorAccountName, type CollectorAccounts, type CollectorStatus } fr
 // 采集器页两套版式（手绘 / 极简）和设置面板共用的推导：同一个按钮在哪套里都按同一套条件禁用、
 // 同一个状态在哪套里都写同一句话。这里只有纯函数，版式各自决定怎么画。
 
-/** 正在读取记录（起浏览器、等登录、采集中），不含手动监听 */
-export function isCollectorSyncing(connected: boolean, observing: boolean, status: CollectorStatus | null): boolean {
-  return connected && !observing && ["launching_browser", "awaiting_login", "collecting"].includes(status?.state ?? "");
+/** 正在通过接口读取记录 */
+export function isCollectorSyncing(connected: boolean, status: CollectorStatus | null): boolean {
+  return connected && ["launching_browser", "awaiting_login", "collecting"].includes(status?.state ?? "");
 }
 
 export interface AccountBlockInput {
   switchingAccount: boolean;
-  observing: boolean;
+
   syncing: boolean;
   busy: boolean;
   downloading: boolean;
   sparkRenewing: boolean;
 }
 
-// 切换要先关掉旧账号的浏览器，读取和手动监听都用着它；聊天接收、看直播之类采集器会自己停
-export function accountBlockedReason({ switchingAccount, observing, syncing, busy, downloading, sparkRenewing }: AccountBlockInput): string | null {
+// 切换前等接口读取结束；聊天接收和直播连接会由采集器停止。
+export function accountBlockedReason({ switchingAccount, syncing, busy, downloading, sparkRenewing }: AccountBlockInput): string | null {
   return switchingAccount ? "正在切换账号，稍等一下。"
-    : observing ? "正在手动监听，先停下再切换账号。"
       : syncing ? "正在读取记录，先停下再切换账号。"
         : busy ? "采集器正在忙，等它忙完再切换账号。"
           : downloading ? "正在下载视频，等下完再切换账号。"
@@ -48,7 +47,7 @@ export function activeAccountLabel(connected: boolean, status: CollectorStatus |
 export interface SetupInput {
   connected: boolean;
   busy: boolean;
-  observing: boolean;
+
   chatCollecting: boolean;
   status: CollectorStatus | null;
   snapshotSource: "collector" | "archive" | null;
@@ -68,13 +67,13 @@ export interface SetupState {
   /** 有数据可看：读到过记录、采集器说读完了，或者正用着导入的文件 */
   ready: boolean;
   syncing: boolean;
-  /** 完整读取要独占可见浏览器；增量读取走无头，接收和下载照常 */
+  /** 凭据导出期间暂时禁用读取操作 */
   visibleBusy: boolean;
-  /** 读取中哪个按钮发起的就由哪个按钮停：完整读取走可见浏览器（syncMode=page），其余是增量 */
-  pageSyncing: boolean;
+  /** 完整与增量都走接口，通过 syncFull 区分发起按钮 */
+  fullSyncing: boolean;
   directSyncing: boolean;
   chatProgress: CollectorStatus["progress"];
-  /** 聊天历史还在整理（起浏览器、逐个会话读）：「采集聊天记录」变成停止键，停下就是停掉这一轮接收，已读到的照样留着 */
+  /** 聊天历史还在整理（连接接口、逐个会话读）：「采集聊天记录」变成停止键，停下就是停掉这一轮接收，已读到的照样留着 */
   chatReading: boolean;
   loginNeeded: boolean;
   fromArchive: boolean;
@@ -85,22 +84,23 @@ export interface SetupState {
   flow: SetupFlow;
 }
 
-export function deriveSetup({ busy, chatCollecting, connected, observing, snapshotSource, status, total }: SetupInput): SetupState {
+export function deriveSetup({ busy, chatCollecting, connected, snapshotSource, status, total }: SetupInput): SetupState {
   const ready = total > 0 || status?.state === "complete" || snapshotSource === "archive";
-  const syncing = isCollectorSyncing(connected, observing, status);
-  const visibleBusy = observing || status?.syncMode === "page";
-  const pageSyncing = syncing && status?.syncMode === "page";
-  const directSyncing = syncing && !pageSyncing;
+  const syncing = isCollectorSyncing(connected, status);
+  const visibleBusy = status?.browserSource?.credentials === "exporting";
+  const fullSyncing = syncing && (status?.syncFull === true || status?.syncMode === "page");
+  const directSyncing = syncing && !fullSyncing;
   const chatProgress = status?.chat.progress ?? null;
   const chatReading = chatCollecting && (status?.chat.state !== "observing" || chatProgress !== null);
-  const loginNeeded = status?.state === "awaiting_login" || status?.code === "login_required";
+  const loginNeeded = status?.browserSource?.credentials === "reconnect_required" || status?.state === "awaiting_login"
+    || ["login_required", "browser_reconnect_required"].includes(status?.code ?? "");
   const fromArchive = snapshotSource === "archive";
   const source = fromArchive ? "备用文件导入" : connected ? "本地采集器" : "尚未连接";
   const statusLine = busy && ready && snapshotSource === "collector" ? `${source} · 采集中，报告用采集前的数据` : source;
   const flow: SetupFlow = fromArchive
     ? { step: 3, done: [true, true, true], note: "可以看了" }
     : loginNeeded
-      ? { step: 0, done: [false, connected, ready], note: "要登录" }
+      ? { step: 0, done: [false, connected, ready], note: "要导入凭据" }
       : !connected
         ? { step: 1, done: [false, false, ready], note: "先连上" }
         : syncing
@@ -108,20 +108,19 @@ export function deriveSetup({ busy, chatCollecting, connected, observing, snapsh
           : ready
             ? { step: 3, done: [true, true, true], note: "可以看了" }
             : { step: 2, done: [true, true, false], note: "去读取" };
-  return { ready, syncing, visibleBusy, pageSyncing, directSyncing, chatProgress, chatReading, loginNeeded, fromArchive, source, statusLine, flow };
+  return { ready, syncing, visibleBusy, fullSyncing, directSyncing, chatProgress, chatReading, loginNeeded, fromArchive, source, statusLine, flow };
 }
 
-// ---------- 五个读取按钮 ----------
+// ---------- 四个读取按钮 ----------
 
-export type ReadActionKey = "incremental" | "full" | "observe" | "chat" | "history";
+export type ReadActionKey = "incremental" | "full" | "chat" | "history";
 export type ReadActionIcon = "play" | "pause" | "refresh" | "eye" | "message";
 /** 按下去做什么；每种对应页面上的一个回调，见 runReadCommand */
 export type ReadCommand =
   | "start-incremental"
   | "start-full"
   | "stop-sync"
-  | "start-observation"
-  | "stop-observation"
+  | "stop-chat"
   | "start-chat"
   | "collect-chat-history"
   | "stop-chat-history";
@@ -139,7 +138,7 @@ export interface ReadAction {
 export interface ReadActionInput {
   connected: boolean;
   busy: boolean;
-  observing: boolean;
+
   chatCollecting: boolean;
   chatBusy: boolean;
   stoppingSync: boolean;
@@ -148,34 +147,26 @@ export interface ReadActionInput {
   stoppingChat: boolean;
 }
 
-/** 增量读取 / 完整读取 / 手动监听 / 开始接收 / 采集聊天记录：读取中哪个按钮发起的就由哪个变成停止键 */
-export function readActions(input: ReadActionInput, state: Pick<SetupState, "visibleBusy" | "pageSyncing" | "directSyncing" | "chatReading">): ReadAction[] {
-  const { busy, chatBusy, chatCollecting, connected, observing, stoppingChat, stoppingSync, switchingAccount } = input;
-  const { chatReading, directSyncing, pageSyncing, visibleBusy } = state;
+/** 增量读取 / 完整读取 / 开始接收 / 采集聊天记录：读取中哪个按钮发起的就由哪个变成停止键 */
+export function readActions(input: ReadActionInput, state: Pick<SetupState, "visibleBusy" | "fullSyncing" | "directSyncing" | "chatReading">): ReadAction[] {
+  const { busy, chatBusy, chatCollecting, connected, stoppingChat, stoppingSync, switchingAccount } = input;
+  const { chatReading, directSyncing, fullSyncing, visibleBusy } = state;
   return [
     {
       key: "incremental",
       label: directSyncing ? "停止读取" : "增量读取",
       icon: directSyncing ? "pause" : "play",
       disabled: !connected || (busy && !directSyncing) || visibleBusy,
-      busy: directSyncing ? stoppingSync : busy && !observing && !pageSyncing,
+      busy: directSyncing ? stoppingSync : busy && !fullSyncing,
       command: directSyncing ? "stop-sync" : "start-incremental",
     },
     {
       key: "full",
-      label: pageSyncing ? "停止读取" : "完整读取",
-      icon: pageSyncing ? "pause" : "refresh",
-      disabled: !connected || (!pageSyncing && (busy || visibleBusy)),
-      busy: pageSyncing && stoppingSync,
-      command: pageSyncing ? "stop-sync" : "start-full",
-    },
-    {
-      key: "observe",
-      label: observing ? "停止监听" : "手动监听",
-      icon: observing ? "pause" : "eye",
-      disabled: !connected || busy,
-      busy: false,
-      command: observing ? "stop-observation" : "start-observation",
+      label: fullSyncing ? "停止读取" : "完整读取",
+      icon: fullSyncing ? "pause" : "refresh",
+      disabled: !connected || (!fullSyncing && (busy || visibleBusy)),
+      busy: fullSyncing && stoppingSync,
+      command: fullSyncing ? "stop-sync" : "start-full",
     },
     {
       key: "chat",
@@ -183,7 +174,7 @@ export function readActions(input: ReadActionInput, state: Pick<SetupState, "vis
       icon: chatCollecting ? "pause" : "message",
       disabled: !connected || chatBusy || switchingAccount || (!chatCollecting && (visibleBusy || busy)),
       busy: false,
-      command: chatCollecting ? "stop-observation" : "start-chat",
+      command: chatCollecting ? "stop-chat" : "start-chat",
     },
     {
       key: "history",
@@ -200,8 +191,7 @@ export interface ReadHandlers {
   onStartIncrementalSync: () => void;
   onStartFullSync: () => void;
   onStopSync: () => Promise<void>;
-  onStartObservation: () => Promise<void>;
-  onStopObservation: () => Promise<void>;
+  onStopChatObservation: () => Promise<void>;
   onStartChatObservation: () => Promise<void>;
   onCollectChatHistory: () => Promise<void>;
   /** 停止读取聊天时先把按钮置成「正在停」，停完再放开 */
@@ -213,13 +203,12 @@ export function runReadCommand(command: ReadCommand, handlers: ReadHandlers): vo
     case "start-incremental": handlers.onStartIncrementalSync(); return;
     case "start-full": handlers.onStartFullSync(); return;
     case "stop-sync": void handlers.onStopSync(); return;
-    case "start-observation": void handlers.onStartObservation(); return;
-    case "stop-observation": void handlers.onStopObservation(); return;
+    case "stop-chat": void handlers.onStopChatObservation(); return;
     case "start-chat": void handlers.onStartChatObservation(); return;
     case "collect-chat-history": void handlers.onCollectChatHistory(); return;
     case "stop-chat-history":
       handlers.setStoppingChat(true);
-      void handlers.onStopObservation().finally(() => handlers.setStoppingChat(false));
+      void handlers.onStopChatObservation().finally(() => handlers.setStoppingChat(false));
       return;
   }
 }
@@ -250,9 +239,9 @@ export function tipNotes(state: TipInput, layout: "sketch" | "minimal" = "sketch
   const tip = state.fromArchive
     ? { title: "用的是导入的文件", body: state.connected ? `报告和工作台都用这份文件。想换回采集器的数据，${minimal ? "把这份文件「移除」" : "点右边的「移除」"}就行。` : "报告和工作台都用这份文件，关掉应用后要重新导入。" }
     : state.loginNeeded
-      ? { title: "要先登录抖音", body: "在弹出的浏览器窗口里登录，登录好以后回来点「增量读取」。" }
+      ? { title: "要先登录抖音", body: "在设置 → 账号中连接已登录的浏览器，确认账号并导入凭据后再读取。" }
       : !state.connected
-        ? { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。第一次连接会弹出一个浏览器窗口，在里面登录抖音就行。" }
+        ? { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。然后在设置 → 账号中连接已登录的浏览器并导入凭据。" }
         : state.syncing
           ? { title: "正在读取", body: "随时可以点「停止读取」停下，已经读到的会先存好。" }
           : state.ready

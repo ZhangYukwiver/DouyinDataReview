@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 
 import { createReadStream } from "node:fs";
-import { access, chmod, mkdir, stat } from "node:fs/promises";
+import { chmod, mkdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { homedir, networkInterfaces } from "node:os";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
-import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
-import { chromium } from "playwright-core";
-
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
-import { DouyinCollector } from "./douyinCollector.mjs";
+import { DouyinCollector, readLoginIdentity } from "./douyinCollector.mjs";
+import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
 import { DirectHistoryError } from "./directHistory.mjs";
@@ -60,50 +60,6 @@ function printHelp() {
   -h, --help          显示帮助
 
 默认只监听 127.0.0.1。手机连接时使用 --lan，并在防火墙中仅允许专用网络。`);
-}
-
-async function firstExistingPath(candidates) {
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      // Try the next standard browser location.
-    }
-  }
-  return null;
-}
-
-// Any Chromium-based browser works: the collector drives it over CDP with its own profile.
-// Preference order is Chrome, Edge (bundled with Windows), Brave, Chromium, then Playwright's cache.
-const CHROMIUM_BROWSERS = {
-  darwin: [
-    "Google Chrome.app/Contents/MacOS/Google Chrome",
-    "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    "Brave Browser.app/Contents/MacOS/Brave Browser",
-    "Chromium.app/Contents/MacOS/Chromium",
-    "Comet.app/Contents/MacOS/Comet",
-  ],
-  win32: [
-    "Google/Chrome/Application/chrome.exe",
-    "Microsoft/Edge/Application/msedge.exe",
-    "BraveSoftware/Brave-Browser/Application/brave.exe",
-    "Chromium/Application/chrome.exe",
-  ],
-  linux: ["google-chrome", "google-chrome-stable", "microsoft-edge", "brave-browser", "chromium", "chromium-browser"],
-};
-
-function browserRoots() {
-  if (process.platform === "win32") return [process.env.LOCALAPPDATA, process.env.ProgramFiles, process.env["ProgramFiles(x86)"]];
-  if (process.platform === "darwin") return ["/Applications", path.join(homedir(), "Applications")];
-  return ["/usr/bin"];
-}
-
-async function findChromeExecutable() {
-  const roots = browserRoots().filter(Boolean);
-  const installed = (CHROMIUM_BROWSERS[process.platform] ?? []).flatMap((relative) => roots.map((root) => path.join(root, relative)));
-  return firstExistingPath([process.env.DOUYIN_CHROME_PATH, ...installed, chromium.executablePath()]);
 }
 
 function localLanAddresses() {
@@ -259,14 +215,10 @@ export async function startCollectorServer({
   origins = [],
   dataDirectory = path.join(projectDirectory, ".local-data"),
   signerDirectory,
-  executablePath: configuredExecutablePath,
+  browserSources = browserDirectories(),
+  browserConnector = connectExternalBrowser,
 } = {}) {
   const options = { lan, port, origins };
-  const executablePath = configuredExecutablePath ?? await findChromeExecutable();
-  if (!executablePath) {
-    throw new Error("未找到 Chrome、Edge、Brave 或 Chromium 浏览器。可通过 DOUYIN_CHROME_PATH 指定浏览器路径。");
-  }
-
   await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   await chmod(dataDirectory, 0o700);
   const accounts = new AccountRegistry(dataDirectory);
@@ -276,7 +228,6 @@ export async function startCollectorServer({
     const directory = accounts.directory(account);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const next = new DouyinCollector({
-      executablePath,
       dataDirectory: directory,
       signerDirectory,
       store: new CollectorStore(directory),
@@ -294,6 +245,33 @@ export async function startCollectorServer({
   // 账号操作（切换、新建、删除）一次只做一个；切换期间旧采集器在关、新的还没接上
   let accountWork = null;
   let switching = false;
+  let browserWork = null;
+  let pendingBrowser = null;
+  const clearPendingBrowser = async (id) => {
+    if (!pendingBrowser || (id && pendingBrowser.id !== id)) return;
+    const pending = pendingBrowser; pendingBrowser = null;
+    clearTimeout(pending.timer);
+    await pending.connection.disconnect();
+  };
+  const browserIdentity = async (connection, page) => {
+    if (!connection.connected) throw new BrowserConnectionError("browser_disconnected", "浏览器已断开，请重新连接。");
+    await page.goto("https://www.douyin.com/user/self", { waitUntil: "domcontentloaded", timeout: 30_000 });
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if (!connection.connected) throw new BrowserConnectionError("browser_disconnected", "浏览器已断开，请重新连接。");
+      const identity = await readLoginIdentity(page);
+      if (identity?.uid && await collector.hasLoginSession(connection.context, page)) return identity;
+      await delay(500);
+    }
+    throw new BrowserConnectionError("browser_login_required", "请在浏览器里完成抖音登录或验证，再重新连接。");
+  };
+  const browserTarget = (identity) => {
+    const existing = accounts.list().accounts.find(account => account.uid === identity.uid);
+    if (existing) return existing;
+    const active = accounts.active();
+    const snapshot = collector.getSnapshot();
+    if (!active.uid && !Object.values(snapshot.records).some(items => items.length) && !snapshot.chatMessages.length && !snapshot.chatConversations.length) return active;
+    return null;
+  };
   const pairing = new PairingManager();
   const bindAddress = options.lan ? "0.0.0.0" : "127.0.0.1";
   const statusWaiters = new Set();
@@ -336,7 +314,6 @@ export async function startCollectorServer({
   const accountBusyMessage = () => {
     if (accountWork) return "上一个账号操作还没做完，请稍等。";
     if (collector.syncPromise) return "正在读取记录，先停下再切换账号。";
-    if (collector.observationPromise) return "正在监听手动浏览，先停下再切换账号。";
     if (collector.hasSavingVideoDownload()) return "正在下载视频，等下载完再切换账号。";
     if (explorer.busy) return "正在搜索或打开作品，等它结束再切换账号。";
     return null;
@@ -353,6 +330,7 @@ export async function startCollectorServer({
   // 切到另一个账号：收掉当前账号的浏览器和任务，换上那个账号目录的采集器，正在长轮询的状态请求直接拿新状态返回
   // 新采集器先建好再记成当前账号，中途失败时旧的还留着能用
   const switchTo = async (account) => {
+    await clearPendingBrowser();
     await explorer.close();
     await collector.shutdown();
     let next;
@@ -444,7 +422,7 @@ export async function startCollectorServer({
     // 切换账号时只放行读状态和账号列表
     if (!(request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts")) && rejectWhileSwitching(response)) return;
 
-    if (request.method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/observe", "/v1/chat/observe", "/v1/downloads", "/v1/browser/close"].includes(url.pathname)) {
+    if (request.method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/chat/observe", "/v1/downloads"].includes(url.pathname)) {
       if (explorer.busy) {
         sendJson(response, 409, { error: "collector_busy", message: "请等待当前探索操作完成后继续。" });
         return;
@@ -454,6 +432,84 @@ export async function startCollectorServer({
       // A download started from an explore page (keepExplore) does the same, so its profile tab can still page on.
       if (url.pathname !== "/v1/downloads") await explorer.close();
       if (rejectWhileSwitching(response)) return;
+    }
+
+    if (url.pathname.startsWith("/v1/browser/")) {
+      if (!isLoopbackAddress(request.socket.remoteAddress)) {
+        sendJson(response, 403, { error: "loopback_only", message: "浏览器登录只能在当前电脑连接。" });
+        return;
+      }
+      try {
+        if (request.method === "GET" && url.pathname === "/v1/browser/sources") {
+          sendJson(response, 200, { sources: await listBrowserSources(browserSources), status: collector.getStatus() });
+          return;
+        }
+        if (!["POST", "DELETE"].includes(request.method)) { sendJson(response, 404, { error: "not_found" }); return; }
+        const body = await readJsonBody(request);
+        if (rejectWhileSwitching(response) || rejectStaleAccount(response, url)) return;
+        const cancel = url.pathname === "/v1/browser/pending" && request.method === "DELETE";
+        if (cancel) {
+          if (typeof body.id !== "string") throw new BrowserConnectionError("browser_candidate_invalid", "连接确认已过期，请重新连接。", 400);
+          await clearPendingBrowser(body.id);
+          sendJson(response, 200, { status: collector.getStatus() }); return;
+        }
+        const busy = accountBusyMessage() || (collector.chatSendPromise ? "正在发送消息，请等待完成。" : null);
+        if (busy) throw new BrowserConnectionError("collector_busy", busy);
+        if (request.method !== "POST" || !["/v1/browser/connect", "/v1/browser/confirm", "/v1/browser/disconnect"].includes(url.pathname)) {
+          sendJson(response, 404, { error: "not_found" }); return;
+        }
+        switching = true;
+        let finishBrowserWork;
+        browserWork = new Promise(resolve => { finishBrowserWork = resolve; });
+        try {
+          if (url.pathname === "/v1/browser/connect") {
+            const source = browserSources.find(item => item.id === body.browser);
+            if (!source) throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge 或受支持的 Comet。", 400);
+            await clearPendingBrowser();
+            const connection = await browserConnector(source);
+            try {
+              const page = await connection.context.newPage();
+              const identity = await browserIdentity(connection, page);
+              const id = randomUUID();
+              const timer = setTimeout(() => { void clearPendingBrowser(id); }, 2 * 60_000); timer.unref();
+              pendingBrowser = { id, connection, page, identity, timer };
+              const target = browserTarget(identity);
+              sendJson(response, 200, { candidate: { id, browser: connection.browser, nickname: identity.nickname, uid: identity.uid,
+                accountId: target?.id ?? null, newAccount: !target } });
+            } catch (error) { await connection.disconnect(); throw error; }
+          } else if (url.pathname === "/v1/browser/confirm") {
+            const pending = pendingBrowser;
+            if (!pending || pending.id !== body.id) throw new BrowserConnectionError("browser_candidate_expired", "连接确认已过期，请重新连接。");
+            const identity = await browserIdentity(pending.connection, pending.page);
+            if (identity.uid !== pending.identity.uid) { await clearPendingBrowser(); throw new BrowserConnectionError("account_mismatch", "浏览器里的账号已经变化，请重新连接并确认。"); }
+            // Transfer ownership out of the pending slot before switching. The
+            // switch shuts down only the old collector's connection.
+            clearTimeout(pending.timer); pendingBrowser = null;
+            let created = null;
+            try {
+              const target = browserTarget(identity) ?? (created = await accounts.create());
+              if (target.id !== accounts.activeId) await runAccountWork(() => switchTo(target));
+              else { await explorer.close(); await collector.shutdown(); }
+              await collector.attachExternalBrowser(pending.connection, identity, pending.page);
+              sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
+            } catch (error) {
+              await pending.connection.disconnect();
+              // Keep a newly active account recoverable; do not delete its data.
+              if (created && created.id !== accounts.activeId) await accounts.remove(created.id).catch(() => {});
+              throw error;
+            }
+          } else {
+            await clearPendingBrowser();
+            await collector.disconnectExternalBrowser();
+            sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
+          }
+        } finally { switching = false; finishBrowserWork(); browserWork = null; }
+      } catch (error) {
+        const known = error instanceof BrowserConnectionError || error instanceof DirectHistoryError;
+        if (!response.headersSent) sendJson(response, known ? error.status || 409 : 500, { error: known ? error.code : "browser_connection_failed",
+          message: known ? error.message : "浏览器连接没有完成，请检查登录和远程调试设置后重试。" });
+      }
+      return;
     }
 
     const accountMatch = url.pathname.match(/^\/v1\/accounts\/([^/]+)(\/activate)?$/u);
@@ -664,15 +720,9 @@ export async function startCollectorServer({
       }
       const started = collector.startDirectRecords();
       sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });
-    } else if (request.method === "POST" && url.pathname === "/v1/observe") {
-      const started = collector.startObservation();
-      sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });
     } else if (request.method === "POST" && url.pathname === "/v1/chat/observe") {
       const started = collector.startChatObservation();
       sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });
-    } else if (request.method === "POST" && url.pathname === "/v1/observe/stop") {
-      const stopped = await collector.stopObservation();
-      sendJson(response, 200, { stopped, status: collector.getStatus() });
     } else if (request.method === "POST" && url.pathname === "/v1/chat/send") {
       try {
         // 16000 characters of worst-case JSON escaping fit well inside this.
@@ -723,9 +773,6 @@ export async function startCollectorServer({
           message: error?.status ? error.message : malformed ? "文件内容无效或超过 32 MB。" : "并入失败，请稍后再试。",
         });
       }
-    } else if (request.method === "POST" && url.pathname === "/v1/browser/close") {
-      await collector.close();
-      sendJson(response, 200, { ok: true });
     } else {
       sendJson(response, 404, { error: "not_found" });
     }
@@ -744,6 +791,8 @@ export async function startCollectorServer({
     try {
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器
       await accountWork?.catch(() => undefined);
+      await browserWork;
+      await clearPendingBrowser();
       await explorer.close();
       await collector.close();
     } finally {
@@ -781,7 +830,7 @@ async function main() {
     for (const address of localLanAddresses()) console.log(`局域网地址: http://${address}:${port}`);
   }
   console.log(`配对码: ${runtime.getPairingCode()}`);
-  console.log(`浏览器数据仅保存在: ${runtime.dataDirectory}`);
+  console.log(`本地数据仅保存在: ${runtime.dataDirectory}`);
 
   process.once("SIGINT", () => void runtime.close().then(() => process.exit(0)));
   process.once("SIGTERM", () => void runtime.close().then(() => process.exit(0)));

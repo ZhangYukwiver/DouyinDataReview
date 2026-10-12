@@ -243,7 +243,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
       </View>
     </View>
     {!connection ? <View {...ws("e-empty")} style={styles.empty}><Search size={34} color={color.cyan} /><Text {...ws("w-emptytitle")} style={styles.sectionTitle}>连接抖音，开始探索</Text><Text style={styles.emptyText}>连接本地采集器后即可搜索，无需先导入历史记录。</Text><Button label="前往连接" primary onPress={onOpenSettings} /></View> : null}
-    {collectorBusy ? <View {...ws("stamp-bar")} style={styles.banner}><Text style={styles.bannerText}>采集器正在处理任务。手动监听就绪后可直接搜索；同步或下载期间请等待任务完成。</Text><Button label="采集设置" onPress={onOpenSettings} /></View> : null}
+    {collectorBusy ? <View {...ws("stamp-bar")} style={styles.banner}><Text style={styles.bannerText}>采集器正在处理任务，请等待当前读取或下载完成。</Text><Button label="采集设置" onPress={onOpenSettings} /></View> : null}
     {error ? <View {...ws("s-error")} accessibilityRole="alert" style={styles.error}><Text style={styles.errorText}>{error}</Text><Button label="连接设置" onPress={onOpenSettings} /></View> : null}
     {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
     {loading || sending ? <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={color.cyan} /><Text style={styles.muted}>{sending ? "正在提交并核验操作…" : "正在读取抖音页面…"}</Text>{loading && !sending ? <Button label="取消读取" onPress={cancelLoad} /> : null}</View> : null}

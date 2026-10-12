@@ -1,5 +1,5 @@
 // 创作者中心（creator.douyin.com）的数据，只读。同一套读法也读创作者平台里的「抖音指数」（热点榜、达人详情）。
-// 使用按账号保存的 Cookie 直接请求；旧采集器适配器仍可使用空白同源页。
+// 使用按账号保存的 Cookie 直接请求。
 // 这些查询接口不用页面签名，不加载创作者中心页面本身，
 // 不点任何东西；能请求的只有下面白名单里的查询接口，发布、删除、回复这些写接口没有入口。
 
@@ -7,10 +7,6 @@ import { decryptIndexData } from "./indexCrypto.mjs";
 import { DirectHistoryError } from "./directHistory.mjs";
 
 const ORIGIN = "https://creator.douyin.com";
-const BLANK_URL = `${ORIGIN}/robots.txt`;
-// 详情页一次要读十来个接口，标签页留着复用；这么久没人读就收掉
-const IDLE_CLOSE_MS = 60_000;
-const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_BATCH = 24;
 
 const CREATOR_QUERY = { aid: "2906", app_name: "aweme_creator_platform", device_platform: "web" };
@@ -162,55 +158,27 @@ function needsLogin(status, payload) {
 export class CreatorCenter {
   constructor(collector) {
     this.collector = collector;
-    this.page = null;
-    this.opening = null;
-    this.idleTimer = null;
-  }
-
-  get active() {
-    return Boolean(this.page && !this.page.isClosed()) || Boolean(this.opening);
   }
 
   async read(requests) {
     if (!Array.isArray(requests) || !requests.length || requests.length > MAX_BATCH) throw new CreatorCenterError("invalid_request", "请求无效，请重试。", 400);
     const prepared = requests.map((item) => creatorRequest(item?.key, item?.params ?? {}));
     if (prepared.some((item) => !item)) throw new CreatorCenterError("invalid_request", "请求无效，请重试。", 400);
-    let page, api;
+    let api;
     try {
-      if (typeof this.collector.ensureDirectApi === "function") api = await this.collector.ensureDirectApi();
-      else page = await this.ensurePage();
+      api = await this.collector.ensureDirectApi();
     } catch (error) {
-      // 没登录、连不上：浏览器可能已经启动了，不安排收尾就没人会释放它
-      this.scheduleIdleClose();
       if (error instanceof DirectHistoryError) throw new CreatorCenterError(error.code, error.message);
       throw error;
     }
-    clearTimeout(this.idleTimer);
     try {
-      const raw = api ? await Promise.all(prepared.map(async (item) => {
+      const raw = await Promise.all(prepared.map(async (item) => {
         try { return await api.readCreator(item); }
         catch (error) {
           if (error?.code !== "request_failed") throw error;
           return { status: 0, text: "" };
         }
-      })) : await page.evaluate(async ({ list, timeout }) => Promise.all(list.map(async ({ method, url, body }) => {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeout);
-        try {
-          const response = await fetch(url, {
-            method,
-            credentials: "include",
-            signal: controller.signal,
-            headers: body === null ? { accept: "application/json" } : { accept: "application/json", "content-type": "application/json" },
-            body: body ?? undefined,
-          });
-          return { status: response.status, text: await response.text(), encrypted: response.headers.get("x-encrypted") };
-        } catch {
-          return { status: 0, text: "" };
-        } finally {
-          clearTimeout(timer);
-        }
-      })), { list: prepared, timeout: REQUEST_TIMEOUT_MS });
+      }));
       // 抖音指数的响应带 x-encrypted：外层 {data:<密文>}，解开才是业务 JSON。解不开要单独标出来，别当成「没数据」
       const results = raw.map(({ status, text, encrypted }) => {
         if (!encrypted) return { status, data: parseCreatorJson(text) };
@@ -220,53 +188,11 @@ export class CreatorCenter {
       if (results.some(({ status, data }) => needsLogin(status, data))) throw new CreatorCenterError("login_required", "登录抖音以后，才能看创作者中心的数据。");
       if (results.every(({ status }) => status === 0)) throw new CreatorCenterError("creator_unavailable", "没连上抖音创作者中心，请检查网络后重试。", 502);
       return results.map(({ status, data, undecryptable }) => (status >= 200 && status < 300 && data ? { ok: true, data } : { ok: false, status, ...(undecryptable ? { reason: "undecryptable" } : {}) }));
-    } finally {
-      if (page) this.scheduleIdleClose();
+    } catch (error) {
+      if (error instanceof DirectHistoryError) throw new CreatorCenterError(error.code, error.message);
+      throw error;
     }
   }
 
-  async ensurePage() {
-    const collector = this.collector;
-    if (this.page && !this.page.isClosed() && this.page.context() === collector.context) return this.page;
-    if (this.opening) return this.opening;
-    this.opening = (async () => {
-      if (collector.visibleBrowserWorkRunning()) throw new CreatorCenterError("collector_busy", "采集器正在用浏览器读取记录，读完就能看创作者中心。");
-      const context = await collector.ensureBrowser({ headless: true });
-      if (!await collector.hasLoginSession(context, null)) throw new CreatorCenterError("login_required", "登录抖音以后，才能看创作者中心的数据。");
-      const page = await context.newPage();
-      // 本机解析 creator.douyin.com 偶尔卡十几秒（10-06 冷启动第一次超时、紧接着重试就通），所以失败再试一次
-      // 只等到文档提交：这个「空白页」其实是创作者中心整个前端壳，同步脚本要下约 4MB，
-      // 静态资源 CDN 慢的时候（10-10 实测 40KB/s）等 DOMContentLoaded 会超时，而我们只需要同源的 cookie 环境发 fetch
-      let opened = false;
-      for (let attempt = 0; attempt < 2 && !opened; attempt += 1) {
-        opened = await page.goto(BLANK_URL, { waitUntil: "commit", timeout: REQUEST_TIMEOUT_MS }).then(() => true, () => false);
-      }
-      if (!opened) {
-        await page.close().catch(() => {});
-        throw new CreatorCenterError("creator_unavailable", "没连上抖音创作者中心，请检查网络后重试。", 502);
-      }
-      page.on("close", () => { if (this.page === page) this.page = null; });
-      this.page = page;
-      return page;
-    })();
-    try {
-      return await this.opening;
-    } finally {
-      this.opening = null;
-    }
-  }
 
-  scheduleIdleClose() {
-    clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => void this.close(), IDLE_CLOSE_MS);
-    this.idleTimer.unref?.();
-  }
-
-  async close() {
-    clearTimeout(this.idleTimer);
-    const page = this.page;
-    this.page = null;
-    if (page) await page.close().catch(() => {});
-    await this.collector.releaseHeadlessContextIfIdle?.();
-  }
 }

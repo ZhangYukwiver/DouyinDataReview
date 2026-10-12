@@ -157,6 +157,7 @@ describe("direct HTTP signing and account session", () => {
     const dataDirectory = await directory(); await saveDirectSession(dataDirectory, session());
     const { api } = client(() => ({ user_uid: "123", status_code: 0 }));
     const collector = new DouyinCollector({ dataDirectory, executablePath: "unused", store: {}, account: { id: "default", uid: "123" } });
+    collector.externalSessionState = "ready";
     collector.directApi = api; collector.ensureBrowser = vi.fn(() => { throw new Error("browser must not launch"); });
     expect(await collector.ensureDirectApi()).toBe(api);
     expect(collector.ensureBrowser).not.toHaveBeenCalled();
@@ -168,6 +169,7 @@ describe("direct HTTP signing and account session", () => {
     await saveDirectSession(value,candidate);
     const {api}=client(()=>({status_code:0,user_uid:"123"}));
     const collector=new DouyinCollector({dataDirectory:value,store:{},account:{id:"default",uid:"123"}});
+    collector.externalConnection={connected:true,disconnect:async()=>{}};
     collector.directApi=api;let ready=false;
     collector.ensureDirectWriteCredentials=vi.fn(async()=>{ready=true;});
     api.verifyIdentity=vi.fn(async()=>{expect(ready).toBe(true);return {uid:"123"};});
@@ -214,13 +216,14 @@ describe("direct HTTP signing and account session", () => {
       ? { ...security, trait: { blob: security.dtrait.blob, sdkVersion: security.dtrait.sdkVersion } }
       : { uid: '123', secUid: api.secUid }) };
     collector.context = { newPage: async () => page, cookies: async () => cookies, directMsToken: security.msToken };
+    collector.externalConnection = { connected: true, context: collector.context, disconnect: async () => {} };
     await expect(collector.ensureDirectWriteCredentials(api)).resolves.toMatchObject({ sdkPairVerified: true, csrfToken: 'current-csrf' });
     expect(collector.directApi).toBe(api); expect(api.cookie('sessionid')).toBe('new-login');
     expect((await loadDirectSession(dataDirectory, '123')).security.sdkPairVerified).toBe(true);
     expect(page.close).toHaveBeenCalledOnce();
     collector.context = null; await collector.close();
   });
-  it("routes initialized full reads through HTTP and opens login recovery after expiry", async () => {
+  it("routes full reads through HTTP and requires reimport after expiry without launching a browser", async () => {
     const dataDirectory = await initializedDirectory();
     const collector = new DouyinCollector({ dataDirectory, store: {}, account: { id: "default", uid: "123" } });
     collector.syncRunId = 1; collector.ensureDirectApi = vi.fn(async () => ({}));
@@ -228,20 +231,8 @@ describe("direct HTTP signing and account session", () => {
     collector.ensureBrowser = vi.fn(async () => { throw new Error("login-recovery"); });
     await collector.runSync(1);
     expect(collector.runDirectRecords).toHaveBeenCalledWith(1, { full: true }); expect(collector.ensureBrowser).not.toHaveBeenCalled();
-    collector.ensureDirectApi.mockRejectedValue(new DirectHistoryError("login_required", "expired"));
-    await expect(collector.runSync(1)).rejects.toThrow("login-recovery"); expect(collector.ensureBrowser).toHaveBeenCalledTimes(1);
-  });
-  it("moves the first full read to HTTP immediately after login and template capture", async () => {
-    const dataDirectory = await directory(), page = {};
-    const collector = new DouyinCollector({ dataDirectory, store: {} }); collector.syncRunId = 1;
-    collector.ensureBrowser = vi.fn(async () => ({})); collector.currentPage = vi.fn(async () => page);
-    collector.visit = vi.fn(async () => {}); collector.waitForLogin = vi.fn(async () => {});
-    collector.assertAccountMatches = vi.fn(async () => { await saveDirectSession(dataDirectory, session()); });
-    collector.prepareDirectHistoryTemplate = vi.fn(async () => { await writeTemplate(dataDirectory); });
-    collector.runDirectRecords = vi.fn(async () => {}); collector.collectPhase = vi.fn(() => { throw new Error("page scrolling must not run"); });
-    await collector.runSync(1);
-    expect(collector.prepareDirectHistoryTemplate).toHaveBeenCalledWith(expect.anything(), page, 1);
-    expect(collector.runDirectRecords).toHaveBeenCalledWith(1, { full: true }); expect(collector.collectPhase).not.toHaveBeenCalled();
+    collector.runDirectRecords.mockRejectedValue(new DirectHistoryError("browser_reconnect_required", "expired"));
+    await expect(collector.runSync(1)).rejects.toMatchObject({ code: "browser_reconnect_required" }); expect(collector.ensureBrowser).not.toHaveBeenCalled();
   });
   it("signs replies without UIFID/fingerprint fields, appending fingerprints after the signature", async () => {
     const signer = vi.fn(async (url) => { expect([...url.searchParams.keys()]).not.toContain("uifid"); expect(url.searchParams.has("fp")).toBe(false);

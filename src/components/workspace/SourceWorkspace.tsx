@@ -96,7 +96,6 @@ export interface SetupWorkspaceProps {
   pairingCode: string;
   connected: boolean;
   busy: boolean;
-  observing: boolean;
   chatCollecting: boolean;
   chatBusy: boolean;
   stoppingSync: boolean;
@@ -113,10 +112,9 @@ export interface SetupWorkspaceProps {
   onChangePairingCode: (value: string) => void;
   onConnect: () => Promise<void>;
   onDisconnect: () => Promise<void>;
-  onStartObservation: () => Promise<void>;
   onStartChatObservation: () => Promise<void>;
   onCollectChatHistory: () => Promise<void>;
-  onStopObservation: () => Promise<void>;
+  onStopChatObservation: () => Promise<void>;
   onStartIncrementalSync: () => void;
   onStartFullSync: () => void;
   onStopSync: () => Promise<void>;
@@ -254,11 +252,9 @@ function SketchSetupWorkspace({
   onCollectChatHistory,
   onStartFullSync,
   onStartIncrementalSync,
-  onStartObservation,
-  onStopObservation,
+  onStopChatObservation,
   onStopSync,
   onToggleAutoSync,
-  observing,
   chatCollecting,
   chatBusy,
   pairingCode,
@@ -285,11 +281,11 @@ function SketchSetupWorkspace({
   const counts = { watch: records.watch_history.length, liked: records.liked_videos.length, favorite: records.favorite_videos.length, chat: chatCount ?? 0 };
   const total = counts.watch + counts.liked + counts.favorite + counts.chat;
   // 状态推导、五个读取按钮、提示文案都在 setupModel，极简版用的是同一套
-  const setup = deriveSetup({ connected, busy, observing, chatCollecting, status, snapshotSource, total });
+  const setup = deriveSetup({ connected, busy, chatCollecting, status, snapshotSource, total });
   const { ready, syncing, chatProgress, loginNeeded, fromArchive, flow } = setup;
   const [stoppingChat, setStoppingChat] = useState(false);
-  const actions = readActions({ connected, busy, observing, chatCollecting, chatBusy, stoppingSync, switchingAccount, stoppingChat }, setup);
-  const handlers = { onStartIncrementalSync, onStartFullSync, onStopSync, onStartObservation, onStopObservation, onStartChatObservation, onCollectChatHistory, setStoppingChat };
+  const actions = readActions({ connected, busy, chatCollecting, chatBusy, stoppingSync, switchingAccount, stoppingChat }, setup);
+  const handlers = { onStartIncrementalSync, onStartFullSync, onStopSync, onStopChatObservation, onStartChatObservation, onCollectChatHistory, setStoppingChat };
   const digest = useMemo(() => digestRecords(records, 24), [records]);
 
   const recordDetail = recordSummary(total, digest.first);
@@ -302,7 +298,7 @@ function SketchSetupWorkspace({
   const accountRows = accounts?.accounts ?? [];
   const activeAccountId = accounts?.activeId ?? status?.account?.id ?? null;
   const accountLabel = activeAccountLabel(connected, status, accounts);
-  const accountBlocked = accountBlockedReason({ switchingAccount, observing, syncing, busy, downloading, sparkRenewing });
+  const accountBlocked = accountBlockedReason({ switchingAccount, syncing, busy, downloading, sparkRenewing });
 
   return (
     <View {...SKETCH_SKIN} testID="setup-workspace" style={styles.root}>
@@ -386,7 +382,7 @@ function SketchSetupWorkspace({
                   <ActionButton key={action.key} seed={`act-${action.key}`} compact={narrow} disabled={action.disabled} icon={READ_ICONS[action.icon]} label={action.label} onPress={() => runReadCommand(action.command, handlers)} busy={action.busy} />
                 ))}
               </View>
-              <Text style={styles.hint}>完整读取和手动监听会先暂停接收聊天。</Text>
+              <Text style={styles.hint}>凭据有效时，完整和增量读取均无需打开浏览器。</Text>
               <HRule seed="auto-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />
               <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSyncEnabled }} aria-checked={autoSyncEnabled} onPress={onToggleAutoSync} style={(state) => [styles.auto, state.pressed && styles.pressed, pointer]}>
                 <Text style={[styles.strong, styles.flex]}>自动补读新记录</Text>
@@ -414,7 +410,7 @@ function SketchSetupWorkspace({
                 {web ? <SketchButton seed="tool-export" compact={narrow} disabled={!connected} icon={Download} kind="small" label="导出数据" onPress={onExportData} /> : null}
                 <SketchButton seed="tool-clear" compact={narrow} disabled={!total || busy} icon={Trash2} kind="small" label="清除本地记录" onPress={onClearCache} />
               </View>
-              {appUpdate ? <AppUpdatePanel busy={busy || observing} compact={narrow} onCheck={onCheckAppUpdate} onDownload={onDownloadAppUpdate} onInstall={onInstallAppUpdate} short={short} state={appUpdate} tight={tight} /> : null}
+              {appUpdate ? <AppUpdatePanel busy={busy} compact={narrow} onCheck={onCheckAppUpdate} onDownload={onDownloadAppUpdate} onInstall={onInstallAppUpdate} short={short} state={appUpdate} tight={tight} /> : null}
             </SketchBox>
           </View>
         </View>
@@ -497,7 +493,7 @@ function AccountMenu({ accounts, activeId, blocked, maxListHeight, onActivate, o
         <HRule color={C.pencil} seed="account-rule-bottom" style={styles.menuRule} />
         <View style={styles.menuFoot}>
           <SketchButton disabled={Boolean(blocked)} icon={UserRoundPlus} kind="ink" label="添加账号" onPress={onAdd} seed="account-add" testID="account-add" />
-          <Text style={[styles.fine, styles.flex]}>会打开专用浏览器，登录另一个抖音号后自动开始读取。</Text>
+          <Text style={[styles.fine, styles.flex]}>添加后在设置 → 账号中连接浏览器并导入该账号的凭据。</Text>
         </View>
       </SketchBox>
     </View>

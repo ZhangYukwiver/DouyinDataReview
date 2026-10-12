@@ -420,11 +420,11 @@ function sessionValue(cookies, name) {
 function requireSessionCookies(cookies) {
   const values = selectedCookies(cookies);
   if (![...LOGIN_COOKIE_NAMES].some((name) => values.has(name))) {
-    throw new DirectHistoryError("login_required", "专用浏览器尚未登录，请先完成一次浏览器登录。");
+    throw new DirectHistoryError("login_required", "尚未导入登录凭据，请在设置 → 账号中连接浏览器并导入。");
   }
   for (const name of ["s_v_web_id", "UIFID"]) {
     if (!sessionValue(cookies, name)) {
-      throw new DirectHistoryError("session_incomplete", "专用浏览器会话缺少直接读取所需字段，请重新登录后再试。");
+      throw new DirectHistoryError("session_incomplete", "浏览器登录凭据缺少直接读取所需字段，请重新连接并导入。");
     }
   }
   return values;
@@ -603,7 +603,7 @@ export async function fetchDirectHistoryPage({
   signer = signDirectHistoryUrl,
 }) {
   if (!context || typeof context.cookies !== "function" || typeof requestFactory?.newContext !== "function") {
-    throw new DirectHistoryError("invalid_context", "直接读取没有可用的专用浏览器会话。");
+    throw new DirectHistoryError("invalid_context", "直接读取没有可用的登录会话。");
   }
   const normalizedCursor = String(cursor);
   if (!/^\d{1,20}$/u.test(normalizedCursor)) {
@@ -693,6 +693,8 @@ export async function fetchDirectHistoryPage({
     }
     validateDirectPayload(payload, "观看历史");
     return payload;
+  } catch (error) {
+    throw context.sessionError?.(error) ?? error;
   } finally {
     await isolatedRequest.dispose().catch(() => undefined);
   }

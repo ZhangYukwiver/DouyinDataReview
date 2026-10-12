@@ -77,7 +77,7 @@ export async function sendChatText(page, { conversationId, text }, { timeoutMs =
   await editor.first().waitFor({ state: "visible", timeout: 8_000 }).catch(() => {});
   if (await editor.count() !== 1 || await button.count() !== 1) {
     throw await pageNeedsVerification(page)
-      ? new ChatSendError("verification_required", "抖音要求先完成安全验证。请用「手动监听」打开抖音，验证完再回来发送。")
+      ? new ChatSendError("verification_required", "抖音要求先完成安全验证。请在日常浏览器中完成验证，再到设置 → 账号中重新导入凭据。")
       : new ChatSendError("control_unavailable", "没找到抖音的输入框，请稍后再试。");
   }
   const before = await page.evaluate(ownMessages, conversationId);

@@ -32,6 +32,8 @@ describe("release privacy boundary", () => {
     "collector/records.json",
     "dist/direct-history-template.json",
     "collector/direct-session.json",
+    "collector/external-browser.json",
+    "app.asar.unpacked/collector/external-browser.json.123-test.tmp",
     "app.asar.unpacked/collector/direct-session.json.123-test.tmp",
     "dist/accounts.json",
     "browser-profile/Default/Cookies",

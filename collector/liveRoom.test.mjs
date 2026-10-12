@@ -43,11 +43,11 @@ const chat = (id, roomId, user, text, method = "WebcastChatMessage") => envelope
 ));
 const pushFrame = (response) => msg(num(1, 1), num(3, 8888), bytes(5, msg(bytes(1, "compress_type"), bytes(2, "gzip"))), bytes(7, "msg"), bytes(8, gzipSync(response)));
 
-describe("live rooms use of the shared browser", () => {
+describe("live room HTTP connection queue", () => {
   it("counts reading who is live and entering a room as in-flight until they settle", async () => {
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
-    const rooms = new LiveRooms({ visibleBrowserWorkRunning: () => false, ensureBrowser: vi.fn(async () => { await gate; throw new Error("stop here"); }) });
+    const rooms = new LiveRooms({ visibleBrowserWorkRunning: () => false, ensureDirectApi: vi.fn(async () => { await gate; throw new Error("stop here"); }) });
     expect(rooms.inflight).toBe(0);
     const following = rooms.following({ refresh: true }).catch(() => undefined);
     await vi.waitFor(() => expect(rooms.inflight).toBe(1));

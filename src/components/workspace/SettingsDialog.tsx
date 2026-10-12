@@ -9,6 +9,7 @@ import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type Coll
 import { ease, ws } from "./motion";
 import { appUpdateAction } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
+import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
 
 export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "features" | "about";
 
@@ -45,11 +46,12 @@ export interface SettingsDialogProps {
   canClear: boolean;
   onClearCache: () => void;
   appUpdate: DesktopUpdateState | null;
-  /** 采集器正在读取或手动监听：下好的更新先不装，按钮写「采集完成后安装」（和采集器页的更新面板一样） */
+  /** 采集器正在读取：下好的更新先不装，按钮写「采集完成后安装」（和采集器页的更新面板一样） */
   installBlocked?: boolean;
   onCheckAppUpdate: () => Promise<void>;
   onDownloadAppUpdate: () => Promise<void>;
   onInstallAppUpdate: () => Promise<void>;
+  browserConnection?: Omit<BrowserConnectionPanelProps, "visible" | "blocked">;
 }
 
 const web = Platform.OS === "web";
@@ -277,7 +279,7 @@ function Privacy({ onTogglePrivacy, privacy }: SettingsDialogProps) {
   );
 }
 
-function Account({ accountBlocked, accounts, activeAccountName, appStyle, connected, onActivateAccount, onAddAccount, onClose, onRemoveAccount, switchingAccount = false }: SettingsDialogProps) {
+function Account({ accountBlocked, accounts, activeAccountName, appStyle, connected, onActivateAccount, onAddAccount, onClose, onRemoveAccount, switchingAccount = false, browserConnection, visible }: SettingsDialogProps) {
   if (!connected) {
     return (
       <View style={styles.row}>
@@ -323,9 +325,10 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
         <View style={styles.row}><Text style={styles.detail}>还没读到账号列表，稍等一下再打开看看。</Text></View>
       )}
       <View style={styles.row}>
-        <RowCopy detail="会打开专用浏览器，登录另一个抖音号以后自动开始读取。" title="添加账号" />
+        <RowCopy detail="添加后连接已登录的浏览器，确认账号并导入凭据。" title="添加账号" />
         <Button appStyle={appStyle} disabled={blocked} icon={UserRoundPlus} label="添加账号" onPress={() => { onClose(); onAddAccount(); }} testID="settings-account-add" />
       </View>
+      {browserConnection ? <BrowserConnectionPanel {...browserConnection} visible={visible} blocked={blocked} /> : null}
     </>
   );
 }

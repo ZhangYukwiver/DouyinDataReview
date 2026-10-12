@@ -100,7 +100,6 @@ export function MinimalSetupWorkspace({
   collectorUrl,
   connected,
   error,
-  observing,
   onChangeCollectorUrl,
   onChangePairingCode,
   onCollectChatHistory,
@@ -115,8 +114,7 @@ export function MinimalSetupWorkspace({
   onStartChatObservation,
   onStartFullSync,
   onStartIncrementalSync,
-  onStartObservation,
-  onStopObservation,
+  onStopChatObservation,
   onStopSync,
   onToggleAutoSync,
   pairingCode,
@@ -139,10 +137,10 @@ export function MinimalSetupWorkspace({
 
   const counts = { watch: records.watch_history.length, liked: records.liked_videos.length, favorite: records.favorite_videos.length, chat: chatCount ?? 0 };
   const total = counts.watch + counts.liked + counts.favorite + counts.chat;
-  const setup = deriveSetup({ connected, busy, observing, chatCollecting, status, snapshotSource, total });
+  const setup = deriveSetup({ connected, busy, chatCollecting, status, snapshotSource, total });
   const [stoppingChat, setStoppingChat] = useState(false);
-  const actions = readActions({ connected, busy, observing, chatCollecting, chatBusy, stoppingSync, switchingAccount, stoppingChat }, setup);
-  const run = (command: ReadCommand) => runReadCommand(command, { onStartIncrementalSync, onStartFullSync, onStopSync, onStartObservation, onStopObservation, onStartChatObservation, onCollectChatHistory, setStoppingChat });
+  const actions = readActions({ connected, busy, chatCollecting, chatBusy, stoppingSync, switchingAccount, stoppingChat }, setup);
+  const run = (command: ReadCommand) => runReadCommand(command, { onStartIncrementalSync, onStartFullSync, onStopSync, onStopChatObservation, onStartChatObservation, onCollectChatHistory, setStoppingChat });
   const digest = useMemo(() => digestRecords(records, 24), [records]);
   // 用着导入文件时，下面档案卡的说明已经讲清楚怎么换回采集器，状态提示就不再重复这句
   const tips = tipNotes({ fromArchive: setup.fromArchive, connected, loginNeeded: setup.loginNeeded, syncing: setup.syncing, ready: setup.ready, autoSyncEnabled }, "minimal")
@@ -241,7 +239,7 @@ export function MinimalSetupWorkspace({
               <FitSlot style={[styles.slotData, short && styles.slotDataShort]}>{(size) => <DataArea digest={digest} roomy={roomy} size={size} />}</FitSlot>
               <ChatProgress progress={setup.chatProgress} />
               <ReadButtons actions={actions} oneRow={oneRow} onRun={run} />
-              <Text style={styles.hint}>完整读取和手动监听会先暂停接收聊天。</Text>
+              <Text style={styles.hint}>凭据有效时，完整和增量读取均无需打开浏览器。</Text>
               <View style={[styles.rule, short && styles.ruleShort]} />
               <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSyncEnabled }} aria-checked={autoSyncEnabled} onPress={onToggleAutoSync} style={(state) => [styles.auto, pointer, state.pressed && styles.autoPressed]}>
                 <View style={styles.flex}>

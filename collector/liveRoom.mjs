@@ -1,19 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { pageNeedsVerification } from "./readOnlyPage.mjs";
 import { DirectHistoryError } from "./directHistory.mjs";
 import { DirectLiveClient, decodeLivePush } from "./directLive.mjs";
 
 // 工作台看直播：当前账号的 HTTP 会话读进房资料，Node WebSocket 收弹幕。
 // 画面由工作台拉流播放；这里没有发弹幕、送礼、点赞的入口。
 
-const ENTER_PATH = "/webcast/room/web/enter/";
-const IM_FETCH_PATH = "/webcast/im/fetch/";
 const MESSAGE_LIMIT = 300;
-const ROOM_INFO_TIMEOUT_MS = 25_000;
-// 工作台每秒来取一次弹幕；这么久没人来取，说明播放器没了，收掉标签页
+// 工作台每秒来取一次弹幕；长时间没人读取时关闭连接。
 const IDLE_CLOSE_MS = 30_000;
-// 退出后等一会儿再收浏览器：换台、重试马上又要用，免得刚关就重开
-const RELEASE_DELAY_MS = 10_000;
 // 关注的人谁在播：抖音关注页顶上那一排用的同一个接口（GET，读的是登录账号的关注）
 const FOLLOWING_URL = "https://www.douyin.com/webcast/web/feed/follow/?aid=6383&device_platform=webapp&channel=channel_pc_web&request_tag_from=web&scene=aweme_pc_follow_top";
 const FOLLOWING_CACHE_MS = 30_000;
@@ -180,15 +174,15 @@ export function normalizeFollowingLive(payload) {
   });
 }
 
-// ---- 标签页 ----
+// ---- HTTP 和 WebSocket 会话 ----
 
 export class LiveRooms {
   constructor(collector) {
     this.collector = collector;
     this.rooms = new Map();
-    // 进房和收浏览器排同一个队：新的浏览器不能在旧的还没关完时起
+    // 进房和关注查询串行处理。
     this.queue = Promise.resolve();
-    // 正在读「关注的人谁在播」或进房（还没登记进 rooms）的次数：这段时间也在用共享的无头会话
+    // 尚未完成的关注查询和进房请求数量。
     this.inflight = 0;
     this.releaseTimer = null;
     this.followingCache = null;
@@ -196,11 +190,6 @@ export class LiveRooms {
 
   get size() {
     return this.rooms.size;
-  }
-
-  get usesBrowser() {
-    return [...this.rooms.values()].some(room => room.page)
-      || (this.inflight > 0 && typeof this.collector.ensureDirectApi !== "function");
   }
 
   async open(input) {
@@ -225,14 +214,12 @@ export class LiveRooms {
       return await work;
     } finally {
       this.inflight -= 1;
-      this.scheduleRelease();
     }
   }
 
   async readFollowing() {
     const collector = this.collector;
-    if (collector.visibleBrowserWorkRunning()) throw new LiveRoomError("collector_busy", "采集器正在用浏览器读取记录，读完就能看到关注的人谁在播。");
-    if (typeof collector.ensureDirectApi === "function") {
+    {
       try {
         const api = await collector.ensureDirectApi();
         const url = new URL(FOLLOWING_URL);
@@ -246,93 +233,12 @@ export class LiveRooms {
         throw error;
       }
     }
-    const context = await collector.ensureBrowser({ headless: true });
-    if (!await collector.hasLoginSession(context, null)) throw new LiveRoomError("login_required", "登录抖音以后，才能看到关注的人谁在播。");
-    const page = await context.newPage();
-    try {
-      // 在一个空白的同源页面里带着登录 cookie 读：不加载抖音页面，不进任何直播间，也不用页面签名（09-27 实测同族接口不签名结果一致）
-      await page.goto("https://www.douyin.com/robots.txt", { waitUntil: "domcontentloaded", timeout: 20_000 });
-      const payload = await page.evaluate(async (url) => {
-        const response = await fetch(url, { credentials: "include" });
-        return response.ok ? response.json().catch(() => null) : null;
-      }, FOLLOWING_URL);
-      const list = normalizeFollowingLive(payload);
-      if (!list) throw new LiveRoomError("following_unavailable", "没读到关注的人的直播，请稍后重试。", 502);
-      this.followingCache = { at: Date.now(), list };
-      return list;
-    } catch (error) {
-      if (error instanceof LiveRoomError) throw error;
-      throw new LiveRoomError("following_unavailable", "没读到关注的人的直播，请检查网络后重试。", 502);
-    } finally {
-      await page.close().catch(() => {});
-    }
   }
 
   async enter(webRid) {
     // 播放器同一时间只看一个直播间，换台就把上一个收掉（会话留着给新的用）
     await this.closeAll({ release: false });
-    const collector = this.collector;
-    if (collector.visibleBrowserWorkRunning()) throw new LiveRoomError("collector_busy", "采集器正在用浏览器读取记录，读完就能看直播。");
-    if (typeof collector.ensureDirectApi === "function") return this.enterDirect(webRid);
-    const context = await collector.ensureBrowser({ headless: true });
-    const page = await context.newPage();
-    const room = {
-      id: randomUUID(), webRid, page, info: null, messages: [], seen: new Set(), seq: 0,
-      online: null, likes: null, ended: false, lastRead: Date.now(), timer: null,
-    };
-    this.rooms.set(room.id, room);
-    page.on("close", () => this.forget(room));
-    page.on("crash", () => void this.close(room.id));
-    try {
-      await prepareLivePage(page);
-      let resolveInfo;
-      const infoReady = new Promise((resolve) => { resolveInfo = resolve; });
-      page.once("close", () => resolveInfo(null));
-      page.on("response", (response) => {
-        const url = new URL(response.url());
-        if (url.hostname !== "live.douyin.com") return;
-        if (url.pathname === ENTER_PATH && url.searchParams.get("web_rid") === webRid) {
-          void response.json().then((payload) => {
-            const info = normalizeLiveRoom(payload, webRid);
-            if (!info) return;
-            room.info = info;
-            room.online ??= info.online;
-            room.likes ??= info.likes;
-            resolveInfo(info);
-          }).catch(() => {});
-        } else if (url.pathname === IM_FETCH_PATH && /protobuf/iu.test(response.headers()["content-type"] ?? "")) {
-          // 进房时这一下会带回最近几条弹幕，免得一开始是空的
-          void response.body().then((body) => this.ingest(room, decodeLiveMessages(body))).catch(() => {});
-        }
-      });
-      page.on("websocket", (socket) => {
-        if (!/\/webcast\/im\/push\//u.test(socket.url())) return;
-        socket.on("framereceived", ({ payload }) => {
-          if (typeof payload === "string") return;
-          try { this.ingest(room, decodeLiveFrame(payload)); } catch { /* 坏帧跳过 */ }
-        });
-      });
-      await page.goto(`https://live.douyin.com/${webRid}`, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {
-        throw new LiveRoomError("page_load_failed", "直播间页面没打开，请检查网络后重试。", 504);
-      });
-      // 这页没人看，不画出来：脚本和弹幕连接照跑，渲染和合成省掉一大半
-      await page.addStyleTag({ content: "html{display:none!important}" }).catch(() => {});
-      let timeout;
-      const info = await Promise.race([infoReady, new Promise((resolve) => { timeout = setTimeout(resolve, ROOM_INFO_TIMEOUT_MS, null); })]);
-      clearTimeout(timeout);
-      if (!info) {
-        if (await pageNeedsVerification(page)) throw new LiveRoomError("verification_required", "抖音要求验证，请先在「连接与采集」里用手动监听打开一次抖音完成验证。");
-        throw new LiveRoomError("room_unavailable", "没读到这个直播间的信息，请稍后重试。", 504);
-      }
-      room.timer = setInterval(() => {
-        if (Date.now() - room.lastRead > IDLE_CLOSE_MS) void this.close(room.id);
-      }, 10_000);
-      room.timer.unref?.();
-      return this.snapshot(room, -1);
-    } catch (error) {
-      await this.close(room.id);
-      throw error;
-    }
+    return this.enterDirect(webRid);
   }
 
   async enterDirect(webRid) {
@@ -415,46 +321,10 @@ export class LiveRooms {
     room.controller?.abort();
     room.transport?.close();
     await room.page?.close().catch(() => {});
-    if (release) this.scheduleRelease();
     return true;
-  }
-
-  scheduleRelease() {
-    clearTimeout(this.releaseTimer);
-    this.releaseTimer = setTimeout(() => { this.queue = this.queue.then(() => this.releaseIfIdle()).catch(() => {}); }, RELEASE_DELAY_MS);
-    this.releaseTimer.unref?.();
-  }
-
-  // 这个无头会话要是只为看直播开的，看完就收掉；聊天、读取、探索还开着页面就留着
-  async releaseIfIdle() {
-    const context = this.collector.context;
-    if (this.rooms.size || !context || !this.collector.contextHeadless) return;
-    if (context.pages().some((page) => !page.isClosed() && page.url() !== "about:blank")) return;
-    await this.collector.releaseHeadlessContextIfIdle();
   }
 
   async closeAll(options) {
     for (const id of [...this.rooms.keys()]) await this.close(id, options);
   }
-}
-
-/**
- * 画面由工作台自己拉流播放，这个标签页里的播放器不必再下一份；图片、礼物特效包、活动小程序也没人看。
- * ponytail: 实测（09-27）这样开着一个直播页约占 1/3 个核（只拦拉流时约 60%）；要再省就得拿页面签好的
- * 弹幕地址在 Node 里自己连，替页面回 ack 和心跳，然后关掉页面。
- */
-async function prepareLivePage(page) {
-  const network = await page.context().newCDPSession(page);
-  // 还没跑过完整读取时，共享会话用的是无头默认 UA；带 HeadlessChrome 的直播间不连弹幕
-  const userAgent = await page.evaluate(() => navigator.userAgent);
-  if (userAgent.includes("HeadlessChrome")) await network.send("Emulation.setUserAgentOverride", { userAgent: userAgent.replace("HeadlessChrome", "Chrome") });
-  network.on("Fetch.requestPaused", ({ requestId }) => {
-    void network.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }).catch(() => {});
-  });
-  await network.send("Fetch.enable", {
-    patterns: [
-      ...["*://pull-*", "*.flv*", "*.m3u8*", "*.zip*", "*bytegecko.com*"].map((urlPattern) => ({ urlPattern, requestStage: "Request" })),
-      { urlPattern: "*", resourceType: "Image", requestStage: "Request" },
-    ],
-  });
 }

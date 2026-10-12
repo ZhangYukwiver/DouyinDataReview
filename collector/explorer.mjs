@@ -9,7 +9,7 @@ export class ExploreError extends Error {
 const text = (value, limit = 500) => typeof value === "string" ? value.trim().slice(0, limit) : "";
 const number = (value) => Number.isFinite(Number(value)) && value !== null && value !== undefined ? Math.max(0, Number(value)) : null;
 const flag = (value) => value === true || value === 1 ? true : value === false || value === 0 ? false : null;
-const verificationError = () => new ExploreError("verification_required", "抖音暂未放行本次搜索，返回了安全验证要求。请在手动监听的抖音搜索页查看；如果出现验证码，请完成后重试。未出现验证码时，请稍后再试。");
+const verificationError = () => new ExploreError("verification_required", "抖音暂未放行本次搜索，返回了安全验证要求。请在已登录的浏览器中打开抖音搜索页查看；如果出现验证码，请完成后重试。未出现验证码时，请稍后再试。");
 const image = (value) => normalizeRecord({ id: "image", coverUrl: value?.url_list?.[0] ?? value })?.coverUrl ?? null;
 export function normalizeExploreUser(raw) {
   if (!raw || typeof raw !== "object") return null;
@@ -170,7 +170,7 @@ export function ingestExploreResponse(session, pathname, payload) {
   if (raw === null && kind === "comments" && payload.status_code === 0) raw = [];
   if (!Array.isArray(raw)) return;
   if (payload.status_code !== undefined && payload.status_code !== 0) {
-    session.error = new ExploreError("platform_error", "抖音暂未返回数据，可能需要重新登录或通过验证，请先在手动监听中处理后重试。"); return;
+    session.error = new ExploreError("platform_error", "抖音暂未返回数据，可能需要重新登录或通过验证，请在日常浏览器中处理并重新导入凭据。"); return;
   }
   const items = raw.map(normalize).filter(Boolean);
   if (raw.length && !items.length) { session.error = new ExploreError("schema_changed", "页面数据格式发生变化，暂时无法读取。"); return; }
@@ -186,7 +186,7 @@ export function ingestExploreReplies(session, commentId, payload) {
   const thread = session.replyThreads?.get(commentId);
   if (!thread || !session.items.has(commentId)) return;
   if (!payload || (payload.status_code !== undefined && payload.status_code !== 0) || (payload.status_msg && payload.comments === undefined)) {
-    thread.error = new ExploreError("platform_error", "抖音暂未返回回复，请稍后重试；如需验证，请先在手动监听中处理。"); return;
+    thread.error = new ExploreError("platform_error", "抖音暂未返回回复，请稍后重试；如需验证，请在日常浏览器中处理并重新导入凭据。"); return;
   }
   const raw = payload.comments === null && payload.status_code === 0 ? [] : payload.comments;
   if (!Array.isArray(raw)) { thread.error = new ExploreError("schema_changed", "回复数据格式发生变化，暂时无法读取。"); return; }

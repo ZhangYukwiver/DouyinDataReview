@@ -13,7 +13,6 @@ const cursorOf = (payload, kind) => String(payload[kind === "profile" ? "max_cur
 export class DirectExplorer extends DouyinExplorer {
   constructor(getContext, getApi, getChat) { super(getContext); this.getApi = getApi; this.getChat = getChat; }
   async read(input, { signal } = {}) {
-    if (!this.getApi) return super.read(input, { signal });
     if (input?.kind === "sharees") return this.readDirectSharees(input, signal);
     const validated = validateExploreRequest(input);
     signal?.throwIfAborted();
@@ -113,7 +112,6 @@ export class DirectExplorer extends DouyinExplorer {
     return snapshot();
   }
   async interact(input) {
-    if (!this.getApi) return super.interact(input);
     const session = this.sessions.get(input?.sessionId);
     if (!/^[\w-]{16,80}$/u.test(input?.requestId ?? "") || !["like", "collect", "follow", "comment", "share"].includes(input?.action))
       throw new ExploreError("invalid_request", "互动请求无效。", 400);
