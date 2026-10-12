@@ -52,7 +52,8 @@ describe("direct HTTP signing and account session", () => {
     expect((await loadDirectSession(first, "123")).cookies).toHaveLength(3);
     expect((await loadDirectSession(second, "456")).uid).toBe("456");
     await expect(loadDirectSession(first, "456")).rejects.toMatchObject({ code: "account_mismatch" });
-    expect((await stat(path.join(first, "direct-session.json"))).mode & 0o777).toBe(0o600);
+    // Windows reports a read/write attribute rather than POSIX permission bits.
+    if (process.platform !== "win32") expect((await stat(path.join(first, "direct-session.json"))).mode & 0o777).toBe(0o600);
   });
   it("refuses expired login cookies and never forwards cookies to an unrelated host", async () => {
     for(const expires of [0,1])expect(() => new DirectApiClient({ ...session(), cookies: [{ ...cookie("sessionid", "expired"), expires }] })).toThrowError(expect.objectContaining({ code: "direct_session_missing" }));
