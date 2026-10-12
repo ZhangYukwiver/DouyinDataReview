@@ -244,6 +244,7 @@ describe("涡旋粒子", () => {
   it("整段生命周期都留在圆锥内，且越靠焦点转得越快", () => {
     const dots = spawnVortex(120);
     const band = [{ angle: 0, frames: 0 }, { angle: 0, frames: 0 }];
+    const bounds = { cone: -Infinity, top: Infinity, bottom: -Infinity, radius: Infinity };
     for (let frame = 0; frame < 900; frame += 1) {
       for (const dot of dots) {
         const before = dot.theta;
@@ -255,13 +256,18 @@ describe("涡旋粒子", () => {
           band[slot]!.frames += 1;
         }
         const view = vortexFrame(dot);
-        expect(Math.abs(view.cx - 190)).toBeLessThanOrEqual(0.44 * (376 - view.cy) + 20);
+        // 汇总每一帧的最差边界，保留全部样本检查，避免几十万次断言拖慢 Windows CI。
+        bounds.cone = Math.max(bounds.cone, Math.abs(view.cx - 190) - (0.44 * (376 - view.cy) + 20));
         // 最上一层圆盘在锥口平面上方，落在暗腔里甚至锥口以外是预期的（预览也这样）
-        expect(view.cy).toBeGreaterThan(0);
-        expect(view.cy).toBeLessThanOrEqual(380);
-        expect(view.r).toBeGreaterThan(0);
+        bounds.top = Math.min(bounds.top, view.cy);
+        bounds.bottom = Math.max(bounds.bottom, view.cy);
+        bounds.radius = Math.min(bounds.radius, view.r);
       }
     }
+    expect(bounds.cone).toBeLessThanOrEqual(0);
+    expect(bounds.top).toBeGreaterThan(0);
+    expect(bounds.bottom).toBeLessThanOrEqual(380);
+    expect(bounds.radius).toBeGreaterThan(0);
     const omega = band.map((row) => row.angle / row.frames);
     // 焦点附近角速度必须显著高于锥口，否则只是整体刚性旋转
     expect(omega[1]! / omega[0]!).toBeGreaterThan(2);
