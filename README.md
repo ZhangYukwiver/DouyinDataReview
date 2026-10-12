@@ -330,12 +330,12 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 
 ## English
 
-DouyinDataReview is a local-first desktop app for Windows and macOS that works with Douyin, the Chinese version of TikTok. It reads your own watch history, likes, favorites and chat messages through the Douyin web client, keeps everything on your computer, and turns it into a rolling report and a year-in-review (a "Douyin Wrapped"). You can also export all records as JSON, receive chats in real time, keep chat streaks going, play and download videos, and view your Creator Center stats read-only. Nothing is sent to an external AI or analytics service. The interface is in Chinese. Get the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest); Chrome, Edge, Brave or Chromium must be installed.
+DouyinDataReview is a local-first desktop app for Windows and macOS that works with Douyin, the Chinese version of TikTok. It reads your own watch history, likes, favorites and chat messages using your Douyin login session, keeps these records on your computer, and turns them into a rolling report and a year-in-review (a "Douyin Wrapped"). You can also export all records as JSON, receive chats in real time, keep chat streaks going, play and download videos, and view your Creator Center stats read-only. Optional video analysis sends the selected video, its public metadata and a prompt to the AI endpoint you configure. The interface is in Chinese. Get the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest); Chrome, Edge, Brave or Chromium must be installed.
 
 - **Is there a Douyin Wrapped?** DouyinDataReview builds a Wrapped-style year-in-review from your own records on your computer, any time you want; you can [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) in the browser without installing anything.
 - **How do I export my Douyin watch history?** Install DouyinDataReview, connect the collector, sign in to Douyin web, and after the sync finishes click 导出数据 (Export data) in Settings. Watch history, likes, favorites and friend chats are saved to one JSON file.
 - **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from Douyin's 个人信息下载 (personal data download) to generate a report without signing in.
-- **Is it free and private?** Yes. It is MIT-licensed. Your records stay on your computer and are never sent to an external AI or analytics service.
+- **Is it free and private?** Yes. It is MIT-licensed. Personal records and reports stay on your computer. Optional video analysis sends only the selected video, public metadata and a prompt to your configured AI endpoint; it does not send your Douyin login cookies or complete personal records. The API key stays in this device's browser configuration and is used by the collector only for the requested analysis.
 
 ## 交流与反馈
 
