@@ -207,6 +207,17 @@ describe("media candidate selection", () => {
     expect(isAllowedMediaUrl("https://p3.douyinvod.com/aweme/v1/play/1")).toBe(true);
     expect(isAllowedMediaUrl("https://evil.example/aweme/v1/play/1")).toBe(false);
     expect(isAllowedMediaUrl("https://p3.douyinvod.com:8443/aweme/v1/play/1")).toBe(false);
+    expect(isAllowedMediaUrl("https://v3-dy-o.zjcdn.com/video/1.mp4")).toBe(true);
+    expect(isAllowedMediaUrl("https://zjcdn.com.example.com/video/1.mp4")).toBe(false);
+  });
+
+  it("resolves the current CDN through HTTP without opening a page and rejects another video's detail", async () => {
+    const context = { directApi: true, newPage: vi.fn(() => { throw new Error("browser must not launch"); }), request: vi.fn(async () => ({
+      status_code: 0, aweme_detail: { aweme_id: "1234567890", desc: "作品", video: { play_addr: { url_list: ["https://v3-dy-o.zjcdn.com/video/1.mp4"] } } },
+    })) };
+    const result = await discoverDouyinVideo(context, "https://www.douyin.com/video/1234567890");
+    expect(result.media.url).toBe("https://v3-dy-o.zjcdn.com/video/1.mp4"); expect(context.newPage).not.toHaveBeenCalled();
+    await expect(discoverDouyinVideo(context, "https://www.douyin.com/video/2345678901")).rejects.toMatchObject({ code: "content_unavailable" });
   });
 });
 

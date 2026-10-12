@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { request as playwrightRequest } from "playwright-core";
+import { nativeSignedUrl } from "./nativeSignature.mjs";
 
 export const DIRECT_HISTORY_ENDPOINT = "https://www.douyin.com/aweme/v1/web/history/read/";
 export const DIRECT_LIKED_ENDPOINT = "https://www-hj.douyin.com/aweme/v1/web/aweme/favorite/";
@@ -128,7 +129,7 @@ const SESSION_PARAMETERS = new Map([
   ["fp", "s_v_web_id"],
   ["uifid", "UIFID"],
 ]);
-const SAFE_TEMPLATE_PARAMETERS = new Set([
+export const SAFE_TEMPLATE_PARAMETERS = new Set([
   "device_platform", "aid", "channel", "update_version_code", "pc_client_type", "pc_libra_divert",
   "support_h265", "support_dash", "version_code", "version_name", "cookie_enabled", "screen_width",
   "screen_height", "browser_language", "browser_platform", "browser_name", "browser_version",
@@ -448,11 +449,54 @@ export function buildUnsignedHistoryUrl(cookies, template) {
 export async function signDirectHistoryUrl(unsignedUrl, { directory, uifid = "", userAgent } = {}) {
   const url = validateDirectHistoryUrl(unsignedUrl, { canonicalHost: true });
   if (!url) throw new DirectHistoryError("unsafe_url", "直接读取只允许固定的抖音观看历史接口。");
+  return signRequestUrl(url, { directory, uifid, userAgent });
+}
+
+export const DIRECT_API_PATHS = new Set([
+  "/aweme/v1/web/query/user/",
+  "/webcast/feed/", "/webcast/web/feed/follow/",
+  "/aweme/v1/web/user/profile/self/", "/aweme/v1/web/user/profile/other/",
+  "/aweme/v1/web/aweme/detail/", "/aweme/v1/web/aweme/post/",
+  "/aweme/v1/web/aweme/favorite/", "/aweme/v1/web/aweme/listcollection/",
+  "/aweme/v1/web/collects/list/", "/aweme/v1/web/collects/video/list/",
+  "/aweme/v1/web/comment/list/", "/aweme/v1/web/comment/list/reply/",
+  "/aweme/v1/web/discover/search/", "/aweme/v1/web/search/item/",
+  "/aweme/v1/web/commit/item/digg/", "/aweme/v1/web/aweme/collect/",
+  "/aweme/v1/web/comment/publish", "/aweme/v1/web/comment/delete/", "/aweme/v1/web/commit/follow/user/",
+  "/passport/safe/get_identity_security_token/",
+]);
+export const DIRECT_IM_PATHS = new Set(["/v1/message/send", "/v1/message/get_message_by_init", "/v1/message/get_user_message",
+  "/v1/message/get_by_conversation", "/v2/conversation/get_info_list", "/v1/stranger/get_conversation_list"]);
+
+// Keep the history signer's narrower URL boundary; other callers use an explicit API allowlist.
+export async function signDirectApiUrl(unsignedUrl, options = {}) {
+  let url;
+  try { url = new URL(unsignedUrl); } catch { /* rejected below */ }
+  const allowed = url && (["www.douyin.com", "www-hj.douyin.com"].includes(url.hostname) ? DIRECT_API_PATHS.has(url.pathname)
+    : url.hostname === "imapi.douyin.com" && DIRECT_IM_PATHS.has(url.pathname));
+  if (!url || url.protocol !== "https:" || !allowed
+    || url.port || url.username || url.password || url.hash
+    || url.searchParams.has("a_bogus")) {
+    throw new DirectHistoryError("unsafe_url", "直接请求地址不在抖音接口白名单内。");
+  }
+  // A valid 500-character Chinese comment expands past 4 KiB when form
+  // encoded. Keep the signer bound while accommodating the supported input.
+  if (![undefined, "GET", "POST"].includes(options.method) || (options.body?.length ?? 0) > 8_192) {
+    throw new DirectHistoryError("invalid_request", "直接请求方法或请求体无效。");
+  }
+  if (!validateUserAgent(options.userAgent)) throw new DirectHistoryError("template_invalid", "直接请求缺少有效浏览器标识。");
+  // Reply endpoints validate the current SDK signature more strictly. Reuse the
+  // packaged, sandboxed JavaScript runtime; this does not start a browser.
+  if (url.pathname === "/aweme/v1/web/comment/list/reply/") return signRequestUrl(url, { ...options, uifid: "" });
+  return nativeSignedUrl(url, options);
+}
+
+async function signRequestUrl(url, { directory, uifid = "", userAgent, method = "GET", body = "" } = {}) {
   const validatedUserAgent = validateUserAgent(userAgent);
   if (!validatedUserAgent) throw new DirectHistoryError("template_invalid", "直接读取模板缺少有效浏览器标识。");
   const runtimeDirectory = await verifyDirectSigner(directory);
   const processConfiguration = directSignerProcessConfiguration({ runtimeDirectory });
-  const payload = JSON.stringify({ url: url.toString(), method: "GET", body: "", uifid, userAgent: validatedUserAgent });
+  const payload = JSON.stringify({ url: url.toString(), method, body, uifid, userAgent: validatedUserAgent });
   const signature = await new Promise((resolve, reject) => {
     const child = spawn(
       processConfiguration.command,
@@ -723,9 +767,8 @@ async function requestInPage(page, request, label) {
   }
 }
 
-// 喜欢和收藏的接口要页面安全 SDK 现场算的签名，Node 里直接请求会被 Argus 网关回 403「Signature Not Found」。
-// 所以借一个已经打开的抖音页面，按游标在页面里自己发请求：不用滚动列表去触发懒加载，也不依赖页面布局。
-// 页面由调用方打开和关闭，两份列表可以共用一个。
+// Legacy page adapter, retained for older callers. The current collector uses
+// DirectApiClient with native A-Bogus and SecSDK signing, without page.evaluate.
 export async function collectDirectRecordPages(page, type, onPage, { dataDirectory } = {}) {
   if (!page || typeof page.evaluate !== "function" || typeof onPage !== "function") {
     throw new DirectHistoryError("invalid_context", "无界面读取没有可用的抖音页面。");

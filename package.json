@@ -45,7 +45,8 @@
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
-    "react-native-web": "^0.21.2"
+    "react-native-web": "^0.21.2",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/matter-js": "^0.20.2",
@@ -81,7 +82,7 @@
       "package.json",
       "!**/*.test.mjs",
       "!collector/fixtures/**",
-      "!node_modules/!(playwright-core|fflate|electron-updater|builder-util-runtime|debug|ms|fs-extra|graceful-fs|jsonfile|universalify|js-yaml|argparse|sax|lazy-val|lodash.escaperegexp|lodash.isequal|semver|tiny-typed-emitter)/**"
+      "!node_modules/!(playwright-core|ws|fflate|electron-updater|builder-util-runtime|debug|ms|fs-extra|graceful-fs|jsonfile|universalify|js-yaml|argparse|sax|lazy-val|lodash.escaperegexp|lodash.isequal|semver|tiny-typed-emitter)/**"
     ],
     "asar": true,
     "asarUnpack": [

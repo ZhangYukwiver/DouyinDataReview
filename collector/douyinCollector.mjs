@@ -55,6 +55,9 @@ import { ChatSendError, sendChatText, validateChatSend } from "./chatSender.mjs"
 import { loadChatMessages, readChatStreaks } from "./chatViewer.mjs";
 import { CreatorCenter } from "./creatorCenter.mjs";
 import { LiveRooms } from "./liveRoom.mjs";
+import { DirectApiClient, loadDirectSession, saveDirectSession, sameDirectSession, needsDirectSessionRefresh } from "./directApi.mjs";
+import { installDirectCredentialCapture, readDirectCredentialMaterial, completeDirectCredentialExport, requireDirectCredentials } from "./directCredentials.mjs";
+import { DirectChatClient } from "./directChat.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
 const CHAT_URL = "https://www.douyin.com/chat?isPopup=1";
@@ -100,8 +103,7 @@ export function directContextLaunchOptions({ executablePath, userAgent, platform
   return {
     executablePath,
     // Incremental reads must not create a visible or taskbar Chrome window.
-    // Chrome's new headless mode still provides the page runtime needed by
-    // Douyin to generate signed list requests.
+    // The page runtime remains necessary for live events and initial session export.
     headless: true,
     locale: "zh-CN",
     userAgent,
@@ -574,9 +576,23 @@ export function labelWatchCompletion(records, completed, coveredFromMs) {
   });
 }
 
-// 观看历史的「直播」分栏没有可直接调用的接口，只能在页面里点开它、拦页面自己发的请求
+// 直播观看历史也可按游标直接请求；旧适配器保留页面读取方式。
 async function collectLiveHistoryRecords(context) {
   const endpoint = { kind: "live_history", pathname: "/webcast/feed/" };
+  if (context.directApi) {
+    const records = [], seen = new Set(); let cursor = "0";
+    for (let page = 0; page < 50; page += 1) {
+      if (seen.has(cursor)) throw new DirectHistoryError("pagination_stalled", "直播观看记录分页游标重复。");
+      seen.add(cursor);
+      const payload = await context.request(endpoint.pathname, { query: { request_tag_from: "web", need_map: "1", source_key: "drawer_hot_live_history", app_name: "douyin_web", live_id: "1", language: "zh-CN", max_time: cursor }, referer: `${SELF_PROFILE_URL}?showTab=record` });
+      const result = normalizeDouyinResponse(endpoint, payload);
+      records.push(...result.records);
+      if (result.pagination.hasMore === false) return records;
+      if (!/^\d{1,20}$/u.test(result.pagination.cursor ?? "")) throw new DirectHistoryError("pagination_missing", "直播观看记录缺少下一页游标。");
+      cursor = result.pagination.cursor; await delay(300);
+    }
+    throw new DirectHistoryError("record_limit", "直播观看记录超过读取页数上限。");
+  }
   const isLiveHistory = (response) => matchDouyinEndpoint(response.url())?.kind === endpoint.kind;
   const page = await context.newPage();
   try {
@@ -1084,6 +1100,8 @@ export class DouyinCollector {
     this.store = store;
     this.context = null;
     this.contextHeadless = null;
+    this.directApi = null;
+    this.directApiPromise = null;
     this.syncPromise = null;
     this.syncStopRequested = false;
     this.observation = null;
@@ -1124,7 +1142,7 @@ export class DouyinCollector {
       updatedAt: null,
       browserOpen: false,
       code: null,
-      // page 要开可见浏览器，direct_records 走无头，前端据此决定还能做什么
+      // page 是登录/初始化入口，direct_records 使用 HTTP，前端据此决定还能做什么
       syncMode: null,
       // 聊天接收单独一份状态，这样它和记录读取、视频下载可以同时跑，互不覆盖对方的进度
       chat: { state: "idle", connection: null, message: null, progress: null, code: null },
@@ -1196,6 +1214,140 @@ export class DouyinCollector {
     }
     if (identity.uid) this.accountMismatch = false;
     void this.applyAccountIdentity(identity);
+    if (identity.uid && this.context) await this.cacheDirectSession(this.context, page, identity).catch(() => {});
+  }
+
+  async cacheDirectSession(context, page, identity, { updateApi = true } = {}) {
+    const template = await loadDirectHistoryTemplate(this.dataDirectory).catch(() => null);
+    const userAgent = template?.headers["user-agent"] ?? await page.evaluate(() => navigator.userAgent);
+    const previous = await loadDirectSession(this.dataDirectory, identity.uid).catch(() => null);
+    const next = { version: 1, uid: identity.uid, secUid: identity.secUid,
+      userAgent, values: template?.values ?? {}, requestHeaders: template?.headers ?? {}, cookies: await context.cookies() };
+    if (previous && sameDirectSession(previous, next)) next.security = previous.security;
+    const session = await saveDirectSession(this.dataDirectory, next);
+    // A chat identity refresh must not dispose an HTTP request currently reading records.
+    if (!updateApi) return session;
+    if (this.directApi && !sameDirectSession(this.directApi.session, session)) {
+      await this.directApi.close(); this.directApi = null;
+    } else this.directApi?.replaceSession(session);
+    return session;
+  }
+
+  async ensureDirectApi({ history = false, security = false, signal } = {}) {
+    signal?.throwIfAborted();
+    if (this.accountMismatch) throw accountMismatchError();
+    if (this.directApiPromise) {
+      const api = await this.directApiPromise;
+      if (security) await this.ensureDirectWriteCredentials(api, signal);
+      return api;
+    }
+    const work = (async () => {
+      let session;
+      try {
+        session = await loadDirectSession(this.dataDirectory, this.accountUid);
+        if (!session.values.webid && !await loadDirectHistoryTemplate(this.dataDirectory).catch(() => null))
+          throw new DirectHistoryError("direct_session_missing", "登录会话尚未完成请求参数初始化。");
+      }
+      catch (error) {
+        if (error?.code !== "direct_session_missing") throw error;
+        // Existing profiles need one session export. Subsequent reads use only the cached HTTP session.
+        const ownsContext = !this.context;
+        const context = this.context ?? await this.ensureBrowser({ headless: true });
+        const page = await context.newPage();
+        try {
+          await page.goto(SELF_PROFILE_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
+          signal?.throwIfAborted();
+          if (!await this.hasLoginSession(context, page)) throw new DirectHistoryError("login_required", "请先在采集器中登录抖音。");
+          await this.assertAccountMatches(page);
+          if (history || !session?.values.webid) {
+            await this.prepareDirectHistoryTemplate(context, page, this.syncRunId);
+            const cached = await loadDirectSession(this.dataDirectory, this.accountUid);
+            const template = await loadDirectHistoryTemplate(this.dataDirectory);
+            await saveDirectSession(this.dataDirectory, { ...cached, values: template.values, userAgent: template.headers["user-agent"] });
+          }
+          session = await loadDirectSession(this.dataDirectory, this.accountUid);
+        } finally {
+          await page.close().catch(() => {});
+          if (ownsContext && this.context === context && !this.chat?.active && !this.observation?.active && !this.liveRooms.usesBrowser && !this.creatorCenter.active) {
+            this.context = null; this.contextHeadless = null; await closeContextWithin(context);
+          }
+        }
+      }
+      const template = history ? await loadDirectHistoryTemplate(this.dataDirectory)
+        : await loadDirectHistoryTemplate(this.dataDirectory).catch(() => null);
+      if (template) session = { ...session, values: template.values, requestHeaders: template.headers };
+      if (this.directApi && !sameDirectSession(this.directApi.session, session)) {
+        await this.directApi.close(); this.directApi = null;
+      }
+      this.directApi ??= new DirectApiClient(session, { dataDirectory: this.dataDirectory, directory: this.signerDirectory });
+      this.directApi.replaceSession(session);
+      try {
+        // Browser-bound login Cookies must be refreshed before the HTTP
+        // identity check; an expired short token otherwise looks like logout.
+        if (security || needsDirectSessionRefresh(this.directApi.session))
+          await this.ensureDirectWriteCredentials(this.directApi, signal);
+        const identity = await this.directApi.verifyIdentity(this.accountUid, signal);
+        await this.applyAccountIdentity(identity);
+        return this.directApi;
+      } catch (error) {
+        if (error?.code === "account_mismatch") this.accountMismatch = true;
+        await this.directApi.close(); this.directApi = null;
+        throw error;
+      }
+    })();
+    this.directApiPromise = work;
+    let api;
+    try { api = await work; } finally { if (this.directApiPromise === work) this.directApiPromise = null; }
+    return api;
+  }
+
+  async ensureDirectWriteCredentials(api, signal) {
+    try {
+      const credentials = requireDirectCredentials(api.session);
+      if (!needsDirectSessionRefresh(api.session)) return credentials;
+    } catch (error) { if (error.code !== "write_credentials_missing") throw error; }
+    if (this.directSecurityPromise) return this.directSecurityPromise;
+    const work = (async () => {
+      const owned = !this.context;
+      const context = this.context || await this.ensureBrowser({ headless: true });
+      const page = await context.newPage();
+      try {
+        await page.goto(SELF_PROFILE_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          signal?.throwIfAborted();
+          const identity = await readLoginIdentity(page);
+          if (identity?.uid && identity.uid !== api.session.uid) throw accountMismatchError(identity.nickname);
+          if (identity?.uid) {
+            const material = await page.evaluate(readDirectCredentialMaterial);
+            if (material) material.msToken = context.directMsToken || "";
+            if (material?.trait?.blob && material.ticket && material.privateKey && material.msToken) {
+              // A fresh login to the same account rotates Cookies. Complete
+              // its paired export before replacing the active HTTP client.
+              const session = await this.cacheDirectSession(context, page, identity, { updateApi: false });
+              if (needsDirectSessionRefresh(session)) { await delay(500, undefined, { signal }); continue; }
+              // Export with the browser's current Cookie jar, independently
+              // of a previously created HTTP context.
+              const exporter = new DirectApiClient(session, { dataDirectory: api.dataDirectory, directory: api.directory,
+                requestFactory: api.requestFactory, signer: api.signer });
+              try {
+                const security = await completeDirectCredentialExport(exporter, material);
+                api.replaceSession(exporter.session);
+                return security;
+              } finally { await exporter.close(); }
+            }
+          }
+          await delay(500, undefined, { signal });
+        }
+        throw new DirectHistoryError("write_credentials_missing", "登录凭据尚未初始化，请打开登录窗口完成登录或验证后重试。");
+      } finally {
+        await page.close().catch(() => {});
+        if (owned && this.context === context && !this.observation?.active && !this.liveRooms.usesBrowser && !this.creatorCenter.active) {
+          this.context = null; this.contextHeadless = null; await closeContextWithin(context);
+        }
+      }
+    })();
+    this.directSecurityPromise = work;
+    try { return await work; } finally { if (this.directSecurityPromise === work) this.directSecurityPromise = null; }
   }
 
   // 昵称头像和已知的不一样才报；名单先落盘再推状态，前端收到新昵称会马上去拉名单
@@ -1422,12 +1574,12 @@ export class DouyinCollector {
       }
       const existingContext = this.context;
       try {
-        context = await this.ensureBrowser({ headless: true });
+        context = await this.ensureDirectApi({ signal: controller.signal });
       } catch (error) {
         operation.statusRevisionAfterLaunch = this.statusRevision;
         throw error;
       }
-      ownsContext = context !== existingContext;
+      ownsContext = !context.directApi && context !== existingContext;
       operation.statusRevisionAfterLaunch = this.statusRevision;
       controller.signal.throwIfAborted();
       // Playback only resolves the media address; the bytes are streamed to the player, never saved.
@@ -1555,8 +1707,7 @@ export class DouyinCollector {
 
   startSync({ mode = "page" } = {}) {
     if (this.syncPromise || this.observationPromise) return false;
-    // 无界面读取和聊天接收、视频下载共用一个无头会话，可以同时进行；
-    // 需要可见浏览器的完整读取仍要等它们结束
+    // 直接读取不占浏览器；尚未初始化登录的完整读取仍需可见浏览器。
     if (mode !== "direct_records" && (this.chatPromise || this.hasActiveVideoDownload())) return false;
     this.syncStopRequested = false;
     this.syncMode = mode;
@@ -1638,6 +1789,7 @@ export class DouyinCollector {
     const chat = {
       active: true,
       mode: "chat",
+      direct: true,
       runId,
       stop: () => releaseStop?.(),
       stopPromise: new Promise((resolve) => {
@@ -1681,7 +1833,8 @@ export class DouyinCollector {
     chat.active = false;
     this.chatRunId += 1;
     chat.stop();
-    if (this.context && this.contextHeadless) {
+    if (chat.direct) await chat.client?.close();
+    if (!chat.direct && this.context && this.contextHeadless) {
       const context = this.context;
       const otherPages = context.pages().filter((page) => page !== chat.page && !page.isClosed?.());
       // 记录读取、播放和探索各有自己的标签页，只有没人再用这个会话时才关掉它
@@ -1721,7 +1874,7 @@ export class DouyinCollector {
 
   // 还有别的无头任务在用这个共享会话吗
   headlessWorkRunning() {
-    return this.syncMode === "direct_records" || this.hasActiveVideoDownload() || this.liveRooms.size > 0 || this.liveRooms.inflight > 0 || this.creatorCenter.active;
+    return this.syncMode === "direct_records" || this.hasActiveVideoDownload() || this.liveRooms.usesBrowser || this.creatorCenter.active;
   }
 
   async releaseHeadlessContextIfIdle() {
@@ -1736,7 +1889,7 @@ export class DouyinCollector {
   }
 
   isChatReceiving() {
-    return this.chat?.active === true && this.contextHeadless === true
+    return this.chat?.active === true && (this.chat.direct === true || this.contextHeadless === true)
       && this.status.chat.state === "observing";
   }
 
@@ -1749,13 +1902,13 @@ export class DouyinCollector {
       return previous.result;
     }
     const observation = this.chat;
-    if (!this.isChatReceiving() || observation.stopping || !observation.page || observation.page.isClosed()) throw new ChatSendError("not_receiving", "先开始接收消息，才能发送。");
+    if (!this.isChatReceiving() || observation.stopping || (!observation.direct && (!observation.page || observation.page.isClosed()))) throw new ChatSendError("not_receiving", "先开始接收消息，才能发送。");
     if (!observation.historyReady) throw new ChatSendError("collector_busy", "正在整理聊天历史，整理完就能发送。");
     if (this.status.chat.connection !== "connected") throw new ChatSendError("not_connected", "消息连接还没连上，请稍后再发。");
     if (this.chatSendPromise) throw new ChatSendError("collector_busy", "上一条还在发送，请稍等。");
-    if (this.chatSends.size >= 1000) this.chatSends.delete(this.chatSends.keys().next().value);
+    if (this.chatSends.size >= 1000) throw new ChatSendError("send_limit", "本次会话发送数量已达上限，请重启采集器。");
     // One send at a time, deduplicated by requestId; a dispatched message is never retried here.
-    const result = sendChatText(observation.page, request).then((outcome) => {
+    const result = (observation.direct ? observation.client.send(request) : sendChatText(observation.page, request)).then((outcome) => {
       if (outcome.chatMessage) observation.acceptSent?.(outcome.chatMessage);
       return outcome;
     });
@@ -1764,7 +1917,7 @@ export class DouyinCollector {
     try {
       return await result;
     } catch (error) {
-      // Only failures before the click reach here, so the same request may run again.
+      // Only pre-dispatch failures reach here, so the same request may run again.
       this.chatSends.delete(request.requestId);
       throw error;
     } finally {
@@ -1781,6 +1934,10 @@ export class DouyinCollector {
   }
 
   async readChatMessages(input) {
+    if (this.chat?.direct && this.isChatReceiving() && this.chat.historyReady && !this.chat.stopping) {
+      const { pageMessages, ...result } = await this.chat.client.messages(input);
+      return result;
+    }
     const page = this.chatPageForReading();
     if (input?.older !== true) return loadChatMessages(page, { conversationId: input?.conversationId });
     // Paging older opens the conversation and scrolls the site's list, so it shares the send lock.
@@ -1791,7 +1948,22 @@ export class DouyinCollector {
   }
 
   async readChatStreaks() {
+    if (this.chat?.direct && this.isChatReceiving() && this.chat.historyReady && !this.chat.stopping) return this.chat.client.streaks();
     return { streaks: await readChatStreaks(this.chatPageForReading()) };
+  }
+
+  async getDirectChatClient(options = {}) {
+    const api = await this.ensureDirectApi({ ...options, security: true });
+    if (!api.chatClient) api.chatClient = new DirectChatClient(api);
+    const client = api.chatClient;
+    if (!client.conversations.size) {
+      await client.initialize({ signal: options.signal });
+      for (const known of this.snapshot?.chatConversations || []) {
+        const item = client.conversations.get(known.id);
+        if (item) { item.name ||= known.name; item.avatarUrl ||= known.avatarUrl; item.secUid ||= known.secUid; }
+      }
+    }
+    return client;
   }
 
   isManualObserving() {
@@ -1966,6 +2138,7 @@ export class DouyinCollector {
   }
 
   async runChatObservation(runId, observation) {
+    if (observation.direct) return this.runDirectChatObservation(runId, observation);
     // 聊天的进度写进 status.chat，共享字段（计数、浏览器开关）才落到主状态上
     const report = ({ state, progress, message, chatConnection, ...shared }) => {
       const patch = {};
@@ -2344,6 +2517,88 @@ export class DouyinCollector {
     }
   }
 
+  async runDirectChatObservation(runId, observation) {
+    const controller = new AbortController();
+    const originalStop = observation.stop;
+    observation.stop = () => { controller.abort(); originalStop(); };
+    const signal = controller.signal;
+    const api = await this.ensureDirectApi({ security: true, signal });
+    this.assertChatActive(runId);
+    const client = api.chatClient ||= new DirectChatClient(api);
+    observation.client = client;
+    const messages = new ChatMessageAccumulator(this.snapshot.chatMessages);
+    const conversations = new ChatConversationAccumulator(this.snapshot.chatConversations.map(conversation=>({
+      ...conversation, messageCount: 0, ownMessageCount: 0,
+    })), api.session.uid);
+    conversations.addMessages(messages.snapshot());
+    const initialGroups = new Map(this.snapshot.chatConversations.filter(c=>c.kind==="group").map(c=>[c.id,c]));
+    const initialSnapshotTime = Date.parse(this.snapshot.updatedAt || "") || 0;
+    const newGroupMessages = new Map();
+    let processing = Promise.resolve();
+    const accept = (payload) => {
+      const work = processing.then(async () => {
+        if (!observation.active || runId !== this.chatRunId) return;
+        conversations.addConversations(payload.conversations || []);
+        const normalized = (payload.messages || []).map(message=>({ ...message,
+          conversationType: message.conversationType === "unknown" ? client.conversations.get(message.conversationId)?.kind || "unknown" : message.conversationType }));
+        for (const message of normalized) {
+          if (message.conversationType !== "group" || !message.id || (Date.parse(message.sentAt || "") || 0) <= initialSnapshotTime) continue;
+          const fresh = newGroupMessages.get(message.conversationId) || new Map();
+          fresh.set(message.id, message.senderId); newGroupMessages.set(message.conversationId, fresh);
+        }
+        conversations.addMessages(normalized.map(message=>message.conversationType === "group"
+          ? { id: message.id, conversationId: message.conversationId, conversationType: "group", senderId: message.senderId } : message));
+        messages.addMessages(normalized.filter(message=>message.conversationType !== "group"));
+        const warnings = currentChatWarnings(this.snapshot.warnings);
+        this.snapshot = await this.store.save(this.snapshot.records, warnings, { directSync: normalizeDirectSyncState(this.snapshot.directSync),
+          chatMessages: messages.snapshot(), chatConversations: mergeChatConversationSnapshots(this.snapshot.chatConversations, conversations.snapshot().map(conversation=>{
+            const baseline = initialGroups.get(conversation.id), fresh = newGroupMessages.get(conversation.id);
+            return baseline && fresh ? { ...conversation,
+              messageCount: Math.max(conversation.messageCount, baseline.messageCount + fresh.size),
+              ownMessageCount: Math.max(conversation.ownMessageCount, baseline.ownMessageCount + [...fresh.values()].filter(sender=>sender===api.session.uid).length),
+            } : conversation;
+          })) });
+        this.updateStatus({ counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations), updatedAt: this.snapshot.updatedAt });
+      });
+      processing = work.catch(()=>{});
+      return work;
+    };
+    observation.acceptSent = message=>{ void accept({ messages: [message], conversations: [] }).catch(()=>{}); };
+    try {
+      this.updateChat({ state: "observing", connection: "connecting", progress: { current: 0, total: 0 }, message: "正在通过接口读取聊天会话" });
+      await client.initialize({ signal, onPayload: accept, onProgress: progress=>this.updateChat({ progress: { current: progress.pages, total: progress.pages }, message: `已读取 ${progress.conversations} 个会话` }) });
+      for (const known of this.snapshot.chatConversations) {
+        const item = client.conversations.get(known.id);
+        if (item) { item.name ||= known.name; item.avatarUrl ||= known.avatarUrl; item.secUid ||= known.secUid; }
+      }
+      // Connect before reading older pages, so pushes during hydration share
+      // the same serialized accumulator and cannot be lost.
+      await client.connect({ onPayload: accept, onConnection: connection=>{
+        if (observation.active && runId === this.chatRunId) this.updateChat({ connection });
+      }, onError: error=>{
+        if (observation.active && runId === this.chatRunId) this.updateChat({ message: safeMessage(error, "实时消息暂不可用，正在重连") });
+      } });
+      const friends = [...client.conversations.values()].filter(c=>c.type===1);
+      for (const [index, conversation] of friends.entries()) {
+        signal.throwIfAborted(); this.assertChatActive(runId);
+        this.updateChat({ progress: { current: index + 1, total: friends.length }, message: `正在读取聊天历史 ${index + 1}/${friends.length}` });
+        let page = await client.messages({ conversationId: conversation.id }, { signal });
+        await accept({ messages: page.pageMessages, conversations: [conversation] });
+        for (let count = 1; page.hasMore && count < CHAT_FRIEND_HISTORY_PAGE_LIMIT; count += 1) {
+          page = await client.messages({ conversationId: conversation.id, older: true }, { signal });
+          await accept({ messages: page.pageMessages, conversations: [] });
+          await delay(200, undefined, { signal });
+        }
+        if (page.hasMore) throw new DirectHistoryError("record_limit", "聊天历史达到读取容量，已保留读取到的消息。");
+      }
+      observation.historyReady = true;
+      this.updateChat({ progress: null, message: "正在通过接口实时接收消息" });
+      await observation.stopPromise;
+    } finally {
+      controller.abort(); await client.close(); await processing;
+    }
+  }
+
   assertSyncActive(runId) {
     if (runId !== this.syncRunId) throw new CollectorCancelledError();
   }
@@ -2388,13 +2643,20 @@ export class DouyinCollector {
         acceptDownloads: false,
       };
     const context = await chromium.launchPersistentContext(this.profileDirectory, launchOptions);
+    context.on("request", request=>{
+      try {
+        const url = new URL(request.url()), token = url.searchParams.get("msToken");
+        if (["www.douyin.com", "www-hj.douyin.com", "imapi.douyin.com"].includes(url.hostname) && /^[A-Za-z0-9+/_=-]{100,1024}$/u.test(token || "")) context.directMsToken = token;
+      } catch { /* Non-HTTP browser resources carry no token. */ }
+    });
+    await context.addInitScript(installDirectCredentialCapture);
     this.context = context;
     this.contextHeadless = headless;
     context.on("close", () => {
       if (this.context !== context) return;
       this.context = null;
       this.contextHeadless = null;
-      if (this.chat?.active) {
+      if (this.chat?.active && !this.chat.direct) {
         this.chat.active = false;
         this.chat.stop();
         this.updateChat({ state: "idle", connection: null, progress: null, message: "浏览器会话已关闭，实时接收已停止" });
@@ -2690,6 +2952,28 @@ export class DouyinCollector {
   }
 
   async runSync(runId) {
+    // After login/template initialization, a full read uses the same HTTP path,
+    // with incremental stopping disabled. The visible flow remains the login/recovery path.
+    let directReady = false;
+    if (!this.accountMismatch) {
+      try {
+        await loadDirectSession(this.dataDirectory, this.accountUid);
+        await loadDirectHistoryTemplate(this.dataDirectory);
+        directReady = true;
+      } catch { /* initialize or refresh the browser session below */ }
+    }
+    if (directReady) {
+      try { await this.ensureDirectApi({ history: true }); }
+      catch (error) {
+        if (!["direct_session_missing", "login_required", "session_rejected", "verification_required"].includes(error?.code)) throw error;
+        directReady = false;
+      }
+    }
+    if (directReady) {
+      this.syncMode = "direct_records";
+      this.updateStatus({ syncMode: "direct_records", state: "collecting", phase: "watch_history", message: "正在直接读取全部观看、点赞和收藏记录" });
+      return this.runDirectRecords(runId, { full: true });
+    }
     this.assertSyncActive(runId);
     const context = await this.ensureBrowser();
     this.assertSyncActive(runId);
@@ -2701,6 +2985,19 @@ export class DouyinCollector {
     page = await this.currentPage(context);
     await this.assertAccountMatches(page);
     this.assertSyncActive(runId);
+    // A first login only needs to capture one history request; collect all lists
+    // with HTTP immediately afterward instead of scrolling the newly opened page.
+    const exported = await loadDirectSession(this.dataDirectory, this.accountUid).catch(() => null);
+    if (exported) {
+      let templateReady = false;
+      try { await this.prepareDirectHistoryTemplate(context, page, runId); templateReady = true; }
+      catch (error) { if (error instanceof CollectorCancelledError || error?.code === "account_mismatch") throw error; }
+      if (templateReady) {
+        this.syncMode = "direct_records";
+        this.updateStatus({ syncMode: "direct_records", state: "collecting", phase: "watch_history", message: "登录已就绪，正在通过接口读取记录" });
+        return this.runDirectRecords(runId, { full: true });
+      }
+    }
     const browserUserAgent = typeof page.evaluate === "function"
       ? await page.evaluate(() => navigator.userAgent)
       : null;
@@ -2885,8 +3182,7 @@ export class DouyinCollector {
   }
 
   async readDirectHistory(context, cursor = "0", { completedOnly = false } = {}) {
-    const page = context.pages()[0] ?? await context.newPage();
-    const currentUserAgent = await page.evaluate(() => navigator.userAgent);
+    const currentUserAgent = context.currentUserAgent ?? await (context.pages()[0] ?? await context.newPage()).evaluate(() => navigator.userAgent);
     return fetchDirectHistoryPage({
       context,
       currentUserAgent,
@@ -2930,9 +3226,9 @@ export class DouyinCollector {
     return { completed, coveredFromMs: oldest };
   }
 
-  // page 是 runDirectRecords 开头打开、核对过账号的那个抖音页面，喜欢和收藏都借它发请求
-  async collectDirectList(page, type, onPage) {
-    return collectDirectRecordPages(page, type, onPage, { dataDirectory: this.dataDirectory });
+  async collectDirectList(source, type, onPage) {
+    if (source.directApi) return source.collectRecordPages(type, onPage);
+    return collectDirectRecordPages(source, type, onPage, { dataDirectory: this.dataDirectory });
   }
 
   async prepareDirectHistoryTemplate(context, page, runId) {
@@ -2968,37 +3264,18 @@ export class DouyinCollector {
     return loadDirectHistoryTemplate(this.dataDirectory);
   }
 
-  async runDirectRecords(runId) {
+  async runDirectRecords(runId, { full = false } = {}) {
     this.assertSyncActive(runId);
     // 核对时发现浏览器里登录的是别的号：登回原来的号之前不用那份登录态读，也别关掉用户正拿来换号的窗口
     if (this.accountMismatch) throw accountMismatchError();
-    const visibleContext = this.contextHeadless === true ? null : this.context;
-    if (visibleContext) {
-      this.context = null;
-      this.contextHeadless = null;
-      await closeContextWithin(visibleContext);
-      this.updateStatus({ browserOpen: false });
-    }
-    // 借用共用的无头会话另开标签页，聊天接收和视频下载可以一直跑着
-    const context = await this.ensureBrowser({ headless: true });
-    let page = null;
+    const context = await this.ensureDirectApi({ history: true });
     try {
       this.assertSyncActive(runId);
-      page = await context.newPage();
-      if (typeof page.waitForResponse === "function") {
-        await this.prepareDirectHistoryTemplate(context, page, runId);
-      }
-      // 喜欢和收藏只能在抖音页面里发请求（见 collectDirectRecordPages），先把页面打开；
-      // 顺手认出当前账号的昵称头像，存任何记录之前就核对没换号
-      await page.goto(SELF_PROFILE_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
-      this.assertSyncActive(runId);
-      await this.assertAccountMatches(page);
-      const currentUserAgent = await page.evaluate(() => navigator.userAgent);
       const accumulator = new RecordAccumulator();
       const existingRecords = structuredClone(this.snapshot.records);
       const stagedRecords = structuredClone(existingRecords);
       const directSync = normalizeDirectSyncState(this.snapshot.directSync, this.snapshot.warnings);
-      const incrementalByType = new Map(REQUIRED_TYPES.map((type) => [type, directSync[type]]));
+      const incrementalByType = new Map(REQUIRED_TYPES.map((type) => [type, !full && directSync[type]]));
       const allIncremental = REQUIRED_TYPES.every((type) => incrementalByType.get(type));
       const knownIds = new Map(REQUIRED_TYPES.map((type) => [
         type,
@@ -3088,7 +3365,7 @@ export class DouyinCollector {
       for (const [phaseIndex, [type, endpointUrl]] of phases.entries()) {
         const endpoint = matchDouyinEndpoint(endpointUrl);
         if (type !== "watch_history") {
-          pageCounts[type] = await this.collectDirectList(page, type, async (payload, pageCount) => {
+          pageCounts[type] = await this.collectDirectList(context, type, async (payload, pageCount) => {
             this.assertSyncActive(runId);
             const result = accumulator.addResponse(endpoint, payload);
             trackResult(type, result);
@@ -3187,8 +3464,6 @@ export class DouyinCollector {
         updatedAt: this.snapshot.updatedAt,
       });
     } finally {
-      // 抖音页面偶尔关不掉，限时 5 秒，别卡住读取收尾
-      await Promise.race([page?.close().catch(() => undefined), delay(CONTEXT_CLOSE_TIMEOUT_MS)]);
       // 读取结束后不留常驻的无头 Chrome，除非聊天或下载还在用它
       this.syncMode = null;
       await this.releaseHeadlessContextIfIdle();
@@ -3196,6 +3471,8 @@ export class DouyinCollector {
   }
 
   async close() {
+    clearTimeout(this.liveRooms.releaseTimer);
+    await this.liveRooms.closeAll({ release: false });
     for (const job of this.videoDownloadJobs.values()) {
       if (job.playback) {
         this.releaseVideoPlayback(job.id);
@@ -3214,6 +3491,8 @@ export class DouyinCollector {
     this.stopSync({ silent: true });
     await this.stopObservation({ silent: true });
     await this.stopChatObservation({ silent: true });
+    await this.directApi?.chatClient?.close();
+    await this.directApi?.close(); this.directApi = null;
     const context = this.context;
     this.context = null;
     this.contextHeadless = null;
@@ -3234,6 +3513,7 @@ export class DouyinCollector {
       this.liveRooms.queue,
       this.store?.writeQueue,
     ]);
+    await this.liveRooms.closeAll({ release: false });
     // 收尾途中刚起来的浏览器（比如正在启动的那次）也一起关掉
     if (this.context) await this.close();
   }

@@ -138,6 +138,7 @@ describe("explore data boundaries and pagination", () => {
     expect(normalizeExploreUser(author)).toMatchObject({ followers: 0, likes: null, followed: false });
     expect(normalizeExploreUser({ ...author, follow_status: 99 })).toMatchObject({ followed: null });
     expect(normalizeExploreVideo(aweme("12345678901234567"))).toMatchObject({ occurredAt: null, liked: false, collected: true, stats: { diggCount: 0 } });
+    expect(normalizeExploreVideo({ ...aweme("12345678901234567"), collect_stat: 0 })).toMatchObject({ collected: false });
   });
   it("does not discard one-character comments or preserve arbitrary image URLs", () => {
     expect(normalizeExploreComment({ cid: "c1", text: "好", user: author, digg_count: 0 })).toMatchObject({ text: "好", likes: 0 });
@@ -345,14 +346,24 @@ describe("commenting and sharing like the site", () => {
   });
 });
 
-describe("sharing never reaches past the visible rows", () => {
-  it("refuses yourself, a row out of view, or an unknown account without clicking", async () => {
-    const cases = [[ME, { me: ME, label: "分享", shared: null }], ["102530395613", { me: ME, label: null, shared: null }], ["102530395613", { me: "", label: "分享", shared: null }]];
+describe("sharing never scrolls the board", () => {
+  it("shares to someone out of view through the site's own call, without clicking", async () => {
+    for (const [answer, outcome] of [["sent", "confirmed"], ["failed", "rejected"], ["unavailable", "rejected"], [null, "unknown"]]) {
+      const page = sharePage([{ me: ME, label: null, shared: null, listed: true }, answer]);
+      await expect(videoExplorer("sharees", page).interact({ sessionId: "video-tab", requestId: `share-off-screen-${outcome}-${answer}`, action: "share", targetId: "3505697794824344" }))
+        .resolves.toMatchObject({ outcome });
+      expect(page.evaluate).toHaveBeenLastCalledWith(expect.any(Function), "3505697794824344");
+      expect(page.button.click).not.toHaveBeenCalled();
+    }
+  });
+  it("refuses yourself, someone not in the list, or an unknown account without sharing", async () => {
+    const cases = [[ME, { me: ME, label: "分享", shared: null }], ["102530395613", { me: ME, label: null, shared: null, listed: false }], ["102530395613", { me: "", label: "分享", shared: null }]];
     for (const [index, [targetId, state]] of cases.entries()) {
       const page = sharePage([state]);
       await expect(videoExplorer("sharees", page).interact({ sessionId: "video-tab", requestId: `share-refused-case-${index}`, action: "share", targetId }))
         .resolves.toMatchObject({ outcome: "rejected" });
       expect(page.button.click).not.toHaveBeenCalled();
+      expect(page.evaluate).toHaveBeenCalledTimes(1);
     }
   });
 });

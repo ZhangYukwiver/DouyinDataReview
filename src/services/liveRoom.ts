@@ -44,7 +44,7 @@ async function request<T>(connection: ExploreConnection, path: string, init: Req
   }
 }
 
-/** 进房要开标签页、等抖音回直播间信息，冷启动浏览器或网络慢时要等上几十秒。 */
+/** HTTP 进房并连接弹幕；登录会话续期或网络慢时可能需要更久。 */
 export const openLiveRoom = (connection: ExploreConnection, room: string, signal?: AbortSignal) =>
   request<LiveRoomState>(connection, "/v1/live/rooms", { method: "POST", body: JSON.stringify({ room }), signal, timeoutMs: 90_000 });
 export const readLiveRoom = (connection: ExploreConnection, id: string, after: number, signal?: AbortSignal) =>

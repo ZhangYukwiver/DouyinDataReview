@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCipheriv } from "node:crypto";
 import { CreatorCenter, creatorRequest, parseCreatorJson } from "./creatorCenter.mjs";
+import { DirectHistoryError } from "./directHistory.mjs";
+
+it("preserves a direct login error in the creator HTTP error contract", async () => {
+  const center = new CreatorCenter({ ensureDirectApi: async () => { throw new DirectHistoryError("login_required", "请重新登录"); } });
+  await expect(center.read([{ key: "user_info" }])).rejects.toMatchObject({ name: "CreatorCenterError", code: "login_required", status: 409 });
+  clearTimeout(center.idleTimer);
+});
+
+it("keeps successful creator queries when another HTTP request fails, without opening a browser", async () => {
+  const api = { readCreator: vi.fn(async ({ url }) => {
+    if (url.includes("user/info")) return { status: 200, text: '{"status_code":0,"user":{"nickname":"用户"}}' };
+    throw Object.assign(new Error("network"), { code: "request_failed" });
+  }) };
+  const collector = { ensureDirectApi: vi.fn(async () => api), ensureBrowser: vi.fn(() => { throw new Error("browser must not launch"); }) };
+  const result = await new CreatorCenter(collector).read([{ key: "user_info" }, { key: "index_hot_topic" }]);
+  expect(result[0]).toMatchObject({ ok: true, data: { status_code: 0 } }); expect(result[1]).toEqual({ ok: false, status: 0 });
+  expect(collector.ensureBrowser).not.toHaveBeenCalled();
+});
 
 describe("creatorRequest", () => {
   it("builds a whitelisted GET query", () => {

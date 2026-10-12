@@ -44,8 +44,8 @@ export async function renewSparks(connection: ChatSendConnection, conversationId
     for (const id of queue) {
       if (stopped || signal.aborted) { onUpdate(id, { state: "skipped", message: STOPPED }); continue; }
       const peer = listed ? shareTargetIds(id, selfId).find((candidate) => listed!.has(candidate)) : null;
-      // 名单只有抖音分享面板最上面、不用往下翻就看得到的那几位：往下翻会让抖音给沿路的人都建会话
-      if (listed && !peer) { onUpdate(id, { state: "skipped", message: "TA 不在抖音分享面板最上面那几位里，视频没发；发一句话或表情不受影响。" }); continue; }
+      // 名单是抖音分享面板里的全部朋友和群（最近聊过的、关注的人），不在里面的分享不了
+      if (listed && !peer) { onUpdate(id, { state: "skipped", message: "TA 不在这个视频的抖音分享名单里，视频没发；发一句话或表情不受影响。" }); continue; }
       if (sentBefore) await pause(gapMs(), signal);
       if (signal.aborted) { onUpdate(id, { state: "skipped", message: STOPPED }); continue; }
       sentBefore = true;

@@ -25,7 +25,7 @@ export function normalizeExploreVideo(raw) {
   const record = normalizeAweme(raw, "explore", null);
   if (!record) return null;
   return { ...record, coverUrl: record.coverUrl ?? image(raw.images?.[0]), occurredAt: null, occurredAtSource: "unknown", authorProfile: normalizeExploreUser(raw.author),
-    liked: flag(raw.user_digged), collected: flag(raw.collect_status),
+    liked: flag(raw.user_digged), collected: flag(raw.collect_stat ?? raw.collect_status),
     images: (Array.isArray(raw.images) ? raw.images : []).map((item) => image(item)).filter(Boolean).slice(0, 50) };
 }
 export function normalizeExploreComment(raw) {
@@ -49,10 +49,10 @@ export function normalizeSharee(raw) {
 
 const COMMENT_EDITOR = '.public-DraftEditor-content[contenteditable="true"]';
 const SHARE_BOARD = '[data-e2e="video-share-container"]';
-// Runs in the page. Only the rows the board rendered when it opened are offered. Bringing any
-// other row into view (scrolling the list) makes the site create a conversation with that person
-// and drop a notice into it, so the list is never scrolled. The signed-in account is itself one
-// of the rows and is always left out. Names come from the board's list, results from its store.
+// Runs in the page. Bringing a row into view (scrolling the list) makes the site create a
+// conversation with that person and drop a notice into it, so the list is never scrolled: rows
+// fully in view are clicked, everyone else in the board's list goes through shareFromList. The
+// signed-in account is itself in the list and is always left out. Results come from its store.
 function readShareBoard(targetId) {
   const board = document.querySelector('[data-e2e="video-share-container"]');
   const rendered = board ? [...board.querySelectorAll("[data-userid]")] : [];
@@ -77,15 +77,33 @@ function readShareBoard(targetId) {
   const sharedOf = (id) => shareMap?.user?.[id] ?? shareMap?.group?.[id] ?? null;
   if (targetId) {
     const button = rows.find((row) => row.dataset.userid === targetId);
-    return { me, label: button ? button.textContent.trim() : null, shared: sharedOf(targetId) };
+    return { me, label: button ? button.textContent.trim() : null, shared: sharedOf(targetId), listed: !!list?.some((item) => String(item?.uid ?? "") === targetId) };
   }
-  const byId = new Map((list ?? []).map((item) => [String(item?.uid ?? ""), item]));
-  return rows.map((button) => {
-    const id = button.dataset.userid ?? "";
-    const item = byId.get(id);
-    return { id, name: item?.remark_name || item?.nickname || button.parentElement?.querySelector("span")?.textContent || "",
-      avatar: item?.avatar_thumb?.url_list?.[0] ?? button.parentElement?.querySelector("img")?.src ?? null, group: item ? item.type === 2 : null, shared: sharedOf(id) === true };
+  if (!list) return rows.map((button) => ({ id: button.dataset.userid ?? "", name: button.parentElement?.querySelector("span")?.textContent || "",
+    avatar: button.parentElement?.querySelector("img")?.src ?? null, group: null, shared: sharedOf(button.dataset.userid) === true })).filter((person) => person.id && person.id !== me);
+  return list.map((item) => {
+    const id = String(item?.uid ?? "");
+    return { id, name: item?.remark_name || item?.nickname || "", avatar: item?.avatar_thumb?.url_list?.[0] ?? null, group: item?.type === 2 || String(item?.type) === "2", shared: sharedOf(id) === true };
   }).filter((person) => person.id && person.id !== me);
+}
+// Runs in the page. Shares to someone in the board's list without rendering their row: the site's
+// own confirmSharee (what a row's 分享 button ends up calling) sends through its IM SDK to that one
+// uid or group. It reports back only on an answer from Douyin; a failed request never calls back.
+function shareFromList(targetId) {
+  const row = document.querySelector('[data-e2e="video-share-container"] [data-userid]');
+  const key = row && Object.keys(row).find((name) => name.startsWith("__reactFiber"));
+  let send = null, list = null;
+  for (let fiber = key ? row[key] : null; fiber && !(send && list); fiber = fiber.return) {
+    const props = fiber.memoizedProps;
+    if (!send && typeof props?.confirmSharee === "function" && props.confirmSharee.toString().includes("sendMessage")) send = props.confirmSharee;
+    if (Array.isArray(props?.value?.mixedList)) list = props.value.mixedList;
+  }
+  const item = list?.find((entry) => String(entry?.uid ?? "") === targetId);
+  if (!send || !item) return "unavailable";
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(null), 15000);
+    send(item, item.type === 2 || String(item.type) === "2" ? "group" : "user", list, (result) => resolve(result?.success === true ? "sent" : "failed"));
+  });
 }
 function isCommentPublish(response, awemeId, content, replyTo) {
   const url = new URL(response.url());
@@ -197,7 +215,7 @@ export class DouyinExplorer {
     operation?.signal.throwIfAborted();
     if (this.sessions.size >= 6) {
       const oldest = this.sessions.values().next().value;
-      this.sessions.delete(oldest.key); await oldest.page.close().catch(() => {});
+      this.sessions.delete(oldest.key); await oldest.page?.close().catch(() => {});
     }
     const page = await context.newPage();
     const session = { ...input, key: randomUUID(), page, items: new Map(), hasMore: null, received: false, revision: 0 };
@@ -493,8 +511,15 @@ export class DouyinExplorer {
         if (state.me === id) throw new ExploreError("invalid_request", "不能分享给自己。", 400);
         // state.label is only set for a row fully in view (readShareBoard), so the click never scrolls the list.
         const button = page.locator(`${SHARE_BOARD} [data-userid="${id}"]`);
-        if (state.label !== "分享" || await button.count() !== 1)
-          throw new ExploreError("control_unavailable", "TA 不在抖音分享面板最上面那几位里。为了不让抖音顺手给别人建会话，这次没分享。");
+        if (state.label !== "分享" || await button.count() !== 1) {
+          if (!state.listed) throw new ExploreError("control_unavailable", "TA 不在这个视频的抖音分享名单里，这次没分享。");
+          dispatched = true;
+          const sent = await page.evaluate(shareFromList, id).catch(() => null);
+          if (sent === "unavailable") action.result = { outcome: "rejected", message: "抖音分享面板变了样，这次没分享，请在抖音原页分享。" };
+          else if (sent === "sent") action.result = { outcome: "confirmed", value: true, message: "已分享" };
+          else if (sent === "failed") action.result = { outcome: "rejected", message: "抖音提示分享失败，请稍后再试。" };
+          return action.result;
+        }
         dispatched = true;
         await button.click({ timeout: 3000 });
         // The site flips the button to 捎句话 on success and records false on failure (its toast says 分享失败).

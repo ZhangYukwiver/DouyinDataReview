@@ -107,7 +107,7 @@ export function LiveRoomPlayer({ target, connection, onClose, onOpenRecord, onOp
     return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
 
-  // 进房：采集器开标签页读直播间信息；没在播的直播间不占着标签页
+  // 进房：采集器用 HTTP 读直播间资料，用 WebSocket 收弹幕；下播房间立即释放
   useEffect(() => {
     if (!connection) return;
     const controller = new AbortController();

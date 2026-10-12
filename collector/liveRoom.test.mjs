@@ -1,6 +1,20 @@
 import { gzipSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { decodeLiveFrame, liveRoomIdFrom, LiveRooms, normalizeFollowingLive, normalizeLiveRoom } from "./liveRoom.mjs";
+import { DirectHistoryError } from "./directHistory.mjs";
+
+it("caches following via HTTP without a browser and keeps verification errors visible", async () => {
+  const api = { request: vi.fn(async () => ({ status_code: 0, data: { data: [] } })) };
+  const collector = { visibleBrowserWorkRunning: () => false, ensureDirectApi: vi.fn(async () => api), ensureBrowser: vi.fn() };
+  const rooms = new LiveRooms(collector);
+  try {
+    expect(await rooms.following()).toEqual([]); expect(await rooms.following()).toEqual([]);
+    expect(api.request).toHaveBeenCalledTimes(1); expect(collector.ensureBrowser).not.toHaveBeenCalled();
+    collector.ensureDirectApi.mockRejectedValue(new DirectHistoryError("verification_required", "请完成验证"));
+    await expect(rooms.following({ refresh: true })).rejects.toMatchObject({ name: "LiveRoomError", code: "verification_required", status: 409 });
+    expect(rooms.inflight).toBe(0);
+  } finally { clearTimeout(rooms.releaseTimer); }
+});
 
 // 按抖音直播 protobuf 的线格式拼测试帧（字段号是 09-26 实抓的帧里对出来的）
 const varint = (value) => {
