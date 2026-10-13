@@ -1,6 +1,6 @@
 {
   "name": "douyin-content-insights-mobile",
-  "version": "1.13.2",
+  "version": "1.13.3",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -88,6 +88,7 @@
     "asar": true,
     "asarUnpack": [
       "collector/directSignerRunner.cjs",
+      "collector/openBrowserDebugging.ps1",
       "node_modules/playwright-core/**/*"
     ],
     "extraResources": [
@@ -127,6 +128,9 @@
     },
     "afterPack": "scripts/mac-adhoc-sign.cjs",
     "mac": {
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "在你点击连接浏览器时，打开所选浏览器的远程调试设置页。"
+      },
       "target": [
         {
           "target": "dmg",

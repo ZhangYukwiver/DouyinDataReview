@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { browserDirectories, connectExternalBrowser, discoverBrowser, endpointOwnedByBrowser, listBrowserSources, localBrowserEndpoint } from "./browserConnection.mjs";
+import { browserDirectories, connectExternalBrowser, discoverBrowser, endpointOwnedByBrowser, listBrowserSources, localBrowserEndpoint, openBrowserDebuggingPage } from "./browserConnection.mjs";
 import { closeContextWithin, DouyinCollector } from "./douyinCollector.mjs";
 
 const directories = [];
@@ -72,9 +72,10 @@ describe("local CDP source discovery", () => {
     expect(await endpointOwnedByBrowser(item, endpoint, { platform: "win32", run })).toBe(false);
   });
   it("does not ask another browser to authorize a connection through a stale endpoint", async () => {
-    const connect = vi.fn();
-    await expect(connectExternalBrowser(await source(), { connect, listening: async () => true, ownsEndpoint: async () => false })).rejects.toMatchObject({ code: "browser_debugging_disabled" });
+    const item = await source(), connect = vi.fn(), openDebuggingPage = vi.fn();
+    await expect(connectExternalBrowser(item, { connect, openDebuggingPage, listening: async () => true, ownsEndpoint: async () => false })).rejects.toMatchObject({ code: "browser_debugging_required" });
     expect(connect).not.toHaveBeenCalled();
+    expect(openDebuggingPage).toHaveBeenCalledExactlyOnceWith(item);
   });
   it("resolves Chrome/Edge default profiles on macOS, Windows and Linux", () => {
     expect(browserDirectories({ platform: "darwin", home: "/Users/test", env: {} }).map(item => item.directory)).toEqual([
@@ -85,11 +86,77 @@ describe("local CDP source discovery", () => {
   });
 });
 
+describe("opening the selected browser's debugging settings", () => {
+  it.each([
+    ["chrome", "C:\\local\\Google\\Chrome\\Application\\chrome.exe"],
+    ["edge", "C:\\programs-x86\\Microsoft\\Edge\\Application\\msedge.exe"],
+  ])("opens %s directly on Windows even when it is not the default browser", async (id, executable) => {
+    const run = vi.fn(async () => ({ stdout: "debugging_page_opened\r\n" }));
+    await openBrowserDebuggingPage({ id, label: id, inspectUrl: "https://untrusted.example/" }, {
+      platform: "win32", env: { LOCALAPPDATA: "C:\\local", "ProgramFiles(x86)": "C:\\programs-x86" },
+      fileExists: async file => file === executable, run,
+    });
+    expect(run).toHaveBeenCalledExactlyOnceWith("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", expect.stringMatching(/[\\/]collector[\\/]openBrowserDebugging\.ps1$/u),
+      "-Browser", id, "-Executable", executable,
+    ], expect.objectContaining({ windowsHide: true }));
+  });
+  it("uses a registered Windows installation path with spaces as a single argument", async () => {
+    const executable = "D:\\Browser Apps\\Chrome\\chrome.exe";
+    const run = vi.fn(async command => ({ stdout: command === "reg.exe" ? `\r\n    (默认)    REG_SZ    ${executable}\r\n` : "debugging_page_opened\r\n" }));
+    await openBrowserDebuggingPage({ id: "chrome", label: "Chrome" }, {
+      platform: "win32", env: {}, fileExists: async file => file === executable, run,
+    });
+    expect(run.mock.calls[0][1]).toEqual(["query", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe", "/ve"]);
+    expect(run.mock.calls[1][0]).toBe("powershell.exe");
+    expect(run.mock.calls[1][1].slice(-4)).toEqual(["-Browser", "chrome", "-Executable", executable]);
+  });
+  it.each([["chrome", "Google Chrome"], ["edge", "Microsoft Edge"], ["comet", "Comet"]])("targets %s by application name on macOS", async (id, application) => {
+    const run = vi.fn(async () => ({ stdout: `${id}://inspect/#remote-debugging\n` }));
+    await openBrowserDebuggingPage({ id, label: application }, { platform: "darwin", run });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0][0]).toBe("/usr/bin/osascript");
+    expect(run.mock.calls[0][1][1]).toContain(`tell application "${application}"`);
+    expect(run.mock.calls[0][1][1]).toContain(`set URL of active tab of settingsWindow to "${id}://inspect/#remote-debugging"`);
+  });
+  it("provides a manual URL when the platform has no supported settings opener", async () => {
+    const run = vi.fn();
+    await expect(openBrowserDebuggingPage({ id: "edge", label: "Edge" }, { platform: "linux", run })).rejects.toMatchObject({
+      code: "browser_debugging_disabled", message: expect.stringContaining("edge://inspect/#remote-debugging"),
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+  it("provides the manual settings URL if an executable cannot be found or launched", async () => {
+    const run = vi.fn(async () => ({ stdout: "    (Default)    REG_SZ    C:\\other\\msedge.exe\r\n" }));
+    await expect(openBrowserDebuggingPage({ id: "chrome", label: "Chrome" }, {
+      platform: "win32", env: {}, fileExists: async () => true, run,
+    })).rejects.toMatchObject({ code: "browser_debugging_disabled", message: expect.stringContaining("chrome://inspect/#remote-debugging") });
+    expect(run.mock.calls.every(([command]) => command === "reg.exe")).toBe(true);
+    await expect(openBrowserDebuggingPage({ id: "edge", label: "Edge" }, {
+      platform: "darwin", run: vi.fn().mockRejectedValue(new Error("missing application")),
+    })).rejects.toMatchObject({ code: "browser_debugging_disabled", message: expect.stringContaining("edge://inspect/#remote-debugging") });
+  });
+  it.each(["darwin", "win32"])("does not report success on %s until the helper confirms the settings page", async platform => {
+    const run = vi.fn(async () => ({ stdout: "" }));
+    await expect(openBrowserDebuggingPage({ id: "chrome", label: "Chrome" }, {
+      platform, env: { LOCALAPPDATA: "C:\\local" }, fileExists: async () => true, run,
+    })).rejects.toMatchObject({ code: "browser_debugging_disabled" });
+  });
+  it("rejects unsupported browsers before launching any application", async () => {
+    const run = vi.fn();
+    for (const id of ["__proto__", "ws://evil.example/", "comet"]) {
+      await expect(openBrowserDebuggingPage({ id }, { platform: "win32", run })).rejects.toMatchObject({ code: "browser_unsupported" });
+    }
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
 describe("borrowed browser ownership and cookie scope", () => {
   it("initializes only its own tabs, reads bounded Douyin cookies and disconnects without closing the browser context", async () => {
-    const item = await source(); const fake = fakeBrowser(); const connect = vi.fn(async () => fake.browser);
-    const connection = await connectExternalBrowser(item, { connect, listening: async () => true, ownsEndpoint: async () => true });
+    const item = await source(); const fake = fakeBrowser(); const connect = vi.fn(async () => fake.browser), openDebuggingPage = vi.fn();
+    const connection = await connectExternalBrowser(item, { connect, openDebuggingPage, listening: async () => true, ownsEndpoint: async () => true });
     expect(connect).toHaveBeenCalledWith("ws://127.0.0.1:9222/devtools/browser/test-id", { timeout: 60_000, noDefaults: true });
+    expect(openDebuggingPage).not.toHaveBeenCalled();
     const page = await connection.context.newPage();
     expect(connection.context.pages()).toEqual([page]);
     expect(page.addInitScript).toHaveBeenCalledTimes(2);
@@ -107,10 +174,18 @@ describe("borrowed browser ownership and cookie scope", () => {
     expect(fake.browser.close).toHaveBeenCalledOnce(); expect(connection.connected).toBe(false);
     expect(fake.sessions.flatMap(session => session.send.mock.calls.map(([method]) => method))).not.toContain("Browser.close");
   });
-  it("fails explicitly when debugging is disabled without invoking a browser connection", async () => {
-    const connect = vi.fn();
-    await expect(connectExternalBrowser(await source(), { connect, listening: async () => false })).rejects.toMatchObject({ code: "browser_debugging_disabled" });
+  it("opens settings when debugging is disabled and waits for the user's opt-in", async () => {
+    const item = await source(), connect = vi.fn(), openDebuggingPage = vi.fn();
+    await expect(connectExternalBrowser(item, { connect, openDebuggingPage, listening: async () => false })).rejects.toMatchObject({
+      code: "browser_debugging_required", message: expect.stringContaining("再次点击“连接浏览器”"),
+    });
     expect(connect).not.toHaveBeenCalled();
+    expect(openDebuggingPage).toHaveBeenCalledExactlyOnceWith(item);
+  });
+  it("does not launch a browser when its user directory is unavailable", async () => {
+    const item = await source(), connect = vi.fn(), openDebuggingPage = vi.fn();
+    await expect(connectExternalBrowser({ ...item, directory: path.join(item.directory, "missing") }, { connect, openDebuggingPage })).rejects.toMatchObject({ code: "browser_unavailable" });
+    expect(connect).not.toHaveBeenCalled(); expect(openDebuggingPage).not.toHaveBeenCalled();
   });
   it("never launches an independent browser or falls back to page scrolling for an external source", async () => {
     const store = { recordsRevision: 0 };

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { cancelBrowserLogin, confirmBrowserLogin, disconnectBrowserLogin, getBrowserLoginSources, inspectBrowserLogin,
+import { cancelBrowserLogin, confirmBrowserLogin, disconnectBrowserLogin, getBrowserLoginSources, inspectBrowserLogin, LocalCollectorError,
   type BrowserLoginCandidate, type BrowserLoginSource, type CollectorAccountChange, type CollectorStatus } from "../../services/localCollector";
 import { workspaceColors as color } from "./workspaceTheme";
 
@@ -21,6 +21,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const visibleRef = useRef(visible); visibleRef.current = visible;
   const candidateRef = useRef<BrowserLoginCandidate | null>(null);
   const runningRef = useRef(false);
@@ -52,9 +53,12 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
 
   async function run(work: () => Promise<void>) {
     if (runningRef.current || blocked) return;
-    runningRef.current = true; setBusy(true); setError(null); onBusyChange(true);
+    runningRef.current = true; setBusy(true); setError(null); setNotice(null); onBusyChange(true);
     try { await work(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "浏览器连接没有完成，请重试。"); }
+    catch (reason) {
+      if (reason instanceof LocalCollectorError && reason.code === "browser_debugging_required") setNotice(reason.message);
+      else setError(reason instanceof Error ? reason.message : "浏览器连接没有完成，请重试。");
+    }
     finally { runningRef.current = false; setBusy(false); onBusyChange(false); }
   }
 
@@ -118,12 +122,12 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
         <View accessibilityRole="radiogroup" accessibilityLabel="登录来源浏览器" style={styles.actions}>
           {sources.map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityLabel={item.label}
             accessibilityState={{ checked: item.id === selected, disabled: disabled || !item.available }} aria-checked={item.id === selected}
-            disabled={disabled || !item.available} onPress={() => setSelected(item.id)}
+            disabled={disabled || !item.available} onPress={() => { setSelected(item.id); setNotice(null); setError(null); }}
             style={[styles.option, item.id === selected && styles.selected, !item.available && styles.disabled]} testID={`browser-login-${item.id}`}>
             <Text style={styles.text}>{item.label} · {!item.available ? "未找到" : item.debugging ? "可连接" : "需开启调试"}</Text>
           </Pressable>)}
         </View>
-        {source ? <Text selectable style={styles.detail}>打开 {source.inspectUrl}，勾选允许远程调试。连接时请在浏览器中允许；未登录时若登录框没有自动弹出，可在新页面点击“登录”。</Text> : null}
+        {source ? <Text selectable style={styles.detail}>未开启调试时，点击“连接浏览器”会尝试自动打开 {source.label} 的调试设置页。勾选允许远程调试后再次连接；也可手动打开 {source.inspectUrl}。连接时请在浏览器中允许。</Text> : null}
         <Text style={styles.detail}>调试权限覆盖整个浏览器；工作台仅访问自己创建的抖音页面和抖音 Cookie。导出后可关闭调试开关，无需安装扩展。</Text>
         <View style={styles.actions}>
           <Action label={busy ? "连接处理中…" : "连接浏览器"} disabled={disabled || !source?.available} onPress={connect} testID="browser-login-connect" />
@@ -133,9 +137,10 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       </>}
       {busy ? <View style={styles.actions}>
         <ActivityIndicator size="small" color={color.accent} />
-        <Text style={styles.detail} accessibilityLiveRegion="polite">{candidate ? "正在导出凭据，完成前请保持浏览器打开。" : "请允许浏览器连接；工作台会打开抖音登录入口，未弹出时可在新页面点击“登录”。完成登录或验证后自动继续，最多等待 5 分钟。"}</Text>
+        <Text style={styles.detail} accessibilityLiveRegion="polite">{candidate ? "正在导出凭据，完成前请保持浏览器打开。" : "请按提示开启调试或允许连接；进入抖音页面后完成登录或验证，未弹出登录框时可点击“登录”。工作台会自动继续，最多等待 5 分钟。"}</Text>
         {connecting ? <Action label="取消连接" disabled={false} onPress={() => connectControllerRef.current?.abort()} testID="browser-login-cancel-connect" /> : null}
       </View> : null}
+      {notice ? <Text accessibilityLiveRegion="polite" style={styles.detail} testID="browser-login-notice">{notice}</Text> : null}
       {error ? <Text accessibilityLiveRegion="polite" style={styles.error} testID="browser-login-error">{error}</Text> : null}
     </View>
   );

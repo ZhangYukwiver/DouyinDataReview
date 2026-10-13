@@ -95,13 +95,14 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     "collector/directApi.mjs", "collector/directChat.mjs", "collector/directCredentials.mjs",
     "collector/directExplorer.mjs", "collector/directLive.mjs", "collector/directProto.mjs",
     "collector/directWrites.mjs", "collector/nativeSignature.mjs", "collector/sm3.mjs",
-    "collector/browserConnection.mjs", "collector/server.mjs",
+    "collector/browserConnection.mjs", "collector/openBrowserDebugging.ps1", "collector/server.mjs",
     "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs",
     "node_modules/ws/index.js",
     "node_modules/ws/wrapper.mjs", "node_modules/ws/lib/websocket.js",
   ]) {
     assert.deepEqual(extractFile(archive, relative), await readFile(path.join(sourceDirectory, relative)), `Outdated packaged source: ${relative}`);
   }
+  assert.equal(statFile(archive, "collector/openBrowserDebugging.ps1").unpacked, true, "Browser debugging helper must be unpacked for PowerShell");
   assertPackagedWebSocketManifest(
     JSON.parse(extractFile(archive, "node_modules/ws/package.json").toString("utf8")),
     JSON.parse(await readFile(path.join(sourceDirectory, "node_modules/ws/package.json"), "utf8")),

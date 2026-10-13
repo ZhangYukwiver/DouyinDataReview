@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { readFile, readlink, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import net from "node:net";
 import path from "node:path";
@@ -12,6 +13,9 @@ import { prepareReadOnlyPage } from "./readOnlyPage.mjs";
 
 const COOKIE_URLS = ["https://www.douyin.com/", "https://www-hj.douyin.com/", "https://imapi.douyin.com/"];
 const runFile = promisify(execFile);
+const debuggingScriptPath = fileURLToPath(new URL("./openBrowserDebugging.ps1", import.meta.url)).replace(
+  `${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`,
+);
 
 export class BrowserConnectionError extends Error {
   constructor(code, message, status = 409) { super(message); this.code = code; this.status = status; }
@@ -107,6 +111,59 @@ export async function listBrowserSources(sources = browserDirectories()) {
   }));
 }
 
+export async function openBrowserDebuggingPage(source, {
+  platform = process.platform, env = process.env, run = runFile,
+  fileExists = file => stat(file).then(value => value.isFile(), () => false),
+} = {}) {
+  const applications = {
+    chrome: { mac: "Google Chrome", windows: ["Google", "Chrome", "Application", "chrome.exe"] },
+    edge: { mac: "Microsoft Edge", windows: ["Microsoft", "Edge", "Application", "msedge.exe"] },
+    comet: { mac: "Comet" },
+  };
+  if (!Object.hasOwn(applications, source.id) || (source.id === "comet" && platform !== "darwin"))
+    throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge 或受支持的 Comet。", 400);
+  const application = applications[source.id];
+  // Both the browser and URL are fixed locally, never supplied by an API caller.
+  const inspectUrl = `${source.id}://inspect/#remote-debugging`;
+  try {
+    if (platform === "darwin") {
+      const script = `tell application "${application.mac}"
+  activate
+  set settingsWindow to make new window
+  set URL of active tab of settingsWindow to "${inspectUrl}"
+  return URL of active tab of settingsWindow
+end tell`;
+      const { stdout } = await run("/usr/bin/osascript", ["-e", script], { timeout: 15_000, maxBuffer: 16 * 1024 });
+      if (stdout.trim() !== inspectUrl) throw new Error("settings_page_not_opened");
+      return;
+    }
+    if (platform === "win32") {
+      const roots = [env.LOCALAPPDATA, env.ProgramW6432, env.ProgramFiles, env.PROGRAMFILES, env["ProgramFiles(x86)"], env["PROGRAMFILES(X86)"]].filter(Boolean);
+      const executable = application.windows.at(-1);
+      const candidates = [...new Set(roots.map(root => path.win32.join(root, ...application.windows)))];
+      const openSettings = async file => {
+        const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", debuggingScriptPath, "-Browser", source.id, "-Executable", file], { timeout: 15_000, maxBuffer: 16 * 1024, windowsHide: true });
+        if (stdout.trim() !== "debugging_page_opened") throw new Error("settings_page_not_opened");
+      };
+      for (const file of candidates) {
+        if (await fileExists(file)) { await openSettings(file); return; }
+      }
+      // App Paths also covers installations outside the standard directories.
+      for (const hive of ["HKCU", "HKLM"]) {
+        try {
+          const { stdout } = await run("reg.exe", ["query", `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${executable}`, "/ve"], { timeout: 3000, maxBuffer: 16 * 1024, windowsHide: true });
+          const registered = /^\s*[^\r\n]+?\s+REG_(?:EXPAND_)?SZ\s+([^\r\n]+)$/mu.exec(stdout)?.[1].trim().replace(/^"|"$/gu, "");
+          const file = registered?.replace(/%([^%]+)%/gu, (match, key) => env[key] ?? match);
+          if (file && path.win32.isAbsolute(file) && path.win32.basename(file).toLowerCase() === executable && await fileExists(file)) {
+            await openSettings(file); return;
+          }
+        } catch { /* Missing registry entries are normal for per-user installs. */ }
+      }
+    }
+  } catch { /* Fall back to an actionable manual URL instead of OS diagnostics. */ }
+  throw new BrowserConnectionError("browser_debugging_disabled", `未能自动打开 ${source.label} 的调试设置页。请在 ${source.label} 中打开 ${inspectUrl}，勾选允许远程调试后再连接。`);
+}
+
 // This facade exposes only tabs created by the workbench. It deliberately has
 // no global route/cache/cookie-write APIs and never exposes the user's tabs.
 class BorrowedContext extends EventEmitter {
@@ -155,9 +212,13 @@ class BorrowedContext extends EventEmitter {
   }
 }
 
-export async function connectExternalBrowser(source, { connect = (endpoint, options) => chromium.connectOverCDP(endpoint, options), listening, ownsEndpoint } = {}) {
+export async function connectExternalBrowser(source, { connect = (endpoint, options) => chromium.connectOverCDP(endpoint, options), listening, ownsEndpoint, openDebuggingPage = openBrowserDebuggingPage } = {}) {
   const discovered = await discoverBrowser(source, listening, ownsEndpoint);
-  if (!discovered.endpoint) throw new BrowserConnectionError("browser_debugging_disabled", `请打开 ${source.label}，在 ${source.inspectUrl} 开启远程调试，再重新连接。`);
+  if (!discovered.endpoint) {
+    if (!discovered.available) throw new BrowserConnectionError("browser_unavailable", `未找到 ${source.label} 的用户目录，请先安装并打开该浏览器，再刷新检测。`);
+    await openDebuggingPage(source);
+    throw new BrowserConnectionError("browser_debugging_required", `已打开 ${source.label} 的调试设置页。请勾选允许远程调试，然后再次点击“连接浏览器”。`);
+  }
   let browser;
   try { browser = await connect(discovered.endpoint, { timeout: 60_000, noDefaults: true }); }
   catch { throw new BrowserConnectionError("browser_connection_failed", "浏览器连接未获允许或已关闭，请在浏览器确认框中允许后重试。"); }
