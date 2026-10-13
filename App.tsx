@@ -1235,6 +1235,8 @@ function AppContent() {
     chatAutomaticRequestRef.current.clear();
     autoSyncInFlightRef.current = false;
     const accountChanged = change.accounts.activeId !== collectorStatus?.account?.id;
+    // The collector starts a full read after import; skip the incremental
+    // trigger caused by adopting the imported account.
     skipBrowserLoginAutoSyncRef.current = true;
     if (accountChanged) {
       forgetPreviousAccount();
@@ -1242,13 +1244,16 @@ function AppContent() {
     }
     applyCollectorAccounts(change.accounts);
     setCollectorStatus(change.status);
+    setCollectorBusy(true);
+    setStoppingSync(false);
+    timerSyncRef.current = false;
     try { await adoptCollector(collectorUrl, token, requestId); }
     catch (error) {
       skipBrowserLoginAutoSyncRef.current = false;
+      setCollectorBusy(false);
       throw error;
     }
-    // A login-source confirmation should not start reading chat history before
-    // the user has chosen a read action in the newly connected account.
+    // Leave chat startup deferred until the full record read finishes.
     chatStartupRef.current.defer();
     setAccountEpoch(value => value + 1);
   }

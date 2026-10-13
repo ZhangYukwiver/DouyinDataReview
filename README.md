@@ -46,7 +46,9 @@
 
 v1.13.0 统一使用日常浏览器的 CDP 凭据导入：核对账号后一次性导出 Cookie、接口参数和签名凭据，成功后自动断开连接。有效凭据按账号保存，重启工作台也可继续使用；凭据失效或平台要求验证时，再由本人完成登录或验证并重新导入。专用浏览器及网页手动监听入口已移除。
 
-v1.13.1 修复未登录浏览器连接后过早关闭的问题：连接后会等待本人登录，最多五分钟，可手动取消。确认导入凭据后不会自动启动记录采集；需要更新记录时手动点击读取。观看、点赞和收藏仍通过接口分页读取，不滚动页面。
+v1.13.1 修复未登录浏览器连接后过早关闭的问题：连接后会等待本人登录，最多五分钟，可手动取消。观看、点赞和收藏仍通过接口分页读取，不滚动页面。
+
+当前源码在每次成功导入登录凭据后，都会自动执行一次完整读取，更新观看历史、喜欢和收藏。这一次读取不受「自动补读新记录」开关影响，可在采集器页面停止。
 
 记录采集、搜索与互动、创作者中心、视频解析与下载通过 HTTP 接口完成，聊天和直播弹幕通过 WebSocket 接收；完整和增量读取均不要求滚动网页。源码运行和桌面版共用静态服务的媒体策略，允许播放本机采集器提供的视频。
 
@@ -103,12 +105,12 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
    **macOS 首次打开前需在终端执行一次 `xattr -cr "/Applications/内容数据工作台.app"`，否则会提示应用已损坏；Windows 可能出现 SmartScreen 提示，点「更多信息」，再点「仍要运行」。**
 
 2. 启动「内容数据工作台」，点击「连接采集器」。应用会从本机采集器自动取一次性配对码完成连接，之后默认在前台自动读取新记录，也可以手动点「增量读取」。关掉窗口应用会留在托盘里接着每 3 小时读一次，要完全退出就在托盘图标的菜单里点「退出」。
-3. 首次使用请在「设置 → 账号」连接已登录抖音的 Chrome、Edge 或 macOS Comet，核对昵称并导入凭据。导入后自动断开 CDP，可以关闭浏览器，再读取记录或开始接收聊天。凭据失效时重新连接并导入。
+3. 首次使用请在「设置 → 账号」连接已登录抖音的 Chrome、Edge 或 macOS Comet，核对昵称并导入凭据。导入成功后自动断开 CDP，并完整读取一次观看历史、喜欢和收藏，可以关闭浏览器。凭据失效时重新连接并导入。
 4. 进入内容库，在观看历史、喜欢、收藏、聊天和持续报告之间切换；在「设置」里换界面风格、选报告用哪一套，点「打开报告」看年度回顾。
 
 ### 导入已有浏览器登录凭据
 
-在「设置 → 账号 → 导入浏览器登录凭据」选择 Chrome、Edge 或 macOS 的 Comet，开启对应浏览器 `chrome://inspect/#remote-debugging`、`edge://inspect/#remote-debugging` 或 `comet://inspect/#remote-debugging` 中的远程调试，再点击「连接浏览器」。浏览器弹出确认框时本人允许连接；尚未登录抖音时，工作台会尝试打开登录框，未弹出时可在新开的抖音页面点击「登录」。工作台会保留页面并等待最多 5 分钟，登录成功后自动显示账号，等待期间可点击「取消连接」。核对应用显示的抖音昵称后点击「确认导入」。工作台会导出 Cookie、接口参数和配套签名凭据，成功后自动断开 CDP；此后可关闭调试开关及浏览器。已有账号会复用自己的记录目录，首次连接的其他账号会单独保存。首次使用或添加账号也使用此入口，不再启动专用浏览器。
+在「设置 → 账号 → 导入浏览器登录凭据」选择 Chrome、Edge 或 macOS 的 Comet，开启对应浏览器 `chrome://inspect/#remote-debugging`、`edge://inspect/#remote-debugging` 或 `comet://inspect/#remote-debugging` 中的远程调试，再点击「连接浏览器」。浏览器弹出确认框时本人允许连接；尚未登录抖音时，工作台会尝试打开登录框，未弹出时可在新开的抖音页面点击「登录」。工作台会保留页面并等待最多 5 分钟，登录成功后自动显示账号，等待期间可点击「取消连接」。核对应用显示的抖音昵称后点击「确认导入」。工作台会导出 Cookie、接口参数和配套签名凭据，成功后自动断开 CDP，并立即完整读取一次观看历史、喜欢和收藏；此后可关闭调试开关及浏览器。已有账号会复用自己的记录目录，首次连接的其他账号会单独保存。每次成功导入都会触发这一次完整读取，包括重新导入已有账号的凭据；取消连接或导入失败不会触发。首次使用或添加账号也使用此入口，不再启动专用浏览器。
 
 Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供远程调试开关的版本。工作台自动检测默认安装的稳定版用户目录和有效本机调试端口，并核对监听进程属于该浏览器，避免旧端口文件接到另一个实例；自定义用户目录、其他浏览器渠道和 Firefox 暂不支持此入口。无需安装浏览器扩展，也无需手填端口。
 
@@ -146,7 +148,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 - 聊天与探索：`/v1/chat/*`、`/v1/explore/*`；聊天通过 HTTP 整理历史、WebSocket 实时接收，发消息和转发走 IM 接口，其他探索操作走 HTTP；发送由用户触发并校验回执，结果不明时不自动重发。
 - 创作者与直播：`/v1/creator/read`、`/v1/live/*`；按需通过 HTTP 查询，直播弹幕通过 WebSocket 接收，正在直播的关注列表缓存 30 秒；群聊、火花和直播数据不写入记录文件。
 - 视频与解析：`/v1/downloads*`、`/v1/analyses*`；下载和播放由用户触发。解析时最低清晰度视频及提示词会发送到你配置的解析用大模型接口，结果存入 `analyses.json`，API Key 不落盘；播放地址使用独立密钥。
-- 浏览器凭据：`/v1/browser/sources`、`/v1/browser/connect`、`/v1/browser/confirm`、DELETE `/v1/browser/pending`、`/v1/browser/disconnect`；仅本机可用，未登录时等待最多五分钟，取消请求会释放连接；登录后预览账号，本人确认才导出凭据并自动断开；待确认连接两分钟后释放，断开连接保留有效凭据及接口任务。
+- 浏览器凭据：`/v1/browser/sources`、`/v1/browser/connect`、`/v1/browser/confirm`、DELETE `/v1/browser/pending`、`/v1/browser/disconnect`；仅本机可用，未登录时等待最多五分钟，取消请求会释放连接；登录后预览账号，本人确认才导出凭据并自动断开，成功后启动一次完整读取；待确认连接两分钟后释放，断开连接保留有效凭据及接口任务。
 
 代码请求复用当前账号导入的登录会话。CDP 导入时一次性导出 Cookie、请求参数、签名密钥和设备凭据，之后记录、聊天、互动、创作者中心和直播都走 HTTP 或 WebSocket。直播弹幕只在内存保留最近 300 条。没有凭据、短期令牌过期或需要验证时，提示本人在所选浏览器中完成登录或验证并重新导入，不启动后台浏览器。
 
@@ -205,7 +207,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 ### 已连接却提示需要导入凭据或读取配置不完整？
 
-在「设置 → 账号」重新连接已登录的浏览器并确认导入。导入会建立 HTTP 分页所需的请求参数；导入完成后再点「增量读取」或「完整读取」。升级保留本地记录，旧版已有完整且有效的凭据也可以继续使用。
+在「设置 → 账号」重新连接已登录的浏览器并确认导入。导入会建立 HTTP 分页所需的请求参数，成功后自动完整读取一次。升级保留本地记录，旧版已有完整且有效的凭据也可以继续使用。
 
 ### 报告是空的，或提示「报告有更新」？
 
@@ -326,10 +328,10 @@ DouyinDataReview is a local-first desktop app for Windows and macOS that works w
 
 Since v1.13.0, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, enable that browser's remote debugging, connect, check the account name, and confirm the credential import. The app disconnects automatically after exporting the complete credentials. You can turn off debugging and close the browser; valid credentials work through HTTP and WebSocket, including after an app restart. If they expire or Douyin requires verification, reconnect and import again. No extension, dedicated browser or manual page-listening mode is required. Firefox, custom user-data directories and other browser channels are not supported.
 
-Since v1.13.1, an unsigned-in browser connection stays open while you sign in (up to five minutes, with a cancel option). Importing credentials no longer starts record collection automatically; start a read when you want to update records. Watch history, likes and favorites are still read through paginated APIs without scrolling the page.
+Since v1.13.1, an unsigned-in browser connection stays open while you sign in (up to five minutes, with a cancel option). The current source automatically starts one full read of watch history, likes and favorites after every successful credential import, even when automatic incremental reading is disabled. You can stop the read from the collector page. Records are still read through paginated APIs without scrolling the page.
 
 - **Is there a Douyin Wrapped?** DouyinDataReview builds a Wrapped-style year-in-review from your own records on your computer, any time you want; you can [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) in the browser without installing anything.
-- **How do I export my Douyin watch history?** Install DouyinDataReview, connect the collector, import credentials from your signed-in browser in Settings → Account, then run a full or incremental read. After it finishes, click 导出数据 (Export data) in Settings. Watch history, likes, favorites and friend chats are saved to one JSON file.
+- **How do I export my Douyin watch history?** Install DouyinDataReview, connect the collector, and import credentials from your signed-in browser in Settings → Account. A full read starts automatically after import. After it finishes, click 导出数据 (Export data) in Settings. Watch history, likes, favorites and friend chats are saved to one JSON file.
 - **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from Douyin's 个人信息下载 (personal data download) to generate a report without signing in.
 - **Is it free and private?** Yes. It is MIT-licensed. Personal records and reports stay on your computer. Optional video analysis sends only the selected video, public metadata and a prompt to your configured AI endpoint; it does not send your Douyin login cookies or complete personal records. The API key stays in this device's browser configuration and is used by the collector only for the requested analysis.
 
