@@ -1,6 +1,6 @@
 {
   "name": "douyin-content-insights-mobile",
-  "version": "1.13.1",
+  "version": "1.13.2",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -38,6 +38,7 @@
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.2",
     "fflate": "^0.8.2",
+    "hls.js": "^1.7.3",
     "lucide-react-native": "^1.30.0",
     "playwright-core": "^1.62.1",
     "react": "19.2.3",

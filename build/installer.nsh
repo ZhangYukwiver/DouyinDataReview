@@ -17,7 +17,7 @@
     ${if} $analysisChoice == ${BST_CHECKED}
       ${NSD_Check} $analysisCheckbox
     ${endif}
-    ${NSD_CreateLabel} 12u 16u -12u 40u "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备火山方舟的 API Key。"
+    ${NSD_CreateLabel} 12u 16u -12u 40u "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备解析用大模型的 API Key。"
     Pop $0
     nsDialogs::Show
   FunctionEnd

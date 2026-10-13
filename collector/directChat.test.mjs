@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DirectChatClient, buildDirectImRequest } from "./directChat.mjs";
+import { DirectChatClient, buildDirectImRequest, parseDirectConversation } from "./directChat.mjs";
 import { directSessionFixture, directApiFixture, imResponse, imConversation, imMessage } from "./fixtures/directClient.mjs";
 import { decodeProto, encodeProto, protoNumber as n, protoMessage as m, protoString as s, protoMapEntry as kv, protoInteger, protoChild, protoChildren, protoText } from "./directProto.mjs";
 import { normalizeChatPayload } from "./chatNormalizer.mjs";
@@ -12,6 +12,8 @@ const conversation=()=>({id:cid,shortId:"7654321098765432100",type:1,ticket:"fak
 afterEach(()=>vi.useRealTimers());
 function handler(url,options) {
   if(url.pathname.includes("/query/user/")) return {payload:{status_code:0,user_uid:"123",id:"9876543210123456789"}};
+  if(url.pathname.includes("/user/profile/other/")) return {payload:{status_code:0,user:{uid:url.searchParams.get("user_id"),nickname:"联系人资料",
+    sec_uid:`MS4w${"x".repeat(24)}`,avatar_thumb:{url_list:["https://p3.douyinpic.com/contact.jpg"]}}}};
   if(url.pathname.includes("get_identity_security_token")) return {payload:{message:"success",data:{identity_security_token:"fake-identity",device_id:"9876543210123456789"}}};
   if(url.pathname.includes("get_info_list")) return {buffer:imResponse(610,[m(1,imConversation())])};
   if(url.pathname.endsWith("/send")) return {buffer:imResponse(100,[n(1,serverId),n(3,0),s(4,protoText(protoChild(protoChild(decodeProto(options.data),8),100),8)),n(5,0)])};
@@ -44,6 +46,66 @@ describe("native chat protocol",()=>{
   it("rejects missing pagination rather than claiming history is complete",async()=>{
     const {api}=directApiFixture((url,options)=>url.pathname.includes("get_message_by_init") ? {buffer:imResponse(2043,[])} : handler(url,options));
     await expect(new DirectChatClient(api).initialize()).rejects.toMatchObject({code:"pagination_missing"}); await api.close();
+  });
+  it("fills unnamed IM conversations and senders from the matching contact profile and reuses the cache",async()=>{
+    const peer="9876543210123456789", id=`0:1:${peer}:123`, avatar="https://p3.douyinpic.com/friend.jpg";
+    const {api,fetch}=directApiFixture((url,options)=>{
+      if(url.pathname.includes("/user/profile/other/")) {
+        expect(url.searchParams.get("user_id")).toBe(peer);
+        return {payload:{status_code:0,user:{uid:peer,nickname:"好友昵称",remark_name:"好友备注",sec_uid:`MS4w${"a".repeat(24)}`,avatar_larger:{url_list:[avatar]}}}};
+      }
+      if(url.pathname.includes("get_message_by_init")) return {buffer:imResponse(2043,[m(1,[m(1,[s(1,id),n(2,"7654321098765432100"),n(3,1),m(50,[])]),
+        m(2,imMessage("98765",{conversationId:id,sender:peer}))]),n(2,0)])};
+      return handler(url,options);
+    });
+    const chat=new DirectChatClient(api),payloads=[];
+    try {
+      await chat.initialize({onPayload:payload=>payloads.push(payload)});
+      await chat.initialize();
+      expect(chat.conversations.get(id)).toMatchObject({name:"好友备注",avatarUrl:avatar,secUid:`MS4w${"a".repeat(24)}`});
+      expect(payloads[0].conversations[0]).toMatchObject({id,name:"好友备注",avatarUrl:avatar});
+      expect(payloads[0].messages[0]).toMatchObject({conversationName:"好友备注",senderName:"好友备注",senderAvatarUrl:avatar});
+      expect(fetch.mock.calls.filter(([url])=>url.includes("/user/profile/other/"))).toHaveLength(1);
+    } finally {await api.close();}
+  });
+  it("keeps the self chat label and attaches its profile avatar",async()=>{
+    const {api}=directApiFixture(handler), chat=new DirectChatClient(api);
+    try {
+      const payload=await chat.enrichPayload({conversations:[{id:"0:1:123:123",kind:"friend",name:null}],messages:[]});
+      expect(payload.conversations[0]).toMatchObject({name:"我自己",avatarUrl:"https://p3.douyinpic.com/contact.jpg"});
+    } finally {await api.close();}
+  });
+  it("ignores profiles belonging to a different uid and ids outside the current account",async()=>{
+    const {api,fetch}=directApiFixture((url,options)=>url.pathname.includes("/user/profile/other/")
+      ? {payload:{status_code:0,user:{uid:"999",nickname:"别人的资料",avatar_thumb:{url_list:["https://p3.douyinpic.com/wrong.jpg"]}}}} : handler(url,options));
+    const chat=new DirectChatClient(api);
+    try {
+      const payload=await chat.enrichPayload({conversations:[{id:cid,kind:"friend",name:null},{id:"0:1:777:888",kind:"friend",name:null}],messages:[]});
+      expect(payload.conversations.every(row=>row.name===null&&!row.avatarUrl)).toBe(true);
+      expect(fetch.mock.calls.filter(([url])=>url.includes("/user/profile/other/"))).toHaveLength(1);
+    } finally {await api.close();}
+  });
+  it("retains history when a contact profile is unavailable, but surfaces login failures",async()=>{
+    let failure=500;
+    const {api}=directApiFixture((url,options)=>url.pathname.includes("/user/profile/other/")
+      ? {payload:{status_code:failure}} : handler(url,options));
+    const chat=new DirectChatClient(api);
+    try {
+      await expect(chat.initialize()).resolves.toHaveLength(1);
+      expect((await chat.messages({conversationId:cid})).messages[0].text).toBe("测试消息");
+      failure=8;
+      chat.profileCheckedAt.clear();
+      await expect(chat.initialize()).rejects.toMatchObject({code:"login_required"});
+    } finally {await api.close();}
+  });
+  it("reads the group icon without requesting a one-to-one user profile",async()=>{
+    const avatar="https://p3.douyinpic.com/group.jpg", {api,fetch}=directApiFixture(handler), chat=new DirectChatClient(api);
+    try {
+      const group=parseDirectConversation(imConversation(gid,2,[s(7,avatar)]));
+      const payload=await chat.enrichPayload({conversations:[group],messages:[]});
+      expect(payload.conversations[0]).toMatchObject({name:"群聊",avatarUrl:avatar});
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {await api.close();}
   });
   it("exposes every older batch even after the display cache reaches 1000 messages",async()=>{
     let page=0;
@@ -117,6 +179,7 @@ describe("production HTTP chat entry",()=>{
     try {
       expect(collector.startChatObservation()).toBe(true);
       await vi.waitFor(()=>expect(collector.chat?.historyReady).toBe(true));
+      expect(collector.snapshot.chatConversations.find(c=>c.id===cid)).toMatchObject({name:"联系人资料",avatarUrl:"https://p3.douyinpic.com/contact.jpg"});
       socket.emit("message",frame("22222"),true);socket.emit("message",frame("33333",{group:true,text:"不得落盘的群正文"}),true);socket.emit("message",frame("33333",{group:true,text:"不得落盘的群正文"}),true);
       await vi.waitFor(()=>expect(collector.snapshot.chatMessages.some(msg=>msg.text==="实时消息")).toBe(true));
       expect(JSON.stringify(collector.snapshot)).not.toContain("不得落盘的群正文");

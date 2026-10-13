@@ -120,8 +120,8 @@ function ConfigPanel({ config, onSave }: { config: AnalysisConfig; onSave: (conf
     <Text style={styles.label}>{label}</Text>
     <TextInput accessibilityLabel={label} value={draft[key]} onChangeText={(text) => setDraft((current) => ({ ...current, [key]: text }))} placeholderTextColor={color.textMuted} style={[styles.input, styles.fieldInput, props.multiline && styles.multiline]} {...props} />
   </View>;
-  return <Panel title="接口设置" subtitle="默认用火山方舟的豆包 Seed 2.1 lite，能看画面也能听声音，要先在方舟控制台开通。Key 只存在这台电脑上。">
-    {field("apiKey", "API Key", { secureTextEntry: true, placeholder: "在火山方舟控制台的 API Key 管理里创建" })}
+  return <Panel title="接口设置" subtitle="填写解析用大模型的接口地址、模型名称和 API Key。模型需支持视频输入，Key 只存在这台电脑上。">
+    {field("apiKey", "API Key", { secureTextEntry: true, placeholder: "从大模型服务商获取 API Key" })}
     {field("model", "模型", { placeholder: "doubao-seed-2-1-lite-260915" })}
     {field("baseUrl", "接口地址", { placeholder: "https://ark.cn-beijing.volces.com/api/v3" })}
     {field("direction", "我的创作方向（选填）", { multiline: true, maxLength: 600, placeholder: "比如：上班族的 10 分钟快手菜，口播加实拍。填了以后改编建议会贴着这个方向写。" })}

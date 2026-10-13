@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View, type LayoutChangeEvent } from "react-native";
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View, type LayoutChangeEvent } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { Check, Download, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
@@ -304,9 +304,8 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
         const avatar = color.avatars[index % color.avatars.length]!;
         return (
           <View key={account.id} style={styles.row} testID={`settings-account-${account.id}`}>
-            <View {...role(appStyle, "c-avatar")} style={[styles.avatar, { backgroundColor: alpha(avatar, 0.19) }]}>
-              <Text style={[styles.avatarText, { color: avatar }]}>{account.nickname ? Array.from(account.nickname)[0] : String(index + 1)}</Text>
-            </View>
+            <AccountAvatar appStyle={appStyle} avatarUrl={account.avatar} accent={avatar}
+              initial={account.nickname ? Array.from(account.nickname)[0]! : String(index + 1)} name={name} />
             <View style={styles.copy}>
               <Text numberOfLines={1} style={styles.rowTitle}>{name}</Text>
               {note ? <Text numberOfLines={1} style={styles.detail}>{note}</Text> : null}
@@ -361,7 +360,7 @@ function Features({ analysisInstalled, appStyle, onToggleAnalysis }: SettingsDia
       <RowCopy
         detail={analysisInstalled
           ? "已安装，在侧栏的「解析库」里用。移除后入口会收起来，解析过的结果和填过的 Key 都还留着。"
-          : "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备火山方舟的 API Key。"}
+          : "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备解析用大模型的 API Key。"}
         title="视频解析"
       />
       <Button appStyle={appStyle} icon={analysisInstalled ? undefined : Download} label={analysisInstalled ? "移除" : "安装"} onPress={onToggleAnalysis} testID="settings-analysis" />
@@ -536,6 +535,20 @@ function StyleSwatch({ kind }: { kind: AppStyle }) {
   );
 }
 
+function AccountAvatar({ appStyle, avatarUrl, accent, initial, name }: {
+  appStyle: AppStyle; avatarUrl: string | null; accent: string; initial: string; name: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [avatarUrl]);
+  return (
+    <View {...role(appStyle, "c-avatar")} style={[styles.avatar, { backgroundColor: alpha(accent, 0.19) }]}>
+      {avatarUrl?.startsWith("https://") && !failed ? (
+        <Image accessibilityLabel={`${name}的头像`} source={{ uri: avatarUrl }} style={styles.avatarImage} onError={() => setFailed(true)} />
+      ) : <Text style={[styles.avatarText, { color: accent }]}>{initial}</Text>}
+    </View>
+  );
+}
+
 /**
  * 版式角色（data-ws）只给另外三种风格，让它们的版式层把面板印成自己的样子（年志的玻璃、海报的粗线按钮……）。
  * 极简的样子已经全在下面按 token 写好；工作台的极简版式层是按角色选元素的，挂上角色它会把危险按钮的红字、
@@ -629,6 +642,7 @@ const styles = StyleSheet.create({
   // 账号行
   // 头像和聊天页一样是圆的（不跟档案馆的直角圆角 token）
   avatar: { width: 30, height: 30, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 15 },
+  avatarImage: { width: 30, height: 30, borderRadius: 15 },
   avatarText: { fontFamily: font.sans, fontSize: 13, fontWeight: "600" },
   currentTag: { flexShrink: 0, paddingHorizontal: 9, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: color.surfaceMuted },
   currentText: { fontFamily: font.sans, color: color.textSecondary, fontSize: 12, fontWeight: "500" },

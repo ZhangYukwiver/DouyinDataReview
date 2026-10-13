@@ -1537,7 +1537,9 @@ export class ChatConversationAccumulator {
       const inferredName = explicitName
         ?? (kind !== "group" && senderName && senderId !== this.currentUserId && !/^(我|本人|自己)$/u.test(senderName) ? senderName : null);
       const avatarUrl = normalizeChatAvatarUrl(
-        message?.avatarUrl ?? message?.avatar_url ?? message?.senderAvatarUrl ?? message?.sender_avatar_url,
+        message?.avatarUrl ?? message?.avatar_url
+          ?? (senderId !== this.currentUserId || /^0:1:(\d+):\1$/u.test(id)
+            ? message?.senderAvatarUrl ?? message?.sender_avatar_url : null),
       );
       const previous = this.conversations.get(id);
       if (this.conversations.size >= MAX_CHAT_CONVERSATIONS && !previous) continue;
