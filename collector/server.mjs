@@ -6,14 +6,14 @@ import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
-import { DouyinCollector, readLoginIdentity } from "./douyinCollector.mjs";
+import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
+import { BROWSER_LOGIN_TIMEOUT_MS, waitForBrowserLogin } from "./browserLogin.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
 import { DirectHistoryError } from "./directHistory.mjs";
@@ -246,6 +246,7 @@ export async function startCollectorServer({
   let accountWork = null;
   let switching = false;
   let browserWork = null;
+  let browserLoginController = null;
   let pendingBrowser = null;
   const clearPendingBrowser = async (id) => {
     if (!pendingBrowser || (id && pendingBrowser.id !== id)) return;
@@ -253,16 +254,12 @@ export async function startCollectorServer({
     clearTimeout(pending.timer);
     await pending.connection.disconnect();
   };
-  const browserIdentity = async (connection, page) => {
+  const browserIdentity = async (connection, page, options = { timeoutMs: 15_000 }) => {
+    options.signal?.throwIfAborted();
     if (!connection.connected) throw new BrowserConnectionError("browser_disconnected", "浏览器已断开，请重新连接。");
+    if (page.isClosed()) throw new BrowserConnectionError("browser_page_closed", "抖音登录页面已关闭，请重新连接浏览器。");
     await page.goto("https://www.douyin.com/user/self", { waitUntil: "domcontentloaded", timeout: 30_000 });
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      if (!connection.connected) throw new BrowserConnectionError("browser_disconnected", "浏览器已断开，请重新连接。");
-      const identity = await readLoginIdentity(page);
-      if (identity?.uid && await collector.hasLoginSession(connection.context, page)) return identity;
-      await delay(500);
-    }
-    throw new BrowserConnectionError("browser_login_required", "请在浏览器里完成抖音登录或验证，再重新连接。");
+    return waitForBrowserLogin(connection, page, (context, loginPage) => collector.hasLoginSession(context, loginPage), options);
   };
   const browserTarget = (identity) => {
     const existing = accounts.list().accounts.find(account => account.uid === identity.uid);
@@ -461,6 +458,12 @@ export async function startCollectorServer({
         switching = true;
         let finishBrowserWork;
         browserWork = new Promise(resolve => { finishBrowserWork = resolve; });
+        const loginController = url.pathname === "/v1/browser/connect" ? new AbortController() : null;
+        const cancelLogin = () => { if (!response.writableEnded) loginController?.abort(); };
+        if (loginController) {
+          browserLoginController = loginController;
+          response.once("close", cancelLogin);
+        }
         try {
           if (url.pathname === "/v1/browser/connect") {
             const source = browserSources.find(item => item.id === body.browser);
@@ -468,8 +471,11 @@ export async function startCollectorServer({
             await clearPendingBrowser();
             const connection = await browserConnector(source);
             try {
+              loginController.signal.throwIfAborted();
               const page = await connection.context.newPage();
-              const identity = await browserIdentity(connection, page);
+              await page.bringToFront?.();
+              const identity = await browserIdentity(connection, page, { signal: loginController.signal, timeoutMs: BROWSER_LOGIN_TIMEOUT_MS });
+              loginController.signal.throwIfAborted();
               const id = randomUUID();
               const timer = setTimeout(() => { void clearPendingBrowser(id); }, 2 * 60_000); timer.unref();
               pendingBrowser = { id, connection, page, identity, timer };
@@ -503,10 +509,14 @@ export async function startCollectorServer({
             await collector.disconnectExternalBrowser();
             sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
           }
-        } finally { switching = false; finishBrowserWork(); browserWork = null; }
+        } finally {
+          response.off("close", cancelLogin);
+          browserLoginController = null;
+          switching = false; finishBrowserWork(); browserWork = null;
+        }
       } catch (error) {
         const known = error instanceof BrowserConnectionError || error instanceof DirectHistoryError;
-        if (!response.headersSent) sendJson(response, known ? error.status || 409 : 500, { error: known ? error.code : "browser_connection_failed",
+        if (!response.headersSent && !response.destroyed) sendJson(response, known ? error.status || 409 : 500, { error: known ? error.code : "browser_connection_failed",
           message: known ? error.message : "浏览器连接没有完成，请检查登录和远程调试设置后重试。" });
       }
       return;
@@ -787,6 +797,7 @@ export async function startCollectorServer({
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    browserLoginController?.abort();
     for (const finish of statusWaiters) finish();
     try {
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器

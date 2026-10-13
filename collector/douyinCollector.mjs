@@ -55,6 +55,7 @@ const MAX_CHAT_MESSAGES = 100_000;
 // local cap to be reached for a genuinely long friend conversation.
 const CHAT_FRIEND_HISTORY_PAGE_LIMIT = 2_000;
 const CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
+const DIRECT_CREDENTIAL_EXPORT_TIMEOUT_MS = 45_000;
 const LEGACY_CHAT_OBSERVATION_WARNING = "聊天监听模式：使用无头浏览器自动读取；群聊只保存群名和消息统计，好友对话保存已加载的完整消息内容。";
 const LEGACY_CHAT_SNAPSHOT_WARNING = "聊天读取（单次）：使用无头浏览器自动读取，完成后自动停止；群聊只保存群名和消息统计，好友对话保存已加载的完整消息内容。";
 const CHAT_OBSERVATION_WARNING = "聊天实时接收：整理历史后保持连接，新消息自动更新；暂停接收或关闭采集器后停止。群聊只保存群名和消息统计，好友对话保存已接收的内容。";
@@ -403,13 +404,25 @@ async function findOwnProfileLink(page) {
   return null;
 }
 
-async function hasVisibleLoginControl(page) {
+async function visibleLoginControl(page) {
   if (!page || page.isClosed()) return false;
   for (const role of ["button", "link"]) {
     const candidate = await firstVisible(page.getByRole(role, { name: "登录", exact: true }), 4);
-    if (candidate) return true;
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+export async function openLoginDialog(page) {
+  if (!page || page.isClosed()) return false;
+  for (const role of ["button", "link"]) {
+    if (await clickFirstVisible(page.getByRole(role, { name: "登录", exact: true }))) return true;
   }
   return false;
+}
+
+async function hasVisibleLoginControl(page) {
+  return Boolean(await visibleLoginControl(page));
 }
 
 export class DouyinCollector {
@@ -521,6 +534,11 @@ export class DouyinCollector {
   externalSessionError(error) {
     if (!["direct_session_missing", "write_credentials_missing", "login_required", "session_rejected",
       "verification_required", "account_mismatch", "template_missing", "template_invalid", "template_mismatch"].includes(error?.code)) return error;
+    if (this.externalSessionState === "exporting") {
+      const problem = new DirectHistoryError("browser_import_failed", `浏览器账号已识别，但凭据导入未完成。${error.message}`);
+      problem.cause = error;
+      return problem;
+    }
     this.externalSessionState = "reconnect_required";
     const problem = new DirectHistoryError("browser_reconnect_required", "导入的登录凭据已失效或不完整，请在设置 → 账号中重新连接浏览器，完成登录或验证后再次导入。");
     // Each caller owns its task state; only publish the shared credential flag here.
@@ -735,13 +753,19 @@ export class DouyinCollector {
       const page = await context.newPage();
       try {
         await page.goto(SELF_PROFILE_URL, { waitUntil: "domcontentloaded", timeout: 45_000 });
-        for (let attempt = 0; attempt < 20; attempt += 1) {
+        // The page can identify the account before its security SDK finishes
+        // initializing. Allow a cold browser to finish the paired export.
+        const deadline = Date.now() + DIRECT_CREDENTIAL_EXPORT_TIMEOUT_MS;
+        while (Date.now() < deadline) {
           signal?.throwIfAborted();
           const identity = await readLoginIdentity(page);
           if (identity?.uid && identity.uid !== api.session.uid) throw accountMismatchError(identity.nickname);
           if (identity?.uid) {
             const material = await page.evaluate(readDirectCredentialMaterial);
-            if (material) material.msToken = context.directMsToken || "";
+            if (material) {
+              const msToken = context.directMsToken || api.cookie("msToken");
+              material.msToken = /^[A-Za-z0-9+/_=-]{100,1024}$/u.test(msToken || "") ? msToken : "";
+            }
             if (material?.trait?.blob && material.ticket && material.privateKey && material.msToken) {
               // A fresh login to the same account rotates Cookies. Complete
               // its paired export before replacing the active HTTP client.
@@ -760,7 +784,7 @@ export class DouyinCollector {
           }
           await delay(500, undefined, { signal });
         }
-        throw new DirectHistoryError("write_credentials_missing", "登录凭据尚未初始化，请打开登录窗口完成登录或验证后重试。");
+        throw new DirectHistoryError("write_credentials_missing", "未能获取完整签名与设备凭据，请在浏览器刷新抖音页面，完成登录或验证后重新连接。");
       } finally {
         await page.close().catch(() => {});
       }

@@ -30,3 +30,10 @@ export function shouldAutoSync(guard: AutoSyncGuard): boolean {
     && !guard.stoppingSync
     && !BLOCKED_STATES.has(guard.state ?? "idle");
 }
+
+export function shouldSuppressBrowserLoginAutoSync(
+  pendingBrowserLogin: boolean,
+  manual: boolean,
+): boolean {
+  return pendingBrowserLogin && !manual;
+}

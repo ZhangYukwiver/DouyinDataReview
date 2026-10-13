@@ -6,20 +6,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { startCollectorServer } from "./server.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { saveDirectSession } from "./directApi.mjs";
-import { DIRECT_SIGNER_COMMIT } from "./directHistory.mjs";
+import { DIRECT_SIGNER_COMMIT, DirectHistoryError } from "./directHistory.mjs";
 import { directSessionFingerprint } from "./directCredentials.mjs";
 import { directSessionFixture } from "./fixtures/directClient.mjs";
 
 const cleanups = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function fixture() {
+async function fixture({ isLoggedIn = () => true } = {}) {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "cdp-server-")); cleanups.push(() => rm(dataDirectory, { recursive: true, force: true }));
   const identity = { uid: "123456", nickname: "合成账号", secUid: null, avatar: null };
   const cookies = [{ name: "sessionid", value: "synthetic", domain: ".douyin.com", path: "/", expires: -1 }];
-  const page = { goto: vi.fn(), isClosed: () => false, evaluate: vi.fn(async fn => fn.toString().includes("navigator.userAgent") ? directSessionFixture().userAgent : { ...identity }),
-    getByRole: () => ({ count: async () => 0 }) };
+  const loginButton = { click: vi.fn(async () => {}) };
+  const page = { goto: vi.fn(), bringToFront: vi.fn(), isClosed: () => false,
+    evaluate: vi.fn(async fn => fn.toString().includes("navigator.userAgent") ? directSessionFixture().userAgent : isLoggedIn() ? { ...identity } : null),
+    getByRole: () => ({ count: async () => isLoggedIn() ? 0 : 1, nth: () => ({ isVisible: async () => true, click: loginButton.click }) }) };
   const context = new EventEmitter();
-  Object.assign(context, { externalBrowser: true, cookies: vi.fn(async () => cookies), newPage: vi.fn(async () => page), pages: () => [page] });
+  Object.assign(context, { externalBrowser: true, cookies: vi.fn(async () => isLoggedIn() ? cookies : []), newPage: vi.fn(async () => page), pages: () => [page] });
   const connections = [];
   const browserConnector = vi.fn(async () => {
     const borrowed = Object.assign(new EventEmitter(), { externalBrowser: true, cookies: context.cookies, newPage: context.newPage, pages: context.pages });
@@ -50,7 +52,7 @@ async function fixture() {
     const response = await fetch(`${runtime.baseUrl}${route}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { runtime, call, dataDirectory, connections, browserConnector, identity, bootstrap };
+  return { runtime, call, headers, dataDirectory, connections, browserConnector, identity, loginButton, bootstrap };
 }
 
 describe("browser login HTTP handshake", () => {
@@ -72,6 +74,39 @@ describe("browser login HTTP handshake", () => {
     expect((await call("/v1/browser/independent?account=default", "POST")).status).toBe(404);
     expect(await readFile(path.join(dataDirectory, "direct-session.json"), "utf8").then(() => true, () => false)).toBe(true);
   });
+  it("keeps the browser open until a later login, then returns the account for confirmation", async () => {
+    let loggedIn = false;
+    const { call, connections, browserConnector, loginButton } = await fixture({ isLoggedIn: () => loggedIn });
+    let settled = false;
+    const inspectedRequest = call("/v1/browser/connect", "POST", { browser: "chrome" }).finally(() => { settled = true; });
+    await vi.waitFor(() => expect(browserConnector).toHaveBeenCalledOnce());
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(settled).toBe(false);
+    expect(connections[0].disconnect).not.toHaveBeenCalled();
+    expect(loginButton.click).toHaveBeenCalledOnce();
+
+    loggedIn = true;
+    const inspected = await inspectedRequest;
+    expect(inspected).toMatchObject({ status: 200, body: { candidate: { uid: "123456", nickname: "合成账号" } } });
+    expect(connections[0].disconnect).not.toHaveBeenCalled();
+    await call("/v1/browser/pending", "DELETE", { id: inspected.body.candidate.id });
+    expect(connections[0].disconnect).toHaveBeenCalledOnce();
+  });
+  it("disconnects the temporary browser when the login wait is cancelled", async () => {
+    let loggedIn = false;
+    const { runtime, headers, connections, browserConnector } = await fixture({ isLoggedIn: () => loggedIn });
+    const controller = new AbortController();
+    const request = fetch(`${runtime.baseUrl}/v1/browser/connect`, {
+      method: "POST", headers,
+      body: JSON.stringify({ browser: "chrome" }), signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(browserConnector).toHaveBeenCalledOnce());
+    await new Promise(resolve => setTimeout(resolve, 50));
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(connections[0].disconnect).toHaveBeenCalledOnce());
+    expect(loggedIn).toBe(false);
+  });
   it("reports a failed first export as requiring reconnection and never reports imported credentials", async () => {
     const { call, dataDirectory, connections, bootstrap } = await fixture();
     const inspected = await call("/v1/browser/connect", "POST", { browser: "chrome" });
@@ -81,6 +116,24 @@ describe("browser login HTTP handshake", () => {
     expect((await call("/v1/status")).body.browserSource).toMatchObject({ credentials: "reconnect_required", connected: false });
     expect(await readFile(path.join(dataDirectory, "direct-session.json"), "utf8").catch(() => null)).toBeNull();
     expect(connections[0].disconnect).toHaveBeenCalled();
+  });
+  it.each([
+    ["write_credentials_missing", "当前会话缺少服务端签名证书。"],
+    ["template_missing", "无法从观看历史请求建立增量读取配置。"],
+  ])("preserves the %s import failure and accepts a fresh connection afterwards", async (code, message) => {
+    const { call, bootstrap, connections, dataDirectory } = await fixture();
+    const inspected = await call("/v1/browser/connect", "POST", { browser: "chrome" });
+    bootstrap.mockImplementationOnce(async function () {
+      throw this.externalSessionError(new DirectHistoryError(code, message));
+    });
+    const failed = await call("/v1/browser/confirm", "POST", { id: inspected.body.candidate.id });
+    expect(failed).toMatchObject({ status: 409, body: { error: "browser_import_failed", message: expect.stringContaining(message) } });
+    expect(connections[0].disconnect).toHaveBeenCalled();
+    expect(await readFile(path.join(dataDirectory, "direct-session.json"), "utf8").catch(() => null)).toBeNull();
+    expect((await call("/v1/browser/confirm", "POST", { id: inspected.body.candidate.id })).body.error).toBe("browser_candidate_expired");
+    const retry = await call("/v1/browser/connect", "POST", { browser: "chrome" });
+    const confirmed = await call("/v1/browser/confirm", "POST", { id: retry.body.candidate.id });
+    expect(confirmed).toMatchObject({ status: 200, body: { status: { browserSource: { credentials: "ready", connected: false } } } });
   });
   it("rejects an account changing between preview and confirmation, without writing a session", async () => {
     const { call, identity, dataDirectory, connections } = await fixture();

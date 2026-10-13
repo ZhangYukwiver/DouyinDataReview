@@ -93,7 +93,7 @@ import {
   trackDesktopWindowVisibility,
   type DesktopUpdateState,
 } from "./src/desktopRuntime";
-import { shouldAutoSync } from "./src/services/autoSync";
+import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
 import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAnalysisInstalled, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAnalysisInstalled, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
@@ -283,6 +283,7 @@ function AppContent() {
   const accountsRequestRef = useRef(0);
   const removingAccountRef = useRef(false);
   const autoSyncInFlightRef = useRef(false);
+  const skipBrowserLoginAutoSyncRef = useRef(false);
   const autoSyncTriggerRef = useRef<(options?: { manual?: boolean; timer?: boolean }) => void>(() => undefined);
   // 托盘定时读取发起的这一轮：失败了也不弹浏览器，等用户回到窗口那次再说
   const timerSyncRef = useRef(false);
@@ -519,8 +520,12 @@ function AppContent() {
   useEffect(() => trackDesktopWindowVisibility(() => autoSyncTriggerRef.current(), () => autoSyncTriggerRef.current()), []);
 
   useEffect(() => {
+    if (shouldSuppressBrowserLoginAutoSync(skipBrowserLoginAutoSyncRef.current, false)) return;
     if (collectorToken && displaySnapshot?.source === "collector") autoSyncTriggerRef.current();
   }, [accountEpoch, autoSyncEnabled, collectorToken, displaySnapshot?.source]);
+  useEffect(() => {
+    skipBrowserLoginAutoSyncRef.current = false;
+  }, [accountEpoch]);
 
   // 连上了、换了账号，或者采集器刚认出昵称头像，都把账号列表重新拉一遍
   const accountIdentity = collectorStatus?.account ? JSON.stringify(collectorStatus.account) : null;
@@ -720,6 +725,9 @@ function AppContent() {
 
   function triggerAutoSync(options: { manual?: boolean; timer?: boolean } = {}) {
     const manual = options.manual === true || pendingManualSyncRef.current;
+    const suppressForBrowserLogin = shouldSuppressBrowserLoginAutoSync(skipBrowserLoginAutoSyncRef.current, manual);
+    if (manual) skipBrowserLoginAutoSyncRef.current = false;
+    if (suppressForBrowserLogin) return;
     if (batchDownloadActive) return;
     // Returning from the search browser must not close its result/verification
     // page to launch a foreground history sync. 窗口收在托盘里时没人在看探索页，照常读
@@ -1226,17 +1234,23 @@ function AppContent() {
     chatStartupRef.current.cancel();
     chatAutomaticRequestRef.current.clear();
     autoSyncInFlightRef.current = false;
-    if (change.accounts.activeId !== collectorStatus?.account?.id) {
+    const accountChanged = change.accounts.activeId !== collectorStatus?.account?.id;
+    skipBrowserLoginAutoSyncRef.current = true;
+    if (accountChanged) {
       forgetPreviousAccount();
       setCollectorSnapshot(null);
-      setAccountEpoch(value => value + 1);
     }
     applyCollectorAccounts(change.accounts);
     setCollectorStatus(change.status);
-    await adoptCollector(collectorUrl, token, requestId);
+    try { await adoptCollector(collectorUrl, token, requestId); }
+    catch (error) {
+      skipBrowserLoginAutoSyncRef.current = false;
+      throw error;
+    }
     // A login-source confirmation should not start reading chat history before
     // the user has chosen a read action in the newly connected account.
     chatStartupRef.current.defer();
+    setAccountEpoch(value => value + 1);
   }
 
   function confirmRemoveAccount(id: string, name: string) {

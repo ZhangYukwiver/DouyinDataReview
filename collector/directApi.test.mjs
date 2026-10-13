@@ -200,7 +200,7 @@ describe("direct HTTP signing and account session", () => {
     expect(api.cookie("sessionid")).toBe("fake-session");
     await collector.close();
   });
-  it("completes paired credential bootstrap after the same account logs in again", async () => {
+  it.each(["request_token", "cookie_token", "delayed_sdk"])("completes paired credential bootstrap with %s after the same account logs in again", async mode => {
     let security;
     const { api } = directApiFixture(url => url.pathname.includes('get_client_cert')
       ? { payload: { data: { server_cert: security.serverCert, 'x-tt-session-dtrait-pk1': Buffer.from(security.dtrait.publicKey).toString('base64'), 'x-tt-session-dtrait-pk1-version': '1' } } }
@@ -212,17 +212,22 @@ describe("direct HTTP signing and account session", () => {
     const collector = new DouyinCollector({ dataDirectory, store: {}, account: { id: 'default', uid: '123' } });
     collector.directApi = api;
     const cookies = api.session.cookies.map(cookie => cookie.name === 'sessionid' ? { ...cookie, value: 'new-login' } : cookie);
+    if (mode === "cookie_token") {
+      cookies.push(cookie("msToken", security.msToken));
+      api.session.cookies.push(cookie("msToken", security.msToken));
+    }
+    const materialReadyAt = Date.now() + (mode === "delayed_sdk" ? 12_000 : 0);
     const page = { goto: vi.fn(async () => {}), close: vi.fn(async () => {}), evaluate: vi.fn(async fn => fn.name === 'readDirectCredentialMaterial'
-      ? { ...security, trait: { blob: security.dtrait.blob, sdkVersion: security.dtrait.sdkVersion } }
+      ? { ...security, trait: Date.now() < materialReadyAt ? null : { blob: security.dtrait.blob, sdkVersion: security.dtrait.sdkVersion } }
       : { uid: '123', secUid: api.secUid }) };
-    collector.context = { newPage: async () => page, cookies: async () => cookies, directMsToken: security.msToken };
+    collector.context = { newPage: async () => page, cookies: async () => cookies, directMsToken: mode === "cookie_token" ? "" : security.msToken };
     collector.externalConnection = { connected: true, context: collector.context, disconnect: async () => {} };
     await expect(collector.ensureDirectWriteCredentials(api)).resolves.toMatchObject({ sdkPairVerified: true, csrfToken: 'current-csrf' });
     expect(collector.directApi).toBe(api); expect(api.cookie('sessionid')).toBe('new-login');
     expect((await loadDirectSession(dataDirectory, '123')).security.sdkPairVerified).toBe(true);
     expect(page.close).toHaveBeenCalledOnce();
     collector.context = null; await collector.close();
-  });
+  }, 20_000);
   it("routes full reads through HTTP and requires reimport after expiry without launching a browser", async () => {
     const dataDirectory = await initializedDirectory();
     const collector = new DouyinCollector({ dataDirectory, store: {}, account: { id: "default", uid: "123" } });
