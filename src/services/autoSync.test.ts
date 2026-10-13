@@ -35,7 +35,7 @@ describe("shouldAutoSync", () => {
 });
 
 describe("browser login auto-sync suppression", () => {
-  it("suppresses automatic reads after import while allowing a manual read", () => {
+  it("suppresses a duplicate incremental trigger while adopting a browser login, but allows a manual read", () => {
     expect(shouldSuppressBrowserLoginAutoSync(true, false)).toBe(true);
     expect(shouldSuppressBrowserLoginAutoSync(true, true)).toBe(false);
     expect(shouldSuppressBrowserLoginAutoSync(false, false)).toBe(false);

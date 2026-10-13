@@ -101,7 +101,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   return (
     <View style={styles.panel} testID="browser-login-panel">
       <Text style={styles.title}>导入浏览器登录凭据</Text>
-      <Text style={styles.detail}>连接一次，确认账号并导出凭据后自动断开。凭据有效时可关闭浏览器，失效后再从这里重新导入。原有标签页会保留。</Text>
+      <Text style={styles.detail}>连接一次，确认账号并导出凭据后自动断开，并完整读取一次观看历史、喜欢和收藏。凭据有效时可关闭浏览器，失效后再从这里重新导入。原有标签页会保留。</Text>
       <Text style={styles.detail} accessibilityLiveRegion="polite" testID="browser-login-status">
         {status?.browserSource?.browser ? `${status.browserSource.browser} · ` : ""}
         {status?.browserSource?.credentials === "ready" ? "凭据已导入，浏览器可关闭"
@@ -109,7 +109,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       </Text>
       {candidate ? <>
         <Text style={styles.title} testID="browser-login-candidate">浏览器登录的是「{candidate.nickname || "抖音账号"}」</Text>
-        <Text style={styles.detail}>{candidate.newAccount ? "确认后添加这个账号并导出凭据，记录单独保存。" : "确认后导出这个账号的凭据，使用已有记录，保留其他账号数据。"}</Text>
+        <Text style={styles.detail}>{candidate.newAccount ? "确认后添加这个账号并导出凭据，自动完整读取一次，记录单独保存。" : "确认后导出这个账号的凭据，自动完整读取一次，使用已有记录，保留其他账号数据。"}</Text>
         <View style={styles.actions}>
           <Action label="确认导入" disabled={disabled} onPress={confirm} testID="browser-login-confirm" />
           <Action label="取消" disabled={disabled} onPress={cancel} testID="browser-login-cancel" />

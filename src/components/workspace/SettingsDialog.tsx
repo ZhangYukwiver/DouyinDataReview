@@ -252,7 +252,7 @@ function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openA
     <>
       <View style={styles.row}>
         <RowCopy
-          detail="开着时，回到窗口或刚连上采集器，会补读新的观看、喜欢和收藏记录；导入浏览器登录凭据后不会自动读取。关掉以后，只在你点读取时才读。"
+          detail="开着时，回到窗口或刚连上采集器，会补读新的观看、喜欢和收藏记录。关掉以后，日常更新需要手动点读取；每次导入浏览器登录凭据成功后，仍会自动完整读取一次。"
           title="自动补读新记录"
         />
         <Toggle label="自动补读新记录" onPress={onToggleAutoSync} testID="settings-auto-sync" value={autoSyncEnabled} />

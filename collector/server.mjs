@@ -497,6 +497,7 @@ export async function startCollectorServer({
               if (target.id !== accounts.activeId) await runAccountWork(() => switchTo(target));
               else { await explorer.close(); await collector.shutdown(); }
               await collector.attachExternalBrowser(pending.connection, identity, pending.page);
+              collector.startSync({ mode: "full_records" });
               sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
             } catch (error) {
               await pending.connection.disconnect();
