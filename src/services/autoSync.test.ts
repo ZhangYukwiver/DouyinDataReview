@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldAutoSync } from "./autoSync";
+import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./autoSync";
 
 const ready = {
   enabled: true,
@@ -31,5 +31,13 @@ describe("shouldAutoSync", () => {
     expect(shouldAutoSync({ ...ready, state: "observing" })).toBe(false);
     expect(shouldAutoSync({ ...ready, switchingAccount: true })).toBe(false);
     expect(shouldAutoSync({ ...ready, stoppingSync: true })).toBe(false);
+  });
+});
+
+describe("browser login auto-sync suppression", () => {
+  it("suppresses automatic reads after import while allowing a manual read", () => {
+    expect(shouldSuppressBrowserLoginAutoSync(true, false)).toBe(true);
+    expect(shouldSuppressBrowserLoginAutoSync(true, true)).toBe(false);
+    expect(shouldSuppressBrowserLoginAutoSync(false, false)).toBe(false);
   });
 });

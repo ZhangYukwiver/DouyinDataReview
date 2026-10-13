@@ -252,7 +252,7 @@ function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openA
     <>
       <View style={styles.row}>
         <RowCopy
-          detail="开着时，回到窗口或刚连上采集器，都会自己把新的观看、喜欢和收藏补进来。关掉以后，只在你点读取时才读。"
+          detail="开着时，回到窗口或刚连上采集器，会补读新的观看、喜欢和收藏记录；导入浏览器登录凭据后不会自动读取。关掉以后，只在你点读取时才读。"
           title="自动补读新记录"
         />
         <Toggle label="自动补读新记录" onPress={onToggleAutoSync} testID="settings-auto-sync" value={autoSyncEnabled} />
@@ -325,7 +325,7 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
         <View style={styles.row}><Text style={styles.detail}>还没读到账号列表，稍等一下再打开看看。</Text></View>
       )}
       <View style={styles.row}>
-        <RowCopy detail="添加后连接已登录的浏览器，确认账号并导入凭据。" title="添加账号" />
+        <RowCopy detail="连接浏览器，登录并确认账号后导入凭据。" title="添加账号" />
         <Button appStyle={appStyle} disabled={blocked} icon={UserRoundPlus} label="添加账号" onPress={() => { onClose(); onAddAccount(); }} testID="settings-account-add" />
       </View>
       {browserConnection ? <BrowserConnectionPanel {...browserConnection} visible={visible} blocked={blocked} /> : null}

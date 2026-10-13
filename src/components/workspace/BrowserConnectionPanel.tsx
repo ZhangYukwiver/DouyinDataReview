@@ -19,10 +19,12 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   const [selected, setSelected] = useState<BrowserLoginSource["id"]>("chrome");
   const [candidate, setCandidate] = useState<BrowserLoginCandidate | null>(null);
   const [busy, setBusy] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const visibleRef = useRef(visible); visibleRef.current = visible;
   const candidateRef = useRef<BrowserLoginCandidate | null>(null);
   const runningRef = useRef(false);
+  const connectControllerRef = useRef<AbortController | null>(null);
 
   async function refresh() {
     try {
@@ -37,10 +39,12 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   useEffect(() => {
     if (visible) void refresh();
     else {
+      connectControllerRef.current?.abort();
       const previous = candidateRef.current; candidateRef.current = null; setCandidate(null);
       if (previous) void cancelBrowserLogin(baseUrl, token, previous.id).catch(() => {});
     }
     return () => {
+      connectControllerRef.current?.abort();
       const previous = candidateRef.current; candidateRef.current = null;
       if (previous) void cancelBrowserLogin(baseUrl, token, previous.id).catch(() => {});
     };
@@ -55,13 +59,32 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   }
 
   const connect = () => run(async () => {
-    const result = await inspectBrowserLogin(baseUrl, token, selected, status?.account?.id);
-    if (!visibleRef.current) { await cancelBrowserLogin(baseUrl, token, result.id); return; }
-    candidateRef.current = result; setCandidate(result);
+    const controller = new AbortController();
+    connectControllerRef.current = controller; setConnecting(true);
+    try {
+      const result = await inspectBrowserLogin(baseUrl, token, selected, status?.account?.id, controller.signal);
+      if (controller.signal.aborted || !visibleRef.current) { await cancelBrowserLogin(baseUrl, token, result.id); return; }
+      candidateRef.current = result; setCandidate(result);
+    } catch (reason) {
+      if (!controller.signal.aborted) throw reason;
+    } finally {
+      if (connectControllerRef.current === controller) connectControllerRef.current = null;
+      setConnecting(false);
+    }
   });
   const confirm = () => run(async () => {
     if (!candidate) return;
-    const change = await confirmBrowserLogin(baseUrl, token, candidate.id, status?.account?.id);
+    let change: CollectorAccountChange;
+    try {
+      change = await confirmBrowserLogin(baseUrl, token, candidate.id, status?.account?.id);
+    } catch (reason) {
+      // Confirmation consumes the server's pending connection even if export
+      // fails. Return to connection controls instead of retrying a stale id.
+      const previous = candidateRef.current;
+      candidateRef.current = null; setCandidate(null);
+      if (previous) void cancelBrowserLogin(baseUrl, token, previous.id).catch(() => {});
+      throw reason;
+    }
     candidateRef.current = null; setCandidate(null);
     await onChange(change);
   });
@@ -100,7 +123,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
             <Text style={styles.text}>{item.label} · {!item.available ? "未找到" : item.debugging ? "可连接" : "需开启调试"}</Text>
           </Pressable>)}
         </View>
-        {source ? <Text selectable style={styles.detail}>先登录抖音，再打开 {source.inspectUrl}，勾选允许远程调试。连接时请在浏览器中允许。</Text> : null}
+        {source ? <Text selectable style={styles.detail}>打开 {source.inspectUrl}，勾选允许远程调试。连接时请在浏览器中允许；未登录时若登录框没有自动弹出，可在新页面点击“登录”。</Text> : null}
         <Text style={styles.detail}>调试权限覆盖整个浏览器；工作台仅访问自己创建的抖音页面和抖音 Cookie。导出后可关闭调试开关，无需安装扩展。</Text>
         <View style={styles.actions}>
           <Action label={busy ? "连接处理中…" : "连接浏览器"} disabled={disabled || !source?.available} onPress={connect} testID="browser-login-connect" />
@@ -108,7 +131,11 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
           {status?.browserSource?.connected ? <Action label="断开连接" disabled={disabled} onPress={() => disconnect()} testID="browser-login-disconnect" /> : null}
         </View>
       </>}
-      {busy ? <View style={styles.actions}><ActivityIndicator size="small" color={color.accent} /><Text style={styles.detail}>{candidate ? "正在导出凭据，完成前请保持浏览器打开。" : "请留意浏览器中的连接确认框。"}</Text></View> : null}
+      {busy ? <View style={styles.actions}>
+        <ActivityIndicator size="small" color={color.accent} />
+        <Text style={styles.detail} accessibilityLiveRegion="polite">{candidate ? "正在导出凭据，完成前请保持浏览器打开。" : "请允许浏览器连接；工作台会打开抖音登录入口，未弹出时可在新页面点击“登录”。完成登录或验证后自动继续，最多等待 5 分钟。"}</Text>
+        {connecting ? <Action label="取消连接" disabled={false} onPress={() => connectControllerRef.current?.abort()} testID="browser-login-cancel-connect" /> : null}
+      </View> : null}
       {error ? <Text accessibilityLiveRegion="polite" style={styles.error} testID="browser-login-error">{error}</Text> : null}
     </View>
   );
