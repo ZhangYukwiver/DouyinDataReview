@@ -48,7 +48,7 @@ v1.13.0 统一使用日常浏览器的 CDP 凭据导入：核对账号后一次�
 
 v1.13.1 修复未登录浏览器连接后过早关闭的问题：连接后会等待本人登录，最多五分钟，可手动取消。观看、点赞和收藏仍通过接口分页读取，不滚动页面。
 
-当前源码在每次成功导入登录凭据后，都会自动执行一次完整读取，更新观看历史、喜欢和收藏。这一次读取不受「自动补读新记录」开关影响，可在采集器页面停止。
+v1.13.3 在未开启调试时尝试自动打开所选浏览器的调试设置页，本人开启开关后再次连接。每次成功导入登录凭据后，都会自动执行一次完整读取，更新观看历史、喜欢和收藏。这一次读取不受「自动补读新记录」开关影响，可在采集器页面停止。
 
 记录采集、搜索与互动、创作者中心、视频解析与下载通过 HTTP 接口完成，聊天和直播弹幕通过 WebSocket 接收；完整和增量读取均不要求滚动网页。源码运行和桌面版共用静态服务的媒体策略，允许播放本机采集器提供的视频。
 
@@ -110,7 +110,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ### 导入已有浏览器登录凭据
 
-在「设置 → 账号 → 导入浏览器登录凭据」选择 Chrome、Edge 或 macOS 的 Comet，开启对应浏览器 `chrome://inspect/#remote-debugging`、`edge://inspect/#remote-debugging` 或 `comet://inspect/#remote-debugging` 中的远程调试，再点击「连接浏览器」。浏览器弹出确认框时本人允许连接；尚未登录抖音时，工作台会尝试打开登录框，未弹出时可在新开的抖音页面点击「登录」。工作台会保留页面并等待最多 5 分钟，登录成功后自动显示账号，等待期间可点击「取消连接」。核对应用显示的抖音昵称后点击「确认导入」。工作台会导出 Cookie、接口参数和配套签名凭据，成功后自动断开 CDP，并立即完整读取一次观看历史、喜欢和收藏；此后可关闭调试开关及浏览器。已有账号会复用自己的记录目录，首次连接的其他账号会单独保存。每次成功导入都会触发这一次完整读取，包括重新导入已有账号的凭据；取消连接或导入失败不会触发。首次使用或添加账号也使用此入口，不再启动专用浏览器。
+在「设置 → 账号 → 导入浏览器登录凭据」选择 Chrome、Edge 或 macOS 的 Comet，点击「连接浏览器」。尚未开启远程调试时，工作台会自动打开所选浏览器的调试设置页；本人勾选允许远程调试后，再次点击「连接浏览器」。自动打开失败时，可在对应浏览器中手动访问 `chrome://inspect/#remote-debugging`、`edge://inspect/#remote-debugging` 或 `comet://inspect/#remote-debugging`。浏览器弹出确认框时本人允许连接；尚未登录抖音时，工作台会尝试打开登录框，未弹出时可在新开的抖音页面点击「登录」。工作台会保留页面并等待最多 5 分钟，登录成功后自动显示账号，等待期间可点击「取消连接」。核对应用显示的抖音昵称后点击「确认导入」。工作台会导出 Cookie、接口参数和配套签名凭据，成功后自动断开 CDP，并立即完整读取一次观看历史、喜欢和收藏；此后可关闭调试开关及浏览器。已有账号会复用自己的记录目录，首次连接的其他账号会单独保存。每次成功导入都会触发这一次完整读取，包括重新导入已有账号的凭据；取消连接或导入失败不会触发。首次使用或添加账号也使用此入口，不再启动专用浏览器。
 
 Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供远程调试开关的版本。工作台自动检测默认安装的稳定版用户目录和有效本机调试端口，并核对监听进程属于该浏览器，避免旧端口文件接到另一个实例；自定义用户目录、其他浏览器渠道和 Firefox 暂不支持此入口。无需安装浏览器扩展，也无需手填端口。
 
@@ -326,7 +326,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 
 DouyinDataReview is a local-first desktop app for Windows and macOS that works with Douyin, the Chinese version of TikTok. It reads your own watch history, likes, favorites and chat messages using your Douyin login session, keeps these records on your computer, and turns them into a rolling report and a year-in-review (a "Douyin Wrapped"). You can also export all records as JSON, receive chats in real time, keep chat streaks going, play and download videos, and view your Creator Center stats read-only. Optional video analysis sends the selected video, its public metadata and a prompt to the AI endpoint you configure. The interface is in Chinese. Get the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest).
 
-Since v1.13.0, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, enable that browser's remote debugging, connect, check the account name, and confirm the credential import. The app disconnects automatically after exporting the complete credentials. You can turn off debugging and close the browser; valid credentials work through HTTP and WebSocket, including after an app restart. If they expire or Douyin requires verification, reconnect and import again. No extension, dedicated browser or manual page-listening mode is required. Firefox, custom user-data directories and other browser channels are not supported.
+Since v1.13.0, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, connect, check the account name, and confirm the credential import. In v1.13.3, connecting before remote debugging is enabled attempts to open the selected browser's debugging settings; enable the toggle and connect again. If opening fails, use the displayed settings URL. The app disconnects automatically after exporting the complete credentials, then reads watch history, likes and favorites once in full. You can turn off debugging and close the browser; valid credentials work through HTTP and WebSocket, including after an app restart. If they expire or Douyin requires verification, reconnect and import again. No extension, dedicated browser or manual page-listening mode is required. Firefox, custom user-data directories and other browser channels are not supported.
 
 Since v1.13.1, an unsigned-in browser connection stays open while you sign in (up to five minutes, with a cancel option). The current source automatically starts one full read of watch history, likes and favorites after every successful credential import, even when automatic incremental reading is disabled. You can stop the read from the collector page. Records are still read through paginated APIs without scrolling the page.
 
