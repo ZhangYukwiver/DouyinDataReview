@@ -9,6 +9,7 @@ import {
   parseBlockedWords, readLiveRoom, saveDanmakuSettings, type DanmakuSettings, type DanmakuSpeed, type LiveDanmaku, type LiveRoomState,
 } from "../../services/liveRoom";
 import { waitForCollector } from "../../services/videoFeed";
+import { playLiveStream } from "../../services/livePlayback";
 import { count, EmojiText } from "./RecordVideoPlayer";
 import "./RecordVideoPlayer.css";
 
@@ -152,14 +153,17 @@ export function LiveRoomPlayer({ target, connection, onClose, onOpenRecord, onOp
     return () => { controller.abort(); clearTimeout(timer); };
   }, [connection?.baseUrl, connection?.token, liveId]);
 
-  // 有点击进来的用户手势，一般能带声音自动播；被拦就先静音播
+  // 每次换清晰度或重试都建立新播放器，退出时停止分片请求并释放 MediaSource。
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !stream) return;
     setBuffering(true); setVideoError(false);
     video.muted = muted;
-    void video.play().catch(() => { video.muted = true; setMuted(true); void video.play().catch(() => {}); });
-  }, [stream?.url, videoAttempt]);
+    return playLiveStream(video, stream.url, {
+      onError: () => setVideoError(true),
+      onAutoplayMuted: () => setMuted(true),
+    });
+  }, [stream?.key, stream?.url, videoAttempt]);
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -192,8 +196,8 @@ export function LiveRoomPlayer({ target, connection, onClose, onOpenRecord, onOp
             {onOpenRecord ? <button className="lv-link" onClick={() => void onOpenRecord(roomUrl)}>去抖音<ArrowUpRight color="#fff" size={15} /></button> : null}
           </header>
           <div ref={stageRef} className="lv-stage">
-            {stream ? <video key={`${stream.key}:${videoAttempt}`} ref={videoRef} src={stream.url} playsInline muted={muted} aria-label={`${anchor}的直播画面`}
-              onPlaying={() => setBuffering(false)} onWaiting={() => setBuffering(true)} onError={() => setVideoError(true)} /> : null}
+            {stream ? <video key={`${stream.key}:${videoAttempt}`} ref={videoRef} playsInline muted={muted} aria-label={`${anchor}的直播画面`}
+              onPlaying={() => { setBuffering(false); setVideoError(false); }} onWaiting={() => setBuffering(true)} /> : null}
             <div ref={layerRef} className="lv-danmaku" aria-hidden="true"
               style={{ height: `${settings.area * 100}%`, opacity: settings.opacity, "--dm-size": `${settings.size}px` } as React.CSSProperties} />
             {status || (stream && buffering) ? <div className={`rv-message lv-message ${status ? "" : "lv-quiet"}`} role={status === "error" || status === "video" ? "alert" : "status"}>

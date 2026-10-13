@@ -61,6 +61,10 @@ describe("desktop static server", () => {
     expect(directives.find(([name]) => name === "media-src")).toEqual([
       "media-src", "'self'", "https:", "blob:", "http://127.0.0.1:*", "http://localhost:*",
     ]);
+    // HLS 播放器以 XHR 读直播清单和分片；只放行抖音直播 CDN。
+    expect(directives.find(([name]) => name === "connect-src")).toEqual([
+      "connect-src", "'self'", "http://127.0.0.1:*", "http://localhost:*", "https://douyincdn.com", "https://*.douyincdn.com",
+    ]);
     expect(directives.find(([name]) => name === "script-src")).not.toContain("blob:");
   });
 });

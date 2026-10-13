@@ -269,7 +269,7 @@ async function askInstallChoiceOnMac() {
     defaultId: 1,
     cancelId: 1,
     message: "要安装可选功能「视频解析」吗？",
-    detail: "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备火山方舟的 API Key。\n\n现在不装的话，以后也可以在设置里安装。",
+    detail: "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备解析用大模型的 API Key。\n\n现在不装的话，以后也可以在设置里安装。",
   });
   try { writeFileSync(marker, ""); } catch { /* 记不下就下次再问 */ }
   return { analysis: response === 0 };

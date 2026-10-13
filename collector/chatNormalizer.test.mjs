@@ -598,6 +598,17 @@ describe("ChatConversationAccumulator", () => {
     })]);
   });
 
+  it("keeps the friend's avatar when an outgoing message carries my own avatar", () => {
+    const avatarUrl="https://p3.douyinpic.com/friend-avatar.jpg";
+    const accumulator=new ChatConversationAccumulator([{id:"0:1:123:456",kind:"friend",name:"好友",avatarUrl}],"123");
+    accumulator.addMessages([{id:"outgoing",conversationId:"0:1:123:456",conversationType:"friend",senderId:"123",
+      senderAvatarUrl:"https://p3.douyinpic.com/my-avatar.jpg"}]);
+    expect(accumulator.snapshot()[0].avatarUrl).toBe(avatarUrl);
+    accumulator.addMessages([{id:"self",conversationId:"0:1:123:123",conversationType:"friend",senderId:"123",
+      senderAvatarUrl:"https://p3.douyinpic.com/my-avatar.jpg"}]);
+    expect(accumulator.snapshot().find(row=>row.id==="0:1:123:123").avatarUrl).toBe("https://p3.douyinpic.com/my-avatar.jpg");
+  });
+
   it("does not reintroduce an empty numeric placeholder through the message accumulator", () => {
     const accumulator = new ChatMessageAccumulator();
     accumulator.addMessages([{

@@ -6,7 +6,7 @@ import { directSecurityHeaders, requireDirectCredentials } from "./directCredent
 import { signDirectRequest, parseDirectJson } from "./directWrites.mjs";
 import { decodeProto, encodeProto, protoNumber as n, protoString as s, protoMessage as m, protoMapEntry as kv,
   protoField, protoText, protoInteger, protoChild, protoChildren } from "./directProto.mjs";
-import { normalizeChatPayload, normalizeChatSocketPayload } from "./chatNormalizer.mjs";
+import { normalizeChatAvatarUrl, normalizeChatPayload, normalizeChatSocketPayload } from "./chatNormalizer.mjs";
 import { normalizeStreaks } from "./chatViewer.mjs";
 import { ChatSendError, validateChatSend } from "./chatSender.mjs";
 
@@ -28,13 +28,76 @@ export function parseDirectConversation(fields) {
   if (!/^[\w:.-]{1,200}$/u.test(id) || !/^\d{1,30}$/u.test(shortId || "") || ![1, 2].includes(type)) return null;
   const core = protoChild(fields, 50);
   const ext = Object.fromEntries(protoChildren(core, 11).map((entry) => [protoText(entry, 1), protoText(entry, 2)]));
-  return { id, shortId, type, ticket: protoText(fields, 4), kind: type === 1 ? "friend" : "group", name: protoText(core, 5) || null, ext };
+  return { id, shortId, type, ticket: protoText(fields, 4), kind: type === 1 ? "friend" : "group", name: protoText(core, 5) || null,
+    avatarUrl: normalizeChatAvatarUrl(protoText(core, 7)), ext };
 }
+
+function conversationUserId(id, ownUid) {
+  const match = /^0:1:(\d{1,30}):(\d{1,30})$/u.exec(id || "");
+  if (!match || (match[1] !== ownUid && match[2] !== ownUid)) return null;
+  return match[1] === ownUid ? match[2] : match[1];
+}
+
+const profileName = value => typeof value === "string" ? value.trim().slice(0, 300) || null : null;
+const PROFILE_CACHE_MS = 5 * 60_000;
 
 export class DirectChatClient {
   constructor(api, { socketFactory = (url, options) => new WebSocket(url, ["binary", "base64", "pbbp2"], options) } = {}) {
     this.api = api; this.socketFactory = socketFactory; this.conversations = new Map(); this.messagePages = new Map();
+    this.userProfiles = new Map(); this.profileRequests = new Map(); this.profileCheckedAt = new Map();
     this.identity = null; this.socket = null; this.controller = null;
+  }
+  async userProfile(uid, { signal } = {}) {
+    signal?.throwIfAborted();
+    if (Date.now() - (this.profileCheckedAt.get(uid) || 0) < PROFILE_CACHE_MS) return this.userProfiles.get(uid) || null;
+    if (this.profileRequests.has(uid)) return this.profileRequests.get(uid);
+    const work = (async () => {
+      try {
+        const payload = await this.api.request("/aweme/v1/web/user/profile/other/", {
+          query: { user_id: uid, publish_video_strategy_type: "2" }, signal,
+        });
+        const user = payload.user;
+        // Never attach a profile returned for another uid to this conversation.
+        if (user && String(user.uid) === uid) {
+          this.userProfiles.set(uid, { uid, name: profileName(user.remark_name) || profileName(user.nickname),
+            avatarUrl: normalizeChatAvatarUrl([user.avatar_larger, user.avatar_medium, user.avatar_thumb]),
+            secUid: /^MS4w[\w-]{10,200}$/u.test(user.sec_uid || "") ? user.sec_uid : null });
+        }
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (["login_required", "account_mismatch", "verification_required", "direct_session_missing", "write_credentials_missing"].includes(error.code)) throw error;
+        // A deleted/unavailable contact must not prevent reading chat history.
+      }
+      this.profileCheckedAt.set(uid, Date.now());
+      return this.userProfiles.get(uid) || null;
+    })();
+    this.profileRequests.set(uid, work);
+    try { return await work; } finally { if (this.profileRequests.get(uid) === work) this.profileRequests.delete(uid); }
+  }
+  async enrichPayload(payload, { signal } = {}) {
+    const ids = new Set([...(payload.conversations || []).map(row => row.id), ...(payload.messages || []).map(row => row.conversationId)]);
+    const metadata = new Map();
+    for (const id of ids) {
+      const uid = conversationUserId(id, this.api.session.uid);
+      if (!uid) continue;
+      const profile = await this.userProfile(uid, { signal });
+      if (!profile) continue;
+      const previous = this.conversations.get(id) || (payload.conversations || []).find(row => row.id === id);
+      const conversation = { ...previous, id, kind: "friend",
+        name: uid === this.api.session.uid ? "我自己" : profile.name || previous?.name || null,
+        avatarUrl: profile.avatarUrl || previous?.avatarUrl || null, secUid: profile.secUid || previous?.secUid || null };
+      metadata.set(id, conversation);
+      if (this.conversations.has(id)) this.conversations.set(id, conversation);
+    }
+    return { ...payload,
+      conversations: [...new Map([...(payload.conversations || []), ...metadata.values()].map(row => [row.id, row])).values()],
+      messages: (payload.messages || []).map(message => {
+        const conversation = metadata.get(message.conversationId) || this.conversations.get(message.conversationId);
+        const sender = this.userProfiles.get(message.senderId);
+        return { ...message, conversationName: conversation?.name || message.conversationName || null,
+          senderName: sender?.name || message.senderName || null, senderAvatarUrl: sender?.avatarUrl || message.senderAvatarUrl || null };
+      }),
+    };
   }
   async request(pathname, command, body, { signal, headers, onDispatch = () => {} } = {}) {
     if (!DIRECT_IM_PATHS.has(pathname)) throw new DirectHistoryError("unsafe_url", "消息请求不在允许的接口内。");
@@ -67,7 +130,8 @@ export class DirectChatClient {
       if (conversation) {
         accepted.add(conversation.id);
         const previous = this.conversations.get(conversation.id);
-        this.conversations.set(conversation.id, { ...previous, ...conversation, name: conversation.name || previous?.name || null });
+        this.conversations.set(conversation.id, { ...previous, ...conversation, name: conversation.name || previous?.name || null,
+          avatarUrl: conversation.avatarUrl || previous?.avatarUrl || null });
       }
     }
     return accepted;
@@ -82,7 +146,7 @@ export class DirectChatClient {
       const response = await this.request("/v1/message/get_message_by_init", 2043, [m(2043, [...(cursor ? [n(1, cursor)] : []), n(2, page)])], { signal });
       const section = protoChild(response.body, 2043);
       this.acceptConversations(section, true);
-      const normalized = normalizeChatPayload(response.buffer, { endpoint: { kind: "chat_messages", pathname: "/v1/message/get_message_by_init" } });
+      const normalized = await this.enrichPayload(normalizeChatPayload(response.buffer, { endpoint: { kind: "chat_messages", pathname: "/v1/message/get_message_by_init" } }), { signal });
       await onPayload(normalized); onProgress({ pages: page + 1, conversations: this.conversations.size });
       if (typeof normalized.hasMore !== "boolean") throw new DirectHistoryError("pagination_missing", "聊天初始化缺少分页状态。");
       if (!normalized.hasMore) return [...this.conversations.values()];
@@ -118,8 +182,8 @@ export class DirectChatClient {
     const cursor = older && previous ? previous.cursor : String(BigInt(Date.now()) * 1_000n);
     const response = await this.request("/v1/message/get_by_conversation", 301,
       [m(301, [s(1, conversationId), n(2, conversation.type), n(3, conversation.shortId), n(4, 1), n(5, cursor), n(6, 50)])], { signal });
-    const normalized = normalizeChatPayload(response.buffer, { conversationId, conversationType: conversation.type,
-      endpoint: { kind: "chat_messages", pathname: "/v1/message/get_by_conversation" } });
+    const normalized = await this.enrichPayload(normalizeChatPayload(response.buffer, { conversationId, conversationType: conversation.type,
+      endpoint: { kind: "chat_messages", pathname: "/v1/message/get_by_conversation" } }), { signal });
     if (typeof normalized.hasMore !== "boolean") throw new DirectHistoryError("pagination_missing", "聊天历史缺少分页状态。");
     if (normalized.hasMore === true && (!/^\d{1,30}$/u.test(normalized.nextTimestamp || "") || normalized.nextTimestamp === cursor))
       throw new DirectHistoryError("pagination_stalled", "聊天历史分页游标无效，已保留当前消息。");
@@ -213,7 +277,8 @@ export class DirectChatClient {
               // also recovers pushes that arrived during a disconnected window.
               void this.initialize({ signal, onPayload }).catch(error=>{ if (!signal.aborted) onError(error); });
             });
-            socket.on("message", (data, binary) => { try { const payload = normalizeChatSocketPayload(binary ? data : data.toString()); if (payload) void Promise.resolve(onPayload(payload)).catch(onError); } catch (error) { onError(error); } });
+            socket.on("message", (data, binary) => { try { const payload = normalizeChatSocketPayload(binary ? data : data.toString());
+              if (payload) void this.enrichPayload(payload, { signal }).then(onPayload).catch(onError); } catch (error) { onError(error); } });
             socket.on("error", () => { onConnection("reconnecting"); });
             socket.on("close", () => { signal.removeEventListener("abort", abort); this.socket = null; resolve(); });
           });
