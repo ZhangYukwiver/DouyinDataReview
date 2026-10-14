@@ -60,7 +60,7 @@ DouyinDataReview 由 **React / React Native / Expo 工作台、Node.js 本地采
 3. **保存个人记录**：接口返回的数据经过归一化和合并，写入当前账号的 `records.json`。观看事件保留重复观看的信息；喜欢和收藏按作品身份处理。记录文件与登录凭据分别保存。
 4. **生成统计与报告**：工作台通过本地 API 读取记录，在本机计算时间分布、作者与话题排行、观看和收藏交集、聊天统计等，再把汇总快照交给年度回顾页面。报告生成不需要外部 AI 服务。
 
-每次成功导入凭据后，采集器自动完整读取一次观看历史、喜欢和收藏。这次读取不受「自动补读新记录」开关影响，可在采集器页面停止。凭据有效时可关闭浏览器，重启应用也可继续使用；过期或需要验证时，由本人重新登录、验证并导入。
+每次成功导入凭据后，采集器自动完整读取一次观看历史、喜欢和收藏。这次读取不受「自动补读新记录」开关影响，可在采集器页面停止。重启后会复用本机缓存并核对平台返回的账号，短期令牌过期本身不会要求重新导入；凭据缺失或不完整、平台拒绝登录、账号不一致或要求验证时，由本人重新登录、验证并导入。
 
 ### 功能模块与源码入口
 
@@ -177,7 +177,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 - 视频与解析：`/v1/downloads*`、`/v1/analyses*`；下载和播放由用户触发。解析时最低清晰度视频及提示词会发送到你配置的解析用大模型接口，结果存入 `analyses.json`，API Key 不落盘；播放地址使用独立密钥。
 - 浏览器凭据：`/v1/browser/sources`、`/v1/browser/connect`、`/v1/browser/confirm`、DELETE `/v1/browser/pending`、`/v1/browser/disconnect`；仅本机可用，未登录时等待最多五分钟，取消请求会释放连接；登录后预览账号，本人确认才导出凭据并自动断开，成功后启动一次完整读取；待确认连接两分钟后释放，断开连接保留有效凭据及接口任务。
 
-代码请求复用当前账号导入的登录会话。CDP 导入时一次性导出 Cookie、请求参数、签名密钥和设备凭据，之后记录、聊天、互动、创作者中心和直播都走 HTTP 或 WebSocket。直播弹幕只在内存保留最近 300 条。没有凭据、短期令牌过期或需要验证时，提示本人在所选浏览器中完成登录或验证并重新导入，不启动后台浏览器。
+代码请求复用当前账号导入的登录会话。CDP 导入时一次性导出 Cookie、请求参数、签名密钥和设备凭据，之后记录、聊天、互动、创作者中心和直播都走 HTTP 或 WebSocket。直播弹幕只在内存保留最近 300 条。重启恢复缓存后先核对平台返回的账号，不仅凭短期令牌过期判断登录失效；凭据缺失或不完整、平台拒绝登录、账号不一致或要求验证时，提示本人在所选浏览器中完成登录或验证并重新导入，不启动后台浏览器。
 
 作品详情、评论和搜索通过 HTTP 接口获取，视频通过本机采集器提供的媒体接口在应用内播放，不需要打开抖音网页播放器。
 
@@ -374,7 +374,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 
 The app combines a React / React Native / Expo interface, a Node.js collector and an Electron desktop shell. Playwright connects to your authorized browser through CDP to import Douyin cookies, request parameters and signing credentials. The collector then uses signed, paginated HTTP requests for records and WebSocket connections for real-time chats and live comments. Normalized records are stored in local, per-account JSON files; TypeScript report logic computes statistics on your computer without an external AI service. See [implementation and source modules](#实现方式).
 
-To connect, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, click Connect browser. If remote debugging is disabled, the app attempts to open the selected browser's debugging settings; enable the toggle and connect again, or use the displayed settings URL if opening fails. Check the account name and confirm the credential import. If you are not signed in, the connection waits up to five minutes and can be cancelled. After import, the app disconnects from CDP and starts one full read of watch history, likes and favorites, even when automatic incremental reading is disabled. You can stop the read from the collector page, turn off debugging and close the browser. Valid credentials can be reused after restarting the app; expired credentials or a verification requirement need a new import. No browser extension is required. Firefox, custom user-data directories and other browser channels are not supported.
+To connect, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, click Connect browser. If remote debugging is disabled, the app attempts to open the selected browser's debugging settings; enable the toggle and connect again, or use the displayed settings URL if opening fails. Check the account name and confirm the credential import. If you are not signed in, the connection waits up to five minutes and can be cancelled. After import, the app disconnects from CDP and starts one full read of watch history, likes and favorites, even when automatic incremental reading is disabled. You can stop the read from the collector page, turn off debugging and close the browser. After a restart, the app reuses cached credentials and checks the account returned by Douyin; short-token expiry alone does not require a new import. Missing or incomplete credentials, a rejected login, an account mismatch or a verification requirement need a new import. No browser extension is required. Firefox, custom user-data directories and other browser channels are not supported.
 
 Collection is limited to records currently returned by Douyin's private APIs and accessible to your account. It cannot guarantee a complete lifetime history or future API compatibility. Reports reflect the records you have saved and their available fields.
 
