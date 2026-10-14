@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { cancelBrowserLogin, confirmBrowserLogin, disconnectBrowserLogin, getBrowserLoginSources, inspectBrowserLogin, LocalCollectorError,
-  type BrowserLoginCandidate, type BrowserLoginSource, type CollectorAccountChange, type CollectorStatus } from "../../services/localCollector";
+  type BrowserLoginCandidate, type BrowserLoginSource, type CollectorAccountChange, type CollectorReadPermissions, type CollectorStatus } from "../../services/localCollector";
 import { workspaceColors as color } from "./workspaceTheme";
 
 export interface BrowserConnectionPanelProps {
@@ -18,6 +18,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   const [sources, setSources] = useState<BrowserLoginSource[]>([]);
   const [selected, setSelected] = useState<BrowserLoginSource["id"]>("chrome");
   const [candidate, setCandidate] = useState<BrowserLoginCandidate | null>(null);
+  const [readPermissions, setReadPermissions] = useState<CollectorReadPermissions>({ videos: true, chat: false });
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +70,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       const result = await inspectBrowserLogin(baseUrl, token, selected, status?.account?.id, controller.signal);
       if (controller.signal.aborted || !visibleRef.current) { await cancelBrowserLogin(baseUrl, token, result.id); return; }
       candidateRef.current = result; setCandidate(result);
+      setReadPermissions(result.readPermissions ?? { videos: true, chat: false });
     } catch (reason) {
       if (!controller.signal.aborted) throw reason;
     } finally {
@@ -77,10 +79,10 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
     }
   });
   const confirm = () => run(async () => {
-    if (!candidate) return;
+    if (!candidate || (!readPermissions.videos && !readPermissions.chat)) return;
     let change: CollectorAccountChange;
     try {
-      change = await confirmBrowserLogin(baseUrl, token, candidate.id, status?.account?.id);
+      change = await confirmBrowserLogin(baseUrl, token, candidate.id, readPermissions, status?.account?.id);
     } catch (reason) {
       // Confirmation consumes the server's pending connection even if export
       // fails. Return to connection controls instead of retrying a stale id.
@@ -105,17 +107,28 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   return (
     <View style={styles.panel} testID="browser-login-panel">
       <Text style={styles.title}>导入浏览器登录凭据</Text>
-      <Text style={styles.detail}>连接一次，确认账号并导出凭据后自动断开，并完整读取一次观看历史、喜欢和收藏。凭据有效时可关闭浏览器，失效后再从这里重新导入。原有标签页会保留。</Text>
+      <Text style={styles.detail}>连接浏览器后确认账号，分别选择读取视频和读取聊天。导入完成后只读取勾选的类型，并自动断开浏览器；凭据失效或需要调整权限时，从这里重新导入。原有标签页会保留。</Text>
       <Text style={styles.detail} accessibilityLiveRegion="polite" testID="browser-login-status">
         {status?.browserSource?.browser ? `${status.browserSource.browser} · ` : ""}
         {status?.browserSource?.credentials === "ready" ? "凭据已导入，浏览器可关闭"
           : status?.browserSource?.credentials === "exporting" ? "正在导出凭据" : "请连接浏览器并导入凭据"}
       </Text>
+      {status?.readPermissions && status.browserSource?.credentials === "ready" ? <Text style={styles.detail} testID="browser-read-permissions">当前账号：视频读取{status.readPermissions.videos ? "已开启" : "未开启"} · 聊天读取{status.readPermissions.chat ? "已开启" : "未开启"}</Text> : null}
       {candidate ? <>
         <Text style={styles.title} testID="browser-login-candidate">浏览器登录的是「{candidate.nickname || "抖音账号"}」</Text>
-        <Text style={styles.detail}>{candidate.newAccount ? "确认后添加这个账号并导出凭据，自动完整读取一次，记录单独保存。" : "确认后导出这个账号的凭据，自动完整读取一次，使用已有记录，保留其他账号数据。"}</Text>
+        <Text style={styles.detail}>{candidate.newAccount ? "确认后添加这个账号，记录单独保存。" : "确认后更新这个账号的凭据和读取权限，保留已有记录及其他账号数据。"}</Text>
         <View style={styles.actions}>
-          <Action label="确认导入" disabled={disabled} onPress={confirm} testID="browser-login-confirm" />
+          {(["videos", "chat"] as const).map(kind => <Pressable key={kind} accessibilityRole="checkbox"
+            accessibilityLabel={kind === "videos" ? "读取视频" : "读取聊天"} accessibilityState={{ checked: readPermissions[kind], disabled }}
+            aria-checked={readPermissions[kind]} disabled={disabled} onPress={() => setReadPermissions(current => ({ ...current, [kind]: !current[kind] }))}
+            style={[styles.option, readPermissions[kind] && styles.selected, disabled && styles.disabled]} testID={`browser-read-${kind}`}>
+            <Text style={styles.text}>{readPermissions[kind] ? "✓ " : "○ "}{kind === "videos" ? "读取视频" : "读取聊天"}</Text>
+          </Pressable>)}
+        </View>
+        <Text style={styles.detail}>视频：观看历史、喜欢、收藏及视频相关联网读取。聊天：历史记录、实时接收及火花。勾选视频后自动完整读取一次，勾选聊天后自动整理历史并开始接收；未勾选的类型不能继续联网读取，已有本地数据仍可查看。</Text>
+        {!readPermissions.videos && !readPermissions.chat ? <Text style={styles.error}>请至少选择一项读取权限。</Text> : null}
+        <View style={styles.actions}>
+          <Action label="确认导入" disabled={disabled || (!readPermissions.videos && !readPermissions.chat)} onPress={confirm} testID="browser-login-confirm" />
           <Action label="取消" disabled={disabled} onPress={cancel} testID="browser-login-cancel" />
         </View>
       </> : <>

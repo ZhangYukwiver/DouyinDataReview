@@ -30,12 +30,12 @@ async function fixture({ isLoggedIn = () => true } = {}) {
     connections.push(connection); return connection;
   });
   const bootstrap = vi.spyOn(DouyinCollector.prototype, "ensureDirectApi").mockImplementation(async function (options) {
-    expect(options).toEqual({ history: true, security: true });
+    expect(options).toEqual({ history: this.getReadPermissions().videos, security: true });
     expect(this.externalConnection.connected).toBe(true);
     const session = { ...directSessionFixture(), uid: this.accountUid };
     session.security.sessionFingerprint = directSessionFingerprint(session);
     await saveDirectSession(this.dataDirectory, session);
-    await writeFile(path.join(this.dataDirectory, "direct-history-template.json"), JSON.stringify({
+    if (options.history) await writeFile(path.join(this.dataDirectory, "direct-history-template.json"), JSON.stringify({
       version: 1, signerCommit: DIRECT_SIGNER_COMMIT, capturedAt: new Date().toISOString(),
       parameterOrder: ["count", "max_cursor", "verifyFp", "fp", "uifid", "device_platform", "aid", "webid"],
       values: { ...session.values, count: "20", max_cursor: "0", device_platform: "webapp", aid: "6383" },
@@ -52,6 +52,8 @@ async function fixture({ isLoggedIn = () => true } = {}) {
   const paired = await fetch(`${runtime.baseUrl}/v1/pair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: runtime.getPairingCode() }) }).then(response => response.json());
   const headers = { Authorization: `Bearer ${paired.token}`, "Content-Type": "application/json" };
   const call = async (route, method = "GET", body) => {
+    if (route.split("?")[0] === "/v1/browser/confirm" && body && !Object.hasOwn(body, "readPermissions"))
+      body = { ...body, readPermissions: { videos: true, chat: true } };
     const response = await fetch(`${runtime.baseUrl}${route}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
@@ -59,6 +61,53 @@ async function fixture({ isLoggedIn = () => true } = {}) {
 }
 
 describe("browser login HTTP handshake", () => {
+  it("restores each account's selected permissions when switching accounts", async () => {
+    const { call, identity, readRecords } = await fixture();
+    const videos = { videos: true, chat: false }, chat = { videos: false, chat: true };
+    const first = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    await call("/v1/browser/confirm", "POST", { id: first.id, readPermissions: videos });
+    identity.uid = "789";
+    const second = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    const imported = await call("/v1/browser/confirm", "POST", { id: second.id, readPermissions: chat });
+    const otherId = imported.body.activeId;
+    expect(otherId).not.toBe("default");
+    expect((await call("/v1/accounts/default/activate", "POST", {})).body.status.readPermissions).toEqual(videos);
+    expect((await call(`/v1/accounts/${otherId}/activate`, "POST", {})).body.status.readPermissions).toEqual(chat);
+    expect(readRecords).toHaveBeenCalledOnce();
+  });
+  it.each([
+    { videos: true, chat: false }, { videos: false, chat: true }, { videos: true, chat: true },
+  ])("persists the selected permissions and only automatically reads selected videos: %j", async readPermissions => {
+    const { call, dataDirectory, readRecords } = await fixture();
+    const candidate = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    expect(candidate.readPermissions).toEqual({ videos: true, chat: false });
+    const result = await call("/v1/browser/confirm", "POST", { id: candidate.id, readPermissions });
+    expect(result.status).toBe(200);
+    expect(result.body.status.readPermissions).toEqual(readPermissions);
+    expect(readRecords).toHaveBeenCalledTimes(readPermissions.videos ? 1 : 0);
+    expect(JSON.parse(await readFile(path.join(dataDirectory, "external-browser.json"), "utf8")).readPermissions).toEqual(readPermissions);
+    const again = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    expect(again.readPermissions).toEqual(readPermissions);
+    await call("/v1/browser/pending", "DELETE", { id: again.id });
+    if (!readPermissions.videos) {
+      for (const route of ["/v1/sync", "/v1/experimental/records-direct", "/v1/downloads", "/v1/explore/read", "/v1/creator/read", "/v1/live/rooms"])
+        expect(await call(route, "POST", {})).toMatchObject({ status: 403, body: { error: "videos_read_disabled" } });
+    }
+    if (!readPermissions.chat) {
+      for (const route of ["/v1/chat/observe", "/v1/chat/messages", "/v1/chat/send"])
+        expect(await call(route, "POST", {})).toMatchObject({ status: 403, body: { error: "chat_read_disabled" } });
+      expect(await call("/v1/chat/streaks")).toMatchObject({ status: 403, body: { error: "chat_read_disabled" } });
+    }
+    expect((await call("/v1/records")).status).toBe(200);
+    expect((await call("/v1/chat/observe/stop", "POST")).status).toBe(200);
+  });
+  it.each([null, {}, { videos: false, chat: false }, { videos: "true", chat: false }])("rejects invalid permission selection without consuming the confirmation: %j", async readPermissions => {
+    const { call, bootstrap, readRecords } = await fixture();
+    const candidate = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    expect(await call("/v1/browser/confirm", "POST", { id: candidate.id, readPermissions })).toMatchObject({ status: 400, body: { error: "invalid_read_permissions" } });
+    expect(bootstrap).not.toHaveBeenCalled(); expect(readRecords).not.toHaveBeenCalled();
+    expect((await call("/v1/browser/confirm", "POST", { id: candidate.id })).status).toBe(200);
+  });
   it("requires pairing, confirms before saving credentials, and detaches while retaining records and source", async () => {
     const { runtime, call, dataDirectory, connections, readRecords } = await fixture();
     expect((await fetch(`${runtime.baseUrl}/v1/browser/sources`)).status).toBe(401);
@@ -72,7 +121,7 @@ describe("browser login HTTP handshake", () => {
     expect(connections[0].disconnect).toHaveBeenCalledOnce();
     expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: true });
     expect(confirmed.body.accounts[0].uid).toBe("123456");
-    expect(JSON.parse(await readFile(path.join(dataDirectory, "external-browser.json"), "utf8"))).toEqual({ browser: "chrome" });
+    expect(JSON.parse(await readFile(path.join(dataDirectory, "external-browser.json"), "utf8"))).toEqual({ browser: "chrome", readPermissions: { videos: true, chat: true } });
     expect((await call("/v1/browser/disconnect?account=default", "POST")).body.status.browserSource.connected).toBe(false);
     expect(connections[0].disconnect).toHaveBeenCalledOnce(); expect((await call("/v1/records")).body).toEqual(before);
     expect((await call("/v1/browser/confirm", "POST", { id: inspected.body.candidate.id })).body.error).toBe("browser_candidate_expired");

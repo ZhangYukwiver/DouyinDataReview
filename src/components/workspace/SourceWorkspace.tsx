@@ -289,7 +289,7 @@ function SketchSetupWorkspace({
   const digest = useMemo(() => digestRecords(records, 24), [records]);
 
   const recordDetail = recordSummary(total, digest.first);
-  const notes = tipNotes({ fromArchive, connected, loginNeeded, syncing, ready, autoSyncEnabled }).map((tip) => ({ ...tip, ...NOTE_LOOK[tip.key] }));
+  const notes = tipNotes({ fromArchive, connected, loginNeeded, syncing, ready, autoSyncEnabled: autoSyncEnabled && setup.videosAllowed }).map((tip) => ({ ...tip, ...NOTE_LOOK[tip.key] }));
   const cardPad = narrow ? styles.cardNarrow : short ? styles.cardShort : roomy ? styles.cardRoomy : null;
 
   const [accountMenu, setAccountMenu] = useState(false);
@@ -382,12 +382,12 @@ function SketchSetupWorkspace({
                   <ActionButton key={action.key} seed={`act-${action.key}`} compact={narrow} disabled={action.disabled} icon={READ_ICONS[action.icon]} label={action.label} onPress={() => runReadCommand(action.command, handlers)} busy={action.busy} />
                 ))}
               </View>
-              <Text style={styles.hint}>凭据有效时，完整和增量读取均无需打开浏览器。</Text>
+              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。在设置 → 账号中重新导入凭据可调整。` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
               <HRule seed="auto-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />
-              <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSyncEnabled }} aria-checked={autoSyncEnabled} onPress={onToggleAutoSync} style={(state) => [styles.auto, state.pressed && styles.pressed, pointer]}>
+              <Pressable accessibilityRole="switch" disabled={!setup.videosAllowed} accessibilityState={{ checked: autoSyncEnabled && setup.videosAllowed, disabled: !setup.videosAllowed }} aria-checked={autoSyncEnabled && setup.videosAllowed} onPress={onToggleAutoSync} style={(state) => [styles.auto, state.pressed && styles.pressed, pointer]}>
                 <Text style={[styles.strong, styles.flex]}>自动补读新记录</Text>
-                <Hand style={[styles.autoState, autoSyncEnabled && styles.autoStateOn]}>{autoSyncEnabled ? "已开启" : "已暂停"}</Hand>
-                <SketchSwitch on={autoSyncEnabled} />
+                <Hand style={[styles.autoState, autoSyncEnabled && setup.videosAllowed && styles.autoStateOn]}>{!setup.videosAllowed ? "未授权" : autoSyncEnabled ? "已开启" : "已暂停"}</Hand>
+                <SketchSwitch on={autoSyncEnabled && setup.videosAllowed} />
               </Pressable>
             </SketchBox>
 

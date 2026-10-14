@@ -247,15 +247,16 @@ function Appearance({ appStyle, contentWidth, onChangeAppStyle, onChangeStorySty
   );
 }
 
-function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openAtLogin }: SettingsDialogProps & { openAtLogin: boolean | null; onToggleOpenAtLogin: () => void }) {
+function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openAtLogin, browserConnection }: SettingsDialogProps & { openAtLogin: boolean | null; onToggleOpenAtLogin: () => void }) {
+  const videosAllowed = browserConnection?.status?.readPermissions?.videos !== false;
   return (
     <>
       <View style={styles.row}>
         <RowCopy
-          detail="开着时，回到窗口或刚连上采集器，会补读新的观看、喜欢和收藏记录。关掉以后，日常更新需要手动点读取；每次导入浏览器登录凭据成功后，仍会自动完整读取一次。"
+          detail={videosAllowed ? "开着时，回到窗口或刚连上采集器，会补读新的观看、喜欢和收藏记录。导入凭据时勾选读取视频，会自动完整读取一次。" : "当前账号未开启视频读取，自动补读不执行。在设置 → 账号中重新导入凭据并勾选读取视频可开启。"}
           title="自动补读新记录"
         />
-        <Toggle label="自动补读新记录" onPress={onToggleAutoSync} testID="settings-auto-sync" value={autoSyncEnabled} />
+        <Toggle disabled={!videosAllowed} label="自动补读新记录" onPress={onToggleAutoSync} testID="settings-auto-sync" value={autoSyncEnabled && videosAllowed} />
       </View>
       {openAtLogin !== null ? (
         <View style={styles.row}>
@@ -339,7 +340,7 @@ function Data({ appStyle, canClear, connected, onClearCache, onExportData }: Set
         <View style={styles.row}>
           <RowCopy
             detail={connected
-              ? "把读到的观看、喜欢、收藏和聊天记录存成一个文件，换电脑或重装以后可以在采集器页导入回来。"
+              ? "分别选择观看历史、喜欢、收藏和聊天数据，只把勾选的内容存成 JSON 文件，换电脑或重装以后可以在采集器页导入回来。"
               : "连上采集器以后，可以把读到的记录存成一个文件，换电脑或重装以后再导入回来。"}
             title="导出数据"
           />
@@ -433,16 +434,17 @@ function RowCopy({ detail, title }: { detail?: string; title: string }) {
   );
 }
 
-function Toggle({ label, onPress, testID, value }: { label: string; onPress: () => void; testID: string; value: boolean }) {
+function Toggle({ label, onPress, testID, value, disabled = false }: { label: string; onPress: () => void; testID: string; value: boolean; disabled?: boolean }) {
   return (
     <Pressable
       accessibilityLabel={label}
       accessibilityRole="switch"
-      accessibilityState={{ checked: value }}
+      accessibilityState={{ checked: value, disabled }}
+      disabled={disabled}
       aria-checked={value}
       onPress={onPress}
-      {...spaceKey(onPress)}
-      style={[styles.switch, value && styles.switchOn, pointer, ease("background-color,border-color", 140)]}
+      {...spaceKey(() => { if (!disabled) onPress(); })}
+      style={[styles.switch, value && styles.switchOn, disabled && { opacity: 0.4 }, pointer, ease("background-color,border-color", 140)]}
       testID={testID}
     >
       <View style={[styles.knob, value && styles.knobOn, ease("transform", 140)]} />

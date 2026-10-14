@@ -95,7 +95,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     "collector/directApi.mjs", "collector/directChat.mjs", "collector/directCredentials.mjs",
     "collector/directExplorer.mjs", "collector/directLive.mjs", "collector/directProto.mjs",
     "collector/directWrites.mjs", "collector/nativeSignature.mjs", "collector/sm3.mjs",
-    "collector/browserConnection.mjs", "collector/openBrowserDebugging.ps1", "collector/server.mjs",
+    "collector/browserConnection.mjs", "collector/readPermissions.mjs", "collector/openBrowserDebugging.ps1", "collector/server.mjs",
     "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs",
     "node_modules/ws/index.js",
     "node_modules/ws/wrapper.mjs", "node_modules/ws/lib/websocket.js",
@@ -118,7 +118,8 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     assert.deepEqual(contents, await readFile(path.join(sourceDirectory, "dist", relative)), `Outdated packaged web asset: ${relative}`);
     if (relative.endsWith(".js")) {
       const source = contents.toString("utf8");
-      credentialImportBundled ||= ["browser-login-connect", "browser-login-confirm", "browser-login-status", "browser_reconnect_required"]
+      credentialImportBundled ||= ["browser-login-connect", "browser-login-confirm", "browser-login-status", "browser_reconnect_required",
+        "browser-read-videos", "browser-read-chat", "data-export-dialog", "data-export-confirm"]
         .every(marker => source.includes(marker));
       assert(!source.includes("browser-login-independent"), "Web bundle still exposes the removed dedicated browser");
       assert(!/["']\/v1\/observe(?:\/stop)?["']/u.test(source), "Web bundle still calls the removed manual observation API");
