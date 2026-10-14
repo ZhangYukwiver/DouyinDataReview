@@ -4,6 +4,8 @@ import {
   activateCollectorAccount,
   addCollectorAccount,
   clearCollectorRecords,
+  canReadCollector,
+  confirmBrowserLogin,
   findTwinAccount,
   formatAccountAddedDay,
   getCollectorAccounts,
@@ -192,6 +194,17 @@ describe("parseLaunchPairingCode", () => {
 });
 
 describe("local collector client", () => {
+  it("parses separate read permissions and sends the selected scopes during credential import", async () => {
+    const readPermissions = { videos: false, chat: true };
+    const statusPayload = { state: "idle", message: "状态", counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0 }, readPermissions };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ activeId: "default", accounts: [{ id: "default", nickname: null, avatar: null, uid: "123", createdAt: null }], status: statusPayload })));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await confirmBrowserLogin("http://127.0.0.1:4765", "synthetic-token", "synthetic-candidate", readPermissions, "default");
+    expect(result.status.readPermissions).toEqual(readPermissions);
+    expect(canReadCollector(result.status, "videos")).toBe(false);
+    expect(canReadCollector(result.status, "chat")).toBe(true);
+    expect(JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({ id: "synthetic-candidate", readPermissions });
+  });
   it.each(["ready", "exporting", "reconnect_required"])("keeps imported-credential state %s separate from a disconnected CDP transport", async credentials => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       state: "idle", message: "状态", counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0 }, updatedAt: null,

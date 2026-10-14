@@ -67,6 +67,7 @@ import {
   removeCollectorAccount,
   fetchCollectorVideoFile,
   type CollectorAccounts,
+  canReadCollector,
   type CollectorAccountChange,
   type CollectorImportResult,
   type CollectorSnapshot,
@@ -100,6 +101,8 @@ import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEnt
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
+import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
+import { buildDataExport, type DataExportSelection } from "./src/services/exportData";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 import { AnalysisWorkspace } from "./src/components/workspace/AnalysisWorkspace";
 import { loadAnalysisConfig, startAnalysis } from "./src/services/videoAnalysis";
@@ -236,6 +239,7 @@ function AppContent() {
   const [collectorToken, setCollectorToken] = useState<string | null>(null);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus | null>(null);
   const [collectorSnapshot, setCollectorSnapshot] = useState<CollectorSnapshot | null>(null);
+  const [exportSnapshot, setExportSnapshot] = useState<CollectorSnapshot | null>(null);
   const [collectorBusy, setCollectorBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
@@ -537,6 +541,7 @@ function AppContent() {
   useEffect(() => {
     if (!collectorToken || displaySnapshot?.source !== "collector" || !chatStartupRef.current.isReady()) return undefined;
     if (collectorStatus?.browserSource?.credentials === "reconnect_required") return undefined;
+    if (!canReadCollector(collectorStatus, "chat")) return undefined;
     if (collectorBusy || switchingAccount || autoSyncInFlightRef.current || chatCollectionInFlightRef.current) return undefined;
     if (collectorStatus && !TERMINAL_COLLECTOR_STATES.has(collectorStatus.state)) return undefined;
 
@@ -546,7 +551,7 @@ function AppContent() {
       void beginChatObservation(collectorUrl, collectorToken, true);
     }, 0);
     return () => clearTimeout(timer);
-  }, [collectorBusy, collectorStatus?.state, collectorToken, collectorUrl, displaySnapshot?.source, switchingAccount]);
+  }, [collectorBusy, collectorStatus?.state, collectorStatus?.readPermissions?.chat, collectorToken, collectorUrl, displaySnapshot?.source, switchingAccount]);
 
   async function refreshCollectorSnapshot(baseUrl: string, token: string, requestId?: number): Promise<CollectorSnapshot | null> {
     const snapshot = await getCollectorRecords(baseUrl, token);
@@ -695,6 +700,10 @@ function AppContent() {
   }
 
   async function beginSync(baseUrl: string, token: string, incremental = false, { timer = false }: { timer?: boolean } = {}) {
+    if (!canReadCollector(collectorStatus, "videos")) {
+      if (!timer) openPreferences("account");
+      return;
+    }
     if (collectorStatus?.browserSource?.credentials === "reconnect_required") {
       setCollectorError("请先连接浏览器并导入登录凭据。");
       if (!timer) openPreferences("account");
@@ -724,6 +733,11 @@ function AppContent() {
   }
 
   function triggerAutoSync(options: { manual?: boolean; timer?: boolean } = {}) {
+    if (!canReadCollector(collectorStatus, "videos")) {
+      pendingManualSyncRef.current = false;
+      if (options.manual) notifyDesktopBackgroundSyncBlocked("当前账号未开启视频读取，请在设置 → 账号中重新导入凭据并勾选读取视频。");
+      return;
+    }
     const manual = options.manual === true || pendingManualSyncRef.current;
     const suppressForBrowserLogin = shouldSuppressBrowserLoginAutoSync(skipBrowserLoginAutoSyncRef.current, manual);
     if (manual) skipBrowserLoginAutoSyncRef.current = false;
@@ -808,6 +822,11 @@ function AppContent() {
   }
 
   async function beginChatObservation(baseUrl: string, token: string, automatic = false) {
+    if (!canReadCollector(collectorStatus, "chat")) {
+      chatStartupRef.current.cancel();
+      if (!automatic) openPreferences("account");
+      return;
+    }
     if (chatCollectionInFlightRef.current || switchingAccount) return;
     if (automatic && !chatStartupRef.current.take()) return;
     chatCollectionInFlightRef.current = true;
@@ -913,6 +932,7 @@ function AppContent() {
   }
 
   async function collectChatHistory(baseUrl: string, token: string) {
+    if (!canReadCollector(collectorStatus, "chat")) { openPreferences("account"); return; }
     if (switchingAccount || chatBusy) return;
     chatStartupRef.current.cancel();
     chatAutomaticRequestRef.current.clear();
@@ -1022,8 +1042,10 @@ function AppContent() {
     } else if (status.browserSource?.credentials === "reconnect_required") {
       chatStartupRef.current.cancel();
       setCollectorError("请在设置 → 账号中连接已登录的浏览器并导入凭据。");
-    } else {
+    } else if (canReadCollector(status, "chat")) {
       chatStartupRef.current.request();
+    } else {
+      chatStartupRef.current.cancel();
     }
     if (TERMINAL_COLLECTOR_STATES.has(status.state) && !isChatReceiving(status)) {
       setCollectorBusy(false);
@@ -1035,6 +1057,7 @@ function AppContent() {
 
   function confirmFullSync() {
     if (!collectorToken || collectorBusy || syncConfirmationOpenRef.current) return;
+    if (!canReadCollector(collectorStatus, "videos")) { openPreferences("account"); return; }
     if (collectorStatus?.browserSource?.credentials === "reconnect_required") { openPreferences("account"); return; }
     syncConfirmationOpenRef.current = true;
     confirmAlert(
@@ -1052,6 +1075,7 @@ function AppContent() {
 
   function confirmIncrementalSync() {
     if (!collectorToken || collectorBusy || syncConfirmationOpenRef.current) return;
+    if (!canReadCollector(collectorStatus, "videos")) { openPreferences("account"); return; }
     if (collectorStatus?.browserSource?.credentials === "reconnect_required") { openPreferences("account"); return; }
     syncConfirmationOpenRef.current = true;
     confirmAlert(
@@ -1235,8 +1259,8 @@ function AppContent() {
     chatAutomaticRequestRef.current.clear();
     autoSyncInFlightRef.current = false;
     const accountChanged = change.accounts.activeId !== collectorStatus?.account?.id;
-    // The collector starts a full read after import; skip the incremental
-    // trigger caused by adopting the imported account.
+    // Skip a duplicate incremental read when the imported video permission
+    // already started the full read. Chat-only imports have no record task.
     skipBrowserLoginAutoSyncRef.current = true;
     if (accountChanged) {
       forgetPreviousAccount();
@@ -1244,17 +1268,19 @@ function AppContent() {
     }
     applyCollectorAccounts(change.accounts);
     setCollectorStatus(change.status);
-    setCollectorBusy(true);
+    setCollectorBusy(isCollectorSyncing(true, change.status));
     setStoppingSync(false);
     timerSyncRef.current = false;
-    try { await adoptCollector(collectorUrl, token, requestId); }
+    let adoptedStatus = change.status;
+    try { adoptedStatus = await adoptCollector(collectorUrl, token, requestId) ?? change.status; }
     catch (error) {
       skipBrowserLoginAutoSyncRef.current = false;
       setCollectorBusy(false);
       throw error;
     }
-    // Leave chat startup deferred until the full record read finishes.
-    chatStartupRef.current.defer();
+    if (!canReadCollector(adoptedStatus, "chat") || isChatReceiving(adoptedStatus)) chatStartupRef.current.cancel();
+    else if (isCollectorSyncing(true, adoptedStatus)) chatStartupRef.current.defer();
+    else chatStartupRef.current.request();
     setAccountEpoch(value => value + 1);
   }
 
@@ -1449,13 +1475,21 @@ function AppContent() {
   async function exportCurrentData() {
     if (!collectorToken) return;
     try {
-      const { updatedAt, warnings, records, chatConversations, chatMessages } = await getCollectorRecords(collectorUrl, collectorToken);
-      const data = { exportedAt: new Date().toISOString(), source: "collector", updatedAt, warnings, records, chatConversations, chatMessages };
-      // sv-SE 的日期格式正好是本地时区的 YYYY-MM-DD
-      triggerBrowserDownload(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
+      const snapshot = await getCollectorRecords(collectorUrl, collectorToken);
+      setPreferences(null);
+      setExportSnapshot(snapshot);
     } catch (error) {
       showAlert("无法导出数据", collectorErrorMessage(error));
     }
+  }
+
+  function exportSelectedData(selection: DataExportSelection) {
+    if (!exportSnapshot) return;
+    try {
+      const data = buildDataExport(exportSnapshot, selection);
+      triggerBrowserDownload(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
+      setExportSnapshot(null);
+    } catch (error) { showAlert("无法导出数据", collectorErrorMessage(error)); }
   }
 
   async function openRecord(url: string) {
@@ -1850,6 +1884,7 @@ function AppContent() {
         browserConnection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
           onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined}
       />
+      {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={() => setExportSnapshot(null)} onExport={exportSelectedData} /> : null}
     </SafeAreaView>
   );
 }

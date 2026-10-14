@@ -325,18 +325,21 @@ export function ChatWorkspace({
   };
 
   const receiving = isChatReceiving(status);
+  const chatAllowed = status?.readPermissions?.chat !== false;
   const chatError = status?.chat.state === "error" ? status.chat.message : null;
   const receptionLabel = !connected ? "未连接采集器"
+    : !chatAllowed ? "聊天读取未开启 · 在设置 → 账号中重新导入凭据可开启"
     : chatError ? "聊天接收失败"
       : !receiving ? "已暂停接收"
       : status?.chatConnection === "connected" ? "实时接收中"
         : status?.chatConnection === "reconnecting" ? "连接中断，正在重连" : "正在连接消息";
-  const controlDisabled = connected && busy && !receiving;
+  const controlDisabled = connected && !receiving && (busy || !chatAllowed);
   // 历史还在整理时「采集聊天记录」变成停止键，和采集器页一样
   const reading = connected && receiving && (status?.chat.state !== "observing" || Boolean(status?.chat.progress));
-  const historyDisabled = !connected || !onCollectHistory || (busy && !reading);
+  const historyDisabled = !connected || !onCollectHistory || (!reading && (busy || !chatAllowed));
   // 发送借用正在接收的抖音网页，所以要等历史整理完、连接就绪。
   const sendBlock = !sendConnection || !connected ? "连接采集器后才能发消息"
+    : !chatAllowed ? "当前账号未开启聊天读取"
     : !receiving ? "开始接收后才能发消息"
       : status?.chat.state !== "observing" || status.chat.progress ? "聊天历史整理完就能发消息"
         : status.chatConnection !== "connected" ? "消息连接好了才能发"

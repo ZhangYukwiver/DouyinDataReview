@@ -143,7 +143,7 @@ export function MinimalSetupWorkspace({
   const run = (command: ReadCommand) => runReadCommand(command, { onStartIncrementalSync, onStartFullSync, onStopSync, onStopChatObservation, onStartChatObservation, onCollectChatHistory, setStoppingChat });
   const digest = useMemo(() => digestRecords(records, 24), [records]);
   // 用着导入文件时，下面档案卡的说明已经讲清楚怎么换回采集器，状态提示就不再重复这句
-  const tips = tipNotes({ fromArchive: setup.fromArchive, connected, loginNeeded: setup.loginNeeded, syncing: setup.syncing, ready: setup.ready, autoSyncEnabled }, "minimal")
+  const tips = tipNotes({ fromArchive: setup.fromArchive, connected, loginNeeded: setup.loginNeeded, syncing: setup.syncing, ready: setup.ready, autoSyncEnabled: autoSyncEnabled && setup.videosAllowed }, "minimal")
     .filter((tip) => !(archive && setup.fromArchive && tip.key === "tip"));
   const accountName = activeAccountLabel(connected, status, accounts);
   const statusMessage = switchingAccount ? "正在切换抖音账号，等旧账号的浏览器关好就换过去。" : status?.message?.trim() || null;
@@ -239,15 +239,15 @@ export function MinimalSetupWorkspace({
               <FitSlot style={[styles.slotData, short && styles.slotDataShort]}>{(size) => <DataArea digest={digest} roomy={roomy} size={size} />}</FitSlot>
               <ChatProgress progress={setup.chatProgress} />
               <ReadButtons actions={actions} oneRow={oneRow} onRun={run} />
-              <Text style={styles.hint}>凭据有效时，完整和增量读取均无需打开浏览器。</Text>
+              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。在设置 → 账号中重新导入凭据可调整。` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
               <View style={[styles.rule, short && styles.ruleShort]} />
-              <Pressable accessibilityRole="switch" accessibilityState={{ checked: autoSyncEnabled }} aria-checked={autoSyncEnabled} onPress={onToggleAutoSync} style={(state) => [styles.auto, pointer, state.pressed && styles.autoPressed]}>
+              <Pressable accessibilityRole="switch" disabled={!setup.videosAllowed} accessibilityState={{ checked: autoSyncEnabled && setup.videosAllowed, disabled: !setup.videosAllowed }} aria-checked={autoSyncEnabled && setup.videosAllowed} onPress={onToggleAutoSync} style={(state) => [styles.auto, pointer, state.pressed && styles.autoPressed]}>
                 <View style={styles.flex}>
                   <Text style={styles.strong}>自动补读新记录</Text>
                   {tight ? null : <Text numberOfLines={1} style={styles.fine}>应用回到前台时，自动读取新增的记录。</Text>}
                 </View>
-                <Text style={[styles.autoState, autoSyncEnabled && styles.autoStateOn]}>{autoSyncEnabled ? "已开启" : "已暂停"}</Text>
-                <Switch on={autoSyncEnabled} />
+                <Text style={[styles.autoState, autoSyncEnabled && setup.videosAllowed && styles.autoStateOn]}>{!setup.videosAllowed ? "未授权" : autoSyncEnabled ? "已开启" : "已暂停"}</Text>
+                <Switch on={autoSyncEnabled && setup.videosAllowed} />
               </Pressable>
             </View>
           </View>

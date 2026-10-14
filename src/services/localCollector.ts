@@ -27,6 +27,8 @@ export interface CollectorProgress {
 }
 
 export interface CollectorStatus {
+  /** 导入凭据时按账号选择；缺省兼容旧采集器。 */
+  readPermissions?: CollectorReadPermissions;
   state: CollectorState;
   phase: PersonalRecordType | "chat_messages" | null;
   message: string;
@@ -51,6 +53,15 @@ export interface CollectorStatus {
     credentials?: "ready" | "exporting" | "reconnect_required" };
 }
 
+export interface CollectorReadPermissions {
+  videos: boolean;
+  chat: boolean;
+}
+
+export function canReadCollector(status: CollectorStatus | null, kind: keyof CollectorReadPermissions): boolean {
+  return status?.readPermissions?.[kind] !== false;
+}
+
 export interface BrowserLoginSource {
   id: "chrome" | "edge" | "comet";
   label: string;
@@ -66,6 +77,7 @@ export interface BrowserLoginCandidate {
   uid: string;
   accountId: string | null;
   newAccount: boolean;
+  readPermissions?: CollectorReadPermissions;
 }
 
 export interface CollectorAccount {
@@ -720,6 +732,9 @@ function parseStatus(value: unknown): CollectorStatus {
       ? value.chatConnection : null,
     syncMode: value.syncMode === "page" || value.syncMode === "direct_records" ? value.syncMode : null,
     syncFull: value.syncFull === true,
+    ...(isObject(value.readPermissions) ? { readPermissions: {
+      videos: value.readPermissions.videos === true, chat: value.readPermissions.chat === true,
+    } } : {}),
     chat: parseChatStatus(value.chat, validStates),
     account: parseStatusAccount(value.account),
     ...(isObject(value.browserSource) && ["independent", "cdp"].includes(String(value.browserSource.mode)) ? {
@@ -1160,11 +1175,14 @@ export async function inspectBrowserLogin(baseUrl: string, token: string, browse
     throw new LocalCollectorError("invalid_response", "浏览器登录账号无效。");
   return { id: candidate.id, browser: candidate.browser as BrowserLoginSource["id"], uid: candidate.uid,
     nickname: cleanRecordString(candidate.nickname, 100), accountId: typeof candidate.accountId === "string" && ACCOUNT_ID.test(candidate.accountId) ? candidate.accountId : null,
-    newAccount: candidate.newAccount === true };
+    newAccount: candidate.newAccount === true,
+    ...(isObject(candidate.readPermissions) ? { readPermissions: {
+      videos: candidate.readPermissions.videos === true, chat: candidate.readPermissions.chat === true,
+    } } : {}) };
 }
 
-export async function confirmBrowserLogin(baseUrl: string, token: string, id: string, accountId?: string | null): Promise<CollectorAccountChange> {
-  return parseAccountChange(await requestJson(baseUrl, withAccount("/v1/browser/confirm", accountId), { method: "POST", body: JSON.stringify({ id }) }, token, 5 * 60_000));
+export async function confirmBrowserLogin(baseUrl: string, token: string, id: string, readPermissions: CollectorReadPermissions, accountId?: string | null): Promise<CollectorAccountChange> {
+  return parseAccountChange(await requestJson(baseUrl, withAccount("/v1/browser/confirm", accountId), { method: "POST", body: JSON.stringify({ id, readPermissions }) }, token, 5 * 60_000));
 }
 
 export async function cancelBrowserLogin(baseUrl: string, token: string, id: string): Promise<void> {

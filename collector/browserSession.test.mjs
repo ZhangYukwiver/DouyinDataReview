@@ -36,6 +36,31 @@ async function fixture({ session = directSessionFixture(), sourceMarker = true, 
 }
 
 describe("imported credentials without a running browser", () => {
+  it("restores chat-only permission after restart and initializes chat without any history template", async () => {
+    const { collector, dataDirectory, browser } = await fixture();
+    await writeFile(path.join(dataDirectory, "external-browser.json"), JSON.stringify({ browser: "chrome", readPermissions: { videos: false, chat: true } }));
+    await rm(path.join(dataDirectory, "direct-history-template.json"));
+    const session = await loadDirectSession(dataDirectory);
+    delete session.values.webid;
+    await saveDirectSession(dataDirectory, session);
+    await collector.initialize();
+    const history = vi.spyOn(collector, "prepareDirectHistoryTemplate");
+    expect(collector.getStatus().readPermissions).toEqual({ videos: false, chat: true });
+    expect(collector.getStatus().browserSource.credentials).toBe("ready");
+    await collector.ensureDirectApi({ security: true });
+    expect(history).not.toHaveBeenCalled(); expect(browser).not.toHaveBeenCalled();
+    expect(() => collector.startSync()).toThrow("未开启读取视频");
+    expect(() => collector.startVideoDownload("https://www.douyin.com/video/123")).toThrow("未开启读取视频");
+  });
+  it("keeps legacy imports compatible and fails closed for a malformed saved selection", async () => {
+    const { collector, dataDirectory } = await fixture();
+    expect(collector.getStatus().readPermissions).toEqual({ videos: true, chat: true });
+    await writeFile(path.join(dataDirectory, "external-browser.json"), JSON.stringify({ browser: "chrome", readPermissions: { chat: "true" } }));
+    await collector.initialize();
+    expect(collector.getStatus().readPermissions).toEqual({ videos: false, chat: false });
+    expect(() => collector.startChatObservation()).toThrow("未开启读取聊天");
+    await expect(collector.getDirectChatClient()).rejects.toMatchObject({ code: "chat_read_disabled" });
+  });
   it("reuses an older complete cache without a source marker", async () => {
     const { collector, browser, dataDirectory } = await fixture({ sourceMarker: false });
     expect(collector.getStatus().browserSource).toEqual({ mode: "cdp", browser: null, connected: false, credentials: "ready" });
@@ -148,7 +173,7 @@ describe("imported credentials without a running browser", () => {
     const connection = { context, browser: "chrome", label: "Chrome", connected: true, disconnect: vi.fn(async () => context.emit("close")) };
     vi.spyOn(collector, "cacheDirectSession").mockResolvedValue({});
     vi.spyOn(collector, "ensureDirectApi").mockRejectedValue(new DirectHistoryError("request_failed", "offline"));
-    await expect(collector.attachExternalBrowser(connection, { uid: "123", nickname: "合成账号" }, {})).rejects.toMatchObject({ code: "request_failed" });
+    await expect(collector.attachExternalBrowser(connection, { uid: "123", nickname: "合成账号" }, {}, { videos: false, chat: true })).rejects.toMatchObject({ code: "request_failed" });
     expect(await Promise.all(files.map(name => readFile(path.join(dataDirectory, name), "utf8")))).toEqual(before);
     expect(collector.getStatus().browserSource).toMatchObject({ credentials: "ready", connected: false });
     expect(JSON.stringify(collector.getSnapshot())).toBe(records); expect(connection.disconnect).toHaveBeenCalled();

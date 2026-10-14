@@ -1,5 +1,5 @@
 import type { DesktopUpdateState } from "../../desktopRuntime";
-import { collectorAccountName, type CollectorAccounts, type CollectorStatus } from "../../services/localCollector";
+import { canReadCollector, collectorAccountName, type CollectorAccounts, type CollectorStatus } from "../../services/localCollector";
 
 // 采集器页两套版式（手绘 / 极简）和设置面板共用的推导：同一个按钮在哪套里都按同一套条件禁用、
 // 同一个状态在哪套里都写同一句话。这里只有纯函数，版式各自决定怎么画。
@@ -64,6 +64,8 @@ export interface SetupFlow {
 }
 
 export interface SetupState {
+  videosAllowed: boolean;
+  chatAllowed: boolean;
   /** 有数据可看：读到过记录、采集器说读完了，或者正用着导入的文件 */
   ready: boolean;
   syncing: boolean;
@@ -108,7 +110,8 @@ export function deriveSetup({ busy, chatCollecting, connected, snapshotSource, s
           : ready
             ? { step: 3, done: [true, true, true], note: "可以看了" }
             : { step: 2, done: [true, true, false], note: "去读取" };
-  return { ready, syncing, visibleBusy, fullSyncing, directSyncing, chatProgress, chatReading, loginNeeded, fromArchive, source, statusLine, flow };
+  return { videosAllowed: canReadCollector(status, "videos"), chatAllowed: canReadCollector(status, "chat"),
+    ready, syncing, visibleBusy, fullSyncing, directSyncing, chatProgress, chatReading, loginNeeded, fromArchive, source, statusLine, flow };
 }
 
 // ---------- 四个读取按钮 ----------
@@ -148,15 +151,15 @@ export interface ReadActionInput {
 }
 
 /** 增量读取 / 完整读取 / 开始接收 / 采集聊天记录：读取中哪个按钮发起的就由哪个变成停止键 */
-export function readActions(input: ReadActionInput, state: Pick<SetupState, "visibleBusy" | "fullSyncing" | "directSyncing" | "chatReading">): ReadAction[] {
+export function readActions(input: ReadActionInput, state: Pick<SetupState, "visibleBusy" | "fullSyncing" | "directSyncing" | "chatReading" | "videosAllowed" | "chatAllowed">): ReadAction[] {
   const { busy, chatBusy, chatCollecting, connected, stoppingChat, stoppingSync, switchingAccount } = input;
-  const { chatReading, directSyncing, fullSyncing, visibleBusy } = state;
+  const { chatReading, directSyncing, fullSyncing, visibleBusy, videosAllowed, chatAllowed } = state;
   return [
     {
       key: "incremental",
       label: directSyncing ? "停止读取" : "增量读取",
       icon: directSyncing ? "pause" : "play",
-      disabled: !connected || (busy && !directSyncing) || visibleBusy,
+      disabled: !connected || (!videosAllowed && !directSyncing) || (busy && !directSyncing) || visibleBusy,
       busy: directSyncing ? stoppingSync : busy && !fullSyncing,
       command: directSyncing ? "stop-sync" : "start-incremental",
     },
@@ -164,7 +167,7 @@ export function readActions(input: ReadActionInput, state: Pick<SetupState, "vis
       key: "full",
       label: fullSyncing ? "停止读取" : "完整读取",
       icon: fullSyncing ? "pause" : "refresh",
-      disabled: !connected || (!fullSyncing && (busy || visibleBusy)),
+      disabled: !connected || (!fullSyncing && (!videosAllowed || busy || visibleBusy)),
       busy: fullSyncing && stoppingSync,
       command: fullSyncing ? "stop-sync" : "start-full",
     },
@@ -172,7 +175,7 @@ export function readActions(input: ReadActionInput, state: Pick<SetupState, "vis
       key: "chat",
       label: chatCollecting ? "暂停接收" : "开始接收",
       icon: chatCollecting ? "pause" : "message",
-      disabled: !connected || chatBusy || switchingAccount || (!chatCollecting && (visibleBusy || busy)),
+      disabled: !connected || chatBusy || switchingAccount || (!chatCollecting && (!chatAllowed || visibleBusy || busy)),
       busy: false,
       command: chatCollecting ? "stop-chat" : "start-chat",
     },
@@ -180,7 +183,7 @@ export function readActions(input: ReadActionInput, state: Pick<SetupState, "vis
       key: "history",
       label: chatReading ? "停止读取" : "采集聊天记录",
       icon: chatReading ? "pause" : "refresh",
-      disabled: !connected || switchingAccount || (chatReading ? stoppingChat : chatBusy || visibleBusy || (busy && !chatCollecting)),
+      disabled: !connected || switchingAccount || (chatReading ? stoppingChat : !chatAllowed || chatBusy || visibleBusy || (busy && !chatCollecting)),
       busy: chatReading ? stoppingChat : chatBusy,
       command: chatReading ? "stop-chat-history" : "collect-chat-history",
     },

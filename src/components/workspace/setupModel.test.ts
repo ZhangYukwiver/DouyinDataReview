@@ -50,6 +50,13 @@ function actionsFor(input: Partial<SetupInput> = {}, extra: Partial<ReadActionIn
 }
 
 describe("采集器页状态", () => {
+  it.each([{ videos: true, chat: false }, { videos: false, chat: true }])("limits the four read controls by account permission: %j", readPermissions => {
+    const actions = actionsFor({ status: status({ readPermissions }) });
+    expect(actions.incremental!.disabled).toBe(!readPermissions.videos);
+    expect(actions.full!.disabled).toBe(!readPermissions.videos);
+    expect(actions.chat!.disabled).toBe(!readPermissions.chat);
+    expect(actions.history!.disabled).toBe(!readPermissions.chat);
+  });
   it("没连上、没数据：尚未连接，流向停在采集器这一步", () => {
     const state = deriveSetup({ ...base, connected: false, status: null, snapshotSource: null, total: 0 });
     expect(state.ready).toBe(false);

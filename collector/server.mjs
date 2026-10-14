@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
@@ -14,6 +14,7 @@ import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, waitForBrowserLogin } from "./browserLogin.mjs";
+import { importedReadPermissions, parseReadPermissions, readPermissionForRequest } from "./readPermissions.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
 import { DirectHistoryError } from "./directHistory.mjs";
@@ -419,6 +420,12 @@ export async function startCollectorServer({
     // 切换账号时只放行读状态和账号列表
     if (!(request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts")) && rejectWhileSwitching(response)) return;
 
+    const readPermission = readPermissionForRequest(request.method, url.pathname);
+    if (readPermission) {
+      try { collector.assertReadPermission(readPermission); }
+      catch (error) { sendJson(response, error.status, { error: error.code, message: error.message }); return; }
+    }
+
     if (request.method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/chat/observe", "/v1/downloads"].includes(url.pathname)) {
       if (explorer.busy) {
         sendJson(response, 409, { error: "collector_busy", message: "请等待当前探索操作完成后继续。" });
@@ -480,10 +487,16 @@ export async function startCollectorServer({
               const timer = setTimeout(() => { void clearPendingBrowser(id); }, 2 * 60_000); timer.unref();
               pendingBrowser = { id, connection, page, identity, timer };
               const target = browserTarget(identity);
+              let readPermissions = { videos: true, chat: false };
+              if (target) {
+                try { readPermissions = importedReadPermissions(JSON.parse(await readFile(path.join(accounts.directory(target), "external-browser.json"), "utf8"))); }
+                catch { /* A first import starts with video reading selected. */ }
+              }
               sendJson(response, 200, { candidate: { id, browser: connection.browser, nickname: identity.nickname, uid: identity.uid,
-                accountId: target?.id ?? null, newAccount: !target } });
+                accountId: target?.id ?? null, newAccount: !target, readPermissions } });
             } catch (error) { await connection.disconnect(); throw error; }
           } else if (url.pathname === "/v1/browser/confirm") {
+            const readPermissions = parseReadPermissions(body.readPermissions);
             const pending = pendingBrowser;
             if (!pending || pending.id !== body.id) throw new BrowserConnectionError("browser_candidate_expired", "连接确认已过期，请重新连接。");
             const identity = await browserIdentity(pending.connection, pending.page);
@@ -496,8 +509,8 @@ export async function startCollectorServer({
               const target = browserTarget(identity) ?? (created = await accounts.create());
               if (target.id !== accounts.activeId) await runAccountWork(() => switchTo(target));
               else { await explorer.close(); await collector.shutdown(); }
-              await collector.attachExternalBrowser(pending.connection, identity, pending.page);
-              collector.startSync({ mode: "full_records" });
+              await collector.attachExternalBrowser(pending.connection, identity, pending.page, readPermissions);
+              if (readPermissions.videos) collector.startSync({ mode: "full_records" });
               sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
             } catch (error) {
               await pending.connection.disconnect();

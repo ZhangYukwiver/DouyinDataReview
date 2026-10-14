@@ -43,6 +43,7 @@ import { DirectApiClient, loadDirectSession, saveDirectSession, sameDirectSessio
 import { readDirectCredentialMaterial, completeDirectCredentialExport, requireDirectCredentials } from "./directCredentials.mjs";
 import { DirectChatClient } from "./directChat.mjs";
 import { BrowserConnectionError } from "./browserConnection.mjs";
+import { importedReadPermissions, parseReadPermissions } from "./readPermissions.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
 const SELF_PROFILE_URL = "https://www.douyin.com/user/self";
@@ -498,7 +499,7 @@ export class DouyinCollector {
     } catch { /* Credentials remain account-bound even when an older cache has no source marker. */ }
     try {
       const session = await loadDirectSession(this.dataDirectory, this.accountUid);
-      await loadDirectHistoryTemplate(this.dataDirectory);
+      if (this.getReadPermissions().videos) await loadDirectHistoryTemplate(this.dataDirectory);
       requireDirectCredentials(session);
       // A browser's short token can expire while the imported login remains
       // usable. Verify the actual HTTP identity before asking for a new import.
@@ -529,8 +530,18 @@ export class DouyinCollector {
 
   getStatus() {
     return { ...structuredClone(this.status), revision: this.statusRevision, recordsRevision: this.store?.recordsRevision,
+      readPermissions: this.getReadPermissions(),
       browserSource: { mode: "cdp", browser: this.externalSource?.browser ?? null,
         connected: this.externalConnection?.connected === true, credentials: this.externalSessionState } };
+  }
+
+  getReadPermissions() {
+    return importedReadPermissions(this.externalSource);
+  }
+
+  assertReadPermission(kind) {
+    if (!this.getReadPermissions()[kind]) throw new BrowserConnectionError(`${kind}_read_disabled`,
+      `当前账号未开启读取${kind === "videos" ? "视频" : "聊天"}。请在设置 → 账号中重新导入凭据并勾选对应权限。`, 403);
   }
 
   externalSessionError(error) {
@@ -558,7 +569,8 @@ export class DouyinCollector {
     await connection?.disconnect();
   }
 
-  async attachExternalBrowser(connection, identity, page) {
+  async attachExternalBrowser(connection, identity, page, readPermissions = this.getReadPermissions()) {
+    readPermissions = parseReadPermissions(readPermissions);
     if (!connection.connected || !identity?.uid) throw new BrowserConnectionError("browser_login_required", "请先在浏览器里登录抖音，再重新连接。");
     if (this.accountUid && this.accountUid !== identity.uid) throw accountMismatchError(identity.nickname);
     await this.close();
@@ -572,7 +584,7 @@ export class DouyinCollector {
     // restores the previous import instead of destroying usable credentials.
     try {
       await Promise.all(files.slice(0, 2).map(name => rm(path.join(this.dataDirectory, name), { force: true })));
-      this.externalSource = { browser: connection.browser };
+      this.externalSource = { browser: connection.browser, readPermissions };
       this.externalSessionState = "exporting";
       await writeFile(path.join(this.dataDirectory, "external-browser.json"), `${JSON.stringify(this.externalSource)}\n`, { mode: 0o600 });
       this.externalConnection = connection;
@@ -589,9 +601,9 @@ export class DouyinCollector {
       this.accountMismatch = false;
       await this.applyAccountIdentity(identity);
       await this.cacheDirectSession(connection.context, page, identity);
-      await this.ensureDirectApi({ history: true, security: true });
+      await this.ensureDirectApi({ history: readPermissions.videos, security: true });
       const imported = await loadDirectSession(this.dataDirectory, identity.uid);
-      await loadDirectHistoryTemplate(this.dataDirectory);
+      if (readPermissions.videos) await loadDirectHistoryTemplate(this.dataDirectory);
       requireDirectCredentials(imported);
       this.externalSessionState = "ready";
       await this.detachExternalBrowser();
@@ -664,6 +676,7 @@ export class DouyinCollector {
   }
 
   async ensureDirectApi({ history = false, security = false, signal } = {}) {
+    if (history) this.assertReadPermission("videos");
     signal?.throwIfAborted();
     if (this.externalSessionState === "reconnect_required" && !this.externalConnection?.connected)
       throw this.externalSessionError(new DirectHistoryError("direct_session_missing", "请重新导入登录凭据。"));
@@ -683,7 +696,7 @@ export class DouyinCollector {
             throw new DirectHistoryError("direct_session_missing", "浏览器登录态已变化，需要重新核对账号。");
           session = await saveDirectSession(this.dataDirectory, { ...session, cookies });
         }
-        if ((history || !session.values.webid) && !await loadDirectHistoryTemplate(this.dataDirectory).catch(() => null))
+        if ((history || (this.getReadPermissions().videos && !session.values.webid)) && !await loadDirectHistoryTemplate(this.dataDirectory).catch(() => null))
           throw new DirectHistoryError("direct_session_missing", "登录会话尚未完成请求参数初始化。");
       }
       catch (error) {
@@ -697,7 +710,7 @@ export class DouyinCollector {
           signal?.throwIfAborted();
           if (!await this.hasLoginSession(context, page)) throw new DirectHistoryError("login_required", "请先在采集器中登录抖音。");
           await this.assertAccountMatches(page);
-          if (history || !session?.values.webid) {
+          if (history || (this.getReadPermissions().videos && !session?.values.webid)) {
             await this.prepareDirectHistoryTemplate(context, page, this.syncRunId);
             const cached = await loadDirectSession(this.dataDirectory, this.accountUid);
             const template = await loadDirectHistoryTemplate(this.dataDirectory);
@@ -901,6 +914,7 @@ export class DouyinCollector {
 
   /** smallest：下最低一档清晰度，给 AI 解析用 */
   startVideoDownload(sourceUrl, { playback = false, smallest = false } = {}) {
+    this.assertReadPermission("videos");
     const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
     if (this.visibleBrowserWorkRunning()) {
       throw new VideoDownloadError("collector_busy", "采集器正在执行其他任务，请稍后再试。", { retryable: true });
@@ -952,6 +966,7 @@ export class DouyinCollector {
 
   /** The player's <video> cannot send the session header, so each playback job carries its own key. */
   playbackStream(jobId, key, live = null) {
+    if (!this.getReadPermissions().videos) return null;
     const job = this.videoDownloadJobs.get(jobId);
     const expected = Buffer.from(job?.stream ? job.streamKey : "");
     const given = Buffer.from(String(key ?? ""));
@@ -1128,6 +1143,7 @@ export class DouyinCollector {
   }
 
   startSync({ mode = "full_records" } = {}) {
+    this.assertReadPermission("videos");
     if (this.syncPromise) return false;
     this.syncStopRequested = false;
     const full = mode === "full_records";
@@ -1202,6 +1218,7 @@ export class DouyinCollector {
 
   // 聊天接收独立于接口记录读取和视频下载。
   startChatObservation() {
+    this.assertReadPermission("chat");
     if (this.chatPromise) return false;
     const runId = this.chatRunId + 1;
     this.chatRunId = runId;
@@ -1283,6 +1300,7 @@ export class DouyinCollector {
   }
 
   async sendChatMessage(input) {
+    this.assertReadPermission("chat");
     const request = validateChatSend(input);
     const fingerprint = `${request.conversationId}\n${request.text}`;
     const previous = this.chatSends.get(request.requestId);
@@ -1315,6 +1333,7 @@ export class DouyinCollector {
   }
 
   chatClientForReading() {
+    this.assertReadPermission("chat");
     const chat = this.chat;
     if (!this.isChatReceiving() || chat.stopping || !chat.client)
       throw new ChatSendError("not_receiving", "先开始接收消息，才能看群消息和抖音上的火花。");
@@ -1332,6 +1351,7 @@ export class DouyinCollector {
   }
 
   async getDirectChatClient(options = {}) {
+    this.assertReadPermission("chat");
     const api = await this.ensureDirectApi({ ...options, security: true });
     if (!api.chatClient) api.chatClient = new DirectChatClient(api);
     const client = api.chatClient;
