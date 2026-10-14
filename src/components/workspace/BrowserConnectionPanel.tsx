@@ -121,7 +121,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
           {(["videos", "chat"] as const).map(kind => <Pressable key={kind} accessibilityRole="checkbox"
             accessibilityLabel={kind === "videos" ? "读取视频" : "读取聊天"} accessibilityState={{ checked: readPermissions[kind], disabled }}
             aria-checked={readPermissions[kind]} disabled={disabled} onPress={() => setReadPermissions(current => ({ ...current, [kind]: !current[kind] }))}
-            style={[styles.option, readPermissions[kind] && styles.selected, disabled && styles.disabled]} testID={`browser-read-${kind}`}>
+            style={[styles.option, readPermissions[kind] && styles.selected, disabled && styles.disabled]} testID={kind === "videos" ? "browser-read-videos" : "browser-read-chat"}>
             <Text style={styles.text}>{readPermissions[kind] ? "✓ " : "○ "}{kind === "videos" ? "读取视频" : "读取聊天"}</Text>
           </Pressable>)}
         </View>
