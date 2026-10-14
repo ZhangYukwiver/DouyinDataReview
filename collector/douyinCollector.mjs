@@ -500,7 +500,9 @@ export class DouyinCollector {
       const session = await loadDirectSession(this.dataDirectory, this.accountUid);
       await loadDirectHistoryTemplate(this.dataDirectory);
       requireDirectCredentials(session);
-      if (!needsDirectSessionRefresh(session)) this.externalSessionState = "ready";
+      // A browser's short token can expire while the imported login remains
+      // usable. Verify the actual HTTP identity before asking for a new import.
+      this.externalSessionState = "ready";
     } catch { /* Missing, incomplete or expired credentials need an explicit CDP import. */ }
     this.updateStatus({
       counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
@@ -591,7 +593,6 @@ export class DouyinCollector {
       const imported = await loadDirectSession(this.dataDirectory, identity.uid);
       await loadDirectHistoryTemplate(this.dataDirectory);
       requireDirectCredentials(imported);
-      if (needsDirectSessionRefresh(imported)) throw new DirectHistoryError("direct_session_missing", "导出的短期凭据已过期，请重新连接。");
       this.externalSessionState = "ready";
       await this.detachExternalBrowser();
       this.updateStatus({ state: "idle", phase: null, progress: null, browserOpen: false,
@@ -684,8 +685,6 @@ export class DouyinCollector {
         }
         if ((history || !session.values.webid) && !await loadDirectHistoryTemplate(this.dataDirectory).catch(() => null))
           throw new DirectHistoryError("direct_session_missing", "登录会话尚未完成请求参数初始化。");
-        if (!this.externalConnection?.connected && needsDirectSessionRefresh(session))
-          throw new DirectHistoryError("direct_session_missing", "导入的短期登录凭据已过期。");
       }
       catch (error) {
         if (error?.code !== "direct_session_missing") throw error;
@@ -719,8 +718,8 @@ export class DouyinCollector {
         onSessionError: error => this.externalSessionError(error) });
       this.directApi.replaceSession(session);
       try {
-        // Browser-bound login Cookies must be refreshed before the HTTP
-        // identity check; an expired short token otherwise looks like logout.
+        // Refresh through the browser while importing; a detached cache still
+        // has to pass the platform's HTTP identity check before any task runs.
         if (security || needsDirectSessionRefresh(this.directApi.session))
           await this.ensureDirectWriteCredentials(this.directApi, signal);
         const identity = await this.directApi.verifyIdentity(this.accountUid, signal);
@@ -743,7 +742,7 @@ export class DouyinCollector {
   async ensureDirectWriteCredentials(api, signal) {
     try {
       const credentials = requireDirectCredentials(api.session);
-      if (!needsDirectSessionRefresh(api.session)) return credentials;
+      if (!needsDirectSessionRefresh(api.session) || !this.externalConnection?.connected) return credentials;
     } catch (error) { if (error.code !== "write_credentials_missing") throw error; }
     if (!this.externalConnection?.connected)
       throw this.externalSessionError(new DirectHistoryError("write_credentials_missing", "导入的签名凭据需要刷新。"));
@@ -770,7 +769,6 @@ export class DouyinCollector {
               // A fresh login to the same account rotates Cookies. Complete
               // its paired export before replacing the active HTTP client.
               const session = await this.cacheDirectSession(context, page, identity, { updateApi: false });
-              if (needsDirectSessionRefresh(session)) { await delay(500, undefined, { signal }); continue; }
               // Export with the browser's current Cookie jar, independently
               // of a previously created HTTP context.
               const exporter = new DirectApiClient(session, { dataDirectory: api.dataDirectory, directory: api.directory,

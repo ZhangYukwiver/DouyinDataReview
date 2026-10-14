@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { CollectorStore } from "./store.mjs";
-import { saveDirectSession } from "./directApi.mjs";
+import { loadDirectSession, saveDirectSession } from "./directApi.mjs";
 import { DIRECT_SIGNER_COMMIT, DirectHistoryError, fetchDirectHistoryPage } from "./directHistory.mjs";
 import { directApiFixture, directSessionFixture, testCookie } from "./fixtures/directClient.mjs";
 
@@ -91,16 +91,35 @@ describe("imported credentials without a running browser", () => {
     expect(collector.getStatus().browserSource.credentials).toBe("reconnect_required");
     expect(JSON.stringify(collector.getSnapshot())).toBe(before); expect(browser).not.toHaveBeenCalled();
   });
-  it("requires reconnection for an expired browser-bound short token without sending an HTTP request", async () => {
+  it.each(["expired", "missing"])("restores a cache with a %s short token when the platform still accepts its login", async token => {
     const session = directSessionFixture(); session.browserBoundSession = true;
-    session.cookies.push({ ...testCookie("x_tt_token", "expired"), expires: (Date.now() - 1_000) / 1000 });
-    const { collector, http, browser } = await fixture({ session });
-    expect(collector.getStatus().browserSource.credentials).toBe("reconnect_required");
-    await expect(collector.ensureDirectApi()).rejects.toMatchObject({ code: "browser_reconnect_required" });
-    expect(http.fetch).not.toHaveBeenCalled(); expect(browser).not.toHaveBeenCalled();
+    if (token === "expired") session.cookies.push({ ...testCookie("x_tt_token", "expired"), expires: (Date.now() - 1_000) / 1000 });
+    const { collector, http, browser } = await fixture({ session, handler: url => ({ payload: url.pathname.includes("/query/user/")
+      ? { status_code: 0, user_uid: "123" } : { status_code: 0, aweme_list: [], has_more: 0, max_cursor: "0", cursor: "0" } }) });
+    expect(collector.getStatus().browserSource).toMatchObject({ credentials: "ready", connected: false });
+    const api = await collector.ensureDirectApi({ history: true, security: true });
+    for (const type of ["liked_videos", "favorite_videos"]) await api.collectRecordPages(type, () => false);
+    expect(http.fetch).toHaveBeenCalledTimes(3);
+    expect(collector.getStatus().browserSource.credentials).toBe("ready");
+    expect(browser).not.toHaveBeenCalled(); expect(collector.context).toBeNull();
   });
-  it("keeps the import usable after network failures rather than treating them as expired credentials", async () => {
-    const { collector, browser } = await fixture({ handler: () => { throw new Error("offline"); } });
+  it.each([401, 403, "logout", "account_mismatch"])("requires reconnection for an expired short token only after platform rejection %s", async rejection => {
+    const session = directSessionFixture(); session.browserBoundSession = true;
+    const { collector, http, browser, dataDirectory } = await fixture({ session, handler: () => typeof rejection === "number"
+      ? { status: rejection } : { payload: rejection === "logout" ? { status_code: 8 } : { status_code: 0, user_uid: "456" } } });
+    const before = await loadDirectSession(dataDirectory);
+    const snapshot = collector.getSnapshot();
+    expect(collector.getStatus().browserSource.credentials).toBe("ready");
+    await expect(collector.ensureDirectApi({ security: true })).rejects.toMatchObject({ code: "browser_reconnect_required" });
+    expect(collector.getStatus().browserSource.credentials).toBe("reconnect_required");
+    expect(http.fetch).toHaveBeenCalledOnce(); expect(browser).not.toHaveBeenCalled();
+    expect(await loadDirectSession(dataDirectory)).toMatchObject({ uid: before.uid, cookies: before.cookies,
+      security: before.security, browserBoundSession: before.browserBoundSession });
+    expect(collector.getSnapshot()).toEqual(snapshot);
+  });
+  it("keeps an expired-token cache usable after network failures rather than treating them as expired credentials", async () => {
+    const session = directSessionFixture(); session.browserBoundSession = true;
+    const { collector, browser } = await fixture({ session, handler: () => { throw new Error("offline"); } });
     await expect(collector.ensureDirectApi()).rejects.toMatchObject({ code: "request_failed" });
     expect(collector.getStatus().browserSource.credentials).toBe("ready"); expect(browser).not.toHaveBeenCalled();
   });
