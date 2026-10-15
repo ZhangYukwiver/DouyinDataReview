@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, session, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,7 +10,7 @@ import { startStaticServer } from "./staticServer.mjs";
 import { isSameOriginUrl, isStoryUrl } from "./windowPolicy.mjs";
 
 const APP_ID = "com.zhangyukwiver.contentinsights";
-const APP_NAME = "内容数据工作台";
+const APP_NAME = "DouyinDataReview";
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(moduleDirectory, "..");
 const ICON_PATH = path.join(projectDirectory, "build", "icon.png");
@@ -39,6 +39,11 @@ let launchedHidden = false;
 const liveNotifications = new Set();
 const storyWindows = new Set();
 
+// 保留旧版的数据和 Chromium 会话目录，应用改名后继续读取已有记录、凭据和设置。
+const userDataDirectory = path.join(app.getPath("appData"), "内容数据工作台");
+mkdirSync(userDataDirectory, { recursive: true });
+app.setPath("userData", userDataDirectory);
+app.setPath("sessionData", userDataDirectory);
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_ID);
 

@@ -1,6 +1,6 @@
 # 参与贡献
 
-感谢你为 `DouyinDataReview | 内容数据工作台` 提交问题、建议或代码。
+感谢你为 `DouyinDataReview` 提交问题、建议或代码。
 
 ## 开始前
 

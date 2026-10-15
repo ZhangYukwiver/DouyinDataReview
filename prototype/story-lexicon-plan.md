@@ -102,7 +102,7 @@ export interface StoryFieldCoverage { label: string; count: number; base: number
 
 - 在脚本 `/* 01 sample */`、`/* 05 echo */`、`/* 06 evidence */` 三段里各自追加；`rankLines(slot, items, label)` 已有（04 段定义，可提到前面复用），芯片用 `el()` 生成；数字沿用 `num()`/`pct()`。
 - 隐私：`body.privacy-on [data-slot="terms-chat"], body.privacy-on [data-slot="chat-words"] { filter: blur(6px) }`；标签不模糊（04 章已明文）。
-- 改完 `npm run sync:story`；用户日常入口 `抖音年度回顾.app` 伺服的是 `dist/`，最后要 `npm run build:web`（会自动 sync）。
+- 改完 `npm run sync:story`；用户日常入口 `DouyinDataReview.app` 伺服的是 `dist/`，最后要 `npm run build:web`（会自动 sync）。
 
 ## 4. 验证
 

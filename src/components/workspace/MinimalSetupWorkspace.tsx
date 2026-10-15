@@ -158,7 +158,7 @@ export function MinimalSetupWorkspace({
       <View style={styles.topbar}>
         {/* 顶栏内容和下面的页面同宽同边距，超宽窗口里左右对齐 */}
         <View style={[styles.topInner, { maxWidth: PAGE_MAX + gutter * 2, paddingHorizontal: gutter }, narrow && styles.topInnerNarrow]}>
-          <Text numberOfLines={1} style={styles.brand}>内容数据工作台</Text>
+          <Text numberOfLines={1} style={styles.brand}>DouyinDataReview</Text>
           <View style={styles.topDivider} />
           <View style={styles.topStatus}>
             <View style={[styles.dot, connected && styles.dotOn]} />

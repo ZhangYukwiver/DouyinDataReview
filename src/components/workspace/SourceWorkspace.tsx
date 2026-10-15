@@ -305,7 +305,7 @@ function SketchSetupWorkspace({
       <View style={[styles.topbar, narrow && styles.topbarNarrow]}>
         <View style={styles.brand}>
           <SketchBox seed="brand-mark" fill={C.card} passes={2} amp={1} style={styles.mark}><NotebookPen color={C.ink} size={17} strokeWidth={1.8} /></SketchBox>
-          <Hand style={[styles.brandName, narrow && styles.brandNameNarrow]}>内容数据工作台</Hand>
+          <Hand style={[styles.brandName, narrow && styles.brandNameNarrow]}>DouyinDataReview</Hand>
         </View>
         <View style={styles.topStatus}><View style={[styles.dot, connected && styles.dotOn]} /><Text numberOfLines={1} style={styles.statusText}>{setup.statusLine}</Text></View>
         <View style={styles.row8}>

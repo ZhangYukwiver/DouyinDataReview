@@ -34,7 +34,7 @@ on idle
 			set savedMessage to do shell script "/bin/cat " & quoted form of errorPath
 			if savedMessage is not "" then set messageText to savedMessage
 		end try
-		display dialog messageText with title "抖音年度回顾" buttons {"好"} default button "好" with icon stop
+		display dialog messageText with title "DouyinDataReview" buttons {"好"} default button "好" with icon stop
 		quit
 	end try
 	return 2
@@ -60,6 +60,6 @@ on startSupervisor()
 		set supervisorPID to do shell script launchCommand
 	on error errorMessage
 		set supervisorPID to missing value
-		display dialog errorMessage with title "抖音年度回顾" buttons {"好"} default button "好" with icon stop
+		display dialog errorMessage with title "DouyinDataReview" buttons {"好"} default button "好" with icon stop
 	end try
 end startSupervisor

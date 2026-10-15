@@ -76,8 +76,8 @@ jobs:
       - name: Verify Apple Silicon package
         if: runner.os == 'macOS'
         run: |
-          node scripts/verify-release-package.mjs 'release/mac-arm64/内容数据工作台.app/Contents/Resources'
-          test "$(lipo -archs 'release/mac-arm64/内容数据工作台.app/Contents/MacOS/内容数据工作台')" = arm64
+          node scripts/verify-release-package.mjs 'release/mac-arm64/DouyinDataReview.app/Contents/Resources'
+          test "$(lipo -archs 'release/mac-arm64/DouyinDataReview.app/Contents/MacOS/DouyinDataReview')" = arm64
       - name: Upload Windows installer
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

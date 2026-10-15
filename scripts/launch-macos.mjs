@@ -247,7 +247,7 @@ async function shutdown() {
 }
 
 async function main() {
-  process.title = "抖音年度回顾";
+  process.title = "DouyinDataReview";
   const launcherAppPID = Number.parseInt(process.env.DOUYIN_LAUNCHER_APP_PID ?? "", 10);
   if (Number.isSafeInteger(launcherAppPID) && launcherAppPID > 1) {
     appMonitor = setInterval(() => {
