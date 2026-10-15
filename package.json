@@ -1,6 +1,6 @@
 {
   "name": "douyin-content-insights-mobile",
-  "version": "1.14.0",
+  "version": "1.14.1",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "collector": "node collector/server.mjs",
     "direct:setup": "node scripts/setup-direct-signer.mjs",
     "direct:check": "node collector/directHistory.mjs --check-signer",
-    "app:mac": "npm run build:icons && osacompile -s -o '抖音年度回顾.app' scripts/macos-launcher.applescript && plutil -replace CFBundleIdentifier -string local.douyin.annual-recap '抖音年度回顾.app/Contents/Info.plist' && plutil -replace NSDocumentsFolderUsageDescription -string '读取同目录中的本地应用代码与年度回顾数据。' '抖音年度回顾.app/Contents/Info.plist' && cp build/icon.icns '抖音年度回顾.app/Contents/Resources/applet.icns' && plutil -remove CFBundleIconName '抖音年度回顾.app/Contents/Info.plist' && codesign --force --deep --sign - '抖音年度回顾.app'",
+    "app:mac": "npm run build:icons && osacompile -s -o 'DouyinDataReview.app' scripts/macos-launcher.applescript && plutil -replace CFBundleName -string DouyinDataReview 'DouyinDataReview.app/Contents/Info.plist' && plutil -replace CFBundleDisplayName -string DouyinDataReview 'DouyinDataReview.app/Contents/Info.plist' && plutil -replace CFBundleIdentifier -string local.douyin.annual-recap 'DouyinDataReview.app/Contents/Info.plist' && plutil -replace NSDocumentsFolderUsageDescription -string '读取同目录中的本地应用代码与年度回顾数据。' 'DouyinDataReview.app/Contents/Info.plist' && cp build/icon.icns 'DouyinDataReview.app/Contents/Resources/applet.icns' && (plutil -remove CFBundleIconName 'DouyinDataReview.app/Contents/Info.plist' 2>/dev/null || true) && codesign --force --deep --sign - 'DouyinDataReview.app'",
     "build:icons": "node scripts/build-icons.mjs",
     "watch:process": "node scripts/process-watchdog.mjs",
     "ops:traffic": "node scripts/ops/github-traffic.mjs",
@@ -60,7 +60,7 @@
   },
   "build": {
     "appId": "com.zhangyukwiver.contentinsights",
-    "productName": "内容数据工作台",
+    "productName": "DouyinDataReview",
     "extraMetadata": {
       "main": "desktop/main.mjs"
     },
@@ -119,7 +119,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "内容数据工作台",
+      "shortcutName": "DouyinDataReview",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
