@@ -2,7 +2,7 @@
   "expo": {
     "name": "DouyinDataReview",
     "slug": "douyin-content-insights",
-    "version": "1.15.0",
+    "version": "1.15.1",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "contentinsights",
