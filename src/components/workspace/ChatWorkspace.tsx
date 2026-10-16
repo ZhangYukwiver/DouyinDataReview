@@ -1787,7 +1787,7 @@ const CHAT_AVATAR_HOST_SUFFIXES = [
   "snssdk.com",
 ];
 
-function safeChatAvatarUrl(value: string | null | undefined): string | null {
+export function safeChatAvatarUrl(value: string | null | undefined): string | null {
   const text = cleanText(value);
   if (!text) return null;
   try {

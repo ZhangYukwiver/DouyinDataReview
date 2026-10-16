@@ -444,7 +444,7 @@ export function ContentWorkspace({
         ) : activeView === "summary" ? (
           model.status === "empty"
             ? <SummaryEmpty />
-            : <ReportDashboard mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} square={appStyle === "archive" || appStyle === "poster"} width={mainWidth} />
+            : <ReportDashboard chatConversations={chatConversations} chatMessages={chatMessages} mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} records={records} width={mainWidth} />
         ) : activeView === "highlights" ? (
           livingReport
             ? <LivingHighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={livingReport} />
