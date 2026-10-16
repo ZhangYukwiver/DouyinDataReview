@@ -119,7 +119,7 @@ describe("browser login HTTP handshake", () => {
     const confirmed = await call("/v1/browser/confirm?account=default", "POST", { id: inspected.body.candidate.id });
     expect(confirmed.status).toBe(200); expect(confirmed.body.status.browserSource).toEqual({ mode: "cdp", browser: "chrome", connected: false, credentials: "ready" });
     expect(connections[0].disconnect).toHaveBeenCalledOnce();
-    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: true });
+    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false });
     expect(confirmed.body.accounts[0].uid).toBe("123456");
     expect(JSON.parse(await readFile(path.join(dataDirectory, "external-browser.json"), "utf8"))).toEqual({ browser: "chrome", readPermissions: { videos: true, chat: true } });
     expect((await call("/v1/browser/disconnect?account=default", "POST")).body.status.browserSource.connected).toBe(false);
@@ -130,7 +130,7 @@ describe("browser login HTTP handshake", () => {
     expect((await call("/v1/browser/independent?account=default", "POST")).status).toBe(404);
     expect(await readFile(path.join(dataDirectory, "direct-session.json"), "utf8").then(() => true, () => false)).toBe(true);
   });
-  it("starts a full read after detaching, reports progress, and supports stopping without duplicate reads", async () => {
+  it("starts a read after detaching, reports progress, and supports stopping without duplicate reads", async () => {
     const { call, connections, readRecords } = await fixture();
     let finishRead;
     readRecords.mockImplementationOnce(function () {
@@ -141,12 +141,12 @@ describe("browser login HTTP handshake", () => {
     const inspected = await call("/v1/browser/connect", "POST", { browser: "chrome" });
     const confirmed = await call("/v1/browser/confirm", "POST", { id: inspected.body.candidate.id });
     expect(confirmed).toMatchObject({ status: 200, body: { status: {
-      state: "collecting", syncFull: true, syncMode: "direct_records", browserOpen: false,
+      state: "collecting", syncFull: false, syncMode: "direct_records", browserOpen: false,
     } } });
-    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: true });
+    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false });
     expect((await call("/v1/sync", "POST")).body.started).toBe(false);
     expect((await call("/v1/experimental/records-direct", "POST")).body.started).toBe(false);
-    expect((await call("/v1/status")).body.syncFull).toBe(true);
+    expect((await call("/v1/status")).body.syncFull).toBe(false);
     expect((await call("/v1/sync/stop", "POST")).body.stopped).toBe(true);
     finishRead();
     await vi.waitFor(async () => expect((await call("/v1/status")).body).toMatchObject({ state: "idle", syncMode: null }));
@@ -161,7 +161,7 @@ describe("browser login HTTP handshake", () => {
       state: "error", code: "request_failed", message: "合成读取失败",
       browserSource: { credentials: "ready", connected: false },
     }));
-    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: true });
+    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false });
   });
   it("keeps the browser open until a later login, then returns the account for confirmation", async () => {
     let loggedIn = false;
@@ -226,7 +226,7 @@ describe("browser login HTTP handshake", () => {
     const retry = await call("/v1/browser/connect", "POST", { browser: "chrome" });
     const confirmed = await call("/v1/browser/confirm", "POST", { id: retry.body.candidate.id });
     expect(confirmed).toMatchObject({ status: 200, body: { status: { browserSource: { credentials: "ready", connected: false } } } });
-    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: true });
+    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false });
   });
   it("rejects an account changing between preview and confirmation, without writing a session", async () => {
     const { call, identity, dataDirectory, connections, readRecords } = await fixture();
@@ -256,7 +256,7 @@ describe("browser login HTTP handshake", () => {
     expect(back.body.candidate).toMatchObject({ accountId: "default", newAccount: false });
     expect((await call("/v1/browser/confirm", "POST", { id: back.body.candidate.id })).body.activeId).toBe("default");
     expect(readRecords.mock.contexts.map(collector => collector.getStatus().account.id)).toEqual(["default", otherId, "default"]);
-    expect(readRecords.mock.calls.every(([, options]) => options.full === true)).toBe(true);
+    expect(readRecords.mock.calls.map(([, options]) => options.full)).toEqual([false, true, false]);
   });
   it("rejects unsupported sources, stale accounts, stale confirmations and busy collection", async () => {
     const { call, browserConnector } = await fixture();

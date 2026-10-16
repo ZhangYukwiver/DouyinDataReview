@@ -510,7 +510,8 @@ export async function startCollectorServer({
               if (target.id !== accounts.activeId) await runAccountWork(() => switchTo(target));
               else { await explorer.close(); await collector.shutdown(); }
               await collector.attachExternalBrowser(pending.connection, identity, pending.page, readPermissions);
-              if (readPermissions.videos) collector.startSync({ mode: "full_records" });
+              // 已有账号重新导入只补新增；没读完过的分类 runDirectRecords 会自己退回整份读取
+              if (readPermissions.videos) collector.startSync({ mode: created ? "full_records" : "direct_records" });
               sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
             } catch (error) {
               await pending.connection.disconnect();
