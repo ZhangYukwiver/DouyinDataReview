@@ -1473,6 +1473,16 @@ export class DouyinCollector {
     }
   }
 
+  // 归进来的记录可能来自备份：喜欢和收藏记成读过一遍，以后只往上加，不按平台现有列表整份替换（用户点完整读取除外）
+  async keepLocalLists() {
+    const directSync = { ...normalizeDirectSyncState(this.snapshot.directSync, this.snapshot.warnings), liked_videos: true, favorite_videos: true };
+    await this.saveSnapshot((snapshot) => [snapshot.records, snapshot.warnings, {
+      directSync,
+      chatMessages: snapshot.chatMessages,
+      chatConversations: snapshot.chatConversations,
+    }]);
+  }
+
   // 聊天接收和记录读取会同时存盘，存的又都是整份快照：排成一队，轮到自己才从当前快照里取对方那部分，
   // 否则后写的一方会拿调用时的旧快照，把对方刚存的记录或聊天盖掉
   saveSnapshot(build) {

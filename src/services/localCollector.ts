@@ -77,6 +77,8 @@ export interface BrowserLoginCandidate {
   uid: string;
   accountId: string | null;
   newAccount: boolean;
+  /** 当前账号有记录但没绑定抖音号，可以把这个号归进来 */
+  adoptable: boolean;
   readPermissions?: CollectorReadPermissions;
 }
 
@@ -1228,14 +1230,14 @@ export async function inspectBrowserLogin(baseUrl: string, token: string, browse
     throw new LocalCollectorError("invalid_response", "浏览器登录账号无效。");
   return { id: candidate.id, browser: candidate.browser as BrowserLoginSource["id"], uid: candidate.uid,
     nickname: cleanRecordString(candidate.nickname, 100), accountId: typeof candidate.accountId === "string" && ACCOUNT_ID.test(candidate.accountId) ? candidate.accountId : null,
-    newAccount: candidate.newAccount === true,
+    newAccount: candidate.newAccount === true, adoptable: candidate.adoptable === true,
     ...(isObject(candidate.readPermissions) ? { readPermissions: {
       videos: candidate.readPermissions.videos === true, chat: candidate.readPermissions.chat === true,
     } } : {}) };
 }
 
-export async function confirmBrowserLogin(baseUrl: string, token: string, id: string, readPermissions: CollectorReadPermissions, accountId?: string | null): Promise<CollectorAccountChange> {
-  return parseAccountChange(await requestJson(baseUrl, withAccount("/v1/browser/confirm", accountId), { method: "POST", body: JSON.stringify({ id, readPermissions }) }, token, 5 * 60_000));
+export async function confirmBrowserLogin(baseUrl: string, token: string, id: string, readPermissions: CollectorReadPermissions, accountId?: string | null, adopt = false): Promise<CollectorAccountChange> {
+  return parseAccountChange(await requestJson(baseUrl, withAccount("/v1/browser/confirm", accountId), { method: "POST", body: JSON.stringify({ id, readPermissions, ...(adopt ? { adopt } : {}) }) }, token, 5 * 60_000));
 }
 
 export async function cancelBrowserLogin(baseUrl: string, token: string, id: string): Promise<void> {

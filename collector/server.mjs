@@ -264,6 +264,15 @@ export async function startCollectorServer({
     await page.goto("https://www.douyin.com/user/self", { waitUntil: "domcontentloaded", timeout: 30_000 });
     return waitForBrowserLogin(connection, page, (context, loginPage) => collector.hasLoginSession(context, loginPage), options);
   };
+  // 当前账号有记录却没绑定抖音号（旧版或先并入了备份）：存着的凭据要么没有、要么就是浏览器里这个号的，才让用户归进来
+  const canAdopt = async (identity) => {
+    const active = accounts.active();
+    if (active.uid) return false;
+    let storedUid = null;
+    try { storedUid = JSON.parse(await readFile(path.join(accounts.directory(active), "direct-session.json"), "utf8"))?.uid ?? null; }
+    catch { /* 没存过凭据 */ }
+    return !storedUid || storedUid === identity.uid;
+  };
   const browserTarget = (identity) => {
     const existing = accounts.list().accounts.find(account => account.uid === identity.uid);
     if (existing) return existing;
@@ -494,8 +503,9 @@ export async function startCollectorServer({
                 try { readPermissions = importedReadPermissions(JSON.parse(await readFile(path.join(accounts.directory(target), "external-browser.json"), "utf8"))); }
                 catch { /* A first import starts with video reading selected. */ }
               }
+              const adoptable = !target && await canAdopt(identity);
               sendJson(response, 200, { candidate: { id, browser: connection.browser, nickname: identity.nickname, uid: identity.uid,
-                accountId: target?.id ?? null, newAccount: !target, readPermissions } });
+                accountId: target?.id ?? null, newAccount: !target, adoptable, readPermissions } });
             } catch (error) { await connection.disconnect(); throw error; }
           } else if (url.pathname === "/v1/browser/confirm") {
             const readPermissions = parseReadPermissions(body.readPermissions);
@@ -508,9 +518,12 @@ export async function startCollectorServer({
             clearTimeout(pending.timer); pendingBrowser = null;
             let created = null;
             try {
-              const target = browserTarget(identity) ?? (created = await accounts.create());
+              const existing = browserTarget(identity);
+              const adopt = !existing && body.adopt === true && await canAdopt(identity);
+              const target = existing ?? (adopt ? accounts.active() : (created = await accounts.create()));
               if (target.id !== accounts.activeId) await runAccountWork(() => switchTo(target));
               else { await explorer.close(); await collector.shutdown(); }
+              if (adopt) await collector.keepLocalLists();
               await collector.attachExternalBrowser(pending.connection, identity, pending.page, readPermissions);
               // 已有账号重新导入只补新增；没读完过的分类 runDirectRecords 会自己退回整份读取
               if (readPermissions.videos) collector.startSync({ mode: created ? "full_records" : "direct_records" });
