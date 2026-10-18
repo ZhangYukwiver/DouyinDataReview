@@ -231,9 +231,14 @@ export function ContentWorkspace({
   const seenUpdatedAtRef = useRef<string | null>(updatedAt);
   const totalRecords = records.watch_history.length + records.liked_videos.length + records.favorite_videos.length;
   const livingReport = report && isLivingReport(report) ? report : null;
+  // 读聊天历史时每存一批就换一份聊天，报告模型一次要算两百毫秒，滚动跟着一顿一顿：读完再一次算齐，聊天页照常实时显示。
+  // 记录换了（移除导入文件、切换账号）就是换了数据来源，聊天得跟着换，不能拿上一份的聊天配新的记录
+  const reportChatsRef = useRef({ records, chatMessages, chatConversations });
+  if (!status?.chat.progress || reportChatsRef.current.records !== records) reportChatsRef.current = { records, chatMessages, chatConversations };
+  const reportChats = reportChatsRef.current;
   const model = useMemo(
-    () => buildReportModel(records, chatMessages, report, chatConversations),
-    [chatConversations, chatMessages, records, report],
+    () => buildReportModel(records, reportChats.chatMessages, report, reportChats.chatConversations),
+    [reportChats.chatConversations, reportChats.chatMessages, records, report],
   );
   // 直播记录存在观看历史里（mediaType live），侧栏单独一栏，观看历史只列视频，免得一条出现两次
   const [watchedVideos, watchedLives] = useMemo(() => [
@@ -444,7 +449,7 @@ export function ContentWorkspace({
         ) : activeView === "summary" ? (
           model.status === "empty"
             ? <SummaryEmpty />
-            : <ReportDashboard chatConversations={chatConversations} chatMessages={chatMessages} mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} records={records} width={mainWidth} />
+            : <ReportDashboard chatConversations={reportChats.chatConversations} chatMessages={reportChats.chatMessages} mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} records={records} width={mainWidth} />
         ) : activeView === "highlights" ? (
           livingReport
             ? <LivingHighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={livingReport} />

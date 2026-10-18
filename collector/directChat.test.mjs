@@ -166,6 +166,56 @@ describe("native chat protocol",()=>{
 });
 
 describe("production HTTP chat entry",()=>{
+  it("saves chat history in batches and keeps the unsaved batch when stopped",async()=>{
+    const friends=["a","b","c"].map(id=>({id:`0:1:${id}`,type:1,name:id}));
+    const client={conversations:new Map(friends.map(f=>[f.id,f])),initialize:async()=>{},connect:async()=>{},close:async()=>{},
+      messages:async({conversationId},{signal})=>{
+        if(conversationId==="0:1:c") await new Promise((_,reject)=>signal.addEventListener("abort",()=>reject(signal.reason)));
+        return {pageMessages:[{id:`m-${conversationId}`,conversationId,conversationType:"friend",type:"text",text:"hi",sentAt:"2026-10-01T00:00:00Z",senderId:"9"}],hasMore:false};
+      }};
+    const store={save:vi.fn(async(records,warnings,options)=>({schemaVersion:2,records,warnings,updatedAt:new Date().toISOString(),...options}))};
+    const collector=new DouyinCollector({dataDirectory:".test",store,account:{id:"default",uid:"123"}});
+    collector.snapshot={schemaVersion:2,records:createEmptyRecords(),chatMessages:[],chatConversations:[],warnings:[],updatedAt:null};
+    collector.ensureDirectApi=vi.fn(async()=>({chatClient:client,session:{uid:"123"}}));
+    try {
+      expect(collector.startChatObservation()).toBe(true);
+      await vi.waitFor(()=>expect(collector.status.chat.progress).toMatchObject({current:3,total:3}));
+      expect(store.save).toHaveBeenCalledTimes(1);
+      await collector.stopChatObservation();
+      expect(store.save).toHaveBeenCalledTimes(2);
+      expect(collector.snapshot.chatMessages.map(msg=>msg.id).sort()).toEqual(["m-0:1:a","m-0:1:b"]);
+    } finally {await collector.close();}
+  });
+  it("queues overlapping chat and record saves so neither overwrites the other",async()=>{
+    let release;const gate=new Promise(resolve=>{release=resolve;});
+    const store={save:vi.fn(async(records,warnings,options)=>{if(store.save.mock.calls.length===1)await gate;return {schemaVersion:2,records,warnings,updatedAt:"2026-10-18T00:00:00Z",...options};})};
+    const collector=new DouyinCollector({dataDirectory:".test",store,account:{id:"default",uid:"123"}});
+    collector.snapshot={schemaVersion:2,records:createEmptyRecords(),chatMessages:[],chatConversations:[],warnings:[],updatedAt:null};
+    const chat=[{id:"m1",conversationId:cid,type:"text",text:"hi"}], liked={...createEmptyRecords(),liked_videos:[{id:"v1"}]};
+    collector.saveSnapshot(s=>[s.records,s.warnings,{chatMessages:chat,chatConversations:s.chatConversations}]);
+    const second=collector.saveSnapshot(s=>[liked,s.warnings,{chatMessages:s.chatMessages,chatConversations:s.chatConversations}]);
+    release();await second;
+    expect(collector.snapshot.records).toBe(liked);expect(collector.snapshot.chatMessages).toBe(chat);
+  });
+  it("says the last chat batch was not saved when the stop-time save fails",async()=>{
+    const friends=["a","b","c"].map(id=>({id:`0:1:${id}`,type:1,name:id}));
+    const client={conversations:new Map(friends.map(f=>[f.id,f])),initialize:async()=>{},connect:async()=>{},close:async()=>{},
+      messages:async({conversationId},{signal})=>{
+        if(conversationId==="0:1:c") await new Promise((_,reject)=>signal.addEventListener("abort",()=>reject(signal.reason)));
+        return {pageMessages:[{id:`m-${conversationId}`,conversationId,conversationType:"friend",type:"text",text:"hi",sentAt:"2026-10-01T00:00:00Z",senderId:"9"}],hasMore:false};
+      }};
+    const store={save:vi.fn(async(records,warnings,options)=>{if(store.save.mock.calls.length>1)throw Object.assign(new Error("busy"),{code:"EPERM"});return {schemaVersion:2,records,warnings,updatedAt:new Date().toISOString(),...options};})};
+    const collector=new DouyinCollector({dataDirectory:".test",store,account:{id:"default",uid:"123"}});
+    collector.snapshot={schemaVersion:2,records:createEmptyRecords(),chatMessages:[],chatConversations:[],warnings:[],updatedAt:null};
+    collector.ensureDirectApi=vi.fn(async()=>({chatClient:client,session:{uid:"123"}}));
+    try {
+      expect(collector.startChatObservation()).toBe(true);
+      await vi.waitFor(()=>expect(collector.status.chat.progress).toMatchObject({current:3,total:3}));
+      await collector.stopChatObservation();
+      expect(store.save).toHaveBeenCalledTimes(2);
+      expect(collector.status.chat.message).toContain("没能存上");
+    } finally {await collector.close();}
+  });
   it("receives live pushes, protects group text, deduplicates sends and releases its socket without Chromium",async()=>{
     let socket;
     const {api,fetch}=directApiFixture((url,options)=>url.pathname.includes("get_message_by_init")
