@@ -108,6 +108,9 @@ import { AnalysisWorkspace } from "./src/components/workspace/AnalysisWorkspace"
 import { loadAnalysisConfig, startAnalysis } from "./src/services/videoAnalysis";
 
 type ViewKey = "summary" | "highlights" | "records" | "chat" | "sources";
+// 官方档案没有聊天字段：每次渲染都给新的 []，按引用记忆的报告模型（上万条记录要算两百毫秒）就会跟着白算
+const NO_CHAT_MESSAGES: ChatMessage[] = [];
+const NO_CHAT_CONVERSATIONS: ChatConversationSummary[] = [];
 
 const DOWNLOAD_JOB_POLL_INTERVAL_MS = 800;
 const DOWNLOAD_JOB_TIMEOUT_MS = 15 * 60 * 1_000;
@@ -447,8 +450,8 @@ function AppContent() {
     ? {
         source: "archive",
         records: selectedArchive.data.records,
-        chatMessages: selectedArchive.data.chatMessages ?? [],
-        chatConversations: selectedArchive.data.chatConversations ?? [],
+        chatMessages: selectedArchive.data.chatMessages ?? NO_CHAT_MESSAGES,
+        chatConversations: selectedArchive.data.chatConversations ?? NO_CHAT_CONVERSATIONS,
         warnings: selectedArchive.data.warnings,
         updatedAt: selectedArchive.data.updatedAt ?? null,
       }
@@ -1777,8 +1780,8 @@ function AppContent() {
           storyStyle={storyStyle}
           onOpenPreferences={openPreferences}
           busy={collectorBusy}
-          chatConversations={displaySnapshot?.chatConversations ?? []}
-          chatMessages={displaySnapshot?.chatMessages ?? []}
+          chatConversations={displaySnapshot?.chatConversations ?? NO_CHAT_CONVERSATIONS}
+          chatMessages={displaySnapshot?.chatMessages ?? NO_CHAT_MESSAGES}
           chatBusy={chatControlBusy}
           chatConnected={collectorToken !== null}
           onToggleChatReception={() => {
@@ -1830,8 +1833,8 @@ function AppContent() {
           onTogglePrivacy={() => setPrivacy((value) => !value)}
           privacy={privacy}
           records={workspaceRecords}
-          chatMessages={displaySnapshot?.chatMessages ?? []}
-          chatConversations={displaySnapshot?.chatConversations ?? []}
+          chatMessages={displaySnapshot?.chatMessages ?? NO_CHAT_MESSAGES}
+          chatConversations={displaySnapshot?.chatConversations ?? NO_CHAT_CONVERSATIONS}
           report={personalSummary ?? livingReport}
           sourceLabel={sourceLabel}
           status={collectorStatus}

@@ -32,6 +32,11 @@ ${Array.from({ length: 16 }, (_, index) => `[data-i="${index + 1}"]{animation-de
 [data-hover="tint"]:hover{background-color:color-mix(in srgb,var(--ws-text) 7%,transparent)}
 @keyframes ws-side-more{0%,99%{-webkit-mask-image:linear-gradient(180deg,#000 calc(100% - 64px),transparent calc(100% - 6px));mask-image:linear-gradient(180deg,#000 calc(100% - 64px),transparent calc(100% - 6px))}100%{-webkit-mask-image:none;mask-image:none}}
 @supports (animation-timeline:scroll()){[data-sidenav]{animation:ws-side-more linear both;animation-timeline:scroll(self)}}
+[data-scrollbar]::-webkit-scrollbar{width:14px}
+[data-scrollbar]::-webkit-scrollbar-track{background:transparent}
+[data-scrollbar]::-webkit-scrollbar-thumb{min-height:48px;border:4px solid transparent;border-radius:7px;background:color-mix(in srgb,var(--ws-text) 22%,transparent) padding-box}
+[data-scrollbar]::-webkit-scrollbar-thumb:hover{background-color:color-mix(in srgb,var(--ws-text) 38%,transparent)}
+[data-scrollbar]::-webkit-scrollbar-thumb:active{background-color:color-mix(in srgb,var(--ws-text) 52%,transparent)}
 @media (prefers-reduced-motion:reduce){[data-motion],[data-reveal]{animation:none!important;opacity:1!important}[data-hover],[data-hover] svg{transition:none!important}}
 `;
 

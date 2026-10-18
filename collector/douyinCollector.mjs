@@ -1278,7 +1278,7 @@ export class DouyinCollector {
       state: "idle",
       connection: null,
       progress: null,
-      message: silent ? null : "已暂停实时接收，已保留聊天记录",
+      message: silent ? null : chat.saveError ? "已暂停实时接收，最后一批聊天没能存上，下次开始接收时会重新读取" : "已暂停实时接收，已保留聊天记录",
     });
     if (!silent) {
       this.updateStatus({
@@ -1387,6 +1387,33 @@ export class DouyinCollector {
     const initialSnapshotTime = Date.parse(this.snapshot.updatedAt || "") || 0;
     const newGroupMessages = new Map();
     let processing = Promise.resolve();
+    // 存一次就是整份 records.json 重写，读历史时一页存一次会让同进程的窗口一卡一卡：
+    // 读历史期间按读取进度的间隔攒着存，读完、停止或出错时补存最后一批；实时消息来一条存一条
+    let lastSavedAt = 0;
+    let unsaved = false;
+    const persist = async () => {
+      unsaved = false;
+      lastSavedAt = Date.now();
+      try {
+        await this.saveSnapshot((snapshot) => [snapshot.records, currentChatWarnings(snapshot.warnings), { directSync: normalizeDirectSyncState(snapshot.directSync),
+          chatMessages: messages.snapshot(), chatConversations: mergeChatConversationSnapshots(snapshot.chatConversations, conversations.snapshot().map(conversation=>{
+            const baseline = initialGroups.get(conversation.id), fresh = newGroupMessages.get(conversation.id);
+            return baseline && fresh ? { ...conversation,
+              messageCount: Math.max(conversation.messageCount, baseline.messageCount + fresh.size),
+              ownMessageCount: Math.max(conversation.ownMessageCount, baseline.ownMessageCount + [...fresh.values()].filter(sender=>sender===api.session.uid).length),
+            } : conversation;
+          })) }]);
+      } catch (error) {
+        unsaved = true; // 没存上就还算没存，下一次存盘或停止时的补存会带上它
+        throw error;
+      }
+      this.updateStatus({ counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations), updatedAt: this.snapshot.updatedAt });
+    };
+    const flush = () => {
+      const work = processing.then(() => unsaved ? persist() : undefined);
+      processing = work.catch(()=>{});
+      return work;
+    };
     const accept = (payload) => {
       const work = processing.then(async () => {
         if (!observation.active || runId !== this.chatRunId) return;
@@ -1401,16 +1428,8 @@ export class DouyinCollector {
         conversations.addMessages(normalized.map(message=>message.conversationType === "group"
           ? { id: message.id, conversationId: message.conversationId, conversationType: "group", senderId: message.senderId } : message));
         messages.addMessages(normalized.filter(message=>message.conversationType !== "group"));
-        const warnings = currentChatWarnings(this.snapshot.warnings);
-        this.snapshot = await this.store.save(this.snapshot.records, warnings, { directSync: normalizeDirectSyncState(this.snapshot.directSync),
-          chatMessages: messages.snapshot(), chatConversations: mergeChatConversationSnapshots(this.snapshot.chatConversations, conversations.snapshot().map(conversation=>{
-            const baseline = initialGroups.get(conversation.id), fresh = newGroupMessages.get(conversation.id);
-            return baseline && fresh ? { ...conversation,
-              messageCount: Math.max(conversation.messageCount, baseline.messageCount + fresh.size),
-              ownMessageCount: Math.max(conversation.ownMessageCount, baseline.ownMessageCount + [...fresh.values()].filter(sender=>sender===api.session.uid).length),
-            } : conversation;
-          })) });
-        this.updateStatus({ counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations), updatedAt: this.snapshot.updatedAt });
+        unsaved = true;
+        if (observation.historyReady || Date.now() - lastSavedAt >= this.progressPersistIntervalMs) await persist();
       });
       processing = work.catch(()=>{});
       return work;
@@ -1443,12 +1462,27 @@ export class DouyinCollector {
         }
         if (page.hasMore) throw new DirectHistoryError("record_limit", "聊天历史达到读取容量，已保留读取到的消息。");
       }
+      await flush();
       observation.historyReady = true;
       this.updateChat({ progress: null, message: "正在通过接口实时接收消息" });
       await observation.stopPromise;
     } finally {
-      controller.abort(); await client.close(); await processing;
+      // 停止时 chatRunId 已经换了，这里不再认它：新的一轮要等这一轮的 promise 收尾才开得起来，补存不会盖掉别人。
+      // 补存失败记在 observation 上，停止提示据此说明最后一批没存上
+      controller.abort(); await client.close(); await flush().catch((error)=>{ observation.saveError = error; });
     }
+  }
+
+  // 聊天接收和记录读取会同时存盘，存的又都是整份快照：排成一队，轮到自己才从当前快照里取对方那部分，
+  // 否则后写的一方会拿调用时的旧快照，把对方刚存的记录或聊天盖掉
+  saveSnapshot(build) {
+    const task = (this.saveChain ?? Promise.resolve()).catch(() => undefined).then(async () => {
+      const [records, warnings, options] = build(this.snapshot);
+      this.snapshot = await this.store.save(records, warnings, options);
+      return this.snapshot;
+    });
+    this.saveChain = task;
+    return task;
   }
 
   assertSyncActive(runId) {
@@ -1653,13 +1687,13 @@ export class DouyinCollector {
         if (Date.now() - lastProgressPersistAt < this.progressPersistIntervalMs) return;
         lastProgressPersistAt = Date.now();
         this.assertSyncActive(runId);
-        this.snapshot = await this.store.save(previewRecords(type), this.snapshot.warnings, {
+        await this.saveSnapshot((snapshot) => [previewRecords(type), snapshot.warnings, {
           // 观看历史读到一半存下的新记录，下次增量读取会在它们身上停住，被打断时中间那段就再也补不回来。
           // 存了新记录就先把它标成没读完，被打断的话下次整段重读（观看历史是合并，不会丢旧记录），读完再标回去
           directSync: newIds.get(type).size > 0 ? { ...directSync, [type]: false } : directSync,
-          chatMessages: this.snapshot.chatMessages,
-          chatConversations: this.snapshot.chatConversations,
-        });
+          chatMessages: snapshot.chatMessages,
+          chatConversations: snapshot.chatConversations,
+        }]);
         this.updateStatus({ updatedAt: this.snapshot.updatedAt });
       };
       const persistCompletedType = async (type, finalPhase) => {
@@ -1675,11 +1709,11 @@ export class DouyinCollector {
             ? [`其中 ${missingViewTimes} 条缺少观看日期，已保持为空，未使用发布时间或采集时间替代。`]
             : []),
         ])];
-        this.snapshot = await this.store.save(stagedRecords, warnings, {
+        await this.saveSnapshot((snapshot) => [stagedRecords, warnings, {
           directSync,
-          chatMessages: this.snapshot.chatMessages,
-          chatConversations: this.snapshot.chatConversations,
-        });
+          chatMessages: snapshot.chatMessages,
+          chatConversations: snapshot.chatConversations,
+        }]);
         this.updateStatus({
           counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
           updatedAt: this.snapshot.updatedAt,
@@ -1750,11 +1784,11 @@ export class DouyinCollector {
       const withLive = mergeRecordList("watch_history", stagedRecords.watch_history, liveRecords);
       const liveAdded = withLive.length - stagedRecords.watch_history.length;
       const saveStaged = async () => {
-        this.snapshot = await this.store.save(stagedRecords, this.snapshot.warnings, {
+        await this.saveSnapshot((snapshot) => [stagedRecords, snapshot.warnings, {
           directSync,
-          chatMessages: this.snapshot.chatMessages,
-          chatConversations: this.snapshot.chatConversations,
-        });
+          chatMessages: snapshot.chatMessages,
+          chatConversations: snapshot.chatConversations,
+        }]);
       };
       // 没有新增也要写回：已有的直播记录可能刚补上封面、改了昵称
       if (liveRecords.length > 0) {

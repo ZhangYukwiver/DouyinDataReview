@@ -350,7 +350,8 @@ export class CollectorStore {
   }
 
   async save(records, warnings = [], { directSync, chatMessages, chatConversations } = {}) {
-    const normalizedRecords = normalizeRecordCollection(records) ?? createEmptyRecords();
+    // 聊天存盘传回的就是上次存好、规整过的那份，上万条记录再规整一遍要一百多毫秒，还堵着窗口所在的主进程
+    const normalizedRecords = records === this.savedRecords ? records : normalizeRecordCollection(records) ?? createEmptyRecords();
     await mkdir(this.dataDirectory, { recursive: true });
     const normalizedConversations = normalizeChatConversations(chatConversations);
     const groupConversationIds = new Set(normalizedConversations
@@ -376,7 +377,12 @@ export class CollectorStore {
     // 聊天接收和直接读取会同时存盘，共用一个临时文件名；排队写，否则后到的 rename 会 ENOENT
     const task = (this.writeQueue ?? Promise.resolve()).catch(() => undefined).then(async () => {
       const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
-      await writeFile(temporaryPath, `${JSON.stringify(snapshot, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+      // 记录占了文件大半，存聊天时它没变：序列化好的字节留着复用，只重写其余字段（rest 至少有 schemaVersion，不会是 {}）。
+      // ponytail: 不再缩进，文件小两成；多占一份记录大小的内存
+      const { records, ...rest } = snapshot;
+      if (this.recordsJson?.records !== records) this.recordsJson = { records, bytes: Buffer.from(JSON.stringify(records)) };
+      const content = Buffer.concat([Buffer.from("{\"records\":"), this.recordsJson.bytes, Buffer.from(`,${JSON.stringify(rest).slice(1)}\n`)]);
+      await writeFile(temporaryPath, content, { mode: 0o600 });
       await rename(temporaryPath, this.filePath);
     });
     this.writeQueue = task;

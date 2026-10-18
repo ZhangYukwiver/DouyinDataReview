@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Text as RNText,
   TextInput,
+  type CellRendererProps,
   type TextProps,
   useWindowDimensions,
   View,
@@ -231,9 +232,14 @@ export function ContentWorkspace({
   const seenUpdatedAtRef = useRef<string | null>(updatedAt);
   const totalRecords = records.watch_history.length + records.liked_videos.length + records.favorite_videos.length;
   const livingReport = report && isLivingReport(report) ? report : null;
+  // 读聊天历史时每存一批就换一份聊天，报告模型一次要算两百毫秒，滚动跟着一顿一顿：读完再一次算齐，聊天页照常实时显示。
+  // 记录换了（移除导入文件、切换账号）就是换了数据来源，聊天得跟着换，不能拿上一份的聊天配新的记录
+  const reportChatsRef = useRef({ records, chatMessages, chatConversations });
+  if (!status?.chat.progress || reportChatsRef.current.records !== records) reportChatsRef.current = { records, chatMessages, chatConversations };
+  const reportChats = reportChatsRef.current;
   const model = useMemo(
-    () => buildReportModel(records, chatMessages, report, chatConversations),
-    [chatConversations, chatMessages, records, report],
+    () => buildReportModel(records, reportChats.chatMessages, report, reportChats.chatConversations),
+    [reportChats.chatConversations, reportChats.chatMessages, records, report],
   );
   // 直播记录存在观看历史里（mediaType live），侧栏单独一栏，观看历史只列视频，免得一条出现两次
   const [watchedVideos, watchedLives] = useMemo(() => [
@@ -444,7 +450,7 @@ export function ContentWorkspace({
         ) : activeView === "summary" ? (
           model.status === "empty"
             ? <SummaryEmpty />
-            : <ReportDashboard chatConversations={chatConversations} chatMessages={chatMessages} mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} records={records} width={mainWidth} />
+            : <ReportDashboard chatConversations={reportChats.chatConversations} chatMessages={reportChats.chatMessages} mobile={mobile} model={model} onOpenRecord={onOpenRecord} privacy={privacy} records={records} width={mainWidth} />
         ) : activeView === "highlights" ? (
           livingReport
             ? <LivingHighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={livingReport} />
@@ -662,6 +668,21 @@ function RecordsGallery({
   const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
   // 最后一行不满时 flex:1 会把卡片拉宽，限成一列宽（12 是 gridRow 的 gap）
   const cellStyle = useMemo(() => Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null, [columns]);
+  // 滚动条要按全部记录的总高度算才拖得动：没有 getItemLayout 时列表只把量过的行算进滚动范围，拖到底会一截截往外长。
+  // 每行差不多一样高（封面宽高比固定、标题限两行），量第一行就能推出所有行的位置。只认第一行：海报、内容年志的列表行
+  // 会差一两像素，谁挂上来都改一次的话，行高在几个值之间来回翻，滚动时渲染窗口算偏、整屏空白
+  const [rowFrame, setRowFrame] = useState<{ start: number; length: number } | null>(null);
+  const RowCell = useMemo(() => function RowCell({ index, onLayout, children, style }: CellRendererProps<PersonalVideoRecord>) {
+    return <View style={style} onLayout={(event) => {
+      onLayout?.(event);
+      const { y, height } = event.nativeEvent.layout;
+      const start = y - index * height;
+      if (index === 0 && height > 0) setRowFrame((current) => current && Math.abs(current.start - start) < 1 && Math.abs(current.length - height) < 0.5 ? current : { start, length: height });
+    }}>{children}</View>;
+  }, []);
+  const getItemLayout = useMemo(() => rowFrame
+    ? (_: unknown, index: number) => ({ index, length: rowFrame.length, offset: rowFrame.start + rowFrame.length * index })
+    : undefined, [rowFrame]);
   // 卡片是 memo 的：读取、接收聊天时状态每变一次整页都要重渲染，几百张卡片跟着重画一遍要一两百毫秒。
   // 外面传进来的回调每次都是新函数，这里换成引用不变、调用时取最新那份的版本
   const latest = useRef({ onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive });
@@ -722,6 +743,8 @@ function RecordsGallery({
       columnWrapperStyle={layout === "grid" ? styles.gridRow : undefined}
       contentContainerStyle={[styles.galleryContent, mobile && styles.galleryContentMobile, shownRecords.length === 0 && styles.galleryContentEmpty]}
       data={shownRecords}
+      CellRendererComponent={RowCell}
+      getItemLayout={getItemLayout}
       keyExtractor={(item) => item.id}
       ListHeaderComponent={(
         <>
@@ -817,7 +840,8 @@ function RecordsGallery({
             type={activeType}
           />
         : <RecordRow selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} />}
-      showsVerticalScrollIndicator={false}
+      // 上万条记录靠滚轮翻太慢，留一条常驻、能拖的滚动条（样式见 motionCss 的 data-scrollbar）
+      {...{ dataSet: { scrollbar: "" } }}
     />
     {Platform.OS === "web" && playingRecord && !privacy && onLoadVideo ? (
       <RecordVideoPlayer record={playingRecord} records={shownRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)} />
