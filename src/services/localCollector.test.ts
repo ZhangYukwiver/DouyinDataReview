@@ -434,12 +434,12 @@ describe("local collector client", () => {
     );
   });
 
-  it("rejects unreasonable count values from the service", async () => {
+  it("rejects invalid count values from the service", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       state: "complete",
       phase: null,
       message: "完成",
-      counts: { watch_history: 9_999_999, liked_videos: 0, favorite_videos: 0 },
+      counts: { watch_history: -1, liked_videos: 0, favorite_videos: 0 },
       updatedAt: null,
       browserOpen: false,
     }), { status: 200 })));

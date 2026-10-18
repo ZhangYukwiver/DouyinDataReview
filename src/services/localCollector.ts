@@ -699,7 +699,7 @@ function parseStatus(value: unknown): CollectorStatus {
   const rawCounts = isObject(value.counts) ? value.counts : null;
   function countFor(type: PersonalRecordType): number {
     const count = rawCounts?.[type];
-    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || count > 100_000) {
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
       throw new LocalCollectorError("invalid_response", "采集服务数量字段无效。");
     }
     return count;
@@ -824,8 +824,8 @@ function parseCollectorProgress(value: unknown): CollectorProgress | null {
   const current = value.current;
   const total = value.total;
   if (
-    typeof current !== "number" || !Number.isSafeInteger(current) || current < 0 || current > 100_000
-    || typeof total !== "number" || !Number.isSafeInteger(total) || total < 0 || total > 100_000
+    typeof current !== "number" || !Number.isSafeInteger(current) || current < 0
+    || typeof total !== "number" || !Number.isSafeInteger(total) || total < 0
     || current > total
   ) {
     throw new LocalCollectorError("invalid_response", "采集服务进度字段无效。");
@@ -834,7 +834,7 @@ function parseCollectorProgress(value: unknown): CollectorProgress | null {
 }
 
 function countForChat(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 100_000) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new LocalCollectorError("invalid_response", "采集服务聊天数量字段无效。");
   }
   return value;

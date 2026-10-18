@@ -210,14 +210,15 @@ describe("collector accounts", () => {
 describe("collector account switching edge cases", () => {
   it("stays on the current account with a reset status when the switch fails, and says which action failed", async () => {
     const opened = [];
+    let failOpen = false;
     const initialize = DouyinCollector.prototype.initialize;
     const spy = vi.spyOn(DouyinCollector.prototype, "initialize").mockImplementation(async function () {
       opened.push(this);
-      if (opened.length === 4) throw new Error("disk full");
+      if (opened.length === 4 || failOpen) throw new Error("disk full");
       return initialize.call(this);
     });
     try {
-      const { dataDirectory, call } = await startPaired("accounts-switch-failed-", writeSyntheticRecords);
+      const { call } = await startPaired("accounts-switch-failed-", writeSyntheticRecords);
       const created = await call("/v1/accounts", "POST");
       expect(created.status).toBe(201);
       const newId = created.body.activeId;
@@ -227,8 +228,8 @@ describe("collector account switching edge cases", () => {
       expect(failedAdd).toMatchObject({ status: 500, body: { error: "account_switch_failed", message: "没能添加账号，请稍后再试。" } });
       expect((await call("/v1/accounts")).body.accounts).toHaveLength(2);
 
-      // 目标账号的记录文件坏了；当前账号正在“接收”时被静默收掉，状态要复位
-      await writeFile(path.join(dataDirectory, "accounts", newId, "records.json"), "{ truncated");
+      // 目标账号打不开；当前账号正在“接收”时被静默收掉，状态要复位
+      failOpen = true;
       opened.at(-1).updateStatus({ state: "observing", message: "正在监听手动浏览", browserOpen: true });
       const failedSwitch = await call(`/v1/accounts/${newId}/activate`, "POST");
       expect(failedSwitch).toMatchObject({ status: 500, body: { error: "account_switch_failed", message: "没能切换账号，请稍后再试。" } });

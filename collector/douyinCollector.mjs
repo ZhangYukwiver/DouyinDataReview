@@ -1085,7 +1085,7 @@ export class DouyinCollector {
 
   async clearRecords() {
     await this.stopChatObservation({ silent: true });
-    this.snapshot = await this.store.clear();
+    this.snapshot = await this.store.clear(this.snapshot);
     this.updateStatus({
       state: "idle",
       phase: null,

@@ -781,9 +781,9 @@ export async function startCollectorServer({
       sendJson(response, 200, await collector.clearRecords());
     } else if (request.method === "POST" && url.pathname === "/v1/records/import") {
       try {
-        // 和应用里导入文件的上限一致
+        // 和应用里导入本应用导出文件的上限一致
         const target = collector;
-        const body = await readJsonBody(request, 32 * 1024 * 1024);
+        const body = await readJsonBody(request, 256 * 1024 * 1024);
         // 上传期间换了账号就不并了，免得并进另一个账号
         if (rejectWhileSwitching(response) || rejectStaleAccount(response, url)) return;
         if (collector !== target) {
@@ -795,7 +795,7 @@ export async function startCollectorServer({
         const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
         sendJson(response, error?.status ?? (malformed ? 400 : 500), {
           error: error?.code ?? (malformed ? "invalid_request" : "import_failed"),
-          message: error?.status ? error.message : malformed ? "文件内容无效或超过 32 MB。" : "并入失败，请稍后再试。",
+          message: error?.status ? error.message : malformed ? "文件内容无效或超过 256 MB。" : "并入失败，请稍后再试。",
         });
       }
     } else {

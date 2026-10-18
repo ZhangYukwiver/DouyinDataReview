@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 import { hasChatShareEvidence, isSyntheticChatPlaceholder } from "./chatNormalizer.mjs";
@@ -8,6 +8,7 @@ export const SCHEMA_VERSION = 2;
 const LEGACY_SCHEMA_VERSION = 1;
 const RECORD_TYPES = ["watch_history", "liked_videos", "favorite_videos"];
 const LEGACY_DIRECT_COMPLETE_WARNING_PREFIX = "无界面读取完成：";
+const BROKEN_RECORDS_WARNING_PREFIX = "本地记录文件损坏";
 const MAX_CHAT_MESSAGES = 100_000;
 const MAX_CHAT_CONVERSATIONS = 10_000;
 const MAX_CHAT_STRING = 500;
@@ -345,7 +346,14 @@ export class CollectorStore {
       return snapshot;
     } catch (error) {
       if (error && error.code === "ENOENT") return emptyStoredSnapshot();
-      throw error;
+      if (!(error instanceof SyntaxError)) throw error;
+      // 断电或强制关机可能留下半截文件：坏文件留底，从空记录起步，别让应用整个打不开。留不了底就照旧报错，免得下次存盘把它盖掉
+      const broken = `${this.filePath}.broken-${Date.now()}`;
+      await rename(this.filePath, broken).catch(() => copyFile(this.filePath, broken)).catch(() => { throw error; });
+      const snapshot = { ...emptyStoredSnapshot(), warnings: [`${BROKEN_RECORDS_WARNING_PREFIX}，已另存为 ${path.basename(broken)}。重新读取一次，能从抖音读回的记录会补回来。`] };
+      // 先存一份带提示的空记录，读取之前重启也还看得到这条提示
+      await this.writeSnapshot(snapshot).catch(() => undefined);
+      return snapshot;
     }
   }
 
@@ -382,14 +390,22 @@ export class CollectorStore {
       const { records, ...rest } = snapshot;
       if (this.recordsJson?.records !== records) this.recordsJson = { records, bytes: Buffer.from(JSON.stringify(records)) };
       const content = Buffer.concat([Buffer.from("{\"records\":"), this.recordsJson.bytes, Buffer.from(`,${JSON.stringify(rest).slice(1)}\n`)]);
-      await writeFile(temporaryPath, content, { mode: 0o600 });
+      const file = await open(temporaryPath, "w", 0o600);
+      try {
+        await file.writeFile(content);
+        // 先落盘再改名，不然断电后可能留下改名成功、内容却是半截或全零的 records.json
+        await file.sync();
+      } finally {
+        await file.close();
+      }
       await rename(temporaryPath, this.filePath);
     });
     this.writeQueue = task;
     return task;
   }
 
-  async clear() {
-    return this.save(createEmptyRecords(), [], { chatMessages: [], chatConversations: [] });
+  // 界面上写的就是只清观看、喜欢和收藏：聊天原样留着，群聊计数清掉就再也补不回来
+  async clear({ chatMessages = [], chatConversations = [] } = {}) {
+    return this.save(createEmptyRecords(), [], { chatMessages, chatConversations });
   }
 }
