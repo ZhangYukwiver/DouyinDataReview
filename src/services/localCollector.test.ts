@@ -5,6 +5,7 @@ import {
   addCollectorAccount,
   clearCollectorRecords,
   canReadCollector,
+  collectorFetch,
   confirmBrowserLogin,
   findTwinAccount,
   formatAccountAddedDay,
@@ -23,6 +24,7 @@ import {
   parseExportedSnapshot,
   parseLaunchPairingCode,
   pairCollector,
+  setCollectorTokenRenewal,
   startCollectorSync,
   startDirectRecordsSync,
   startCollectorChatObservation,
@@ -34,6 +36,7 @@ import {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  setCollectorTokenRenewal(null);
 });
 
 describe("video playback loading", () => {
@@ -297,6 +300,49 @@ describe("local collector client", () => {
     await expect(pairCollector("http://127.0.0.1:4765", "123"))
       .rejects.toMatchObject({ code: "invalid_code" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("re-pairs once on an expired session, retries, and moves old-token callers to the new token", async () => {
+    const status = { state: "idle", message: "状态", counts: { watch_history: 120_000, liked_videos: 0, favorite_videos: 0 }, updatedAt: null };
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => (init.headers as Record<string, string>).Authorization === "Bearer fresh-token"
+      ? new Response(JSON.stringify(status))
+      : new Response(JSON.stringify({ error: "not_paired" }), { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const renew = vi.fn(async (expired: string) => expired === "stale-token" ? "fresh-token" : null);
+    setCollectorTokenRenewal(renew);
+
+    const [first, second] = await Promise.all([
+      getCollectorStatus("http://127.0.0.1:4765", "stale-token"),
+      getCollectorStatus("http://127.0.0.1:4765", "stale-token"),
+    ]);
+    expect(first.counts.watch_history).toBe(120_000);
+    expect(second.counts.watch_history).toBe(120_000);
+    await getCollectorStatus("http://127.0.0.1:4765", "stale-token");
+    expect(renew).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+
+    await expect(getCollectorStatus("http://127.0.0.1:4765", "other-token")).rejects.toMatchObject({ code: "not_paired" });
+    // 探索这类自己解析响应的服务走 collectorFetch，同样换成新令牌
+    expect((await collectorFetch({ baseUrl: "http://127.0.0.1:4765", token: "stale-token" }, "/v1/status")).status).toBe(200);
+    expect(renew.mock.calls.map(([expired]) => expired)).toEqual(["stale-token", "other-token"]);
+    setCollectorTokenRenewal(null);
+    await expect(getCollectorStatus("http://127.0.0.1:4765", "stale-token")).rejects.toMatchObject({ code: "not_paired" });
+  });
+
+  it("re-pairs from a service's own request too, and leaves other 401s alone", async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>).Authorization;
+      if (url.endsWith("/v1/explore/read")) return auth === "Bearer fresh-token" ? new Response("{}") : new Response(JSON.stringify({ error: "not_paired" }), { status: 401 });
+      return new Response(JSON.stringify({ error: "forbidden" }), { status: 401 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const renew = vi.fn(async () => "fresh-token");
+    setCollectorTokenRenewal(renew);
+    const connection = { baseUrl: "http://127.0.0.1:4765", token: "stale-token" };
+    expect((await collectorFetch(connection, "/v1/explore/read", { method: "POST", body: "{}" })).status).toBe(200);
+    expect(fetchMock.mock.calls.map(([, init]) => (init.headers as Record<string, string>).Authorization)).toEqual(["Bearer stale-token", "Bearer fresh-token"]);
+    expect((await collectorFetch({ ...connection, token: "fresh-token" }, "/v1/creator/read")).status).toBe(401);
+    expect(renew).toHaveBeenCalledOnce();
   });
 
   it("sends the session token only in the Authorization header", async () => {

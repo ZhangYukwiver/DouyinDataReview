@@ -242,6 +242,22 @@ describe("collector account switching edge cases", () => {
     }
   });
 
+  it("keeps a paired session alive while it is used and expires it after 12 idle hours", async () => {
+    const { call } = await startPaired("pairing-idle-");
+    const start = Date.now();
+    const now = vi.spyOn(Date, "now");
+    try {
+      for (const hours of [11, 22, 33]) {
+        now.mockReturnValue(start + hours * 3_600_000);
+        expect((await call("/v1/status")).status).toBe(200);
+      }
+      now.mockReturnValue(start + 45.5 * 3_600_000);
+      expect((await call("/v1/status")).body.error).toBe("not_paired");
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("leaves records alone when a stale window clears or merges for an account that is no longer active", async () => {
     const { dataDirectory, runtime, call, headers } = await startPaired("accounts-stale-", writeSyntheticRecords);
     const created = await call("/v1/accounts", "POST");

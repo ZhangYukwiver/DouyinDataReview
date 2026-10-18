@@ -122,6 +122,8 @@ class PairingManager {
       this.sessions.delete(token);
       return false;
     }
+    // 闲置 12 小时才过期：托盘常驻每 3 小时补读一次，用着就一直有效
+    this.sessions.set(token, Date.now() + SESSION_TTL_MS);
     return true;
   }
 }

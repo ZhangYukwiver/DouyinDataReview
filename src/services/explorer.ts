@@ -1,5 +1,5 @@
 import type { PersonalVideoRecord } from "../domain/personalRecords";
-import { LocalCollectorError, normalizeCollectorBaseUrl } from "./localCollector";
+import { LocalCollectorError, collectorFetch } from "./localCollector";
 
 export interface ExploreUser {
   id: string; name: string; handle: string; bio: string; avatar: string | null; url: string;
@@ -37,9 +37,9 @@ async function request(connection: ExploreConnection, route: string, body: unkno
   const timeout = setTimeout(abort, route === "read" ? 50000 : 55000);
   try {
     signal?.throwIfAborted();
-    const response = await fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}/v1/explore/${route}`, {
+    const response = await collectorFetch(connection, `/v1/explore/${route}`, {
       method: "POST", signal: controller.signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.token}` }, body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const value = await response.json();
     if (!response.ok) throw new LocalCollectorError(value.error ?? "explore_failed", value.message ?? (response.status === 401 ? "连接已过期，请重新连接采集器。" : response.status === 404 ? "当前采集器尚未加载探索模块，请重启应用或本地采集服务。" : "探索请求失败，请重试。"));
@@ -71,8 +71,8 @@ export async function closeExplore(connection: ExploreConnection, sessionIds: st
 
 export async function loadExploreVideo(connection: ExploreConnection, sessionId: string, signal: AbortSignal): Promise<Blob> {
   signal.throwIfAborted();
-  const response = await fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}/v1/explore/video`, {
-    method: "POST", signal, headers: { Authorization: `Bearer ${connection.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }),
+  const response = await collectorFetch(connection, `/v1/explore/video`, {
+    method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }),
   });
   if (!response.ok) {
     const value = await response.json().catch(() => null);

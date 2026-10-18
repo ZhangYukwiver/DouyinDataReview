@@ -1,7 +1,7 @@
 import type { ChatMessage } from "../domain/chatRecords";
 import type { OfficialStreak } from "../domain/chatSparks";
 import type { ChatSendConnection } from "./chatSend";
-import { LocalCollectorError, normalizeCollectorBaseUrl } from "./localCollector";
+import { LocalCollectorError, collectorFetch } from "./localCollector";
 
 // 群消息和抖音自己的火花天数都是从采集器里开着的抖音网页现读的，不落盘。
 async function call<T>(connection: ChatSendConnection, path: string, body?: unknown): Promise<T> {
@@ -9,10 +9,10 @@ async function call<T>(connection: ChatSendConnection, path: string, body?: unkn
   // 往上翻一页最多要滚十来次，留足时间
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
-    const response = await fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}${path}`, {
+    const response = await collectorFetch(connection, `${path}`, {
       method: body === undefined ? "GET" : "POST",
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.token}` },
+      headers: { "Content-Type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const value = await response.json().catch(() => null);

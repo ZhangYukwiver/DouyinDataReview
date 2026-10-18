@@ -66,6 +66,7 @@ import {
   stopCollectorChatObservation,
   removeCollectorAccount,
   fetchCollectorVideoFile,
+  setCollectorTokenRenewal,
   type CollectorAccounts,
   canReadCollector,
   type CollectorAccountChange,
@@ -285,6 +286,8 @@ function AppContent() {
   const downloadRequestRef = useRef(0);
   const downloadInFlightRef = useRef(new Set<string>());
   const connectingRef = useRef(false);
+  const collectorTokenRef = useRef(collectorToken);
+  collectorTokenRef.current = collectorToken;
   const syncConfirmationOpenRef = useRef(false);
   // 账号列表可能同时有几次在拉，只认最后发出的那次
   const accountsRequestRef = useRef(0);
@@ -538,6 +541,21 @@ function AppContent() {
       setAnalysisInstalled(choice);
     });
   }, []);
+  // 配对闲置过期（电脑睡过一夜）时悄悄重新配对，不用用户先断开再连
+  useEffect(() => {
+    setCollectorTokenRenewal(async (expired) => {
+      // 只续正在用的那个；用户自己断开过就不偷偷连回去
+      if (expired !== collectorTokenRef.current) return null;
+      const desktop = await getDesktopCollectorConfig();
+      const baseUrl = desktop?.baseUrl ?? collectorUrl;
+      const token = await pairCollector(baseUrl, desktop?.pairingCode ?? await getCollectorPairingCode(baseUrl));
+      if (expired !== collectorTokenRef.current) return null;
+      collectorTokenRef.current = token;
+      setCollectorToken(token);
+      return token;
+    });
+    return () => setCollectorTokenRenewal(null);
+  }, [collectorUrl]);
   useEffect(() => subscribeDesktopBackgroundSync((manual) => autoSyncTriggerRef.current({ manual, timer: !manual })), []);
   // 从托盘叫回窗口等于回到前台；开机后台启动时窗口一直不出来，也要先连上采集器读一次
   useEffect(() => trackDesktopWindowVisibility(() => {

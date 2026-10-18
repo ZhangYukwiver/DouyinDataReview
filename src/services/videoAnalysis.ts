@@ -1,4 +1,4 @@
-import { LocalCollectorError, normalizeCollectorBaseUrl } from "./localCollector";
+import { LocalCollectorError, collectorFetch } from "./localCollector";
 import type { ExploreConnection } from "./explorer";
 
 // 解析库：工作台把视频链接和接口配置交给采集器，采集器下载视频、调用 AI、存结果（collector/videoAnalysis.mjs）。
@@ -48,9 +48,9 @@ export function saveAnalysisConfig(config: AnalysisConfig) {
 async function request(connection: ExploreConnection, path: string, init: RequestInit = {}): Promise<any> {
   let response: Response;
   try {
-    response = await fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}${path}`, {
+    response = await collectorFetch(connection, `${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.token}` },
+      headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(20_000),
     });
   } catch {
