@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../domain/chatRecords";
-import { LocalCollectorError, normalizeCollectorBaseUrl } from "./localCollector";
+import { LocalCollectorError, collectorFetch } from "./localCollector";
 
 export interface ChatSendConnection { baseUrl: string; token: string }
 export interface ChatSendOutcome { outcome: "confirmed" | "unknown" | "rejected"; message: string; chatMessage?: ChatMessage | null }
@@ -14,10 +14,10 @@ export async function sendChatMessage(connection: ChatSendConnection, conversati
   let value: Partial<ChatSendOutcome> & { error?: string } | null;
   let response: Response;
   try {
-    response = await fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}/v1/chat/send`, {
+    response = await collectorFetch(connection, `/v1/chat/send`, {
       method: "POST",
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ requestId: crypto.randomUUID(), conversationId, text }),
     });
     value = await response.json().catch(() => null);

@@ -77,6 +77,8 @@ export interface BrowserLoginCandidate {
   uid: string;
   accountId: string | null;
   newAccount: boolean;
+  /** 当前账号有记录但没绑定抖音号，可以把这个号归进来 */
+  adoptable: boolean;
   readPermissions?: CollectorReadPermissions;
 }
 
@@ -699,7 +701,7 @@ function parseStatus(value: unknown): CollectorStatus {
   const rawCounts = isObject(value.counts) ? value.counts : null;
   function countFor(type: PersonalRecordType): number {
     const count = rawCounts?.[type];
-    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || count > 100_000) {
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
       throw new LocalCollectorError("invalid_response", "采集服务数量字段无效。");
     }
     return count;
@@ -824,8 +826,8 @@ function parseCollectorProgress(value: unknown): CollectorProgress | null {
   const current = value.current;
   const total = value.total;
   if (
-    typeof current !== "number" || !Number.isSafeInteger(current) || current < 0 || current > 100_000
-    || typeof total !== "number" || !Number.isSafeInteger(total) || total < 0 || total > 100_000
+    typeof current !== "number" || !Number.isSafeInteger(current) || current < 0
+    || typeof total !== "number" || !Number.isSafeInteger(total) || total < 0
     || current > total
   ) {
     throw new LocalCollectorError("invalid_response", "采集服务进度字段无效。");
@@ -834,7 +836,7 @@ function parseCollectorProgress(value: unknown): CollectorProgress | null {
 }
 
 function countForChat(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 100_000) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new LocalCollectorError("invalid_response", "采集服务聊天数量字段无效。");
   }
   return value;
@@ -877,12 +879,60 @@ function parseVideoDownloadJob(value: unknown): VideoDownloadJob {
   };
 }
 
+// 配对闲置 12 小时会过期（比如电脑睡了一夜）。App 登记续配函数后，请求碰到 not_paired 就重新配对再发一次；
+// 还攥着旧令牌的轮询循环发请求时也会换成新令牌
+let renewCollectorToken: ((expired: string) => Promise<string | null>) | null = null;
+const renewedTokens = new Map<string, Promise<string | null>>();
+
+export function setCollectorTokenRenewal(renew: ((expired: string) => Promise<string | null>) | null): void {
+  renewCollectorToken = renew;
+  renewedTokens.clear();
+}
+
+// 同一个过期令牌只续配一次，并发请求共用结果；续不上就忘掉，下次再试
+async function renewAfterExpiry(expired: string): Promise<string | null> {
+  if (!renewCollectorToken) return null;
+  let renewal = renewedTokens.get(expired);
+  if (!renewal) {
+    renewal = renewCollectorToken(expired).catch(() => null);
+    renewedTokens.set(expired, renewal);
+  }
+  const fresh = await renewal;
+  if (!fresh) renewedTokens.delete(expired);
+  return fresh;
+}
+
+// 探索、创作者中心这些自己解析响应的服务也走这里：配对过期一样自动续配、重发一次
+export async function collectorFetch(connection: { baseUrl: string; token: string }, path: string, init: RequestInit = {}): Promise<Response> {
+  const send = (token: string) => fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}${path}`, {
+    ...init,
+    headers: { ...init.headers as Record<string, string>, Authorization: `Bearer ${token}` },
+  });
+  const token = renewedTokens.size ? await latestToken(connection.token) : connection.token;
+  const response = await send(token);
+  if (response.status !== 401) return response;
+  const payload = await response.clone().json().catch(() => null) as unknown;
+  const fresh = isObject(payload) && payload.error === "not_paired" ? await renewAfterExpiry(token) : null;
+  return fresh ? send(fresh) : response;
+}
+
+async function latestToken(token: string): Promise<string> {
+  let current = token;
+  for (let next = renewedTokens.get(current); next; next = renewedTokens.get(current)) {
+    const renewed = await next;
+    if (!renewed) break;
+    current = renewed;
+  }
+  return current;
+}
+
 async function requestJson(
   baseUrl: string,
   path: string,
   options: RequestInit = {},
   token?: string,
   timeoutMs = 10_000,
+  renewed = false,
 ): Promise<unknown> {
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -890,19 +940,24 @@ async function requestJson(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     options.signal?.throwIfAborted();
+    // 没续过配就别多等一拍
+    const authToken = token && renewedTokens.size ? await latestToken(token) : token;
     const response = await fetch(`${normalizeCollectorBaseUrl(baseUrl)}${path}`, {
       ...options,
       signal: controller.signal,
       headers: {
         Accept: "application/json",
         ...(options.body ? { "Content-Type": "application/json" } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         ...options.headers,
       },
     });
     const payload = await response.json().catch(() => null) as unknown;
     if (!response.ok) {
       const errorCode = isObject(payload) && typeof payload.error === "string" ? payload.error : `http_${response.status}`;
+      if (errorCode === "not_paired" && authToken && !renewed && await renewAfterExpiry(authToken)) {
+        return await requestJson(baseUrl, path, options, authToken, timeoutMs, true);
+      }
       const serverMessage = isObject(payload) && typeof payload.message === "string" && payload.message.trim() ? payload.message : null;
       const message = errorCode === "invalid_pairing_code"
         ? "配对码无效或已使用。"
@@ -1046,7 +1101,7 @@ export async function fetchCollectorVideoFile(
       signal: controller.signal,
       headers: {
         Accept: "video/mp4,video/*;q=0.9,*/*;q=0.8",
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${renewedTokens.size ? await latestToken(token) : token}`,
       },
     });
     if (!response.ok) {
@@ -1175,14 +1230,14 @@ export async function inspectBrowserLogin(baseUrl: string, token: string, browse
     throw new LocalCollectorError("invalid_response", "浏览器登录账号无效。");
   return { id: candidate.id, browser: candidate.browser as BrowserLoginSource["id"], uid: candidate.uid,
     nickname: cleanRecordString(candidate.nickname, 100), accountId: typeof candidate.accountId === "string" && ACCOUNT_ID.test(candidate.accountId) ? candidate.accountId : null,
-    newAccount: candidate.newAccount === true,
+    newAccount: candidate.newAccount === true, adoptable: candidate.adoptable === true,
     ...(isObject(candidate.readPermissions) ? { readPermissions: {
       videos: candidate.readPermissions.videos === true, chat: candidate.readPermissions.chat === true,
     } } : {}) };
 }
 
-export async function confirmBrowserLogin(baseUrl: string, token: string, id: string, readPermissions: CollectorReadPermissions, accountId?: string | null): Promise<CollectorAccountChange> {
-  return parseAccountChange(await requestJson(baseUrl, withAccount("/v1/browser/confirm", accountId), { method: "POST", body: JSON.stringify({ id, readPermissions }) }, token, 5 * 60_000));
+export async function confirmBrowserLogin(baseUrl: string, token: string, id: string, readPermissions: CollectorReadPermissions, accountId?: string | null, adopt = false): Promise<CollectorAccountChange> {
+  return parseAccountChange(await requestJson(baseUrl, withAccount("/v1/browser/confirm", accountId), { method: "POST", body: JSON.stringify({ id, readPermissions, ...(adopt ? { adopt } : {}) }) }, token, 5 * 60_000));
 }
 
 export async function cancelBrowserLogin(baseUrl: string, token: string, id: string): Promise<void> {

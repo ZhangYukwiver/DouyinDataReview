@@ -19,6 +19,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   const [selected, setSelected] = useState<BrowserLoginSource["id"]>("chrome");
   const [candidate, setCandidate] = useState<BrowserLoginCandidate | null>(null);
   const [readPermissions, setReadPermissions] = useState<CollectorReadPermissions>({ videos: true, chat: false });
+  const [adopt, setAdopt] = useState(true);
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +72,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       if (controller.signal.aborted || !visibleRef.current) { await cancelBrowserLogin(baseUrl, token, result.id); return; }
       candidateRef.current = result; setCandidate(result);
       setReadPermissions(result.readPermissions ?? { videos: true, chat: false });
+      setAdopt(true);
     } catch (reason) {
       if (!controller.signal.aborted) throw reason;
     } finally {
@@ -82,7 +84,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
     if (!candidate || (!readPermissions.videos && !readPermissions.chat)) return;
     let change: CollectorAccountChange;
     try {
-      change = await confirmBrowserLogin(baseUrl, token, candidate.id, readPermissions, status?.account?.id);
+      change = await confirmBrowserLogin(baseUrl, token, candidate.id, readPermissions, status?.account?.id, candidate.adoptable && adopt);
     } catch (reason) {
       // Confirmation consumes the server's pending connection even if export
       // fails. Return to connection controls instead of retrying a stale id.
@@ -116,7 +118,15 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       {status?.readPermissions && status.browserSource?.credentials === "ready" ? <Text style={styles.detail} testID="browser-read-permissions">当前账号：视频读取{status.readPermissions.videos ? "已开启" : "未开启"} · 聊天读取{status.readPermissions.chat ? "已开启" : "未开启"}</Text> : null}
       {candidate ? <>
         <Text style={styles.title} testID="browser-login-candidate">浏览器登录的是「{candidate.nickname || "抖音账号"}」</Text>
-        <Text style={styles.detail}>{candidate.newAccount ? "确认后添加这个账号，记录单独保存。" : "确认后更新这个账号的凭据和读取权限，保留已有记录及其他账号数据。"}</Text>
+        <Text style={styles.detail}>{candidate.adoptable && adopt ? "当前账号里已有的记录还没绑定抖音号，确认后会归到这个号名下，以后接着补读。"
+          : candidate.newAccount ? "确认后添加这个账号，记录单独保存。" : "确认后更新这个账号的凭据和读取权限，保留已有记录及其他账号数据。"}</Text>
+        {candidate.adoptable ? <View style={styles.actions}>
+          <Pressable accessibilityRole="checkbox" accessibilityLabel="已有记录归到这个号" accessibilityState={{ checked: adopt, disabled }}
+            aria-checked={adopt} disabled={disabled} onPress={() => setAdopt(current => !current)}
+            style={[styles.option, adopt && styles.selected, disabled && styles.disabled]} testID="browser-login-adopt">
+            <Text style={styles.text}>{adopt ? "✓ " : "○ "}已有记录就是这个号的</Text>
+          </Pressable>
+        </View> : null}
         <View style={styles.actions}>
           {(["videos", "chat"] as const).map(kind => <Pressable key={kind} accessibilityRole="checkbox"
             accessibilityLabel={kind === "videos" ? "读取视频" : "读取聊天"} accessibilityState={{ checked: readPermissions[kind], disabled }}

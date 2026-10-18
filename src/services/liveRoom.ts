@@ -1,5 +1,5 @@
 import type { ExploreConnection } from "./explorer";
-import { LocalCollectorError, normalizeCollectorBaseUrl } from "./localCollector";
+import { LocalCollectorError, collectorFetch } from "./localCollector";
 
 export interface LiveQuality { key: string; name: string; url: string }
 export interface LiveRoomInfo {
@@ -26,9 +26,9 @@ async function request<T>(connection: ExploreConnection, path: string, init: Req
   const timeout = setTimeout(abort, init.timeoutMs ?? 15_000);
   try {
     init.signal?.throwIfAborted();
-    const response = await fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}${path}`, {
+    const response = await collectorFetch(connection, `${path}`, {
       ...init, signal: controller.signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.token}` },
+      headers: { "Content-Type": "application/json" },
     });
     const value = await response.json();
     if (!response.ok) throw new LocalCollectorError(value.error ?? "live_failed", value.message ?? (response.status === 401

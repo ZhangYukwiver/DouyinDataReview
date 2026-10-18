@@ -66,6 +66,7 @@ import {
   stopCollectorChatObservation,
   removeCollectorAccount,
   fetchCollectorVideoFile,
+  setCollectorTokenRenewal,
   type CollectorAccounts,
   canReadCollector,
   type CollectorAccountChange,
@@ -285,6 +286,8 @@ function AppContent() {
   const downloadRequestRef = useRef(0);
   const downloadInFlightRef = useRef(new Set<string>());
   const connectingRef = useRef(false);
+  const collectorTokenRef = useRef(collectorToken);
+  collectorTokenRef.current = collectorToken;
   const syncConfirmationOpenRef = useRef(false);
   // 账号列表可能同时有几次在拉，只认最后发出的那次
   const accountsRequestRef = useRef(0);
@@ -467,6 +470,20 @@ function AppContent() {
       : null;
   // 数据页和故事入口显示的聊天条数：采集器用服务端计数，导入的文件按同一个口径（好友消息加群聊统计）自己数
   const chatCount = displaySnapshot?.source === "archive" ? countChatMessages(displaySnapshot.chatMessages, displaySnapshot.chatConversations) : collectorStatus?.counts.chat_messages ?? null;
+  // 记录文件坏过、采集器从空记录重新开始：告诉用户一声，坏文件留在哪
+  const brokenRecordsNotice = collectorSnapshot?.warnings.find((warning) => warning.startsWith("本地记录文件损坏")) ?? null;
+  // 开机后台启动时窗口还没出来：先记着，等窗口出来再说，免得第一次读取把提示换掉以后就再也看不到
+  const brokenNoticeRef = useRef<{ pending: string | null; shown: string | null }>({ pending: null, shown: null });
+  const flushBrokenNotice = () => {
+    const notice = brokenNoticeRef.current.pending;
+    if (!notice || pageHidden()) return;
+    brokenNoticeRef.current = { pending: null, shown: notice };
+    showAlert("本地记录已重置", notice);
+  };
+  useEffect(() => {
+    if (brokenRecordsNotice && brokenNoticeRef.current.shown !== brokenRecordsNotice) brokenNoticeRef.current.pending = brokenRecordsNotice;
+    flushBrokenNotice();
+  }, [brokenRecordsNotice]);
 
   // 读取开始、结束时状态会变，但冻结期间记录没换；按冻结时的状态算，免得两份报告在开始、结束各白算一遍（上万条记录一次就一秒多）
   const shownState = collectorBusy && frozenSnapshot ? frozenState : collectorStatus?.state;
@@ -502,7 +519,9 @@ function AppContent() {
     if (Platform.OS === "web") {
       if (typeof document === "undefined") return undefined;
       const onVisibilityChange = () => {
-        if (document.visibilityState === "visible") trigger();
+        if (document.visibilityState !== "visible") return;
+        flushBrokenNotice();
+        trigger();
       };
       document.addEventListener("visibilitychange", onVisibilityChange);
       if (document.visibilityState === "visible") trigger();
@@ -522,9 +541,27 @@ function AppContent() {
       setAnalysisInstalled(choice);
     });
   }, []);
+  // 配对闲置过期（电脑睡过一夜）时悄悄重新配对，不用用户先断开再连
+  useEffect(() => {
+    setCollectorTokenRenewal(async (expired) => {
+      // 只续正在用的那个；用户自己断开过就不偷偷连回去
+      if (expired !== collectorTokenRef.current) return null;
+      const desktop = await getDesktopCollectorConfig();
+      const baseUrl = desktop?.baseUrl ?? collectorUrl;
+      const token = await pairCollector(baseUrl, desktop?.pairingCode ?? await getCollectorPairingCode(baseUrl));
+      if (expired !== collectorTokenRef.current) return null;
+      collectorTokenRef.current = token;
+      setCollectorToken(token);
+      return token;
+    });
+    return () => setCollectorTokenRenewal(null);
+  }, [collectorUrl]);
   useEffect(() => subscribeDesktopBackgroundSync((manual) => autoSyncTriggerRef.current({ manual, timer: !manual })), []);
   // 从托盘叫回窗口等于回到前台；开机后台启动时窗口一直不出来，也要先连上采集器读一次
-  useEffect(() => trackDesktopWindowVisibility(() => autoSyncTriggerRef.current(), () => autoSyncTriggerRef.current()), []);
+  useEffect(() => trackDesktopWindowVisibility(() => {
+    flushBrokenNotice();
+    autoSyncTriggerRef.current();
+  }, () => autoSyncTriggerRef.current()), []);
 
   useEffect(() => {
     if (shouldSuppressBrowserLoginAutoSync(skipBrowserLoginAutoSyncRef.current, false)) return;
@@ -1490,7 +1527,7 @@ function AppContent() {
     if (!exportSnapshot) return;
     try {
       const data = buildDataExport(exportSnapshot, selection);
-      triggerBrowserDownload(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
+      triggerBrowserDownload(new Blob([JSON.stringify(data)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
       setExportSnapshot(null);
     } catch (error) { showAlert("无法导出数据", collectorErrorMessage(error)); }
   }
@@ -1877,7 +1914,7 @@ function AppContent() {
         onAddAccount={() => void changeAccount({ add: true })}
         onRemoveAccount={confirmRemoveAccount}
         onExportData={exportCurrentData}
-        canClear={workspaceRecords.watch_history.length + workspaceRecords.liked_videos.length + workspaceRecords.favorite_videos.length + (chatCount ?? 0) > 0 && !collectorBusy}
+        canClear={workspaceRecords.watch_history.length + workspaceRecords.liked_videos.length + workspaceRecords.favorite_videos.length > 0 && !collectorBusy}
         onClearCache={clearCurrentRecords}
         appUpdate={appUpdate}
         installBlocked={collectorBusy}

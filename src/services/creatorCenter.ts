@@ -1,4 +1,4 @@
-import { LocalCollectorError, normalizeCollectorBaseUrl } from "./localCollector";
+import { LocalCollectorError, collectorFetch } from "./localCollector";
 import type { ExploreConnection } from "./explorer";
 
 // 创作者中心：工作台把一批查询交给采集器，采集器在 creator.douyin.com 同源页里读完原样带回。
@@ -25,9 +25,9 @@ export async function readCreatorResults(connection: ExploreConnection, queries:
   const timeout = setTimeout(abort, 45000);
   try {
     signal?.throwIfAborted();
-    const response = await fetch(`${normalizeCollectorBaseUrl(connection.baseUrl)}/v1/creator/read`, {
+    const response = await collectorFetch(connection, `/v1/creator/read`, {
       method: "POST", signal: controller.signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ requests: queries }),
     });
     const value = await response.json().catch(() => null);

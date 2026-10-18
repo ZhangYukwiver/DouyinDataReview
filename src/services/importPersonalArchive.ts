@@ -37,9 +37,12 @@ async function releaseTemporaryFile(asset: DocumentPickerAsset): Promise<void> {
   }
 }
 
+// 本应用自己的导出文件记录一多就几十上百 MB；官方档案在 parsePersonalArchiveBytes 里仍按 32 MB 拦
+const MAX_EXPORT_FILE_BYTES = 8 * MAX_ARCHIVE_BYTES;
+
 export async function importPersonalArchive(asset: DocumentPickerAsset): Promise<PersonalArchiveData> {
-  if (asset.size !== undefined && asset.size > MAX_ARCHIVE_BYTES) {
-    throw new PersonalArchiveError("too_large", "个人信息文件超过 32 MB，请选择仅包含记录的导出文件。");
+  if (asset.size !== undefined && asset.size > MAX_EXPORT_FILE_BYTES) {
+    throw new PersonalArchiveError("too_large", "文件超过 256 MB。可以导出时只勾一部分类别，分几次导出再分别导入。");
   }
 
   try {

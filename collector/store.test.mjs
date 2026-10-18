@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -295,6 +295,56 @@ describe("CollectorStore", () => {
       expect(store.recordsRevision).toBe(revision);
       await store.save(createEmptyRecords());
       expect(store.recordsRevision).toBe(revision + 1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("sets a truncated snapshot aside and starts empty instead of failing to open", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
+    try {
+      await writeFile(path.join(directory, "records.json"), '{"records":{"watch_history":[{"id":"a"');
+      const loaded = await new CollectorStore(directory).load();
+      expect(loaded.records).toEqual(createEmptyRecords());
+      expect(loaded.warnings[0]).toMatch(/损坏.*records\.json\.broken-\d+/u);
+      const broken = (await readdir(directory)).find((name) => name.startsWith("records.json.broken-"));
+      expect(await readFile(path.join(directory, broken), "utf8")).toBe('{"records":{"watch_history":[{"id":"a"');
+      // 提示跟着空记录一起存下了，读取之前重启也还在
+      expect((await new CollectorStore(directory).load()).warnings).toEqual(loaded.warnings);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("keeps failing to open rather than overwrite a truncated snapshot it cannot set aside", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
+    try {
+      await writeFile(path.join(directory, "records.json"), "{ truncated");
+      await chmod(directory, 0o500);
+      await expect(new CollectorStore(directory).load()).rejects.toBeInstanceOf(SyntaxError);
+      await chmod(directory, 0o700);
+      expect(await readdir(directory)).toEqual(["records.json"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("clears video records but keeps the chat history it was given", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
+    try {
+      const store = new CollectorStore(directory);
+      const records = createEmptyRecords();
+      records.liked_videos.push({ id: "liked_videos:1", title: "记录", author: null, occurredAt: null, url: "https://www.douyin.com/video/1" });
+      const saved = await store.save(records, [], {
+        chatMessages: [{ id: "chat-1", conversationId: "0:1:1:2", conversationName: "好友", senderId: "1", senderName: "我",
+          sentAt: "2026-08-20T00:00:00.000Z", type: "text", text: "你好", mediaUrl: null, share: null, callDurationSeconds: null }],
+        chatConversations: [{ id: "group-1", kind: "group", name: "测试群", avatarUrl: null, messageCount: 12, ownMessageCount: 3 }],
+      });
+      await store.clear(saved);
+      const loaded = await store.load();
+      expect(loaded.records).toEqual(createEmptyRecords());
+      expect(loaded.chatMessages.map((message) => message.id)).toEqual(["chat-1"]);
+      expect(loaded.chatConversations).toEqual([expect.objectContaining({ id: "group-1", messageCount: 12 })]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

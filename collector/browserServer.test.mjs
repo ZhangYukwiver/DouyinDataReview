@@ -12,8 +12,9 @@ import { directSessionFixture } from "./fixtures/directClient.mjs";
 
 const cleanups = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function fixture({ isLoggedIn = () => true } = {}) {
+async function fixture({ isLoggedIn = () => true, prepare } = {}) {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "cdp-server-")); cleanups.push(() => rm(dataDirectory, { recursive: true, force: true }));
+  await prepare?.(dataDirectory);
   const identity = { uid: "123456", nickname: "合成账号", secUid: null, avatar: null };
   const cookies = [{ name: "sessionid", value: "synthetic", domain: ".douyin.com", path: "/", expires: -1 }];
   const loginButton = { click: vi.fn(async () => {}) };
@@ -257,6 +258,38 @@ describe("browser login HTTP handshake", () => {
     expect((await call("/v1/browser/confirm", "POST", { id: back.body.candidate.id })).body.activeId).toBe("default");
     expect(readRecords.mock.contexts.map(collector => collector.getStatus().account.id)).toEqual(["default", otherId, "default"]);
     expect(readRecords.mock.calls.map(([, options]) => options.full)).toEqual([false, true, false]);
+  });
+  // 旧版或先并入备份文件留下的账号：有记录、没绑定抖音号
+  const unboundRecords = dir => writeFile(path.join(dir, "records.json"), JSON.stringify({ schemaVersion: 2, updatedAt: null, chatMessages: [], chatConversations: [], warnings: [],
+    records: { watch_history: [], liked_videos: [{ id: "liked_videos:1", title: "合成记录", author: null, occurredAt: null, url: "https://www.douyin.com/video/1" }], favorite_videos: [] } }));
+  it("lets an unbound account with records take the browser login instead of opening a new account", async () => {
+    const { call, readRecords, dataDirectory } = await fixture({ prepare: unboundRecords });
+    const candidate = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    expect(candidate).toMatchObject({ accountId: null, newAccount: true, adoptable: true });
+    const adopted = await call("/v1/browser/confirm", "POST", { id: candidate.id, adopt: true });
+    expect(adopted.body).toMatchObject({ activeId: "default", accounts: [{ id: "default", uid: "123456" }] });
+    expect((await call("/v1/records")).body.records.liked_videos).toHaveLength(1);
+    expect(readRecords.mock.calls.map(([, options]) => options)).toEqual([{ full: false }]);
+    // 记录可能来自备份：喜欢和收藏以后只往上加，读取中断、之后的补读也不会按平台列表整份替换
+    expect(JSON.parse(await readFile(path.join(dataDirectory, "records.json"), "utf8")).directSync).toEqual({ watch_history: false, liked_videos: true, favorite_videos: true });
+    const again = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    expect(again).toMatchObject({ accountId: "default", newAccount: false, adoptable: false });
+  });
+  it("does not offer to take over an unbound account whose saved login belongs to another Douyin account", async () => {
+    const { call } = await fixture({ prepare: async dir => {
+      await unboundRecords(dir);
+      await saveDirectSession(dir, { ...directSessionFixture(), uid: "999" });
+    } });
+    const candidate = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    expect(candidate).toMatchObject({ newAccount: true, adoptable: false });
+    expect((await call("/v1/browser/confirm", "POST", { id: candidate.id, adopt: true })).body.activeId).not.toBe("default");
+  });
+  it("still opens a separate account when the unbound records belong to someone else", async () => {
+    const { call } = await fixture({ prepare: unboundRecords });
+    const candidate = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    const separate = await call("/v1/browser/confirm", "POST", { id: candidate.id });
+    expect(separate.body.activeId).not.toBe("default");
+    expect(separate.body.accounts).toEqual([expect.objectContaining({ id: "default", uid: null }), expect.objectContaining({ uid: "123456" })]);
   });
   it("rejects unsupported sources, stale accounts, stale confirmations and busy collection", async () => {
     const { call, browserConnector } = await fixture();

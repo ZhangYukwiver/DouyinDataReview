@@ -408,7 +408,7 @@ function SketchSetupWorkspace({
                 {/* 写着正在用的账号，点开是账号面板。宽度封顶：不比原来的「切换账号」宽，宽窗口里这行有余量才多露几个字，所以这一行不会因为它多折一行 */}
                 <SketchButton accessibilityLabel={`抖音账号：${accountLabel}，点开切换或添加`} busy={switchingAccount} compact={narrow} disabled={!connected} icon={UserRound} kind="small" label={accountLabel} onPress={() => setAccountMenu(true)} seed="tool-account" style={{ maxWidth: narrow ? 75 : width >= 1600 ? 180 : width >= 1300 ? 112 : 89 }} testID="account-button" />
                 {web ? <SketchButton seed="tool-export" compact={narrow} disabled={!connected} icon={Download} kind="small" label="导出数据" onPress={onExportData} /> : null}
-                <SketchButton seed="tool-clear" compact={narrow} disabled={!total || busy} icon={Trash2} kind="small" label="清除本地记录" onPress={onClearCache} />
+                <SketchButton seed="tool-clear" compact={narrow} disabled={!(counts.watch + counts.liked + counts.favorite) || busy} icon={Trash2} kind="small" label="清除本地记录" onPress={onClearCache} />
               </View>
               {appUpdate ? <AppUpdatePanel busy={busy} compact={narrow} onCheck={onCheckAppUpdate} onDownload={onDownloadAppUpdate} onInstall={onInstallAppUpdate} short={short} state={appUpdate} tight={tight} /> : null}
             </SketchBox>
