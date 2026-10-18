@@ -140,6 +140,7 @@ interface CollectorConnectionOptions {
 }
 
 const TERMINAL_COLLECTOR_STATES = new Set(["idle", "complete", "partial", "error"]);
+const RECONNECT_NOTICE = "抖音登录凭据失效了，打开工作台，在设置 → 账号里重新连接浏览器后才能接着读取。";
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -686,7 +687,14 @@ function AppContent() {
         if (status.state === "observing") setCollectorBusy(false);
         if (TERMINAL_COLLECTOR_STATES.has(status.state)) {
           setCollectorBusy(false);
+          // 聊天还在收时这个轮询不会退出，等它返回的 endSync 收不了尾，「正在停止」要在这里落下，不然之后的自动补读全被挡住
+          setStoppingSync(false);
           autoSyncInFlightRef.current = false;
+          // 托盘定时或收在托盘里的那次读取碰上凭据失效：不弹窗，发系统通知（主进程只在窗口不在屏幕上时发，一次）
+          if (status.browserSource?.credentials === "reconnect_required" && (pageHidden() || timerSyncRef.current)) {
+            notifyDesktopBackgroundSyncBlocked(RECONNECT_NOTICE);
+          }
+          timerSyncRef.current = false;
           if (!receiving && chatPollRequestRef.current === requestId) {
             chatCollectionInFlightRef.current = false;
             chatPollRequestRef.current = null;
@@ -788,7 +796,7 @@ function AppContent() {
     if (!pageHidden() && activeView !== "sources" && dashboardOpen && dashboardView === "explore" && !storySrc) return;
     const token = collectorToken;
     if (collectorStatus?.browserSource?.credentials === "reconnect_required") {
-      if (manual) notifyDesktopBackgroundSyncBlocked("请在设置 → 账号中连接浏览器并导入登录凭据。");
+      if (manual || pageHidden()) notifyDesktopBackgroundSyncBlocked(RECONNECT_NOTICE);
       return;
     }
     // 桌面版每次启动都是新端口新配对码，开机后台启动或没点连接就关窗时，后台读取得自己先连上；
