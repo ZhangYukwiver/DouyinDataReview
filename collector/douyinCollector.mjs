@@ -55,6 +55,9 @@ const MAX_CHAT_MESSAGES = 100_000;
 // ponytail: bound a broken cursor chain while still allowing the 100k-message
 // local cap to be reached for a genuinely long friend conversation.
 const CHAT_FRIEND_HISTORY_PAGE_LIMIT = 2_000;
+// 读聊天历史时碰上这些就是整个账号读不了，不是某个好友的问题
+const CHAT_ACCOUNT_ERRORS = new Set(["browser_reconnect_required", "browser_import_failed", "direct_session_missing", "write_credentials_missing",
+  "login_required", "session_rejected", "verification_required", "account_mismatch", "rate_limited"]);
 const CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
 const DIRECT_CREDENTIAL_EXPORT_TIMEOUT_MS = 45_000;
 const LEGACY_CHAT_OBSERVATION_WARNING = "聊天监听模式：使用无头浏览器自动读取；群聊只保存群名和消息统计，好友对话保存已加载的完整消息内容。";
@@ -453,6 +456,7 @@ export class DouyinCollector {
     this.syncMode = null;
     // 边采边存的最小间隔，快照是整份重写的，不能每页都写
     this.progressPersistIntervalMs = 1_500;
+    this.chatHistoryPageLimit = CHAT_FRIEND_HISTORY_PAGE_LIMIT;
     this.snapshot = null;
     this.videoDownloadJobs = new Map();
     this.videoDownloadQueue = Promise.resolve();
@@ -1450,21 +1454,30 @@ export class DouyinCollector {
         if (observation.active && runId === this.chatRunId) this.updateChat({ message: safeMessage(error, "实时消息暂不可用，正在重连") });
       } });
       const friends = [...client.conversations.values()].filter(c=>c.type===1);
+      let skipped = 0;
       for (const [index, conversation] of friends.entries()) {
         signal.throwIfAborted(); this.assertChatActive(runId);
         this.updateChat({ progress: { current: index + 1, total: friends.length }, message: `正在读取聊天历史 ${index + 1}/${friends.length}` });
-        let page = await client.messages({ conversationId: conversation.id }, { signal });
-        await accept({ messages: page.pageMessages, conversations: [conversation] });
-        for (let count = 1; page.hasMore && count < CHAT_FRIEND_HISTORY_PAGE_LIMIT; count += 1) {
-          page = await client.messages({ conversationId: conversation.id, older: true }, { signal });
-          await accept({ messages: page.pageMessages, conversations: [] });
-          await delay(200, undefined, { signal });
+        // 一个好友读失败就跳过这个好友，别让整个接收停掉、下次又从头读；登录失效、限流这类整个账号的问题照旧停下。
+        // 翻到页数上限就停在那里，读到的都留着
+        try {
+          let page = await client.messages({ conversationId: conversation.id }, { signal });
+          await accept({ messages: page.pageMessages, conversations: [conversation] });
+          for (let count = 1; page.hasMore && count < this.chatHistoryPageLimit; count += 1) {
+            page = await client.messages({ conversationId: conversation.id, older: true }, { signal });
+            await accept({ messages: page.pageMessages, conversations: [] });
+            await delay(200, undefined, { signal });
+          }
+        } catch (error) {
+          if (signal.aborted || runId !== this.chatRunId || CHAT_ACCOUNT_ERRORS.has(error?.code)) throw error;
+          skipped += 1;
         }
-        if (page.hasMore) throw new DirectHistoryError("record_limit", "聊天历史达到读取容量，已保留读取到的消息。");
       }
       await flush();
       observation.historyReady = true;
-      this.updateChat({ progress: null, message: "正在通过接口实时接收消息" });
+      this.updateChat({ progress: null, message: skipped
+        ? `正在通过接口实时接收消息，有 ${skipped} 个好友的聊天历史这次没读到，下次开始接收时再读`
+        : "正在通过接口实时接收消息" });
       await observation.stopPromise;
     } finally {
       // 停止时 chatRunId 已经换了，这里不再认它：新的一轮要等这一轮的 promise 收尾才开得起来，补存不会盖掉别人。

@@ -428,8 +428,9 @@ export async function startCollectorServer({
       return;
     }
 
-    // 切换账号时只放行读状态和账号列表
-    if (!(request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts")) && rejectWhileSwitching(response)) return;
+    // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录照常能读，接收中的聊天页要一直拉
+    const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (url.pathname === "/v1/records" && !accountWork));
+    if (!readable && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
     if (readPermission) {

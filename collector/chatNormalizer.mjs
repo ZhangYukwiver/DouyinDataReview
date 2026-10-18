@@ -1385,19 +1385,15 @@ export function normalizeChatSocketPayload(payload) {
 export class ChatMessageAccumulator {
   constructor(initialMessages = createEmptyChatMessages()) {
     this.messages = new Map();
-    this.addMessages(initialMessages, false);
+    this.addMessages(initialMessages);
   }
 
-  addMessages(messages, trackTruncation = true) {
+  addMessages(messages) {
     let added = 0;
     for (const message of messages ?? []) {
       const normalized = message?.id ? message : normalizeImapiMessage(message);
       if (!normalized) continue;
       if (isSyntheticChatPlaceholder(normalized)) continue;
-      if (!this.messages.has(normalized.id) && this.messages.size >= MAX_CHAT_MESSAGES) {
-        if (trackTruncation) break;
-        continue;
-      }
       if (!this.messages.has(normalized.id)) added += 1;
       const previous = this.messages.get(normalized.id);
       this.messages.set(normalized.id, {
@@ -1420,12 +1416,15 @@ export class ChatMessageAccumulator {
     return added;
   }
 
+  // 满了就淘汰最旧的，留最新的 MAX_CHAT_MESSAGES 条；每次存盘都要排一遍序，顺手在这里删，不用另外再排
   snapshot() {
-    return [...this.messages.values()].sort((left, right) => {
+    const sorted = [...this.messages.values()].sort((left, right) => {
       const leftTime = left.sentAt ? Date.parse(left.sentAt) : 0;
       const rightTime = right.sentAt ? Date.parse(right.sentAt) : 0;
       return rightTime - leftTime || left.id.localeCompare(right.id);
     });
+    for (const message of sorted.splice(MAX_CHAT_MESSAGES)) this.messages.delete(message.id);
+    return sorted;
   }
 }
 

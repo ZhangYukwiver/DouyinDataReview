@@ -207,7 +207,6 @@ function normalizeChatCollection(value, groupConversationIds = new Set()) {
   const seen = new Set();
   const messages = [];
   for (const item of value) {
-    if (messages.length >= MAX_CHAT_MESSAGES) break;
     const message = normalizeChatMessage(item);
     if (
       !message
@@ -219,7 +218,9 @@ function normalizeChatCollection(value, groupConversationIds = new Set()) {
     seen.add(message.id);
     messages.push(message);
   }
-  return messages.sort((left, right) => (right.sentAt ? Date.parse(right.sentAt) : 0) - (left.sentAt ? Date.parse(left.sentAt) : 0));
+  // 超过上限时丢最旧的，留最新的
+  return messages.sort((left, right) => (right.sentAt ? Date.parse(right.sentAt) : 0) - (left.sentAt ? Date.parse(left.sentAt) : 0))
+    .slice(0, MAX_CHAT_MESSAGES);
 }
 
 function normalizeChatConversations(value) {

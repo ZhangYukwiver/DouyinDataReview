@@ -628,6 +628,17 @@ describe("ChatConversationAccumulator", () => {
 
     expect(accumulator.snapshot()).toEqual([]);
   });
+
+  it("drops the oldest messages once the local cap is full", () => {
+    const at = (n) => new Date(Date.UTC(2026, 0, 1) + n * 1_000).toISOString();
+    const message = (n) => ({ id: `m-${n}`, conversationId: "conv-1", conversationType: "friend", senderId: "friend", type: "text", text: "嗯", sentAt: at(n) });
+    const accumulator = new ChatMessageAccumulator(Array.from({ length: 100_000 }, (_, n) => message(n)));
+    accumulator.addMessages([message(100_000)]);
+    const kept = accumulator.snapshot();
+    expect(kept).toHaveLength(100_000);
+    expect(kept[0].id).toBe("m-100000");
+    expect(kept.at(-1).id).toBe("m-1");
+  });
 });
 
 describe("friend online status", () => {

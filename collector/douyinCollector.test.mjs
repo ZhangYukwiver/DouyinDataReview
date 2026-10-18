@@ -1263,3 +1263,44 @@ describe("DouyinCollector concurrent HTTP work", () => {
     expect(store.save.mock.calls.length).toBeGreaterThan(3);
   });
 });
+
+describe("DouyinCollector chat history reading", () => {
+  function chatRun(messages) {
+    const store = mockStore();
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
+    collector.snapshot = emptySnapshot();
+    collector.progressPersistIntervalMs = 0;
+    collector.chatHistoryPageLimit = 3;
+    const friend = (id) => [id, { id, shortId: "1", type: 1, kind: "friend", name: id }];
+    const client = { conversations: new Map([friend("broken"), friend("long"), friend("short")]), messages: vi.fn(messages),
+      initialize: vi.fn(async () => undefined), connect: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
+    collector.ensureDirectApi = vi.fn(async () => ({ session: { uid: "me" }, chatClient: client }));
+    let release;
+    const observation = { active: true, stop: () => release(), stopPromise: new Promise((resolve) => { release = resolve; }) };
+    collector.chatRunId = 1;
+    const run = collector.runDirectChatObservation(1, observation);
+    const stop = async () => { observation.active = false; collector.chatRunId = 2; observation.stop(); await run; };
+    return { collector, client, observation, run, stop };
+  }
+  const message = (conversationId, n) => ({ id: `${conversationId}-${n}`, conversationId, conversationType: "friend", senderId: "friend",
+    type: "text", text: `第 ${n} 条`, sentAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0) - n * 1_000).toISOString() });
+
+  it("skips a friend whose history fails and keeps a long history up to the page limit", async () => {
+    let page = 0;
+    const { collector, client, observation, stop } = chatRun(async ({ conversationId }) => {
+      if (conversationId === "broken") throw new DirectHistoryError("request_failed", "抖音直接请求失败，请检查网络后重试。");
+      page += 1;
+      return { pageMessages: [message(conversationId, page)], hasMore: conversationId === "long" };
+    });
+    await vi.waitFor(() => expect(observation.historyReady).toBe(true), { timeout: 3_000 });
+    expect(client.messages.mock.calls.filter(([input]) => input.conversationId === "long")).toHaveLength(3);
+    expect(collector.snapshot.chatMessages.map((item) => item.conversationId).sort()).toEqual(["long", "long", "long", "short"]);
+    expect(collector.getStatus().chat).toMatchObject({ state: "observing", message: expect.stringContaining("1 个好友") });
+    await stop();
+  });
+
+  it("still stops on an account-wide failure", async () => {
+    const { run } = chatRun(async () => { throw new DirectHistoryError("login_required", "抖音登录已失效，请重新登录后再试。"); });
+    await expect(run).rejects.toMatchObject({ code: "login_required" });
+  });
+});

@@ -174,6 +174,10 @@ describe("browser login HTTP handshake", () => {
     expect(settled).toBe(false);
     expect(connections[0].disconnect).not.toHaveBeenCalled();
     expect(loginButton.click).toHaveBeenCalledOnce();
+    // 等登录期间聊天页照常拉记录，改记录的请求仍然挡着
+    expect((await call("/v1/records?part=chat")).status).toBe(200);
+    expect((await call("/v1/records")).status).toBe(200);
+    expect((await call("/v1/sync", "POST")).body.error).toBe("collector_busy");
 
     loggedIn = true;
     const inspected = await inspectedRequest;

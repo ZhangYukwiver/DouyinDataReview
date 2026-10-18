@@ -8,6 +8,22 @@ import { createEmptyRecords } from "./normalizer.mjs";
 import { CollectorStore } from "./store.mjs";
 
 describe("CollectorStore", () => {
+  it("keeps the newest friend messages when more than the cap are saved", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
+    try {
+      const at = (n) => new Date(Date.UTC(2026, 0, 1) + n * 1_000).toISOString();
+      // 最新的一条排在最后：老代码按顺序截到 10 万条就把它丢了
+      const chatMessages = Array.from({ length: 100_001 }, (_, n) => ({ id: `m-${n}`, conversationId: "conv-1", conversationType: "friend",
+        senderId: "friend", type: "text", text: "嗯", sentAt: at(n) }));
+      const saved = await new CollectorStore(directory).save(createEmptyRecords(), [], { chatMessages });
+      expect(saved.chatMessages).toHaveLength(100_000);
+      expect(saved.chatMessages[0].id).toBe("m-100000");
+      expect(saved.chatMessages.some((message) => message.id === "m-0")).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("atomically replaces an existing snapshot without storing raw session data", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
     try {
