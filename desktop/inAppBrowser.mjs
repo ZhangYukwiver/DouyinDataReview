@@ -78,9 +78,9 @@ const lowerHeaders = headers => Object.fromEntries(Object.entries(headers ?? {})
 const requestView = item => ({ url: () => item.url, method: () => item.method, headerValue: async name => item.headers[name.toLowerCase()] ?? null });
 
 class InAppPage extends EventEmitter {
-  constructor(window, raw) {
+  constructor(window, raw, focusApp) {
     super();
-    this.window = window; this.contents = window.webContents; this.raw = raw;
+    this.window = window; this.contents = window.webContents; this.raw = raw; this.focusApp = focusApp;
     this.sessions = new Set(); this.requests = new Map(); this.closed = false;
     window.once("closed", () => this.markClosed());
     this.contents.debugger.on("message", (_event, method, params) => this.receive(method, params));
@@ -127,6 +127,12 @@ class InAppPage extends EventEmitter {
   // 窗口一直藏着，扫码在工作台里完成；碰到验证或想用验证码登录时，用户点了才 reveal
   async bringToFront() {}
   reveal() { if (!this.closed) { this.window.show(); this.window.focus(); } }
+  // 认出登录后把亮着的窗口藏回去、切回工作台，用户直接在设置里确认账号
+  conceal() {
+    if (this.closed || !this.window.isVisible()) return;
+    this.window.hide();
+    this.focusApp?.();
+  }
   async addInitScript(script) { await this.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${script})();` }); }
 
   async evaluate(script, argument) {
@@ -180,7 +186,7 @@ class InAppPage extends EventEmitter {
   }
 }
 
-export function createInAppBrowserConnector({ BrowserWindow, session }) {
+export function createInAppBrowserConnector({ BrowserWindow, session, focusApp }) {
   let loginSession = null;
   // 第一次用时才建（要等 app ready）；登录态存在独立分区里，和工作台页面、其他账号目录都分开
   const prepare = () => {
@@ -219,7 +225,7 @@ export function createInAppBrowserConnector({ BrowserWindow, session }) {
         guard(window.webContents);
         // 用户关掉亮出来的窗口只是藏回去，不打断登录；断开时 destroy 不走这里
         window.on("close", event => { event.preventDefault(); window.hide(); });
-        const page = new InAppPage(window, raw);
+        const page = new InAppPage(window, raw, focusApp);
         pages.add(page); page.once("close", () => pages.delete(page));
         try { return await page.open(); }
         catch (error) { await page.close(); throw error; }

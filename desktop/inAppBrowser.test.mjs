@@ -23,7 +23,8 @@ function fakeElectron() {
   }
   const loginSession = { setUserAgent: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), on: vi.fn() };
   const session = { fromPartition: vi.fn(() => loginSession) };
-  return { windows, loginSession, session, connect: createInAppBrowserConnector({ BrowserWindow, session }) };
+  const focusApp = vi.fn();
+  return { windows, loginSession, session, focusApp, connect: createInAppBrowserConnector({ BrowserWindow, session, focusApp }) };
 }
 
 describe("in-app Douyin login window", () => {
@@ -40,7 +41,7 @@ describe("in-app Douyin login window", () => {
   });
 
   it("opens guarded pages in the isolated partition, scopes cookies and closes everything on disconnect", async () => {
-    const { windows, loginSession, session, connect } = fakeElectron();
+    const { windows, loginSession, session, focusApp, connect } = fakeElectron();
     const connection = await connect({ id: "app", label: "应用内登录", inApp: true });
     expect(session.fromPartition).toHaveBeenCalledWith(LOGIN_PARTITION);
     expect(loginSession.setUserAgent.mock.calls[0][0]).not.toMatch(/Electron/u);
@@ -66,6 +67,13 @@ describe("in-app Douyin login window", () => {
     const closing = { preventDefault: vi.fn() }; window.hide = vi.fn();
     window.emit("close", closing);
     expect(closing.preventDefault).toHaveBeenCalled(); expect(window.hide).toHaveBeenCalled(); expect(page.isClosed()).toBe(false);
+    // 认出登录后藏起亮着的窗口、切回工作台；本来就藏着就什么都不动
+    window.hide = vi.fn(); window.isVisible = () => true;
+    page.conceal();
+    expect(window.hide).toHaveBeenCalledOnce(); expect(focusApp).toHaveBeenCalledOnce();
+    window.isVisible = () => false;
+    page.conceal();
+    expect(focusApp).toHaveBeenCalledOnce();
 
     const blocked = { preventDefault: vi.fn(), url: "https://example.org/", isMainFrame: true };
     contents.emit("will-navigate", blocked);

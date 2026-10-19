@@ -136,7 +136,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
       <View style={styles.backdrop}>
         {/* 遮罩用响应者而不是 Pressable：RN-web 的 Pressable 总带 tabIndex=0，会变成一个看不见、按回车就关面板的 Tab 停留点 */}
-        <View onResponderRelease={onClose} onStartShouldSetResponder={() => true} style={[StyleSheet.absoluteFill, pointer]} testID="settings-backdrop" />
+        {/* 等登录、导入凭据或换号时（switchingAccount）点遮罩不关：关掉面板会取消正在窗口里做的登录；要关就点 × 或按 Esc */}
+        <View onResponderRelease={props.switchingAccount ? undefined : onClose} onStartShouldSetResponder={() => true} style={[StyleSheet.absoluteFill, pointer]} testID="settings-backdrop" />
         <View
           {...role(props.appStyle, "w-dialog")}
           accessibilityLabel="设置"

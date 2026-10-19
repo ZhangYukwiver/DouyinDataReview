@@ -283,7 +283,7 @@ async function askInstallChoiceOnMac() {
 }
 
 async function startDesktopRuntime() {
-  const connectInApp = createInAppBrowserConnector({ BrowserWindow, session });
+  const connectInApp = createInAppBrowserConnector({ BrowserWindow, session, focusApp: showMainWindow });
   const collector = await startCollectorServer({
     port: 0,
     dataDirectory: path.join(app.getPath("userData"), "collector"),

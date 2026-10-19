@@ -18,7 +18,7 @@ async function fixture({ isLoggedIn = () => true, prepare } = {}) {
   const identity = { uid: "123456", nickname: "合成账号", secUid: null, avatar: null };
   const cookies = [{ name: "sessionid", value: "synthetic", domain: ".douyin.com", path: "/", expires: -1 }];
   const loginButton = { click: vi.fn(async () => {}) };
-  const page = { goto: vi.fn(), bringToFront: vi.fn(), reveal: vi.fn(), isClosed: () => false,
+  const page = { goto: vi.fn(), bringToFront: vi.fn(), reveal: vi.fn(), conceal: vi.fn(), isClosed: () => false,
     evaluate: vi.fn(async fn => fn.toString().includes("navigator.userAgent") ? directSessionFixture().userAgent
       : fn.toString().includes("animate_qrcode_container") ? { image: "data:image/png;base64,QUJD", hint: "扫码成功" }
         : isLoggedIn() ? { ...identity } : null),
@@ -192,6 +192,7 @@ describe("browser login HTTP handshake", () => {
     expect(inspected).toMatchObject({ status: 200, body: { candidate: { uid: "123456", nickname: "合成账号" } } });
     expect(connections[0].disconnect).not.toHaveBeenCalled();
     expect((await call("/v1/browser/login-qrcode")).body).toEqual({ qrcode: null });
+    expect(page.conceal).toHaveBeenCalledOnce();
     await call("/v1/browser/pending", "DELETE", { id: inspected.body.candidate.id });
     expect(connections[0].disconnect).toHaveBeenCalledOnce();
     expect(readRecords).not.toHaveBeenCalled();

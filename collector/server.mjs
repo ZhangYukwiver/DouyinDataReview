@@ -511,6 +511,7 @@ export async function startCollectorServer({
               await page.bringToFront?.();
               const identity = await browserIdentity(connection, page, { signal: loginController.signal, timeoutMs: BROWSER_LOGIN_TIMEOUT_MS });
               loginController.signal.throwIfAborted();
+              page.conceal?.();
               const id = randomUUID();
               const timer = setTimeout(() => { void clearPendingBrowser(id); }, 2 * 60_000); timer.unref();
               pendingBrowser = { id, connection, page, identity, timer };
