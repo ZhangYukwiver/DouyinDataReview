@@ -515,8 +515,9 @@ export async function startCollectorServer({
           if (url.pathname === "/v1/browser/connect") {
             const source = browserSources.find(item => item.id === body.browser);
             if (!source) throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge 或受支持的 Comet。", 400);
+            // fresh：应用内登录换个号扫码，先关掉待确认的窗口，连接器再清登录分区
             await clearPendingBrowser();
-            const connection = await browserConnector(source);
+            const connection = await browserConnector(source, { fresh: body.fresh === true });
             try {
               loginController.signal.throwIfAborted();
               const page = await connection.context.newPage();
