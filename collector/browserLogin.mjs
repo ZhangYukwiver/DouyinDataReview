@@ -42,3 +42,20 @@ export async function waitForBrowserLogin(connection, page, hasLoginSession, {
   assertOpen();
   throw new BrowserConnectionError("browser_login_timeout", "等待抖音登录已超时，请重新连接，并在打开的页面完成登录或验证。");
 }
+
+// 应用内登录的网页藏在后台：把抖音登录框里的二维码和盖在上面的提示（扫码成功、已失效之类）读给工作台显示。
+// 抖音大约一分钟自己换一张码；真显示「已失效 / 点击刷新」时顺手点一下
+export async function readLoginQrCode(page) {
+  if (!page || page.isClosed()) return null;
+  const value = await page.evaluate(() => {
+    const container = document.querySelector("#douyin_login_comp_scan_code #animate_qrcode_container");
+    const image = container?.querySelector('img[aria-label="二维码"]')?.getAttribute("src");
+    if (!image) return null;
+    const hint = container.innerText.split(/\n+/u).map(line => line.trim()).filter(line => line && line !== "如何扫码").join(" ");
+    if (/失效|过期|刷新/u.test(hint)) [...container.querySelectorAll("*")].reverse().find(element => /刷新/u.test(element.textContent))?.click();
+    return { image, hint };
+  }).catch(() => null);
+  if (!value || typeof value.image !== "string" || value.image.length > 200_000
+    || !/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*$/u.test(value.image)) return null;
+  return { image: value.image, hint: typeof value.hint === "string" ? value.hint.slice(0, 60) : "" };
+}

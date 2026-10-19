@@ -4,8 +4,10 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { browserDirectories, connectExternalBrowser } from "../collector/browserConnection.mjs";
 import { startCollectorServer } from "../collector/server.mjs";
 import { createAppUpdateController } from "./appUpdater.mjs";
+import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
 import { startStaticServer } from "./staticServer.mjs";
 import { isSameOriginUrl, isStoryUrl } from "./windowPolicy.mjs";
 
@@ -281,10 +283,14 @@ async function askInstallChoiceOnMac() {
 }
 
 async function startDesktopRuntime() {
+  const connectInApp = createInAppBrowserConnector({ BrowserWindow, session });
   const collector = await startCollectorServer({
     port: 0,
     dataDirectory: path.join(app.getPath("userData"), "collector"),
     signerDirectory: app.isPackaged ? path.join(process.resourcesPath, "direct-signer") : undefined,
+    // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
+    browserSources: [{ id: "app", label: "应用内登录", inApp: true }, ...browserDirectories()],
+    browserConnector: source => (source.inApp ? connectInApp(source) : connectExternalBrowser(source)),
   });
   try {
     const rootDirectory = path.join(projectDirectory, "dist");

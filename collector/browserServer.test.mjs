@@ -18,8 +18,10 @@ async function fixture({ isLoggedIn = () => true, prepare } = {}) {
   const identity = { uid: "123456", nickname: "合成账号", secUid: null, avatar: null };
   const cookies = [{ name: "sessionid", value: "synthetic", domain: ".douyin.com", path: "/", expires: -1 }];
   const loginButton = { click: vi.fn(async () => {}) };
-  const page = { goto: vi.fn(), bringToFront: vi.fn(), isClosed: () => false,
-    evaluate: vi.fn(async fn => fn.toString().includes("navigator.userAgent") ? directSessionFixture().userAgent : isLoggedIn() ? { ...identity } : null),
+  const page = { goto: vi.fn(), bringToFront: vi.fn(), reveal: vi.fn(), isClosed: () => false,
+    evaluate: vi.fn(async fn => fn.toString().includes("navigator.userAgent") ? directSessionFixture().userAgent
+      : fn.toString().includes("animate_qrcode_container") ? { image: "data:image/png;base64,QUJD", hint: "扫码成功" }
+        : isLoggedIn() ? { ...identity } : null),
     getByRole: () => ({ count: async () => isLoggedIn() ? 0 : 1, nth: () => ({ isVisible: async () => true, click: loginButton.click }) }) };
   const context = new EventEmitter();
   Object.assign(context, { externalBrowser: true, cookies: vi.fn(async () => isLoggedIn() ? cookies : []), newPage: vi.fn(async () => page), pages: () => [page] });
@@ -58,7 +60,7 @@ async function fixture({ isLoggedIn = () => true, prepare } = {}) {
     const response = await fetch(`${runtime.baseUrl}${route}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { runtime, call, headers, dataDirectory, connections, browserConnector, identity, loginButton, bootstrap, readRecords };
+  return { runtime, call, headers, dataDirectory, connections, browserConnector, identity, loginButton, bootstrap, readRecords, page };
 }
 
 describe("browser login HTTP handshake", () => {
@@ -166,7 +168,9 @@ describe("browser login HTTP handshake", () => {
   });
   it("keeps the browser open until a later login, then returns the account for confirmation", async () => {
     let loggedIn = false;
-    const { call, connections, browserConnector, loginButton, readRecords } = await fixture({ isLoggedIn: () => loggedIn });
+    const { call, connections, browserConnector, loginButton, readRecords, page } = await fixture({ isLoggedIn: () => loggedIn });
+    expect((await call("/v1/browser/login-qrcode")).body).toEqual({ qrcode: null });
+    expect((await call("/v1/browser/login-window", "POST", {})).body.error).toBe("browser_login_not_running");
     let settled = false;
     const inspectedRequest = call("/v1/browser/connect", "POST", { browser: "chrome" }).finally(() => { settled = true; });
     await vi.waitFor(() => expect(browserConnector).toHaveBeenCalledOnce());
@@ -178,11 +182,16 @@ describe("browser login HTTP handshake", () => {
     expect((await call("/v1/records?part=chat")).status).toBe(200);
     expect((await call("/v1/records")).status).toBe(200);
     expect((await call("/v1/sync", "POST")).body.error).toBe("collector_busy");
+    // 应用内登录时工作台在这里取二维码扫；要验证时把藏着的窗口亮出来
+    expect((await call("/v1/browser/login-qrcode")).body).toEqual({ qrcode: { image: "data:image/png;base64,QUJD", hint: "扫码成功" } });
+    expect((await call("/v1/browser/login-window", "POST", {})).status).toBe(200);
+    expect(page.reveal).toHaveBeenCalledOnce();
 
     loggedIn = true;
     const inspected = await inspectedRequest;
     expect(inspected).toMatchObject({ status: 200, body: { candidate: { uid: "123456", nickname: "合成账号" } } });
     expect(connections[0].disconnect).not.toHaveBeenCalled();
+    expect((await call("/v1/browser/login-qrcode")).body).toEqual({ qrcode: null });
     await call("/v1/browser/pending", "DELETE", { id: inspected.body.candidate.id });
     expect(connections[0].disconnect).toHaveBeenCalledOnce();
     expect(readRecords).not.toHaveBeenCalled();

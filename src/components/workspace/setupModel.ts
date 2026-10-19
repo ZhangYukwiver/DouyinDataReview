@@ -242,9 +242,9 @@ export function tipNotes(state: TipInput, layout: "sketch" | "minimal" = "sketch
   const tip = state.fromArchive
     ? { title: "用的是导入的文件", body: state.connected ? `报告和工作台都用这份文件。想换回采集器的数据，${minimal ? "把这份文件「移除」" : "点右边的「移除」"}就行。` : "报告和工作台都用这份文件，关掉应用后要重新导入。" }
     : state.loginNeeded
-      ? { title: "要先登录抖音", body: "在设置 → 账号中连接已登录的浏览器，确认账号并导入凭据后再读取。" }
+      ? { title: "要先登录抖音", body: "在设置 → 账号中扫码登录（或连接已登录的浏览器），确认账号并导入凭据后再读取。" }
       : !state.connected
-        ? { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。然后在设置 → 账号中连接已登录的浏览器并导入凭据。" }
+        ? { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。然后在设置 → 账号中扫码登录（或连接已登录的浏览器）并导入凭据。" }
         : state.syncing
           ? { title: "正在读取", body: "随时可以点「停止读取」停下，已经读到的会先存好。" }
           : state.ready

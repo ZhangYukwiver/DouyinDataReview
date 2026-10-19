@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
-import { BROWSER_LOGIN_TIMEOUT_MS, waitForBrowserLogin } from "./browserLogin.mjs";
+import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
 import { importedReadPermissions, parseReadPermissions, readPermissionForRequest } from "./readPermissions.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
@@ -250,6 +250,8 @@ export async function startCollectorServer({
   let switching = false;
   let browserWork = null;
   let browserLoginController = null;
+  // 正在等登录的那个页面：应用内登录时工作台从这里取二维码
+  let browserLoginPage = null;
   let pendingBrowser = null;
   const clearPendingBrowser = async (id) => {
     if (!pendingBrowser || (id && pendingBrowser.id !== id)) return;
@@ -430,7 +432,9 @@ export async function startCollectorServer({
 
     // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录照常能读，接收中的聊天页要一直拉
     const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (url.pathname === "/v1/records" && !accountWork));
-    if (!readable && rejectWhileSwitching(response)) return;
+    // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
+    const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window"].includes(url.pathname);
+    if (!readable && !loginWait && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
     if (readPermission) {
@@ -458,6 +462,17 @@ export async function startCollectorServer({
       try {
         if (request.method === "GET" && url.pathname === "/v1/browser/sources") {
           sendJson(response, 200, { sources: await listBrowserSources(browserSources), status: collector.getStatus() });
+          return;
+        }
+        // 应用内登录等扫码时工作台来取二维码；要验证或想用验证码登录时，把藏着的登录窗口亮出来
+        if (request.method === "GET" && url.pathname === "/v1/browser/login-qrcode") {
+          sendJson(response, 200, { qrcode: await readLoginQrCode(browserLoginPage) });
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/v1/browser/login-window") {
+          if (typeof browserLoginPage?.reveal !== "function") throw new BrowserConnectionError("browser_login_not_running", "现在没有在等登录，请重新点扫码登录。");
+          browserLoginPage.reveal();
+          sendJson(response, 200, {});
           return;
         }
         if (!["POST", "DELETE"].includes(request.method)) { sendJson(response, 404, { error: "not_found" }); return; }
@@ -492,6 +507,7 @@ export async function startCollectorServer({
             try {
               loginController.signal.throwIfAborted();
               const page = await connection.context.newPage();
+              browserLoginPage = page;
               await page.bringToFront?.();
               const identity = await browserIdentity(connection, page, { signal: loginController.signal, timeoutMs: BROWSER_LOGIN_TIMEOUT_MS });
               loginController.signal.throwIfAborted();
@@ -542,7 +558,7 @@ export async function startCollectorServer({
           }
         } finally {
           response.off("close", cancelLogin);
-          browserLoginController = null;
+          browserLoginController = null; browserLoginPage = null;
           switching = false; finishBrowserWork(); browserWork = null;
         }
       } catch (error) {

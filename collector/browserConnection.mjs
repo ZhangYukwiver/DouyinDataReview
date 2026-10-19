@@ -106,6 +106,8 @@ export async function discoverBrowser(source, listening = endpointListening, own
 
 export async function listBrowserSources(sources = browserDirectories()) {
   return Promise.all(sources.map(async source => {
+    // 应用内登录窗口不用找浏览器目录，也不用开调试
+    if (source.inApp) return { id: source.id, label: source.label, available: true, debugging: true };
     const { directory: _directory, endpoint: _endpoint, ...publicSource } = await discoverBrowser(source);
     return publicSource;
   }));
@@ -166,7 +168,7 @@ end tell`;
 
 // This facade exposes only tabs created by the workbench. It deliberately has
 // no global route/cache/cookie-write APIs and never exposes the user's tabs.
-class BorrowedContext extends EventEmitter {
+export class BorrowedContext extends EventEmitter {
   constructor(raw) { super(); this.raw = raw; this.ownedPages = new Set(); this.externalBrowser = true; }
   pages() { return [...this.ownedPages].filter(page => !page.isClosed()); }
   browser() { return null; }

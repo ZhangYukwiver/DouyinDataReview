@@ -325,7 +325,7 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
         <View style={styles.row}><Text style={styles.detail}>还没读到账号列表，稍等一下再打开看看。</Text></View>
       )}
       <View style={styles.row}>
-        <RowCopy detail="连接浏览器，登录并确认账号后导入凭据。" title="添加账号" />
+        <RowCopy detail="扫码登录或连接浏览器，确认账号后导入凭据。" title="添加账号" />
         <Button appStyle={appStyle} disabled={blocked} icon={UserRoundPlus} label="添加账号" onPress={() => { onClose(); onAddAccount(); }} testID="settings-account-add" />
       </View>
       {browserConnection ? <BrowserConnectionPanel {...browserConnection} visible={visible} blocked={blocked} /> : null}

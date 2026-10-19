@@ -49,7 +49,7 @@ export interface CollectorStatus {
   chat: CollectorChatStatus;
   /** 正在用的抖音账号；老版本采集器没有这一项 */
   account?: { id: string; nickname: string | null; avatar: string | null } | null;
-  browserSource?: { mode: "independent" | "cdp"; browser: "chrome" | "edge" | "comet" | null; connected: boolean;
+  browserSource?: { mode: "independent" | "cdp"; browser: BrowserLoginSource["id"] | null; connected: boolean;
     credentials?: "ready" | "exporting" | "reconnect_required" };
 }
 
@@ -62,8 +62,11 @@ export function canReadCollector(status: CollectorStatus | null, kind: keyof Col
   return status?.readPermissions?.[kind] !== false;
 }
 
+const BROWSER_IDS: readonly string[] = ["app", "chrome", "edge", "comet"];
+
 export interface BrowserLoginSource {
-  id: "chrome" | "edge" | "comet";
+  // app = 桌面版应用内登录窗口
+  id: "app" | "chrome" | "edge" | "comet";
   label: string;
   available: boolean;
   debugging: boolean;
@@ -741,7 +744,7 @@ function parseStatus(value: unknown): CollectorStatus {
     account: parseStatusAccount(value.account),
     ...(isObject(value.browserSource) && ["independent", "cdp"].includes(String(value.browserSource.mode)) ? {
       browserSource: { mode: value.browserSource.mode as "independent" | "cdp",
-        browser: ["chrome", "edge", "comet"].includes(String(value.browserSource.browser)) ? value.browserSource.browser as BrowserLoginSource["id"] : null,
+        browser: BROWSER_IDS.includes(String(value.browserSource.browser)) ? value.browserSource.browser as BrowserLoginSource["id"] : null,
         connected: value.browserSource.connected === true,
         ...(["ready", "exporting", "reconnect_required"].includes(String(value.browserSource.credentials))
           ? { credentials: value.browserSource.credentials as "ready" | "exporting" | "reconnect_required" } : {}) },
@@ -1215,7 +1218,7 @@ export async function getBrowserLoginSources(baseUrl: string, token: string): Pr
   const value = await requestJson(baseUrl, "/v1/browser/sources", {}, token);
   if (!isObject(value) || !Array.isArray(value.sources)) throw new LocalCollectorError("invalid_response", "浏览器列表无效。");
   return value.sources.flatMap((item): BrowserLoginSource[] => {
-    if (!isObject(item) || !["chrome", "edge", "comet"].includes(String(item.id)) || typeof item.label !== "string") return [];
+    if (!isObject(item) || !BROWSER_IDS.includes(String(item.id)) || typeof item.label !== "string") return [];
     const id = item.id as BrowserLoginSource["id"];
     return [{ id, label: item.label, available: item.available === true, debugging: item.debugging === true, inspectUrl: `${id}://inspect/#remote-debugging` }];
   });
@@ -1226,7 +1229,7 @@ export async function inspectBrowserLogin(baseUrl: string, token: string, browse
   const value = await requestJson(baseUrl, withAccount("/v1/browser/connect", accountId), { method: "POST", body: JSON.stringify({ browser }), signal }, token, 7 * 60_000);
   const candidate = isObject(value) && isObject(value.candidate) ? value.candidate : null;
   if (!candidate || typeof candidate.id !== "string" || !/^[0-9a-f-]{36}$/u.test(candidate.id)
-    || !["chrome", "edge", "comet"].includes(String(candidate.browser)) || typeof candidate.uid !== "string" || !/^\d{1,30}$/u.test(candidate.uid))
+    || !BROWSER_IDS.includes(String(candidate.browser)) || typeof candidate.uid !== "string" || !/^\d{1,30}$/u.test(candidate.uid))
     throw new LocalCollectorError("invalid_response", "浏览器登录账号无效。");
   return { id: candidate.id, browser: candidate.browser as BrowserLoginSource["id"], uid: candidate.uid,
     nickname: cleanRecordString(candidate.nickname, 100), accountId: typeof candidate.accountId === "string" && ACCOUNT_ID.test(candidate.accountId) ? candidate.accountId : null,
@@ -1234,6 +1237,19 @@ export async function inspectBrowserLogin(baseUrl: string, token: string, browse
     ...(isObject(candidate.readPermissions) ? { readPermissions: {
       videos: candidate.readPermissions.videos === true, chat: candidate.readPermissions.chat === true,
     } } : {}) };
+}
+
+/** 应用内登录等扫码时的二维码；不在等登录或码还没出来时是 null */
+export async function getBrowserLoginQrCode(baseUrl: string, token: string): Promise<{ image: string; hint: string } | null> {
+  const value = await requestJson(baseUrl, "/v1/browser/login-qrcode", {}, token);
+  const qrcode = isObject(value) && isObject(value.qrcode) ? value.qrcode : null;
+  if (!qrcode || typeof qrcode.image !== "string" || !/^data:image\/(?:png|jpeg|gif|webp);base64,/u.test(qrcode.image)) return null;
+  return { image: qrcode.image, hint: typeof qrcode.hint === "string" ? qrcode.hint : "" };
+}
+
+/** 把藏着的应用内登录窗口亮出来，用来做验证或改用验证码登录 */
+export async function showBrowserLoginWindow(baseUrl: string, token: string): Promise<void> {
+  await requestJson(baseUrl, "/v1/browser/login-window", { method: "POST", body: "{}" }, token);
 }
 
 export async function confirmBrowserLogin(baseUrl: string, token: string, id: string, readPermissions: CollectorReadPermissions, accountId?: string | null, adopt = false): Promise<CollectorAccountChange> {
