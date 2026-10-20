@@ -44,7 +44,7 @@ describe("system proxy settings", () => {
     for (const host of ["localhost", "127.0.0.1", "[::1]", "10.1.2.3", "192.168.1.5", "172.20.0.1", "nas.local", "box.lan", "intranet", "example.cn", "api.example.cn", "a.corp.com"]) {
       expect(bypassed(host, rules), host).toBe(true);
     }
-    for (const host of ["api.huiliu.one", "ark.cn-beijing.volces.com", "notexample.cn", "172.32.0.1"]) {
+    for (const host of ["api.huiliu.one", "ark.cn-beijing.volces.com", "notexample.cn", "172.32.0.1", "10.relay.example.com", "localhost-relay.com"]) {
       expect(bypassed(host, rules), host).toBe(false);
     }
   });

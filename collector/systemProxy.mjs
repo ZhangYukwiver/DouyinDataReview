@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const CACHE_MS = 15_000;
-const LOCAL = /^(localhost|::1|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/u;
+const LOCAL = /^(localhost|::1|(127|10)(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}|169\.254(\.\d{1,3}){2})$/u;
 
 function envProxy(env) {
   const url = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || env.ALL_PROXY || env.all_proxy;
@@ -70,12 +70,17 @@ const agents = new Map();
 // 依赖 undici 的全局 dispatcher 符号；Node 没有这个函数（24 以前）或造不出来时返回 null，退回直连。
 function proxyAgent(url) {
   if (!agents.has(url)) {
+    const key = Symbol.for("undici.globalDispatcher.1");
+    const original = globalThis[key];
     let agent = null;
     try {
       const restore = http.setGlobalProxyFromEnv({ HTTP_PROXY: url, HTTPS_PROXY: url });
-      agent = globalThis[Symbol.for("undici.globalDispatcher.1")] ?? null;
+      agent = globalThis[key] === original ? null : globalThis[key];
       restore();
     } catch { agent = null; }
+    // 代理地址格式不对时这个函数可能换了全局设置才报错，还原回去，抖音那边的请求不能被带去走代理。
+    // 进程里还没用过 fetch 时原值是空的，不能写回空值（之后的 fetch 都会坏），只能靠上面的 restore
+    if (original !== undefined) globalThis[key] = original;
     agents.set(url, agent);
   }
   return agents.get(url);
@@ -89,7 +94,7 @@ export async function modelFetch(url, init) {
   try {
     return await fetch(url, { ...init, dispatcher: agent });
   } catch (error) {
-    if (error instanceof TypeError) error.proxy = proxy.url;
+    if (error instanceof TypeError) error.proxy = new URL(proxy.url).host;  // 只留主机和端口，代理账号密码不进报错
     throw error;
   }
 }
