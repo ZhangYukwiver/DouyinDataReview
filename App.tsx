@@ -106,7 +106,6 @@ import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
 import { buildDataExport, type DataExportSelection } from "./src/services/exportData";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 import { AnalysisWorkspace } from "./src/components/workspace/AnalysisWorkspace";
-import { AiEditWorkspace } from "./src/components/workspace/AiEditWorkspace";
 import { loadAnalysisConfig, startAnalysis } from "./src/services/videoAnalysis";
 
 type ViewKey = "summary" | "highlights" | "records" | "chat" | "sources";
@@ -1836,7 +1835,6 @@ function AppContent() {
           explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onAnalyzeRecord={analysisInstalled ? (record) => analyzeRecord(record, true) : undefined} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           analysis={analysisInstalled ? <AnalysisWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} /> : undefined}
-          aiEdit={<AiEditWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} records={workspaceRecords} onOpenSettings={openSettings} />}
           onAnalyzeRecord={analysisInstalled ? analyzeRecord : undefined}
           activeView={dashboardView}
           appStyle={appStyle}
