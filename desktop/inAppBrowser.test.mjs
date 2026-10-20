@@ -97,8 +97,9 @@ describe("in-app Douyin login window", () => {
     expect(window.show).not.toHaveBeenCalled();
     page.reveal();
     expect(window.show).toHaveBeenCalledOnce();
+    // 抖音弹验证框也不自己亮，首屏提示，用户点了才 reveal
     contents.emit("did-frame-navigate", {}, "https://rmc.bytedance.com/verifycenter/captcha/v2?from=web");
-    expect(window.show).toHaveBeenCalledTimes(2);
+    expect(window.show).toHaveBeenCalledOnce();
     const closing = { preventDefault: vi.fn() }; window.hide = vi.fn();
     window.emit("close", closing);
     expect(closing.preventDefault).toHaveBeenCalled(); expect(window.hide).toHaveBeenCalled(); expect(page.isClosed()).toBe(false);

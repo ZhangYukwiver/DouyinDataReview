@@ -1,5 +1,5 @@
 // 应用里的抖音登录，替代「在 Chrome/Edge 打开远程调试」这一步。抖音网页开在一个不显示的窗口里，
-// 登录框的二维码交给工作台页面显示（collector/browserLogin.mjs 的 readLoginQrCode），要验证时才把窗口亮出来。
+// 登录框的二维码交给工作台页面显示（collector/browserLogin.mjs 的 readLoginQrCode），要验证时首屏提示，用户点了才把窗口亮出来。
 // 只实现导入凭据链路实际用到的那一小块 Playwright Page/Context 接口，外面照常套
 // collector/browserConnection.mjs 的 BorrowedContext；不是通用兼容层。
 // 不开 remote-debugging-port：CDP 只走每个窗口自己的 webContents.debugger。
@@ -257,8 +257,6 @@ export function createInAppBrowserConnector({ BrowserWindow, session, focusApp, 
       const block = (event, url) => { if (event.isMainFrame !== false && !isLoginUrl(event.url ?? url)) event.preventDefault(); };
       contents.on("will-navigate", block);
       contents.on("will-redirect", block);
-      // 抖音要安全验证时（验证框是 verifycenter/captcha 子框架）把窗口亮出来让用户自己做，登录和导入都接着等
-      contents.on("did-frame-navigate", (_event, url) => { if (VERIFY_FRAME.test(url)) BrowserWindow.fromWebContents(contents)?.show(); });
       // 第三方登录弹窗用同一个分区，同样只许去登录相关的域
       contents.setWindowOpenHandler(({ url }) => isLoginUrl(url)
         ? { action: "allow", overrideBrowserWindowOptions: { autoHideMenuBar: true, webPreferences: preferences } } : { action: "deny" });
