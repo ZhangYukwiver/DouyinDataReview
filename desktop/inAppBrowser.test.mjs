@@ -60,9 +60,14 @@ describe("in-app Douyin login window", () => {
       // 内容没变不重复存；换到下一步（比如输短信验证码）就再存一份
       await connection.verification(); await vi.advanceTimersByTimeAsync(3000);
       expect(saveDiagnostic).toHaveBeenCalledOnce();
-      frame.executeJavaScript.mockResolvedValue("<div>输入验证码</div>");
+      frame.executeJavaScript.mockResolvedValue("<div>验证码 123456 59s后重新发送</div>");
+      await connection.verification(); await vi.advanceTimersByTimeAsync(3000);
+      frame.executeJavaScript.mockResolvedValue("<div>验证码 123456 56s后重新发送</div>");
       await connection.verification(); await vi.advanceTimersByTimeAsync(3000);
       expect(saveDiagnostic).toHaveBeenCalledTimes(2);
+      frame.executeJavaScript.mockResolvedValue("<div>输入验证码</div>");
+      await connection.verification(); await vi.advanceTimersByTimeAsync(3000);
+      expect(saveDiagnostic).toHaveBeenCalledTimes(3);
       await connection.revealVerification();
       expect(window.show).toHaveBeenCalled();
       await connection.disconnect();

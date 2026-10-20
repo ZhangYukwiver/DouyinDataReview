@@ -304,8 +304,10 @@ export function createInAppBrowserConnector({ BrowserWindow, session, focusApp, 
       setTimeout(async () => {
         const html = await withinTime(frame.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.outerHTML ?? ""`).catch(() => null), 3000);
         const masked = typeof html === "string" ? maskDiagnostic(html) : "";
-        if (masked && masked !== seen.last) {
-          seen.last = masked; seen.count += 1;
+        // 「57s后重新发送」这种倒计时每秒都变，不算换了一步
+        const shape = masked.replace(/\d+/gu, "");
+        if (masked && shape !== seen.last) {
+          seen.last = shape; seen.count += 1;
           await saveDiagnostic(masked, maskDiagnostic(frame.url)).catch(() => {});
         }
         seen.busy = false;
