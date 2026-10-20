@@ -3,10 +3,11 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, T
 import { ArrowUpRight, Copy, RefreshCw, Settings2, Sparkles, Trash2 } from "lucide-react-native";
 import type { ExploreConnection } from "../../services/explorer";
 import {
-  deleteAnalysis, listAnalyses, loadAnalysisConfig, parseMarkdown, saveAnalysisConfig, startAnalysis,
+  deleteAnalysis, listAnalyses, loadAnalysisConfig, saveAnalysisConfig, startAnalysis,
   type AnalysisConfig, type VideoAnalysis,
 } from "../../services/videoAnalysis";
 import { Empty, ErrorLine, kit, Panel, SmallButton } from "./CreatorKit";
+import { Markdown } from "./markdownView";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
 
@@ -158,31 +159,6 @@ function Detail({ item, onRetry, onRemove, onOpen }: { item: VideoAnalysis; onRe
   </View>;
 }
 
-function Inline({ text, style }: { text: string; style?: object | object[] }) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/u);
-  return <Text selectable style={style}>{parts.map((part, index) => /^\*\*[^*]+\*\*$/u.test(part)
-    ? <Text key={index} style={kit.strong}>{part.slice(2, -2)}</Text> : part)}</Text>;
-}
-
-function Markdown({ text }: { text: string }) {
-  const blocks = useMemo(() => parseMarkdown(text), [text]);
-  return <View style={styles.markdown}>{blocks.map((block, index) => {
-    if (block.kind === "h") return <Inline key={index} text={block.text} style={[styles.heading, block.level >= 3 && styles.headingSmall]} />;
-    if (block.kind === "hr") return <View key={index} style={styles.hr} />;
-    if (block.kind === "quote") return <Inline key={index} text={block.text} style={[kit.body, styles.quote]} />;
-    if (block.kind === "li") return <View key={index} style={styles.li}><Text style={[kit.body, styles.marker]}>{block.marker}</Text><Inline text={block.text} style={[kit.body, { flex: 1 }]} /></View>;
-    if (block.kind === "table") {
-      const columns = Math.max(...block.rows.map((row) => row.length));
-      return <View key={index} style={styles.table}>
-        {block.rows.map((row, rowIndex) => <View key={rowIndex} style={[styles.tr, rowIndex === 0 && styles.th]}>
-          {Array.from({ length: columns }, (_, cell) => <View key={cell} style={styles.td}><Inline text={row[cell] ?? ""} style={rowIndex === 0 ? styles.thText : styles.tdText} /></View>)}
-        </View>)}
-      </View>;
-    }
-    return <Inline key={index} text={block.text} style={kit.body} />;
-  })}</View>;
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: color.canvas },
   content: { padding: 32, gap: 18, paddingBottom: 70 },
@@ -205,17 +181,4 @@ const styles = StyleSheet.create({
   itemTitle: { color: color.text, fontFamily: font.body, fontSize: 13, lineHeight: 20, fontWeight: "600" },
   detail: { flex: 1, minWidth: 0, alignSelf: "stretch", gap: 12, padding: 22, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
   detailTitle: { color: color.text, fontFamily: font.body, fontSize: 18, lineHeight: 27, fontWeight: "600" },
-  markdown: { gap: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: color.borderSoft },
-  heading: { color: color.text, fontFamily: font.body, fontSize: 16, lineHeight: 26, fontWeight: "600", marginTop: 8 },
-  headingSmall: { fontSize: 14 },
-  hr: { height: 1, backgroundColor: color.borderSoft, marginVertical: 4 },
-  quote: { paddingLeft: 12, borderLeftWidth: 3, borderLeftColor: color.borderSoft, color: color.textMuted },
-  li: { flexDirection: "row", gap: 8, paddingLeft: 4 },
-  marker: { minWidth: 16, color: color.textMuted },
-  table: { borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.small, overflow: "hidden" },
-  tr: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: color.borderSoft },
-  th: { backgroundColor: color.surfaceRaised },
-  td: { flex: 1, minWidth: 0, padding: 10, borderRightWidth: 1, borderRightColor: color.borderSoft },
-  thText: { color: color.text, fontFamily: font.body, fontSize: 12, lineHeight: 19, fontWeight: "600" },
-  tdText: { color: color.textSecondary, fontFamily: font.body, fontSize: 12, lineHeight: 20 },
 });
