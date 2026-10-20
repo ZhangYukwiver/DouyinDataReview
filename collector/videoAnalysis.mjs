@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { modelFetch } from "./systemProxy.mjs";
 import { normalizeDouyinVideoUrl } from "./videoDownloader.mjs";
 
 // 解析库：采集器把视频（最低一档清晰度）下到本地，整段视频连同拆解提示词发给用户自己配的 OpenAI 兼容接口
@@ -72,8 +73,9 @@ const QUICK_RETRY_MS = 10_000;
  */
 export function networkFailure(error, waitedMs = 0) {
   if (!(error instanceof TypeError) || !(error.cause || ["fetch failed", "terminated"].includes(error.message))) return null;
-  const code = String(error.cause?.code ?? "");
+  const code = typeof error.cause?.code === "string" ? error.cause.code : "";
   const shown = code || error.cause?.message || error.message;
+  if (error.proxy && code === "ECONNREFUSED") return { text: `连不上系统代理 ${error.proxy}（${shown}），代理软件可能没开着。` };
   if (code === "ENOTFOUND" || code === "EAI_AGAIN") return { text: `找不到接口地址的域名（${shown}），检查一下地址有没有写错、这台电脑能不能上网。` };
   if (code === "ECONNREFUSED") return { text: `接口地址拒绝连接（${shown}），检查一下地址和端口。` };
   if (CERT_ERROR.test(code)) return { text: `接口的 HTTPS 证书校验不通过（${shown}），可能被代理或网络拦下了。` };
@@ -87,6 +89,7 @@ export function networkFailure(error, waitedMs = 0) {
   }
   // 还没收到回答连接就断了：可能是复用了一条已被断掉的连接（重发就好），也可能是被代理或网络拦下
   if (DROPPED.has(code)) return { text: `连接还没建立好就被断开了（${shown}），检查一下网络、代理和地址。`, retry: true };
+  if (error.proxy) return { text: `系统代理 ${error.proxy} 没能连上接口（${shown}），看看代理软件的节点或规则。` };
   return { text: `连不上接口地址（${shown}），检查一下网络和地址。` };
 }
 
@@ -209,7 +212,7 @@ export async function requestAnalysis(options) {
   });
 }
 
-async function analysis({ config, video, videoBase64, signal, fetchImpl = fetch }) {
+async function analysis({ config, video, videoBase64, signal, fetchImpl = modelFetch }) {
   const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     signal,
@@ -296,7 +299,7 @@ export class AnalysisLibrary {
 }
 
 /** 开始解析一条视频：同一链接再解析就覆盖原来那条（解析中的直接返回）。下载出错会同步抛出（比如采集器正忙）。 */
-export function startAnalysis({ library, collector, url, config, fetchImpl = fetch, pollMs = 1_000 }) {
+export function startAnalysis({ library, collector, url, config, fetchImpl = modelFetch, pollMs = 1_000 }) {
   const sourceUrl = normalizeDouyinVideoUrl(url);
   const existing = library.list().find((item) => item.sourceUrl === sourceUrl);
   if (existing?.status === "running") return existing;

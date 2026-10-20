@@ -1,3 +1,4 @@
+import { modelFetch } from "../systemProxy.mjs";
 import { apiBaseUrl, providerMessage, readJson, sendWithRetry } from "../videoAnalysis.mjs";
 import { AiEditError } from "./library.mjs";
 
@@ -92,7 +93,7 @@ export async function requestCompletion(options) {
   });
 }
 
-async function completion({ config, messages, tools, toolChoice, signal, fetchImpl = fetch, onText = () => undefined }) {
+async function completion({ config, messages, tools, toolChoice, signal, fetchImpl = modelFetch, onText = () => undefined }) {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
@@ -204,7 +205,7 @@ function complete(call) {
  * （工程现状这类每步都变的内容：放在最后，前面的系统提示和历史在一轮里保持不变，接口的前缀缓存才命中得了）。
  * execute(call) 执行一个工具并返回给模型的结果对象。onText(累计文字) 用于流式显示；返回这一轮所有文字拼起来的结果。
  */
-export async function runConversation({ config, history, tools, system, context, execute, signal, fetchImpl = fetch, onText = () => undefined, maxToolCalls = MAX_TOOL_CALLS }) {
+export async function runConversation({ config, history, tools, system, context, execute, signal, fetchImpl = modelFetch, onText = () => undefined, maxToolCalls = MAX_TOOL_CALLS }) {
   let calls = 0;
   let limited = false;
   const parts = [];

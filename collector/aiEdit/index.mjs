@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { modelFetch } from "../systemProxy.mjs";
 import { VideoDownloadError } from "../videoDownloader.mjs";
 import { MAX_TOOL_CALLS, parseEditConfig, runConversation, sealHistory, trimHistory } from "./chat.mjs";
 import { EditError } from "./errors.mjs";
@@ -108,7 +109,7 @@ export function createAiEdit({
   store: injectedStore,
   probe: injectedProbe,
   kindOf: injectedKindOf,
-  fetchImpl = (...args) => fetch(...args),
+  fetchImpl = modelFetch,
   now = () => new Date(),
   pollMs = 1_000,
   longPollMs = 8_000,
