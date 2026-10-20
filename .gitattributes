@@ -1,0 +1,2 @@
+# AI 剪辑的对照夹具要和原仓库输出逐字节一致，检出时不能被 Windows 的自动换行转换改成 CRLF
+collector/fixtures/ai-edit/** -text

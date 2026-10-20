@@ -37,6 +37,7 @@ import {
   Play,
   Radio,
   RefreshCw,
+  Scissors,
   Search,
   Plug,
   Settings,
@@ -74,12 +75,14 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator" | "analysis";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator" | "analysis" | "aiEdit";
 
 export interface ContentWorkspaceProps {
   explore?: React.ReactNode;
   creator?: React.ReactNode;
   analysis?: React.ReactNode;
+  /** AI 剪辑：左边对话、右边只读剪辑看板，做好后放进剪映草稿箱 */
+  aiEdit?: React.ReactNode;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
   chatMessages?: ChatMessage[];
@@ -128,6 +131,7 @@ const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
   { id: "analysis", label: "解析库", icon: Clapperboard, accent: color.amber },
+  { id: "aiEdit", label: "AI 剪辑", icon: Scissors, accent: color.cyan },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
@@ -138,8 +142,8 @@ const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent
 ];
 
 
-// 探索、创作者中心和解析库是工具页：不显示条数、隐私和重新读取
-const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator" || view === "analysis";
+// 探索、创作者中心、解析库和 AI 剪辑是工具页：不显示条数、隐私和重新读取
+const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator" || view === "analysis" || view === "aiEdit";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -158,6 +162,7 @@ export function ContentWorkspace({
   explore,
   creator,
   analysis,
+  aiEdit,
   activeView,
   records,
   chatMessages = [],
@@ -250,6 +255,7 @@ export function ContentWorkspace({
     explore: 0,
     creator: 0,
     analysis: 0,
+    aiEdit: 0,
     watch_history: watchedVideos.length,
     live: watchedLives.length,
     liked_videos: records.liked_videos.length,
@@ -431,7 +437,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "analysis" ? analysis : activeView === "chat" ? (
+        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "analysis" ? analysis : activeView === "aiEdit" ? aiEdit : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}

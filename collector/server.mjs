@@ -11,6 +11,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
+import { createAiEdit } from "./aiEdit/index.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
@@ -245,6 +246,12 @@ export async function startCollectorServer({
   // 解析库不分账号，放在根数据目录
   const analyses = new AnalysisLibrary(path.join(dataDirectory, "analyses.json"));
   await analyses.load();
+  // AI 剪辑（会话、工程、素材库）同样不分账号；切换账号期间拿不到采集器，导入抖音视频会提示稍等
+  const aiEdit = createAiEdit({
+    dataDirectory,
+    getCollector: () => (switching ? null : collector),
+    busyReason: () => (explorer.busy ? "请等待当前探索操作完成后继续。" : null),
+  });
   // 账号操作（切换、新建、删除）一次只做一个；切换期间旧采集器在关、新的还没接上
   let accountWork = null;
   let switching = false;
@@ -425,10 +432,16 @@ export async function startCollectorServer({
       return;
     }
 
+    // AI 剪辑的素材文件给 <video>/<img> 直接用，带不了 Bearer，靠素材库的 key
+    if (await aiEdit.handle(request, response, url)) return;
+
     if (!pairing.authorize(request.headers.authorization)) {
       sendJson(response, 401, { error: "not_paired" });
       return;
     }
+
+    // AI 剪辑不分账号，切换账号期间也照常用
+    if (await aiEdit.handle(request, response, url, { paired: true })) return;
 
     // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录照常能读，接收中的聊天页要一直拉
     const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (url.pathname === "/v1/records" && !accountWork));
@@ -848,6 +861,7 @@ export async function startCollectorServer({
     browserLoginController?.abort();
     for (const finish of statusWaiters) finish();
     try {
+      await aiEdit.close();
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器
       await accountWork?.catch(() => undefined);
       await browserWork;
