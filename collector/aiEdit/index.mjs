@@ -83,7 +83,6 @@ async function draftBoxStatus(draftBox) {
 function chatError(error) {
   if (error instanceof AiEditError) return { code: error.code, message: error.message };
   if (error?.name === "TimeoutError") return { code: "provider_timeout", message: "接口太久没回应，请稍后重试。" };
-  if (error instanceof TypeError) return { code: "provider_unreachable", message: "连不上接口地址，检查一下网络和地址。" };
   console.error("AI 剪辑对话出错:", error);
   return { code: "chat_failed", message: "AI 这一轮没做完，请重试。" };
 }

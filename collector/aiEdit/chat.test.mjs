@@ -38,6 +38,7 @@ function scripted(replies) {
 describe("parseEditConfig", () => {
   it("accepts http(s) with a key and model, and asks for the AI edit settings otherwise", () => {
     expect(parseEditConfig({ baseUrl: " https://example.com/v1/ ", apiKey: " k ", model: " m " })).toEqual({ baseUrl: "https://example.com/v1", apiKey: "k", model: "m" });
+    expect(parseEditConfig({ baseUrl: "https://api.huiliu.one", apiKey: "k", model: "m" }).baseUrl).toBe("https://api.huiliu.one/v1");
     expect(() => parseEditConfig({ baseUrl: "file:///etc", apiKey: "k", model: "m" })).toThrow("接口地址要以 https:// 开头。");
     expect(() => parseEditConfig({ baseUrl: "https://example.com", apiKey: "", model: "m" })).toThrow("先在 AI 剪辑的接口设置里填好 Key 和模型。");
     expect(() => parseEditConfig(null)).toThrow(expect.objectContaining({ code: "invalid_config" }));
@@ -202,6 +203,36 @@ describe("runConversation edge replies", () => {
     await expect(runConversation({ config: ARK, history, tools: [{}], fetchImpl, system: async () => "s", execute: async () => ({ ok: true }) }))
       .rejects.toMatchObject({ code: "provider_error", message: expect.stringContaining("内容审核") });
     expect(history).toEqual([{ role: "user", content: "剪" }]);
+  });
+
+  it("names the network cause, retries a connection that drops at once, and keeps gateway HTML pages out of the message", async () => {
+    const dropError = () => new TypeError("terminated", { cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }) });
+    let calls = 0;
+    const alwaysDrops = async () => { calls += 1; throw dropError(); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: alwaysDrops }))
+      .rejects.toMatchObject({ code: "provider_unreachable", message: "接口连接中途断开了（UND_ERR_SOCKET）。可以发「继续」接着做。" });
+    expect(calls).toBe(2);
+    // 第一次复用了断掉的连接，重发一次就好
+    const flaky = scripted([sse([delta({ role: "assistant", content: "好" }), delta({}, "stop")])]);
+    let first = true;
+    const once = async (url, init) => { if (first) { first = false; throw dropError(); } return flaky.fetchImpl(url, init); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: once })).resolves.toMatchObject({ text: "好" });
+    // 握手阶段就被重置、重发也一样：说连不上，不叫用户发「继续」
+    const blocked = async () => { throw new TypeError("fetch failed", { cause: Object.assign(new Error("Client network socket disconnected before secure TLS connection was established"), { code: "ECONNRESET" }) }); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: blocked }))
+      .rejects.toMatchObject({ code: "provider_unreachable", message: "连接还没建立好就被断开了（ECONNRESET），检查一下网络、代理和地址。" });
+    const dns = async () => { throw new TypeError("fetch failed", { cause: Object.assign(new Error("getaddrinfo ENOTFOUND x"), { code: "ENOTFOUND" }) }); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: dns })).rejects.toMatchObject({ message: expect.stringContaining("找不到接口地址的域名") });
+    // 不是网络错误的 TypeError 原样抛出，不冒充「连不上」
+    const bug = async () => { throw new TypeError("x is not a function"); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: bug })).rejects.toThrow("x is not a function");
+    const timeout = async () => new Response("<!DOCTYPE html><html>A timeout occurred</html>", { status: 524, headers: { "content-type": "text/html" } });
+    const error = await requestCompletion({ config: ARK, messages: [], fetchImpl: timeout }).catch((failure) => failure);
+    expect(error).toMatchObject({ code: "provider_error", message: expect.stringContaining("两分钟左右") });
+    expect(error.message).not.toContain("<");
+    // new-api 没有这个模型的渠道：别叫用户稍后再试
+    const noChannel = async () => new Response(JSON.stringify({ error: { message: "分组 default 下模型 gpt-x 无可用渠道（distributor）", code: "model_not_found" } }), { status: 503 });
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: noChannel })).rejects.toMatchObject({ message: expect.stringContaining("中转站里没有能用的这个模型") });
   });
 
   it("reports an empty reply or a body that is not JSON, and never stores an empty assistant message", async () => {

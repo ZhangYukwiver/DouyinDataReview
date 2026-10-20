@@ -1,3 +1,4 @@
+import { apiBaseUrl, providerMessage, readJson, sendWithRetry } from "../videoAnalysis.mjs";
 import { AiEditError } from "./library.mjs";
 
 // 对话循环：OpenAI 兼容的 /chat/completions + function calling，流式读回答，
@@ -21,7 +22,7 @@ const TRUNCATED_RESULT = {
 /** 请求体里的接口配置：信任边界，地址只认 http(s)，各项限长（同解析库的写法，但配置是 AI 剪辑自己的）。 */
 export function parseEditConfig(value) {
   const text = (item, max) => (typeof item === "string" ? item.trim().slice(0, max) : "");
-  const baseUrl = text(value?.baseUrl, 300).replace(/\/+$/u, "");
+  const baseUrl = apiBaseUrl(text(value?.baseUrl, 300));
   const apiKey = text(value?.apiKey, 400);
   const model = text(value?.model, 120);
   let protocol = "";
@@ -36,18 +37,10 @@ function isArk(baseUrl) {
 }
 
 function providerError(status, body) {
-  let detail = String(body ?? "").trim();
-  try {
-    const parsed = JSON.parse(detail);
-    detail = parsed?.error?.message ?? parsed?.message ?? detail;
-  } catch { /* 不是 JSON 就用原文 */ }
-  detail = String(detail).slice(0, 240);
-  const reason = status === 401 || status === 403 ? "接口 Key 不对或没有权限"
-    : status === 404 ? "接口地址或模型名不对，或者模型还没开通"
-      : status === 429 ? "接口限流或额度用完了，稍后再试"
-        : status === 400 ? "接口不接受这次请求（模型可能不支持工具调用）"
-          : status ? `接口返回 ${status}` : "接口报错";
-  return new AiEditError("provider_error", detail ? `${reason}：${detail}` : `${reason}。`, 502);
+  return new AiEditError("provider_error", providerMessage(status, body, {
+    400: "接口不接受这次请求（模型可能不支持工具调用）",
+    524: "中转站等了两分钟左右，模型还没开始回答（524），换个反应快的模型或把要求拆小一点再试",
+  }), 502);
 }
 
 async function* sseData(body) {
@@ -89,7 +82,17 @@ function mergeToolCallDeltas(calls, deltas) {
 }
 
 /** 发一次 /chat/completions（流式），返回这一轮的文字和工具调用。onText 收到累计的文字。 */
-export async function requestCompletion({ config, messages, tools, toolChoice, signal, fetchImpl = fetch, onText = () => undefined }) {
+export async function requestCompletion(options) {
+  let received = false;
+  const onText = options.onText ?? (() => undefined);
+  return sendWithRetry(() => completion({ ...options, onText: (text) => { received = true; onText(text); } }), {
+    signal: options.signal,
+    received: () => received,
+    fail: ({ text, dropped }) => new AiEditError("provider_unreachable", dropped ? `${text}可以发「继续」接着做。` : text, 502),
+  });
+}
+
+async function completion({ config, messages, tools, toolChoice, signal, fetchImpl = fetch, onText = () => undefined }) {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
@@ -111,9 +114,9 @@ export async function requestCompletion({ config, messages, tools, toolChoice, s
   const calls = [];
   if (!String(response.headers.get("content-type") ?? "").includes("event-stream")) {
     // 不支持流式的接口会直接回整段 JSON
-    const body = await response.json().catch(() => null);
+    const body = await readJson(response);
     if (!body || typeof body !== "object") {
-      throw new AiEditError("provider_error", "接口回的内容看不懂（不是 JSON），检查一下接口地址是不是 OpenAI 兼容的地址（一般以 /v1 或 /api/v3 结尾）。", 502);
+      throw new AiEditError("provider_error", `接口回的内容看不懂（不是 JSON），检查一下接口地址是不是 OpenAI 兼容的地址（一般以 /v1 或 /api/v3 结尾）。这次请求的是 ${config.baseUrl}/chat/completions。`, 502);
     }
     if (body?.error) throw providerError(0, JSON.stringify(body));
     const choice = body?.choices?.[0];
