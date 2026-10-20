@@ -7,6 +7,7 @@ import {
   activeAccountLabel,
   appUpdateAction,
   deriveSetup,
+  desktopLoginNeeded,
   formatLongDay,
   formatWhen,
   hourName,
@@ -207,6 +208,18 @@ describe("提示文案", () => {
     expect(tipNotes({ ...tip, ready: false })[0]!.title).toBe("连上了，下一步读取");
     expect(tipNotes({ ...tip, autoSyncEnabled: false })[0]!.body).toContain("自动读取已暂停");
     expect(tipNotes({ ...tip, fromArchive: true, connected: false })[0]!.body).toContain("重新导入");
+  });
+
+  it("桌面版：凭据没就绪就算要登录，提示指向首屏扫码而不是设置", () => {
+    const withCredentials = (credentials?: "ready" | "exporting" | "reconnect_required") => status({ browserSource: { mode: "cdp", browser: "app", connected: false, ...(credentials ? { credentials } : {}) } });
+    expect(desktopLoginNeeded({}, true, withCredentials())).toBe(true);
+    expect(desktopLoginNeeded({}, true, withCredentials("reconnect_required"))).toBe(true);
+    expect(desktopLoginNeeded({}, true, withCredentials("ready"))).toBe(false);
+    expect(desktopLoginNeeded({}, true, withCredentials("exporting"))).toBe(false);
+    expect(desktopLoginNeeded(null, true, withCredentials())).toBe(false);
+    expect(desktopLoginNeeded({}, false, withCredentials())).toBe(false);
+    expect(tipNotes({ ...tip, loginNeeded: true, desktop: true })[0]!.body).not.toContain("设置");
+    expect(tipNotes({ ...tip, connected: false, ready: false, desktop: true })[0]!.body).not.toContain("连接采集器");
   });
 
   it("极简版不说按钮在哪边，导出数据指到设置里", () => {

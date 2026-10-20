@@ -499,7 +499,7 @@ export class DouyinCollector {
     this.snapshot.warnings = currentChatWarnings(this.snapshot.warnings);
     try {
       const source = JSON.parse(await readFile(path.join(this.dataDirectory, "external-browser.json"), "utf8"));
-      if (["chrome", "edge", "comet"].includes(source.browser)) this.externalSource = source;
+      if (["app", "chrome", "edge", "comet"].includes(source.browser)) this.externalSource = source;
     } catch { /* Credentials remain account-bound even when an older cache has no source marker. */ }
     try {
       const session = await loadDirectSession(this.dataDirectory, this.accountUid);
@@ -557,7 +557,7 @@ export class DouyinCollector {
       return problem;
     }
     this.externalSessionState = "reconnect_required";
-    const problem = new DirectHistoryError("browser_reconnect_required", "导入的登录凭据已失效或不完整，请在设置 → 账号中重新连接浏览器，完成登录或验证后再次导入。");
+    const problem = new DirectHistoryError("browser_reconnect_required", "导入的登录凭据已失效或不完整，请在设置 → 账号中重新扫码登录或连接浏览器，完成登录或验证后再次导入。");
     // Each caller owns its task state; only publish the shared credential flag here.
     this.updateStatus({});
     return problem;
@@ -612,7 +612,9 @@ export class DouyinCollector {
       this.externalSessionState = "ready";
       await this.detachExternalBrowser();
       this.updateStatus({ state: "idle", phase: null, progress: null, browserOpen: false,
-        message: `已导入 ${connection.label} 中「${identity.nickname || "抖音账号"}」的登录凭据，可以关闭浏览器；凭据失效后再重新连接。` });
+        message: connection.browser === "app"
+          ? `已导入「${identity.nickname || "抖音账号"}」的登录凭据；凭据失效后再到设置 → 账号里扫码登录。`
+          : `已导入 ${connection.label} 中「${identity.nickname || "抖音账号"}」的登录凭据，可以关闭浏览器；凭据失效后再重新连接。` });
     } catch (error) {
       await this.close();
       await Promise.all(files.map((name, index) => backups[index] === null
@@ -629,7 +631,7 @@ export class DouyinCollector {
     await this.detachExternalBrowser();
     this.updateStatus({ browserOpen: false, message: this.externalSessionState === "ready"
       ? "已断开浏览器，导入的凭据仍可供接口使用；失效后再重新连接。"
-      : "请重新连接浏览器并导入登录凭据。" });
+      : "请重新扫码登录或连接浏览器，再导入登录凭据。" });
   }
 
   subscribeStatus(listener) {

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { cancelBrowserLogin, confirmBrowserLogin, disconnectBrowserLogin, getBrowserLoginSources, inspectBrowserLogin, LocalCollectorError,
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { cancelBrowserLogin, confirmBrowserLogin, disconnectBrowserLogin, getBrowserLoginQrCode, getBrowserLoginSources, inspectBrowserLogin, LocalCollectorError, showBrowserLoginWindow,
   type BrowserLoginCandidate, type BrowserLoginSource, type CollectorAccountChange, type CollectorReadPermissions, type CollectorStatus } from "../../services/localCollector";
+import { isDesktopApp } from "../../desktopRuntime";
 import { workspaceColors as color } from "./workspaceTheme";
 
 export interface BrowserConnectionPanelProps {
@@ -12,11 +13,43 @@ export interface BrowserConnectionPanelProps {
   blocked: boolean;
   onBusyChange: (busy: boolean) => void;
   onChange: (change: CollectorAccountChange) => Promise<void>;
+  /** 桌面版首屏用：少放说明文字 */
+  compact?: boolean;
+  /** 首屏点开二维码之前的那块，各版式自己画；文案和状态由这里算好 */
+  renderStart?: (props: LoginStartProps) => React.ReactNode;
+  /** 凭据没就绪：一挂上就在后台加载登录页、备好二维码，点「显示二维码」时直接亮出来 */
+  preload?: boolean;
 }
 
-export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocked, onBusyChange, onChange }: BrowserConnectionPanelProps) {
+/** 首屏扫码那块：标题、一句说明，下面一个和二维码一样大的框——没点之前蒙着遮罩，点了遮罩消失、码在原地亮出来 */
+export interface LoginStartProps {
+  title: string;
+  detail: string;
+  /** 遮罩上的字 */
+  label: string;
+  busy: boolean;
+  disabled: boolean;
+  /** 已经登录、凭据可用 */
+  done: boolean;
+  /** 点开了：不再蒙遮罩 */
+  revealed: boolean;
+  /** 后台备好的二维码（data URL）；还没好是 null */
+  image: string | null;
+  onStart: () => void;
+  /** 码下面那一行：点开后是「在窗口里登录」「取消」，没点开是「改用浏览器导入」的链接；也由版式画，颜色才跟页面一致 */
+  actions: LoginStartAction[];
+}
+
+export interface LoginStartAction {
+  kind: "window" | "cancel" | "other";
+  label: string;
+  onPress: () => void;
+  testID: string;
+}
+
+export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocked, onBusyChange, onChange, compact = false, renderStart, preload = false }: BrowserConnectionPanelProps) {
   const [sources, setSources] = useState<BrowserLoginSource[]>([]);
-  const [selected, setSelected] = useState<BrowserLoginSource["id"]>("chrome");
+  const [selected, setSelected] = useState<BrowserLoginSource["id"]>("app");
   const [candidate, setCandidate] = useState<BrowserLoginCandidate | null>(null);
   const [readPermissions, setReadPermissions] = useState<CollectorReadPermissions>({ videos: true, chat: false });
   const [adopt, setAdopt] = useState(true);
@@ -24,6 +57,14 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [qrcode, setQrcode] = useState<{ image: string; hint: string } | null>(null);
+  // 首屏的紧凑版默认只给扫码，Chrome/Edge/Comet 收在一个链接后面
+  const [showOther, setShowOther] = useState(false);
+  // 预加载的二维码先藏着，用户点了才亮；revealedRef 给 connect 收尾时判断要不要报错
+  const [revealed, setRevealed] = useState(false);
+  const revealedRef = useRef(false); revealedRef.current = revealed;
+  const preloadedRef = useRef(false);
+  const renewRef = useRef(false);
   const visibleRef = useRef(visible); visibleRef.current = visible;
   const candidateRef = useRef<BrowserLoginCandidate | null>(null);
   const runningRef = useRef(false);
@@ -31,7 +72,8 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
 
   async function refresh() {
     try {
-      const list = await getBrowserLoginSources(baseUrl, token);
+      // 应用内登录窗口只有桌面版能弹；浏览器里打开的工作台只列 Chrome/Edge/Comet
+      const list = (await getBrowserLoginSources(baseUrl, token)).filter(item => item.id !== "app" || isDesktopApp());
       if (!visibleRef.current) return;
       setSources(list);
       setSelected(current => list.some(item => item.id === current && item.available) ? current : list.find(item => item.debugging)?.id ?? list.find(item => item.available)?.id ?? "chrome");
@@ -52,6 +94,17 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       if (previous) void cancelBrowserLogin(baseUrl, token, previous.id).catch(() => {});
     };
   }, [visible, baseUrl, token]);
+
+  // 应用内登录的网页藏在后台，等登录期间把它的二维码搬到这里来扫；抖音大约一分钟换一张码，跟着取
+  const waitingForScan = connecting && selected === "app";
+  useEffect(() => {
+    if (!waitingForScan) { setQrcode(null); return; }
+    let stopped = false;
+    const poll = () => getBrowserLoginQrCode(baseUrl, token).then(value => { if (!stopped) setQrcode(value); }, () => {});
+    void poll();
+    const timer = setInterval(poll, 1500);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [waitingForScan, baseUrl, token]);
 
   async function run(work: () => Promise<void>) {
     if (runningRef.current || blocked) return;
@@ -74,12 +127,31 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       setReadPermissions(result.readPermissions ?? { videos: true, chat: false });
       setAdopt(true);
     } catch (reason) {
-      if (!controller.signal.aborted) throw reason;
+      // 首屏：抖音登录等了 5 分钟过期就自动续一张；上一次连接还没在采集器那边收完尾（刚取消、刚切回首屏）就稍等再来。
+      // 点没点开都一样。别的失败没点开过就静悄悄收掉，点「显示二维码」时再加载
+      if (compact && visibleRef.current && reason instanceof LocalCollectorError && ["browser_login_timeout", "collector_busy"].includes(reason.code)) {
+        renewRef.current = true; return;
+      }
+      if (!controller.signal.aborted && (revealedRef.current || !compact)) throw reason;
     } finally {
       if (connectControllerRef.current === controller) connectControllerRef.current = null;
-      setConnecting(false);
+      // 要续的话「连接中」不落下，二维码那块原地转圈等新码，不闪回按钮
+      if (!renewRef.current) { setConnecting(false); setRevealed(false); }
     }
+  }).then(async () => {
+    if (!renewRef.current) return;
+    renewRef.current = false;
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    if (visibleRef.current && !connectControllerRef.current) void connect();
+    else { setConnecting(false); setRevealed(false); }
   });
+  useEffect(() => { if (!preload) preloadedRef.current = false; }, [preload]);
+  useEffect(() => {
+    if (!preload || !visible || blocked || preloadedRef.current || runningRef.current || candidateRef.current) return;
+    if (selected !== "app" || !sources.some(item => item.id === "app")) return;
+    preloadedRef.current = true;
+    void connect();
+  }, [preload, visible, blocked, selected, sources]);
   const confirm = () => run(async () => {
     if (!candidate || (!readPermissions.videos && !readPermissions.chat)) return;
     let change: CollectorAccountChange;
@@ -105,19 +177,49 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
     await onChange(change);
   });
   const source = sources.find(item => item.id === selected);
+  const inApp = selected === "app";
+  const sourceLabel = (id: BrowserLoginSource["id"]) => sources.find(item => item.id === id)?.label ?? (id === "app" ? "应用内登录" : id);
   const disabled = busy || blocked;
+  // 首屏：二维码那块由版式画，没点之前蒙着遮罩（码其实已在后台备好），点了遮罩消失；改用浏览器导入时回到完整的选项
+  if (compact && renderStart && !candidate && !showOther && inApp && (!busy || connecting)) {
+    const loggedIn = status?.browserSource?.credentials === "ready";
+    const name = status?.account?.nickname ? `「${status.account.nickname}」` : "";
+    return (
+      <View style={[styles.panel, styles.panelCompact]} testID="browser-login-panel">
+        {renderStart({ title: "扫码登录抖音", done: loggedIn && !revealed, busy: false, revealed, image: waitingForScan ? qrcode?.image ?? null : null,
+          disabled: (blocked && !connecting) || !source?.available,
+          onStart: () => { setRevealed(true); if (!connecting) void connect(); },
+          actions: revealed ? [
+            { kind: "window", label: "在窗口里登录", testID: "browser-login-show-window",
+              onPress: () => { void showBrowserLoginWindow(baseUrl, token).catch(reason => setError(reason instanceof Error ? reason.message : "登录窗口打不开。")); } },
+            { kind: "cancel", label: "取消", testID: "browser-login-cancel-connect", onPress: () => connectControllerRef.current?.abort() },
+          ] : sources.length > 1 ? [{ kind: "other", label: "改用 Chrome / Edge / Comet 导入", testID: "browser-login-other",
+            onPress: () => { connectControllerRef.current?.abort(); setShowOther(true); } }] : [],
+          label: loggedIn ? "点击重新扫码登录" : "点击显示二维码",
+          detail: revealed ? qrcode?.hint || "打开抖音 App，点左上角的扫一扫，扫完在手机上确认。"
+            : loggedIn ? `已登录${name}。凭据失效或要调整读取权限时，再扫一次就行。` : "用抖音 App 扫一扫，核对账号后自动开始读取。" })}
+        {notice ? <Text accessibilityLiveRegion="polite" style={styles.detail} testID="browser-login-notice">{notice}</Text> : null}
+        {error ? <Text accessibilityLiveRegion="polite" style={styles.error} testID="browser-login-error">{error}</Text> : null}
+      </View>
+    );
+  }
   return (
-    <View style={styles.panel} testID="browser-login-panel">
-      <Text style={styles.title}>导入浏览器登录凭据</Text>
-      <Text style={styles.detail}>连接浏览器后确认账号，分别选择读取视频和读取聊天。导入完成后只读取勾选的类型，并自动断开浏览器；凭据失效或需要调整权限时，从这里重新导入。原有标签页会保留。</Text>
-      <Text style={styles.detail} accessibilityLiveRegion="polite" testID="browser-login-status">
-        {status?.browserSource?.browser ? `${status.browserSource.browser} · ` : ""}
-        {status?.browserSource?.credentials === "ready" ? "凭据已导入，浏览器可关闭"
-          : status?.browserSource?.credentials === "exporting" ? "正在导出凭据" : "请连接浏览器并导入凭据"}
-      </Text>
+    <View style={[styles.panel, compact && styles.panelCompact]} testID="browser-login-panel">
+      <Text style={styles.title}>{compact ? "扫码登录抖音" : "导入登录凭据"}</Text>
+      {compact ? null : <Text style={styles.detail}>登录抖音或连接浏览器后确认账号，分别选择读取视频和读取聊天。导入完成后只读取勾选的类型，并自动断开连接（浏览器里原有的标签页保留）；凭据失效或需要调整权限时，从这里重新导入。</Text>}
+      {compact ? (status?.browserSource?.credentials === "ready" || status?.browserSource?.credentials === "exporting"
+        ? <Text style={styles.detail} accessibilityLiveRegion="polite" testID="browser-login-status">
+          {status.browserSource.credentials === "exporting" ? "正在导出凭据"
+            : `已登录${status.account?.nickname ? `「${status.account.nickname}」` : ""}，凭据已导入。凭据失效或要调整读取权限时再扫一次。`}
+        </Text> : null)
+        : <Text style={styles.detail} accessibilityLiveRegion="polite" testID="browser-login-status">
+          {status?.browserSource?.browser ? `${sourceLabel(status.browserSource.browser)} · ` : ""}
+          {status?.browserSource?.credentials === "ready" ? (status.browserSource.browser === "app" ? "凭据已导入" : "凭据已导入，浏览器可关闭")
+            : status?.browserSource?.credentials === "exporting" ? "正在导出凭据" : "请连接浏览器并导入凭据"}
+        </Text>}
       {status?.readPermissions && status.browserSource?.credentials === "ready" ? <Text style={styles.detail} testID="browser-read-permissions">当前账号：视频读取{status.readPermissions.videos ? "已开启" : "未开启"} · 聊天读取{status.readPermissions.chat ? "已开启" : "未开启"}</Text> : null}
       {candidate ? <>
-        <Text style={styles.title} testID="browser-login-candidate">浏览器登录的是「{candidate.nickname || "抖音账号"}」</Text>
+        <Text style={styles.title} testID="browser-login-candidate">{inApp ? "扫码" : "浏览器"}登录的是「{candidate.nickname || "抖音账号"}」</Text>
         <Text style={styles.detail}>{candidate.adoptable && adopt ? "当前账号里已有的记录还没绑定抖音号，确认后会归到这个号名下，以后接着补读。"
           : candidate.newAccount ? "确认后添加这个账号，记录单独保存。" : "确认后更新这个账号的凭据和读取权限，保留已有记录及其他账号数据。"}</Text>
         {candidate.adoptable ? <View style={styles.actions}>
@@ -142,25 +244,39 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
           <Action label="取消" disabled={disabled} onPress={cancel} testID="browser-login-cancel" />
         </View>
       </> : <>
-        <View accessibilityRole="radiogroup" accessibilityLabel="登录来源浏览器" style={styles.actions}>
+        {compact && !showOther ? null : <View accessibilityRole="radiogroup" accessibilityLabel="登录来源浏览器" style={styles.actions}>
           {sources.map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityLabel={item.label}
             accessibilityState={{ checked: item.id === selected, disabled: disabled || !item.available }} aria-checked={item.id === selected}
-            disabled={disabled || !item.available} onPress={() => { setSelected(item.id); setNotice(null); setError(null); }}
+            disabled={disabled || !item.available} onPress={() => { setSelected(item.id); setNotice(null); setError(null); if (compact && item.id === "app") setShowOther(false); }}
             style={[styles.option, item.id === selected && styles.selected, !item.available && styles.disabled]} testID={`browser-login-${item.id}`}>
-            <Text style={styles.text}>{item.label} · {!item.available ? "未找到" : item.debugging ? "可连接" : "需开启调试"}</Text>
+            <Text style={styles.text}>{item.id === "app" ? "在应用里登录" : `${item.label} · ${!item.available ? "未找到" : item.debugging ? "可连接" : "需开启调试"}`}</Text>
           </Pressable>)}
-        </View>
-        {source ? <Text selectable style={styles.detail}>未开启调试时，点击“连接浏览器”会尝试自动打开 {source.label} 的调试设置页。勾选允许远程调试后再次连接；也可手动打开 {source.inspectUrl}。连接时请在浏览器中允许。</Text> : null}
-        <Text style={styles.detail}>调试权限覆盖整个浏览器；工作台仅访问自己创建的抖音页面和抖音 Cookie。导出后可关闭调试开关，无需安装扩展。</Text>
-        <View style={styles.actions}>
-          <Action label={busy ? "连接处理中…" : "连接浏览器"} disabled={disabled || !source?.available} onPress={connect} testID="browser-login-connect" />
-          <Action label="刷新检测" disabled={disabled} onPress={() => { void refresh(); }} testID="browser-login-refresh" />
+        </View>}
+        {inApp ? compact ? null : <Text style={styles.detail}>点“扫码登录”后这里会显示抖音的登录二维码，用抖音 App 扫一扫并在手机上确认，再核对账号导入凭据。登录状态只存在本应用里，不用打开浏览器调试。</Text> : <>
+          {source ? <Text selectable style={styles.detail}>未开启调试时，点击“连接浏览器”会尝试自动打开 {source.label} 的调试设置页。勾选允许远程调试后再次连接；也可手动打开 {source.inspectUrl}。连接时请在浏览器中允许。</Text> : null}
+          <Text style={styles.detail}>调试权限覆盖整个浏览器；工作台仅访问自己创建的抖音页面和抖音 Cookie。导出后可关闭调试开关，无需安装扩展。</Text>
+        </>}
+        {compact && waitingForScan ? null : <View style={styles.actions}>
+          <Action label={busy ? "连接处理中…" : inApp ? "扫码登录" : "连接浏览器"} disabled={disabled || !source?.available} onPress={connect} testID="browser-login-connect" />
+          {compact && inApp ? null : <Action label="刷新检测" disabled={disabled} onPress={() => { void refresh(); }} testID="browser-login-refresh" />}
           {status?.browserSource?.connected ? <Action label="断开连接" disabled={disabled} onPress={() => disconnect()} testID="browser-login-disconnect" /> : null}
-        </View>
+          {compact && sources.length > 1 ? <Action label={showOther ? "只用扫码" : "改用 Chrome / Edge / Comet"} disabled={disabled}
+            onPress={() => { if (showOther) setSelected("app"); setShowOther(value => !value); }} testID="browser-login-other" /> : null}
+        </View>}
       </>}
-      {busy ? <View style={styles.actions}>
+      {waitingForScan && !compact ? <View style={styles.qrcode}>
+        {qrcode ? <Image source={{ uri: qrcode.image }} style={styles.qrcodeImage} accessibilityLabel="抖音登录二维码" testID="browser-login-qrcode" />
+          : <View style={[styles.qrcodeImage, styles.qrcodePending]}><ActivityIndicator size="small" color={color.accent} /></View>}
+        <Text style={styles.detail} accessibilityLiveRegion="polite">{qrcode ? qrcode.hint || "打开抖音 App，点左上角的扫一扫，扫完在手机上确认" : "正在打开抖音登录…"}</Text>
+        <View style={styles.actions}>
+          <Action label="在窗口里登录" disabled={false} onPress={() => { void showBrowserLoginWindow(baseUrl, token).catch(reason => setError(reason instanceof Error ? reason.message : "登录窗口打不开。")); }} testID="browser-login-show-window" />
+        </View>
+      </View> : null}
+      {busy && !(compact && waitingForScan) ? <View style={styles.actions}>
         <ActivityIndicator size="small" color={color.accent} />
-        <Text style={styles.detail} accessibilityLiveRegion="polite">{candidate ? "正在导出凭据，完成前请保持浏览器打开。" : "请按提示开启调试或允许连接；进入抖音页面后完成登录或验证，未弹出登录框时可点击“登录”。工作台会自动继续，最多等待 5 分钟。"}</Text>
+        <Text style={styles.detail} accessibilityLiveRegion="polite">{candidate ? (inApp ? "正在导出凭据，请稍等。抖音要求安全验证时会弹出窗口，在窗口里完成后会接着导入。" : "正在导出凭据，完成前请保持浏览器打开。")
+          : inApp ? "打开抖音 App，点左上角的扫一扫扫码并在手机上确认。要做安全验证、或想用手机验证码登录时，点“在窗口里登录”。工作台会自动继续，最多等待 5 分钟。"
+          : "请按提示开启调试或允许连接；进入抖音页面后完成登录或验证，未弹出登录框时可点击“登录”。工作台会自动继续，最多等待 5 分钟。"}</Text>
         {connecting ? <Action label="取消连接" disabled={false} onPress={() => connectControllerRef.current?.abort()} testID="browser-login-cancel-connect" /> : null}
       </View> : null}
       {notice ? <Text accessibilityLiveRegion="polite" style={styles.detail} testID="browser-login-notice">{notice}</Text> : null}
@@ -174,8 +290,35 @@ function Action({ label, disabled, onPress, testID }: { label: string; disabled:
     onPress={onPress} style={[styles.option, disabled && styles.disabled]} testID={testID}><Text style={styles.text}>{label}</Text></Pressable>;
 }
 
+export interface DesktopLogin {
+  baseUrl: string;
+  token: string | null;
+  blocked: boolean;
+  /** 首屏正在扫码登录或导入凭据：这时 App 的 switchingAccount 也是 true，但别写成「正在切换账号」 */
+  loggingIn: boolean;
+  onBusyChange: (busy: boolean) => void;
+  onChange: (change: CollectorAccountChange) => Promise<void>;
+}
+
+/** 桌面版首屏：采集器在后台自己连，连上就在这里扫码登录，凭据没就绪时自动出码 */
+export function FirstScreenLogin({ login, status, busy, onConnect, renderStart }: { login: DesktopLogin; status: CollectorStatus | null; busy: boolean; onConnect: () => void; renderStart: (props: LoginStartProps) => React.ReactNode }) {
+  // 采集器在后台自己连，正常一两秒就好；连不上才让用户点一下重连
+  if (!login.token) return (
+    <View style={[styles.panel, styles.panelCompact]} testID="first-screen-login">
+      {renderStart({ title: "扫码登录抖音", done: false, busy, disabled: busy, onStart: onConnect, revealed: false, image: null, actions: [],
+        label: busy ? "正在连接采集器…" : "点击重新连接采集器",
+        detail: busy ? "应用自带的采集器正在启动，连上后就能扫码登录。" : "本机采集器还没连上，点下面重新连接。" })}
+    </View>
+  );
+  const credentials = status?.browserSource?.credentials;
+  return <BrowserConnectionPanel visible baseUrl={login.baseUrl} token={login.token} status={status} blocked={login.blocked}
+    onBusyChange={login.onBusyChange} onChange={login.onChange} compact renderStart={renderStart}
+    preload={status !== null && credentials !== "ready" && credentials !== "exporting"} />;
+}
+
 const styles = StyleSheet.create({
   panel: { gap: 12, paddingVertical: 18, borderTopWidth: 1, borderTopColor: color.border },
+  panelCompact: { paddingVertical: 0, borderTopWidth: 0, gap: 10 },
   title: { color: color.text, fontSize: 14, fontWeight: "600" },
   detail: { color: color.textSecondary, fontSize: 12, lineHeight: 19 },
   text: { color: color.text, fontSize: 12, lineHeight: 18 },
@@ -184,4 +327,7 @@ const styles = StyleSheet.create({
   selected: { borderColor: color.accent, backgroundColor: color.surfaceMuted },
   disabled: { opacity: 0.45 },
   error: { color: color.accent, fontSize: 12, lineHeight: 19 },
+  qrcode: { alignItems: "flex-start", gap: 8 },
+  qrcodeImage: { width: 180, height: 180, borderRadius: 6, backgroundColor: "#FFFFFF" },
+  qrcodePending: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border },
 });

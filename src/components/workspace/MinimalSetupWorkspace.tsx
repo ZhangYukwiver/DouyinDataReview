@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   type LayoutChangeEvent,
   Platform,
   Pressable,
@@ -17,7 +18,9 @@ import {
   type ViewStyle,
 } from "react-native";
 import {
+  AppWindow,
   ArrowRight,
+  CircleCheck,
   Database,
   Eye,
   FileArchive,
@@ -27,6 +30,7 @@ import {
   MessageCircle,
   Pause,
   Play,
+  QrCode,
   RefreshCw,
   Settings,
   Unplug,
@@ -36,6 +40,7 @@ import {
 
 import type { CollectorStatus } from "../../services/localCollector";
 import type { SetupWorkspaceProps } from "./SourceWorkspace";
+import { FirstScreenLogin, type LoginStartAction, type LoginStartProps } from "./BrowserConnectionPanel";
 import { ease, useCountUp } from "./motion";
 import {
   activeAccountLabel,
@@ -49,11 +54,11 @@ import {
   readActions,
   recordSummary,
   runReadCommand,
+  desktopLoginNeeded,
   tipNotes,
   type ReadAction,
   type ReadActionIcon,
   type ReadCommand,
-  type SetupFlow,
   type SetupTip,
 } from "./setupModel";
 import { dayWindow, digestRecords, type RecordDigest, type SetupRecordKind } from "./setupSketch";
@@ -125,6 +130,7 @@ export function MinimalSetupWorkspace({
   status,
   stoppingSync,
   switchingAccount,
+  desktopLogin,
 }: SetupWorkspaceProps) {
   const { width, height } = useWindowDimensions();
   // 档位：矮窗口收紧上下间距，窄窗口收窄左栏、按钮排两行，又高又宽时字和留白放大
@@ -143,10 +149,10 @@ export function MinimalSetupWorkspace({
   const run = (command: ReadCommand) => runReadCommand(command, { onStartIncrementalSync, onStartFullSync, onStopSync, onStopChatObservation, onStartChatObservation, onCollectChatHistory, setStoppingChat });
   const digest = useMemo(() => digestRecords(records, 24), [records]);
   // 用着导入文件时，下面档案卡的说明已经讲清楚怎么换回采集器，状态提示就不再重复这句
-  const tips = tipNotes({ fromArchive: setup.fromArchive, connected, loginNeeded: setup.loginNeeded, syncing: setup.syncing, ready: setup.ready, autoSyncEnabled: autoSyncEnabled && setup.videosAllowed }, "minimal")
+  const tips = tipNotes({ fromArchive: setup.fromArchive, connected, loginNeeded: setup.loginNeeded || desktopLoginNeeded(desktopLogin, connected, status), syncing: setup.syncing, ready: setup.ready, autoSyncEnabled: autoSyncEnabled && setup.videosAllowed, desktop: Boolean(desktopLogin) }, "minimal")
     .filter((tip) => !(archive && setup.fromArchive && tip.key === "tip"));
   const accountName = activeAccountLabel(connected, status, accounts);
-  const statusMessage = switchingAccount ? "正在切换抖音账号，等旧账号的浏览器关好就换过去。" : status?.message?.trim() || null;
+  const statusMessage = switchingAccount ? (desktopLogin?.loggingIn ? null : "正在切换抖音账号，等旧账号的浏览器关好就换过去。") : status?.message?.trim() || null;
   const [rightSize, onRightLayout] = useSize();
   // 五个按钮一排要 5 × 120；放不下就排两行：读取三个一行、聊天两个一行
   const oneRow = (rightSize?.w ?? 0) >= 5 * 120 + 4 * 8 + (roomy ? 48 : tight ? 32 : 40);
@@ -187,23 +193,16 @@ export function MinimalSetupWorkspace({
       {/* 整页锁在一屏里：两栏按剩下的高度伸缩，图表和提示按量到的空间决定画多少；ScrollView 只是兜底 */}
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingHorizontal: gutter }, short && styles.scrollShort, roomy && styles.scrollRoomy]} showsVerticalScrollIndicator={false} style={styles.scroll}>
         <View style={styles.page}>
-          <View style={[styles.head, short && styles.headShort, roomy && styles.headRoomy]}>
-            <View style={styles.flex}>
-              {/* 标题里别出现「打开报告」四个字：脚本按全文找那个按钮 */}
-              <Text accessibilityRole="header" numberOfLines={1} style={[styles.title, roomy && styles.titleRoomy, tight && styles.titleTight]}>先连接数据，再看报告</Text>
-              <Text numberOfLines={narrow ? 2 : 1} style={[styles.lead, roomy && styles.leadRoomy]}>连接本机的采集器，或者导入一份个人档案。数据只留在这台电脑上，不会上传。</Text>
-            </View>
-            <Stepper archive={setup.fromArchive} compact={narrow} flow={setup.flow} />
-          </View>
-
           <View style={[styles.columns, narrow && styles.columnsNarrow, roomy && styles.columnsRoomy]}>
             {/* 左栏：数据从哪来 */}
             <View style={[styles.panel, pad, { width: leftW }]}>
               <PanelHead detail={short ? undefined : "本机采集器读取，不经过云端"} title="数据来源" />
+              {desktopLogin ? <FirstScreenLogin busy={busy} login={desktopLogin} onConnect={() => void onConnect()} renderStart={(start) => <LoginStart {...start} />} status={status} /> : <>
               <Field accessibilityLabel="采集服务地址" autoCapitalize="none" autoCorrect={false} dim={connected} editable={!connected && !busy} inline={short} label="服务地址" onChangeText={onChangeCollectorUrl} placeholder="http://127.0.0.1:4765" value={collectorUrl} />
               {/* 配对码先挑出数字再截 8 位：粘贴带空格或前缀的也认得出来 */}
               {!connected ? <Field accessibilityLabel="8 位配对码" editable={!busy} icon={LockKeyhole} inline={short} keyboardType="number-pad" label="配对码" onChangeText={(value) => onChangePairingCode(value.replace(/\D/gu, "").slice(0, 8))} placeholder="连接时自动获取" value={pairingCode} /> : null}
               <Button busy={busy} disabled={busy} full icon={connected ? Unplug : Link2} kind={connected ? "secondary" : "primary"} label={connected ? "断开连接" : "连接采集器"} onPress={() => void (connected ? onDisconnect() : onConnect())} />
+              </>}
               {/* 状态、报错和提示共用按钮下面这块地方：报错先排，然后是采集器的原话（至少一行），剩下的再放提示 */}
               <FitSlot style={styles.slotMessages}>{(size) => <Messages error={error} size={size} status={statusMessage} tips={tips} />}</FitSlot>
               <View style={[styles.rule, short && styles.ruleShort]} />
@@ -239,7 +238,7 @@ export function MinimalSetupWorkspace({
               <FitSlot style={[styles.slotData, short && styles.slotDataShort]}>{(size) => <DataArea digest={digest} roomy={roomy} size={size} />}</FitSlot>
               <ChatProgress progress={setup.chatProgress} />
               <ReadButtons actions={actions} oneRow={oneRow} onRun={run} />
-              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。在设置 → 账号中重新导入凭据可调整。` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
+              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在设置 → 账号中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
               <View style={[styles.rule, short && styles.ruleShort]} />
               <Pressable accessibilityRole="switch" disabled={!setup.videosAllowed} accessibilityState={{ checked: autoSyncEnabled && setup.videosAllowed, disabled: !setup.videosAllowed }} aria-checked={autoSyncEnabled && setup.videosAllowed} onPress={onToggleAutoSync} style={(state) => [styles.auto, pointer, state.pressed && styles.autoPressed]}>
                 <View style={styles.flex}>
@@ -332,6 +331,38 @@ function Field({ dim, icon, inline, label, ...input }: Omit<TextInputProps, "sty
     : <><Text style={styles.label}>{label}</Text>{box}</>;
 }
 
+// 首屏扫码登录：标题一句话，下面一个和二维码一样大的框。没点之前蒙着浅色遮罩（底下隐约是已经备好的码），点了遮罩消失
+function LoginStart({ title, detail, label, busy, disabled, done, revealed, image, onStart, actions }: LoginStartProps) {
+  return (
+    <View style={styles.loginStart} testID="login-start">
+      <View>
+        <Text style={styles.strong}>{title}</Text>
+        <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
+      </View>
+      <Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
+        style={(state) => [styles.qrBox, !revealed && hovered(state) && styles.qrBoxHover, !revealed && pointer, ease("border-color", 140)]} testID="login-start-button">
+        {image ? <Image source={{ uri: image }} style={styles.qrImage} testID={revealed ? "browser-login-qrcode" : undefined} /> : null}
+        {revealed ? (image ? null : <ActivityIndicator color={color.textMuted} size="small" />) : (
+          <View style={styles.qrMask}>
+            {busy ? <ActivityIndicator color={color.textMuted} size="small" /> : <Glyph icon={done ? CircleCheck : QrCode} size={26} tint={done ? color.green : color.text} />}
+            <Text style={styles.qrMaskText}>{label}</Text>
+          </View>
+        )}
+      </Pressable>
+      {actions.length ? <View style={styles.loginActions}>{actions.map(action => <LoginAction key={action.testID} {...action} />)}</View> : null}
+    </View>
+  );
+}
+
+function LoginAction({ kind, label, onPress, testID }: LoginStartAction) {
+  if (kind === "other") return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={(state) => [pointer, hovered(state) && styles.linkHover]} testID={testID}>
+      <Text style={styles.link}>{label}</Text>
+    </Pressable>
+  );
+  return <Button icon={kind === "window" ? AppWindow : X} label={label} onPress={onPress} size="small" testID={testID} />;
+}
+
 function PanelHead({ detail, title }: { detail?: string; title: string }) {
   return (
     <View style={styles.panelHead}>
@@ -368,31 +399,6 @@ const STEPS = [
   { label: "报告", archive: "报告" },
 ];
 
-/** 四步走到哪了：做完的实心圆，当前这一步描边加粗、后面跟一句该做什么 */
-function Stepper({ archive, compact, flow }: { archive: boolean; compact: boolean; flow: SetupFlow }) {
-  const name = (index: number) => (archive ? STEPS[index]!.archive : STEPS[index]!.label);
-  const noteTone = flow.note === "可以看了" ? styles.noteGood : flow.note === "要登录" ? styles.noteWarn : null;
-  return (
-    <View accessibilityLabel={`数据流向：${STEPS.map((_, index) => name(index)).join(" → ")}，现在在「${name(flow.step)}」这一步，${flow.note}`} style={styles.steps}>
-      {STEPS.map((step, index) => {
-        const current = index === flow.step;
-        const done = !current && Boolean(flow.done[index]);
-        return (
-          <React.Fragment key={step.label}>
-            {index > 0 ? <View style={[styles.stepLine, compact && styles.stepLineCompact, flow.done[index - 1] && styles.stepLineOn]} /> : null}
-            <View style={styles.step}>
-              <View style={[styles.stepDot, done && styles.stepDotDone, current && styles.stepDotCurrent]}>
-                <Text style={[styles.stepNum, done && styles.stepNumDone, current && styles.stepNumCurrent]}>{index + 1}</Text>
-              </View>
-              <Text numberOfLines={1} style={[styles.stepLabel, (done || current) && styles.stepLabelOn, current && styles.stepLabelCurrent]}>{name(index)}</Text>
-              {current && !compact ? <Text numberOfLines={1} style={[styles.stepNote, noteTone]}>{flow.note}</Text> : null}
-            </View>
-          </React.Fragment>
-        );
-      })}
-    </View>
-  );
-}
 
 // ---------- 状态、报错和提示 ----------
 
@@ -715,6 +721,15 @@ const styles = StyleSheet.create({
   base: { fontFamily: sans, color: color.textSecondary },
   root: { flex: 1, minHeight: "100%", backgroundColor: color.canvas },
   flex: { flex: 1, minWidth: 0 },
+  loginStart: { gap: 12 },
+  qrBox: { width: 180, height: 180, borderRadius: 10, borderWidth: 1, borderColor: color.border, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  qrBoxHover: { borderColor: color.textMuted },
+  qrImage: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%" },
+  qrMask: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: alpha(color.surfaceMuted, 0.97) },
+  link: { color: color.textSecondary, fontSize: 12, lineHeight: 18, textDecorationLine: "underline" },
+  linkHover: { opacity: 0.7 },
+  loginActions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
+  qrMaskText: { color: color.text, fontSize: 13, lineHeight: 20, fontWeight: "500" },
   glyph: { flexGrow: 0, flexShrink: 0, flexBasis: "auto", alignItems: "center", justifyContent: "center" },
 
   // 顶栏
@@ -758,33 +773,10 @@ const styles = StyleSheet.create({
   scrollShort: { paddingTop: 18, paddingBottom: 18 },
   scrollRoomy: { paddingTop: 36, paddingBottom: 32 },
   page: { flex: 1, width: "100%", maxWidth: PAGE_MAX, alignSelf: "center" },
-  head: { flexDirection: "row", alignItems: "flex-end", gap: 24, marginBottom: 22 },
-  headShort: { marginBottom: 16 },
-  headRoomy: { marginBottom: 28 },
-  title: { color: color.text, fontSize: 22, lineHeight: 30, fontWeight: "600" },
-  titleRoomy: { fontSize: 26, lineHeight: 34 },
-  titleTight: { fontSize: 20, lineHeight: 28 },
-  lead: { marginTop: 4, color: color.textMuted, fontSize: 13, lineHeight: 20 },
-  leadRoomy: { fontSize: 14, lineHeight: 22 },
 
   // 流向
-  steps: { flexShrink: 0, flexDirection: "row", alignItems: "center", paddingBottom: 2 },
-  step: { flexDirection: "row", alignItems: "center", gap: 6 },
-  stepDot: { width: 18, height: 18, borderRadius: 9, borderWidth: 1, borderColor: color.border, alignItems: "center", justifyContent: "center" },
-  stepDotDone: { backgroundColor: color.text, borderColor: color.text },
-  stepDotCurrent: { borderColor: color.text, borderWidth: 1.5 },
-  stepNum: { color: color.textMuted, fontSize: 10, lineHeight: 12, fontWeight: "600", ...tabular },
-  stepNumDone: { color: color.buttonText },
-  stepNumCurrent: { color: color.text },
-  stepLabel: { color: color.textMuted, fontSize: 13, lineHeight: 18 },
-  stepLabelOn: { color: color.textSecondary },
-  stepLabelCurrent: { color: color.text, fontWeight: "600" },
-  stepNote: { color: color.textMuted, fontSize: 12, lineHeight: 18 },
   noteGood: { color: color.green },
   noteWarn: { color: color.amber },
-  stepLine: { width: 20, height: 1, marginHorizontal: 8, backgroundColor: color.border },
-  stepLineCompact: { width: 12, marginHorizontal: 5 },
-  stepLineOn: { backgroundColor: color.textMuted },
 
   // 两栏
   columns: { flex: 1, minHeight: 0, flexDirection: "row", gap: 20 },
