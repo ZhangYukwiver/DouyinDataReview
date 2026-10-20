@@ -1,5 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
+import { AnalysisError, requestAnalysis } from "../videoAnalysis.mjs";
+import { normalizeDouyinVideoUrl } from "../videoDownloader.mjs";
 import { members } from "./catalog.mjs";
 import { EditError, invalid } from "./errors.mjs";
 import { AiEditError } from "./library.mjs";
@@ -46,7 +50,8 @@ import { AiEditError } from "./library.mjs";
 //   remove_subtitles        removeSubtitleGroup
 //   export_to_jianying      mediaInfos + 草稿箱 createDraft / repairDraft
 // 宿主内部用、不给模型：createProject（新建会话）、deleteProject（删会话）、listProjects（不需要，会话就是工程列表）。
-// 另外几个不碰工程的工具：list_media、search_my_records、import_douyin_video、search_catalog。
+// 另外几个不碰工程的工具：list_media、search_my_records、import_douyin_video、search_catalog，
+// 以及参考视频用的 search_douyin（探索的抖音搜索）和 analyze_reference（用 AI 剪辑自己的模型看视频，提示词借用解析库的）。
 
 const MICROS = 1_000_000;
 const DEFAULT_IMAGE_SECONDS = 3;
@@ -237,6 +242,7 @@ export function buildSystemPrompt({ project, media }) {
     "规则：",
     "- 所有时间参数都用秒（可以带小数）。片段的 start 是它在时间线上的开始时间，duration 是它在时间线上占多长；关键帧、分割用的 offset 是从片段开头算起的秒数。",
     "- 素材只能用素材库里的 media_id。用户想用抖音上的视频时，先用 search_my_records 在用户自己的点赞、收藏和观看记录里找，再用 import_douyin_video 导入；找不到合适的就直说，别编。",
+    "- 用户说「参考 X 同款」「照着某条热门视频剪」时：先用 search_douyin 搜，挑一两条点赞多、时长合适的用 analyze_reference 解析，再按解析出的分段、每段时长、转场、字幕样式和配乐节奏，用素材库里用户自己的素材复刻。别人的视频只当参考，不要导入，也不要放进时间线当成片；用户的素材不够复刻时直说还缺什么。这两个工具返回 ok:false 时，把 message 里的原因转告用户，不要反复重试。",
     "- 轨道按列表顺序叠放：越靠后的轨道越在上层，会盖住前面的轨道。文字、贴纸、特效、滤镜轨道要放在视频轨道后面才看得见；画中画、叠加画面要另建一条视频轨道放在后面。需要调整层级用 reorder_tracks。",
     "- 视频和图片只能放视频轨道，音频只能放音频轨道，文字放文字轨道。同一条轨道上的片段不能重叠。轨道名字不要重复。",
     "- 背景音乐比成片短时，把同一段音乐在同一条音频轨道上接着多放几段来循环，最后一段截短；不要靠变速拉长（会变慢变调）。",
@@ -446,6 +452,160 @@ function findRecord(ctx, url) {
     }
   } catch { /* 找不到就只用模型给的信息 */ }
   return null;
+}
+
+// ---------- 参考视频：搜抖音（探索的 DirectExplorer）、看视频（AI 剪辑自己的模型 + 解析库的提示词和请求格式） ----------
+// 不碰解析库：不用它的接口配置，结果也不写进解析库，只在 AI 剪辑进程里缓存。
+
+// ponytail: 方舟请求体上限 64MB，视频 base64 后要放得下；抖音链接下的是最低一档清晰度
+const ANALYSIS_BYTES = 45 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+const ANALYSIS_TIMEOUT_MS = 15 * 60_000;
+const ANALYSIS_CHARS = 12_000;
+// ponytail: 进程内缓存，重启就没了；要跨重启再落盘到 ai-edit/
+const REFERENCE_CACHE_SIZE = 50;
+const NO_VIDEO = "AI 剪辑配置的模型看不了视频，换一个支持视频输入的模型（比如方舟 doubao-seed）再试。";
+// 模型回答自己看不到视频（正常的拆解一定带 Markdown 表格）
+const CANT_SEE_VIDEO = /(无法|不能|没法|没有办法|不支持)(直接)?(读取|查看|观看|看到|播放|处理|解析|理解|访问|打开|接收)[^。\n]{0,8}视频|看不[到了见][^。\n]{0,4}视频|(can(?:no|')t|unable to|not able to)\s+(view|watch|see|process|access|open|analy[sz]e)[^.\n]{0,30}video/iu;
+const VIDEO_WORDS = /video|视频|multimodal|多模态|unknown variant|content type/iu;
+const REFERENCE_FOCUS = "这次拆解还要给剪辑照着复刻：第③部分的时间轴表请按镜头切换细分，每行写清这一段多长、怎么切过来的（硬切还是叠化、推拉、闪白等转场）、字幕的样式和位置（大小、颜色、描边、出现方式）、配乐和音效在哪里卡点。";
+const SEARCH_ERRORS = {
+  login_required: "没法搜索：抖音还没登录或登录已经失效。到设置 → 账号里重新扫码登录（或连接浏览器导入登录）后再搜。",
+  verification_required: "抖音这次要求安全验证，没搜到结果。到设置 → 账号里重新扫码登录或连接浏览器，按提示完成验证后再搜，别马上重试。",
+};
+// 采集器把登录失效和安全验证都包成 browser_reconnect_required，原来的原因在 cause 里
+const LOGIN_CODES = new Set(["login_required", "direct_session_missing", "browser_reconnect_required"]);
+
+async function searchDouyin(ctx, { query, limit = 10 }) {
+  const explorer = ctx.getExplorer?.();
+  if (!explorer) throw new AiEditError("collector_busy", "采集器正在切换账号，稍后再搜。", 409);
+  let page;
+  try {
+    page = await explorer.run({ kind: "videos", query }, "read", ctx.signal);
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    const reason = [error?.code, error?.cause?.code].includes("verification_required") ? "verification_required"
+      : LOGIN_CODES.has(error?.code) ? "login_required" : null;
+    if (reason) throw new AiEditError(reason, SEARCH_ERRORS[reason]);
+    if (!error?.code) console.error("AI 剪辑搜索抖音出错:", error);
+    throw new AiEditError(error?.code ?? "search_failed", error?.code && error.message ? error.message : "抖音搜索出错了，稍后再试。");
+  }
+  // 搜完就关掉：探索最多留 6 个页面，别把用户在探索页开着的挤掉
+  await explorer.close([page.sessionId]).catch(() => undefined);
+  const size = Math.min(20, Math.max(1, Number.isInteger(limit) ? limit : 10));
+  const videos = page.items.filter((item) => item.url && item.mediaType !== "image").slice(0, size);
+  return {
+    total: videos.length,
+    videos: videos.map((item) => ({
+      url: item.url,
+      title: item.title,
+      ...(item.author ? { author: item.author } : {}),
+      ...(typeof item.stats?.diggCount === "number" ? { likes: item.stats.diggCount } : {}),
+      ...(item.durationSeconds ? { duration: item.durationSeconds } : {}),
+    })),
+    ...(videos.length ? { note: "这些是别人的视频，只能用 analyze_reference 解析来参考，不能当素材。" } : {}),
+  };
+}
+
+/** 抖音链接：让采集器下最低一档清晰度（下载任务的文件在采集器的 downloads 里，按保留期自动清掉）。 */
+async function downloadReference(ctx, url) {
+  const busy = ctx.library.busyReason?.();
+  const collector = ctx.getCollector();
+  if (busy || !collector) throw new AiEditError("collector_busy", busy ?? "采集器正在切换账号，稍后再解析。", 409);
+  let job;
+  try {
+    job = collector.startVideoDownload(url, { smallest: true });
+  } catch (error) {
+    throw new AiEditError(error?.code ?? "download_failed", error?.message || "参考视频没下载下来，请稍后重试。", 409);
+  }
+  const deadline = Date.now() + DOWNLOAD_TIMEOUT_MS;
+  while (job?.status === "queued" || job?.status === "running") {
+    if (Date.now() > deadline) throw new AiEditError("download_timeout", "参考视频下载太久了，请稍后重试。");
+    await delay(ctx.pollMs ?? 1_000, undefined, { signal: ctx.signal });
+    job = collector.getVideoDownloadJob(job.id);
+  }
+  if (job?.status !== "complete") throw new AiEditError("download_failed", job?.error ?? "参考视频没下载下来，请稍后重试。");
+  const file = collector.getVideoDownloadFilePath(job.id);
+  if (!file?.toLowerCase().endsWith(".mp4")) throw new AiEditError("not_video", "图文作品不能当参考视频解析，只支持视频。");
+  return { file, video: job.video };
+}
+
+/** 把整段视频连同拆解提示词发给 AI 剪辑配置的模型（请求格式同解析库）。 */
+async function watchVideo(ctx, file, video) {
+  if ((await stat(file)).size > ANALYSIS_BYTES) throw new AiEditError("video_too_large", "这个视频超过 45MB，模型接口收不下，换一个短一点或清晰度低一点的版本。");
+  let status = 0;
+  const fetchImpl = async (...args) => {
+    const response = await (ctx.fetchImpl ?? fetch)(...args);
+    status = response.status;
+    return response;
+  };
+  let markdown;
+  try {
+    markdown = await requestAnalysis({
+      config: { ...ctx.config, focus: REFERENCE_FOCUS },
+      video,
+      videoBase64: (await readFile(file)).toString("base64"),
+      signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(ANALYSIS_TIMEOUT_MS)].filter(Boolean)),
+      fetchImpl,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    if (error instanceof AnalysisError) {
+      // 收不了视频的模型一般回 400/415/422，或者流里报一句不认识视频
+      const noVideo = error.code === "provider_error" && ([400, 415, 422].includes(status) || (status === 200 && VIDEO_WORDS.test(error.message)));
+      throw new AiEditError(noVideo ? "video_unsupported" : error.code, noVideo ? `${NO_VIDEO}（${error.message}）` : error.message, error.status);
+    }
+    throw new AiEditError("analysis_failed", error?.name === "TimeoutError" ? "模型太久没看完这个视频，请稍后重试。"
+      : error instanceof TypeError ? "连不上 AI 剪辑配置的接口，检查一下网络和地址。" : "参考视频没解析成功，请稍后重试。");
+  }
+  if (!/\|\s*:?-{3,}/u.test(markdown) && CANT_SEE_VIDEO.test(markdown)) throw new AiEditError("video_unsupported", NO_VIDEO);
+  return markdown;
+}
+
+async function analyzeReference(ctx, args) {
+  if (has(args, "media_id") === has(args, "url")) throw new AiEditError("arguments_invalid", "media_id 和 url 只给一个：素材库里的视频给 media_id，抖音链接给 url。");
+  let key;
+  let item = null;
+  if (has(args, "media_id")) {
+    ctx.library.readyPath(args.media_id);
+    item = ctx.library.get(args.media_id);
+    if (item.kind !== "video") throw new AiEditError("not_video", "只能解析视频素材。");
+    key = `media:${item.id}`;
+  } else {
+    try {
+      key = normalizeDouyinVideoUrl(args.url);
+    } catch (error) {
+      throw new AiEditError(error?.code ?? "invalid_url", error?.message || "请给有效的抖音视频链接。", 400);
+    }
+  }
+  const cached = ctx.references?.get(key);
+  if (cached) return referenceResult(cached.markdown, cached.video);
+  let file;
+  let video;
+  if (item) {
+    file = ctx.library.readyPath(item.id);
+    video = { title: item.name, author: item.source?.author, durationSeconds: seconds(item.durationUs) };
+  } else {
+    ({ file, video } = await downloadReference(ctx, key));
+  }
+  const markdown = await watchVideo(ctx, file, video);
+  if (ctx.references) {
+    ctx.references.set(key, { markdown, video });
+    if (ctx.references.size > REFERENCE_CACHE_SIZE) ctx.references.delete(ctx.references.keys().next().value);
+  }
+  return referenceResult(markdown, video);
+}
+
+function referenceResult(markdown, video) {
+  return {
+    video: {
+      ...(video?.title ? { title: video.title } : {}),
+      ...(video?.author ? { author: video.author } : {}),
+      ...(video?.durationSeconds ? { duration: video.durationSeconds } : {}),
+    },
+    analysis: markdown.length > ANALYSIS_CHARS ? `${markdown.slice(0, ANALYSIS_CHARS)}\n…（后面略）` : markdown,
+    how_to_use: "只当参考，不要把这条视频放进时间线。照着第③部分时间轴的分段、每段时长、转场、字幕样式和配乐卡点，用素材库里用户自己的素材复刻；剪映里的转场、字体、特效先用 search_catalog 查到准确名称再用。",
+  };
 }
 
 /** add_media_clip 的请求体：没给时长就用素材剩下的长度（图片 3 秒），没给开始时间就接在轨道末尾。 */
@@ -673,6 +833,26 @@ const TOOLS = [
       if (done.status === "failed") throw new AiEditError("import_failed", done.error ?? "没导入成功。");
       return { media: mediaForModel(done) };
     },
+  },
+  {
+    name: "search_douyin",
+    description: "按关键词搜抖音上的公开视频（找热门同款、参考视频时用），返回链接、标题、作者、点赞数和时长。搜到的是别人的视频，只能用 analyze_reference 解析来参考，不能导入当素材。",
+    parameters: obj({
+      query: str("搜索关键词，1 到 100 个字"),
+      limit: int("最多返回几条，默认 10，最多 20", { minimum: 1, maximum: 20 }),
+    }, ["query"]),
+    label: (args) => `在抖音上搜了${quoted(args.query)}`,
+    run: async (ctx, args) => searchDouyin(ctx, args),
+  },
+  {
+    name: "analyze_reference",
+    description: "用 AI 剪辑配置的模型看懂一条参考视频（模型要支持视频输入）：返回分段时间轴、每段时长、转场、字幕风格和配乐卡点。给素材库里视频的 media_id，或者给抖音链接（search_douyin 返回的 url），两个只给一个。第一次解析一条要几分钟，解析过的马上返回。结果只当参考，不会放进时间线。",
+    parameters: obj({
+      media_id: str("素材库里视频的 media_id"),
+      url: str("抖音视频链接"),
+    }),
+    label: (args, ctx) => `解析了参考视频${quoted(args.media_id ? ctx.library.get(args.media_id)?.name : "", 16)}`,
+    run: async (ctx, args) => analyzeReference(ctx, args),
   },
   {
     name: "search_catalog",
@@ -1269,7 +1449,8 @@ function dropNulls(value, keep) {
 }
 
 /**
- * 工具执行器。ctx：{ store, library, projectId, getCollector, exportDraft, onRename, signal }。
+ * 工具执行器。ctx：{ store, library, projectId, getCollector, exportDraft, onRename, signal }，
+ * 参考视频另外用 getExplorer、config（AI 剪辑的接口配置，看视频也用它）、references（解析结果缓存）、fetchImpl、pollMs。
  * 返回 { result（回给模型）, action（给页面的动作摘要）, changed（工程或素材有变化） }。
  */
 export function createToolRunner(ctx) {

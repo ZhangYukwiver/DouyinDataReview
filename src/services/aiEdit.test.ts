@@ -1,0 +1,21 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { sendAiEditMessage } from "./aiEdit";
+
+afterEach(() => { vi.unstubAllGlobals(); });
+
+describe("sendAiEditMessage", () => {
+  it("sends only the AI edit settings, never the video analysis ones", async () => {
+    const saved = new Map<string, string>([["content-insights.analysis", "on"], ["dy2.analysisConfig", JSON.stringify({ apiKey: "analysis-key", direction: "美食" })]]);
+    vi.stubGlobal("localStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ session: { id: "s" } }, { status: 202 });
+    }));
+    const config = { baseUrl: "https://edit.example.com/v1", apiKey: "edit-key", model: "m" };
+
+    await sendAiEditMessage({ baseUrl: "http://127.0.0.1:4765", token: "t" }, "s", "参考同款", config);
+
+    expect(bodies).toEqual([{ text: "参考同款", config }]);
+  });
+});
