@@ -32,6 +32,7 @@ import {
   Play,
   QrCode,
   RefreshCw,
+  ShieldAlert,
   Settings,
   Unplug,
   UserRound,
@@ -332,7 +333,7 @@ function Field({ dim, icon, inline, label, ...input }: Omit<TextInputProps, "sty
 }
 
 // 首屏扫码登录：标题一句话，下面一个和二维码一样大的框。没点之前蒙着浅色遮罩（底下隐约是已经备好的码），点了遮罩消失
-function LoginStart({ title, detail, label, busy, disabled, done, revealed, image, onStart, actions }: LoginStartProps) {
+function LoginStart({ title, detail, label, busy, disabled, done, revealed, image, verify, onStart, actions }: LoginStartProps) {
   return (
     <View style={styles.loginStart} testID="login-start">
       <View>
@@ -344,7 +345,7 @@ function LoginStart({ title, detail, label, busy, disabled, done, revealed, imag
         {image ? <Image source={{ uri: image }} style={styles.qrImage} testID={revealed ? "browser-login-qrcode" : undefined} /> : null}
         {revealed ? (image ? null : <ActivityIndicator color={color.textMuted} size="small" />) : (
           <View style={styles.qrMask}>
-            {busy ? <ActivityIndicator color={color.textMuted} size="small" /> : <Glyph icon={done ? CircleCheck : QrCode} size={26} tint={done ? color.green : color.text} />}
+            {busy ? <ActivityIndicator color={color.textMuted} size="small" /> : <Glyph icon={verify ? ShieldAlert : done ? CircleCheck : QrCode} size={26} tint={done ? color.green : color.text} />}
             <Text style={styles.qrMaskText}>{label}</Text>
           </View>
         )}

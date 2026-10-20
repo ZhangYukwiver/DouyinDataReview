@@ -40,6 +40,7 @@ import {
   Play,
   QrCode,
   RefreshCw,
+  ShieldAlert,
   Settings,
   Trash2,
   Unplug,
@@ -586,7 +587,7 @@ function FitSlot({ children, style }: { children: (size: Size) => React.ReactNod
 // ---------- 按钮 ----------
 
 // 首屏扫码登录：手写标题一句话，下面一个和二维码一样大的手画方框。没点之前蒙着纸色遮罩（底下隐约是备好的码），点了遮罩消失
-function SketchLoginStart({ title, detail, label, busy, disabled, done, revealed, image, onStart, actions }: LoginStartProps) {
+function SketchLoginStart({ title, detail, label, busy, disabled, done, revealed, image, verify, onStart, actions }: LoginStartProps) {
   return (
     <View style={styles.loginStart} testID="login-start">
       <View>
@@ -599,7 +600,8 @@ function SketchLoginStart({ title, detail, label, busy, disabled, done, revealed
           {image ? <Image source={{ uri: image }} style={styles.qrImage} testID={revealed ? "browser-login-qrcode" : undefined} /> : null}
           {revealed ? (image ? null : <ActivityIndicator color={C.muted} size="small" />) : (
             <View style={styles.qrMask}>
-              {busy ? <ActivityIndicator color={C.muted} size="small" /> : done ? <CircleCheck color={C.green} size={26} strokeWidth={1.8} /> : <QrCode color={C.ink} size={26} strokeWidth={1.7} />}
+              {busy ? <ActivityIndicator color={C.muted} size="small" /> : verify ? <ShieldAlert color={C.red} size={26} strokeWidth={1.7} />
+                : done ? <CircleCheck color={C.green} size={26} strokeWidth={1.8} /> : <QrCode color={C.ink} size={26} strokeWidth={1.7} />}
               <Hand style={styles.qrMaskText}>{label}</Hand>
             </View>
           )}

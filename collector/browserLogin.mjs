@@ -57,10 +57,10 @@ export async function readLoginQrCode(page) {
     const state = container.innerText.split(/\n+/u).map(line => line.trim()).filter(line => line && line !== "如何扫码").join(" ");
     if (/失效|过期|刷新/u.test(state)) [...container.querySelectorAll("*")].reverse().find(element => /刷新/u.test(element.textContent))?.click();
     const title = verify ? ["title", "desc"].map(name => verify.querySelector(`[class*=${name}]`)?.innerText.trim()).filter(Boolean).join("：") : "";
-    return { image, hint: title || state };
+    return { image, hint: title || state, verify: Boolean(verify) };
   }).catch(() => null);
   if (value?.verifyWithoutCode) { page.reveal?.(); return null; }
   if (!value || typeof value.image !== "string" || value.image.length > 200_000
     || !/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*$/u.test(value.image)) return null;
-  return { image: value.image, hint: typeof value.hint === "string" ? value.hint.slice(0, 60) : "" };
+  return { image: value.image, hint: typeof value.hint === "string" ? value.hint.slice(0, 60) : "", verify: value.verify === true };
 }

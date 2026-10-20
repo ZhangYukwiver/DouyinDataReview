@@ -1240,11 +1240,18 @@ export async function inspectBrowserLogin(baseUrl: string, token: string, browse
 }
 
 /** 应用内登录等扫码时的二维码；不在等登录或码还没出来时是 null */
-export async function getBrowserLoginQrCode(baseUrl: string, token: string): Promise<{ image: string; hint: string } | null> {
+export async function getBrowserLoginQrCode(baseUrl: string, token: string): Promise<{ image: string; hint: string; verify: boolean } | null> {
   const value = await requestJson(baseUrl, "/v1/browser/login-qrcode", {}, token);
   const qrcode = isObject(value) && isObject(value.qrcode) ? value.qrcode : null;
   if (!qrcode || typeof qrcode.image !== "string" || !/^data:image\/(?:png|jpeg|gif|webp);base64,/u.test(qrcode.image)) return null;
-  return { image: qrcode.image, hint: typeof qrcode.hint === "string" ? qrcode.hint : "" };
+  // verify：这张码是二次验证（使用原设备扫码）的，不是登录码
+  return { image: qrcode.image, hint: typeof qrcode.hint === "string" ? qrcode.hint : "", verify: qrcode.verify === true };
+}
+
+/** 应用内登录或导入凭据时，后台的抖音页有没有弹出身份验证 */
+export async function getBrowserVerification(baseUrl: string, token: string): Promise<boolean> {
+  const value = await requestJson(baseUrl, "/v1/browser/verification", {}, token);
+  return isObject(value) && value.verifying === true;
 }
 
 /** 把藏着的应用内登录窗口亮出来，用来做验证或改用验证码登录 */

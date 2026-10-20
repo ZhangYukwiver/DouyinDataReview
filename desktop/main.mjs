@@ -283,7 +283,13 @@ async function askInstallChoiceOnMac() {
 }
 
 async function startDesktopRuntime() {
-  const connectInApp = createInAppBrowserConnector({ BrowserWindow, session, focusApp: showMainWindow });
+  // 应用内登录碰到验证时，把验证框结构（打码后）存在本机采集器数据目录里，只给排查用，不上传
+  const diagnostics = path.join(app.getPath("userData"), "collector", "diagnostics");
+  const connectInApp = createInAppBrowserConnector({ BrowserWindow, session, focusApp: showMainWindow,
+    saveDiagnostic: async (html, url) => {
+      mkdirSync(diagnostics, { recursive: true });
+      writeFileSync(path.join(diagnostics, `verify-${Date.now()}.html`), `<!-- ${url.replace(/--/gu, "")} -->\n${html}`, { mode: 0o600 });
+    } });
   const collector = await startCollectorServer({
     port: 0,
     dataDirectory: path.join(app.getPath("userData"), "collector"),

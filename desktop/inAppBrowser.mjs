@@ -11,6 +11,16 @@ export const LOGIN_PARTITION = "persist:douyin-login";
 const LOGIN_HOSTS = ["douyin.com", "iesdouyin.com", "snssdk.com", "amemv.com", "bytedance.com", "zijieapi.com", "toutiao.com",
   "open.weixin.qq.com", "graph.qq.com", "ptlogin2.qq.com", "api.weibo.com", "passport.weibo.com"];
 
+// 验证中心的验证框是跨域子框架（rmc.bytedance.com/verifycenter/…、…/captcha/…）；页面里常驻的 rc-verifycenter/rmc-nocaptcha 静默风控框不算
+const VERIFY_FRAME = /\/(?:verifycenter|captcha)\//iu;
+const withinTime = (task, ms) => Promise.race([task, new Promise(resolve => setTimeout(resolve, ms, null))]);
+
+// 只给本机诊断用：去掉脚本、样式和图片数据，连续数字打码（手机号、验证码），控制大小
+export function maskDiagnostic(html) {
+  return String(html).replace(/<script[\s\S]*?<\/script>/giu, "").replace(/<style[\s\S]*?<\/style>/giu, "")
+    .replace(/data:[^"')\s]+/gu, "data:…").replace(/\d{3,}/gu, digits => "*".repeat(digits.length)).slice(0, 300_000);
+}
+
 export function isLoginUrl(value) {
   try {
     const url = new URL(value);
@@ -186,7 +196,7 @@ class InAppPage extends EventEmitter {
   }
 }
 
-export function createInAppBrowserConnector({ BrowserWindow, session, focusApp }) {
+export function createInAppBrowserConnector({ BrowserWindow, session, focusApp, saveDiagnostic }) {
   let loginSession = null;
   // 第一次用时才建（要等 app ready）；登录态存在独立分区里，和工作台页面、其他账号目录都分开
   const prepare = () => {
@@ -209,7 +219,7 @@ export function createInAppBrowserConnector({ BrowserWindow, session, focusApp }
       contents.on("will-navigate", block);
       contents.on("will-redirect", block);
       // 抖音要安全验证时（验证框是 verifycenter/captcha 子框架）把窗口亮出来让用户自己做，登录和导入都接着等
-      contents.on("did-frame-navigate", (_event, url) => { if (/\/(?:verifycenter|captcha)\//iu.test(url)) BrowserWindow.fromWebContents(contents)?.show(); });
+      contents.on("did-frame-navigate", (_event, url) => { if (VERIFY_FRAME.test(url)) BrowserWindow.fromWebContents(contents)?.show(); });
       // 第三方登录弹窗用同一个分区，同样只许去登录相关的域
       contents.setWindowOpenHandler(({ url }) => isLoginUrl(url)
         ? { action: "allow", overrideBrowserWindowOptions: { autoHideMenuBar: true, webPreferences: preferences } } : { action: "deny" });
@@ -233,9 +243,51 @@ export function createInAppBrowserConnector({ BrowserWindow, session, focusApp }
       async newCDPSession(page) { return page.cdpSession(); },
     };
     const context = new BorrowedContext(raw);
+    // 哪一页在做验证：验证中心子框架，或者页面里的二次验证浮层（#uc-second-verify）
+    const findVerification = async () => {
+      for (const page of pages) {
+        if (page.closed) continue;
+        const frame = page.contents.mainFrame.framesInSubtree.find(item => VERIFY_FRAME.test(item.url));
+        if (frame) return { page, frame, selector: "body" };
+        if (await withinTime(page.contents.executeJavaScript(`Boolean(document.querySelector("#uc-second-verify"))`).catch(() => false), 1500))
+          return { page, frame: page.contents.mainFrame, selector: "#uc-second-verify" };
+      }
+      return null;
+    };
+    // 验证框长什么样我们只能等真碰上才知道：验证期间隔几秒看一眼，内容变了（换了验证方式、到了输验证码那步）就打码存一份到本机，
+    // 每个框最多 8 份，以后照着把选项搬进工作台
+    const snapshots = new Map();
+    const capture = ({ frame, selector }) => {
+      const key = `${frame.url}#${selector}`;
+      const seen = snapshots.get(key) ?? { last: "", count: 0, at: Date.now(), busy: false };
+      snapshots.set(key, seen);
+      if (!saveDiagnostic || seen.busy || seen.count >= 8 || Date.now() < seen.at) return;
+      seen.busy = true;
+      seen.at = Date.now() + 3000;
+      setTimeout(async () => {
+        const html = await withinTime(frame.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.outerHTML ?? ""`).catch(() => null), 3000);
+        const masked = typeof html === "string" ? maskDiagnostic(html) : "";
+        if (masked && masked !== seen.last) {
+          seen.last = masked; seen.count += 1;
+          await saveDiagnostic(masked, maskDiagnostic(frame.url)).catch(() => {});
+        }
+        seen.busy = false;
+      }, 3000);
+    };
     return {
       browser: source.id, label: source.label, context,
       get connected() { return !closed; },
+      async verification() {
+        const found = closed ? null : await findVerification();
+        if (found) capture(found);
+        return Boolean(found);
+      },
+      // 「打开验证窗口」：优先亮正在验证的那一页，没有就亮最近开的那一页
+      async revealVerification() {
+        const page = (await findVerification())?.page ?? [...pages].at(-1);
+        page?.reveal();
+        return Boolean(page);
+      },
       async disconnect() {
         if (closed) return;
         closed = true;

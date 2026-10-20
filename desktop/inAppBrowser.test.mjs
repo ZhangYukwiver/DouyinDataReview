@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { chromeUserAgent, createInAppBrowserConnector, isLoginUrl, LOGIN_PARTITION } from "./inAppBrowser.mjs";
+import { chromeUserAgent, createInAppBrowserConnector, isLoginUrl, LOGIN_PARTITION, maskDiagnostic } from "./inAppBrowser.mjs";
 
-function fakeElectron() {
+function fakeElectron({ saveDiagnostic } = {}) {
   const windows = [];
   class BrowserWindow extends EventEmitter {
     constructor(options) {
@@ -10,6 +10,8 @@ function fakeElectron() {
       const contents = new EventEmitter();
       contents.loadURL = vi.fn(async () => {});
       contents.getURL = () => "about:blank";
+      contents.mainFrame = { url: "https://www.douyin.com/user/self", framesInSubtree: [], executeJavaScript: vi.fn(async () => "") };
+      contents.executeJavaScript = vi.fn(async () => false);
       contents.setWindowOpenHandler = handler => { contents.openHandler = handler; };
       contents.debugger = Object.assign(new EventEmitter(), { attach: vi.fn(), sendCommand: vi.fn(async method => method === "Network.getCookies" ? { cookies: [
         { name: "sessionid", value: "synthetic", domain: ".douyin.com", path: "/", expires: -1 },
@@ -24,7 +26,7 @@ function fakeElectron() {
   const loginSession = { setUserAgent: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), on: vi.fn() };
   const session = { fromPartition: vi.fn(() => loginSession) };
   const focusApp = vi.fn();
-  return { windows, loginSession, session, focusApp, connect: createInAppBrowserConnector({ BrowserWindow, session, focusApp }) };
+  return { windows, loginSession, session, focusApp, connect: createInAppBrowserConnector({ BrowserWindow, session, focusApp, saveDiagnostic }) };
 }
 
 describe("in-app Douyin login window", () => {
@@ -32,6 +34,39 @@ describe("in-app Douyin login window", () => {
     expect(chromeUserAgent("darwin", "150.0.7871.12")).toBe("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
     expect(chromeUserAgent("win32", "150.0.7871.12")).toContain("(Windows NT 10.0; Win64; x64)");
     expect(chromeUserAgent()).not.toMatch(/Electron|DouyinDataReview/u);
+  });
+
+  it("masks digits and drops scripts, styles and image data in local verification snapshots", () => {
+    const html = maskDiagnostic('<div>手机号 182****8686，验证码 123456</div><script>secret()</script><style>.a{}</style><img src="data:image/png;base64,AAAA">');
+    expect(html).toBe('<div>手机号 ***********，验证码 ******</div><img src="data:…">');
+  });
+
+  it("finds the page showing Douyin verification, reveals it and saves a masked snapshot once", async () => {
+    vi.useFakeTimers();
+    try {
+      const saveDiagnostic = vi.fn(async () => {});
+      const { windows, connect } = fakeElectron({ saveDiagnostic });
+      const connection = await connect({ id: "app", label: "应用内登录", inApp: true });
+      await connection.context.newPage();
+      const [window] = windows; window.show = vi.fn(); window.focus = vi.fn();
+      expect(await connection.verification()).toBe(false);
+      const frame = { url: "https://rmc.bytedance.com/verifycenter/authentication?mobile=18200008686", executeJavaScript: vi.fn(async () => "<div>验证码 123456</div>") };
+      window.webContents.mainFrame.framesInSubtree = [frame];
+      expect(await connection.verification()).toBe(true);
+      expect(await connection.verification()).toBe(true);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(saveDiagnostic).toHaveBeenCalledOnce();
+      expect(saveDiagnostic.mock.calls[0]).toEqual(["<div>验证码 ******</div>", "https://rmc.bytedance.com/verifycenter/authentication?mobile=***********"]);
+      // 内容没变不重复存；换到下一步（比如输短信验证码）就再存一份
+      await connection.verification(); await vi.advanceTimersByTimeAsync(3000);
+      expect(saveDiagnostic).toHaveBeenCalledOnce();
+      frame.executeJavaScript.mockResolvedValue("<div>输入验证码</div>");
+      await connection.verification(); await vi.advanceTimersByTimeAsync(3000);
+      expect(saveDiagnostic).toHaveBeenCalledTimes(2);
+      await connection.revealVerification();
+      expect(window.show).toHaveBeenCalled();
+      await connection.disconnect();
+    } finally { vi.useRealTimers(); }
   });
 
   it("only navigates the top frame to Douyin and its login domains over HTTPS", () => {
