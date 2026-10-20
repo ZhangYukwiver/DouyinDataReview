@@ -32,6 +32,10 @@ import {
   Play,
   QrCode,
   RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  Send,
+  MessageSquareText,
   Settings,
   Unplug,
   UserRound,
@@ -332,23 +336,36 @@ function Field({ dim, icon, inline, label, ...input }: Omit<TextInputProps, "sty
 }
 
 // 首屏扫码登录：标题一句话，下面一个和二维码一样大的框。没点之前蒙着浅色遮罩（底下隐约是已经备好的码），点了遮罩消失
-function LoginStart({ title, detail, label, busy, disabled, done, revealed, image, onStart, actions }: LoginStartProps) {
+function LoginStart({ title, detail, label, busy, disabled, done, revealed, image, verify, sms, onSms, onStart, actions }: LoginStartProps) {
+  const [code, setCode] = useState("");
   return (
     <View style={styles.loginStart} testID="login-start">
       <View>
         <Text style={styles.strong}>{title}</Text>
-        <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
+        <Text numberOfLines={4} style={styles.meta}>{detail}</Text>
       </View>
-      <Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
+      {verify && sms ? (
+        <View style={styles.smsBox} testID="sms-verify">
+          {sms.stage === "choose" ? <Button full icon={MessageSquareText} kind="primary" label="用短信验证码验证" onPress={() => onSms("choose")} testID="sms-choose" /> : <>
+            <Text style={styles.meta}>验证码会发到{sms.phone ? ` ${sms.phone}` : "你绑定的手机"}</Text>
+            <Field accessibilityLabel="短信验证码" keyboardType="number-pad" label="短信验证码" maxLength={8} onChangeText={(value) => setCode(value.replace(/\D/gu, "").slice(0, 8))} placeholder="收到后自己填在这里" testID="sms-code" value={code} />
+            <View style={styles.smsRow}>
+              <Button disabled={!sms.canSend} icon={Send} label={sms.sendLabel ?? "获取验证码"} onPress={() => onSms("send")} testID="sms-send" />
+              <View style={styles.flex}><Button disabled={code.length < 4} full icon={ShieldCheck} kind="primary" label="提交验证码" onPress={() => onSms("submit", code)} testID="sms-submit" /></View>
+            </View>
+            {sms.error ? <Text style={styles.smsError}>{sms.error}</Text> : null}
+          </>}
+        </View>
+      ) : <Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
         style={(state) => [styles.qrBox, !revealed && hovered(state) && styles.qrBoxHover, !revealed && pointer, ease("border-color", 140)]} testID="login-start-button">
         {image ? <Image source={{ uri: image }} style={styles.qrImage} testID={revealed ? "browser-login-qrcode" : undefined} /> : null}
         {revealed ? (image ? null : <ActivityIndicator color={color.textMuted} size="small" />) : (
           <View style={styles.qrMask}>
-            {busy ? <ActivityIndicator color={color.textMuted} size="small" /> : <Glyph icon={done ? CircleCheck : QrCode} size={26} tint={done ? color.green : color.text} />}
+            {busy ? <ActivityIndicator color={color.textMuted} size="small" /> : <Glyph icon={verify ? ShieldAlert : done ? CircleCheck : QrCode} size={26} tint={done ? color.green : color.text} />}
             <Text style={styles.qrMaskText}>{label}</Text>
           </View>
         )}
-      </Pressable>
+      </Pressable>}
       {actions.length ? <View style={styles.loginActions}>{actions.map(action => <LoginAction key={action.testID} {...action} />)}</View> : null}
     </View>
   );
@@ -729,6 +746,9 @@ const styles = StyleSheet.create({
   link: { color: color.textSecondary, fontSize: 12, lineHeight: 18, textDecorationLine: "underline" },
   linkHover: { opacity: 0.7 },
   loginActions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
+  smsBox: { gap: 10, padding: 14, borderRadius: 10, borderWidth: 1, borderColor: color.border, backgroundColor: color.surfaceMuted },
+  smsRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  smsError: { color: color.danger, fontSize: 12, lineHeight: 18 },
   qrMaskText: { color: color.text, fontSize: 13, lineHeight: 20, fontWeight: "500" },
   glyph: { flexGrow: 0, flexShrink: 0, flexBasis: "auto", alignItems: "center", justifyContent: "center" },
 

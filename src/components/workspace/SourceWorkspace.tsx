@@ -40,6 +40,10 @@ import {
   Play,
   QrCode,
   RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  Send,
+  MessageSquareText,
   Settings,
   Trash2,
   Unplug,
@@ -586,25 +590,41 @@ function FitSlot({ children, style }: { children: (size: Size) => React.ReactNod
 // ---------- 按钮 ----------
 
 // 首屏扫码登录：手写标题一句话，下面一个和二维码一样大的手画方框。没点之前蒙着纸色遮罩（底下隐约是备好的码），点了遮罩消失
-function SketchLoginStart({ title, detail, label, busy, disabled, done, revealed, image, onStart, actions }: LoginStartProps) {
+function SketchLoginStart({ title, detail, label, busy, disabled, done, revealed, image, verify, sms, onSms, onStart, actions }: LoginStartProps) {
+  const [code, setCode] = useState("");
   return (
     <View style={styles.loginStart} testID="login-start">
       <View>
         <Hand style={styles.loginTitle}>{title}</Hand>
-        <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
+        <Text numberOfLines={4} style={styles.meta}>{detail}</Text>
       </View>
-      <Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
+      {verify && sms ? (
+        <View style={styles.smsBox} testID="sms-verify">
+          {sms.stage === "choose" ? <SketchButton full icon={MessageSquareText} kind="ink" label="用短信验证码验证" onPress={() => onSms("choose")} seed="sms-choose" testID="sms-choose" /> : <>
+            <Text style={styles.meta}>验证码会发到{sms.phone ? ` ${sms.phone}` : "你绑定的手机"}</Text>
+            <SketchBox seed="sms-code" fill="#FFFFFF" stroke={C.pencil} passes={1} amp={1.3} style={[styles.inputBox, styles.smsInput]}>
+              <TextInput accessibilityLabel="短信验证码" keyboardType="number-pad" maxLength={8} onChangeText={(value) => setCode(value.replace(/\D/gu, "").slice(0, 8))} placeholder="收到短信验证码后自己填在这里" placeholderTextColor={C.faint} style={styles.input} testID="sms-code" value={code} />
+            </SketchBox>
+            <View style={styles.smsRow}>
+              <SketchButton disabled={!sms.canSend} icon={Send} label={sms.sendLabel ?? "获取验证码"} onPress={() => onSms("send")} seed="sms-send" testID="sms-send" />
+              <SketchButton disabled={code.length < 4} icon={ShieldCheck} kind="ink" label="提交验证码" onPress={() => onSms("submit", code)} seed="sms-submit" style={styles.flex} testID="sms-submit" />
+            </View>
+            {sms.error ? <Text style={styles.smsError}>{sms.error}</Text> : null}
+          </>}
+        </View>
+      ) : <Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
         style={(state) => [styles.qrPress, !revealed && pointer, !revealed && state.pressed && styles.pressed]} testID="login-start-button">
         <SketchBox seed="login-qr" fill="#FFFFFF" stroke={C.pencil} passes={2} amp={1.4} style={styles.qrBox}>
           {image ? <Image source={{ uri: image }} style={styles.qrImage} testID={revealed ? "browser-login-qrcode" : undefined} /> : null}
           {revealed ? (image ? null : <ActivityIndicator color={C.muted} size="small" />) : (
             <View style={styles.qrMask}>
-              {busy ? <ActivityIndicator color={C.muted} size="small" /> : done ? <CircleCheck color={C.green} size={26} strokeWidth={1.8} /> : <QrCode color={C.ink} size={26} strokeWidth={1.7} />}
+              {busy ? <ActivityIndicator color={C.muted} size="small" /> : verify ? <ShieldAlert color={C.red} size={26} strokeWidth={1.7} />
+                : done ? <CircleCheck color={C.green} size={26} strokeWidth={1.8} /> : <QrCode color={C.ink} size={26} strokeWidth={1.7} />}
               <Hand style={styles.qrMaskText}>{label}</Hand>
             </View>
           )}
         </SketchBox>
-      </Pressable>
+      </Pressable>}
       {actions.length ? <View style={styles.smallRow}>{actions.map(action => <SketchLoginAction key={action.testID} {...action} />)}</View> : null}
     </View>
   );
@@ -1155,6 +1175,8 @@ const styles = StyleSheet.create({
   qrImage: { position: "absolute", top: 6, left: 6, right: 6, bottom: 6 },
   qrMask: { position: "absolute", top: 3, left: 3, right: 3, bottom: 3, alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "rgba(255,253,246,0.97)" },
   loginLink: { color: C.muted, fontSize: 12, lineHeight: 18, textDecorationLine: "underline" },
+  smsBox: { gap: 10 }, smsRow: { flexDirection: "row", alignItems: "center", gap: 8 }, smsInput: { marginBottom: 0 },
+  smsError: { color: C.red, fontSize: 12, lineHeight: 18 },
   qrMaskText: { fontSize: 20, lineHeight: 24 },
   brand: { minWidth: 180, flexDirection: "row", alignItems: "center", gap: 10 }, mark: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
   brandName: { fontSize: 24, lineHeight: 30 }, brandNameNarrow: { fontSize: 21, lineHeight: 26 },

@@ -259,6 +259,8 @@ export async function startCollectorServer({
   let browserLoginController = null;
   // 正在等登录的那个页面：应用内登录时工作台从这里取二维码
   let browserLoginPage = null;
+  // 正在登录或导入凭据的那个连接：工作台问它有没有弹出验证、要它把验证窗口亮出来
+  let activeBrowserConnection = null;
   let pendingBrowser = null;
   const clearPendingBrowser = async (id) => {
     if (!pendingBrowser || (id && pendingBrowser.id !== id)) return;
@@ -446,7 +448,7 @@ export async function startCollectorServer({
     // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录照常能读，接收中的聊天页要一直拉
     const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (url.pathname === "/v1/records" && !accountWork));
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
-    const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window"].includes(url.pathname);
+    const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
     if (!readable && !loginWait && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
@@ -482,9 +484,24 @@ export async function startCollectorServer({
           sendJson(response, 200, { qrcode: await readLoginQrCode(browserLoginPage) });
           return;
         }
+        if (request.method === "GET" && url.pathname === "/v1/browser/verification") {
+          const state = await activeBrowserConnection?.verification?.().catch(() => null);
+          sendJson(response, 200, { verifying: state?.verifying === true, sms: state?.verifying ? state.sms ?? null : null });
+          return;
+        }
+        // 首屏上的「接收短信验证码」：选这种方式、获取验证码、提交用户自己填的验证码，都转给后台那一页去点
+        if (request.method === "POST" && url.pathname === "/v1/browser/verification") {
+          const body = await readJsonBody(request);
+          if (!["choose", "send", "submit"].includes(body.action) || (body.action === "submit" && !/^\d{4,8}$/u.test(String(body.code ?? ""))))
+            throw new BrowserConnectionError("verification_invalid", "验证码要填 4 到 8 位数字。", 400);
+          if (typeof activeBrowserConnection?.smsVerify !== "function") throw new BrowserConnectionError("browser_login_not_running", "现在没有在等验证。");
+          sendJson(response, 200, { ok: await activeBrowserConnection.smsVerify(body.action, String(body.code ?? "")) });
+          return;
+        }
         if (request.method === "POST" && url.pathname === "/v1/browser/login-window") {
-          if (typeof browserLoginPage?.reveal !== "function") throw new BrowserConnectionError("browser_login_not_running", "现在没有在等登录，请重新点扫码登录。");
-          browserLoginPage.reveal();
+          if (typeof activeBrowserConnection?.revealVerification === "function") await activeBrowserConnection.revealVerification();
+          else if (typeof browserLoginPage?.reveal === "function") browserLoginPage.reveal();
+          else throw new BrowserConnectionError("browser_login_not_running", "现在没有在等登录，请重新点扫码登录。");
           sendJson(response, 200, {});
           return;
         }
@@ -518,6 +535,7 @@ export async function startCollectorServer({
             // fresh：应用内登录换个号扫码，先关掉待确认的窗口，连接器再清登录分区
             await clearPendingBrowser();
             const connection = await browserConnector(source, { fresh: body.fresh === true });
+            activeBrowserConnection = connection;
             try {
               loginController.signal.throwIfAborted();
               const page = await connection.context.newPage();
@@ -543,6 +561,7 @@ export async function startCollectorServer({
             const readPermissions = parseReadPermissions(body.readPermissions);
             const pending = pendingBrowser;
             if (!pending || pending.id !== body.id) throw new BrowserConnectionError("browser_candidate_expired", "连接确认已过期，请重新连接。");
+            activeBrowserConnection = pending.connection;
             const identity = await browserIdentity(pending.connection, pending.page);
             if (identity.uid !== pending.identity.uid) { await clearPendingBrowser(); throw new BrowserConnectionError("account_mismatch", "浏览器里的账号已经变化，请重新连接并确认。"); }
             // Transfer ownership out of the pending slot before switching. The
@@ -573,7 +592,7 @@ export async function startCollectorServer({
           }
         } finally {
           response.off("close", cancelLogin);
-          browserLoginController = null; browserLoginPage = null;
+          browserLoginController = null; browserLoginPage = null; activeBrowserConnection = null;
           switching = false; finishBrowserWork(); browserWork = null;
         }
       } catch (error) {

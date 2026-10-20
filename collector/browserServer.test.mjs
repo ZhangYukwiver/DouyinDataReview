@@ -29,6 +29,8 @@ async function fixture({ isLoggedIn = () => true, prepare } = {}) {
   const browserConnector = vi.fn(async () => {
     const borrowed = Object.assign(new EventEmitter(), { externalBrowser: true, cookies: context.cookies, newPage: context.newPage, pages: context.pages });
     const connection = { browser: "chrome", label: "Chrome", connected: true, context: borrowed,
+      verification: vi.fn(async () => ({ verifying: true, sms: { stage: "code", phone: "182****8686", sendLabel: "获取验证码", canSend: true, error: null } })),
+      revealVerification: vi.fn(async () => true), smsVerify: vi.fn(async () => true),
       disconnect: vi.fn(async () => { connection.connected = false; borrowed.emit("close"); }) };
     connections.push(connection); return connection;
   });
@@ -170,6 +172,7 @@ describe("browser login HTTP handshake", () => {
     let loggedIn = false;
     const { call, connections, browserConnector, loginButton, readRecords, page } = await fixture({ isLoggedIn: () => loggedIn });
     expect((await call("/v1/browser/login-qrcode")).body).toEqual({ qrcode: null });
+    expect((await call("/v1/browser/verification")).body).toEqual({ verifying: false, sms: null });
     expect((await call("/v1/browser/login-window", "POST", {})).body.error).toBe("browser_login_not_running");
     let settled = false;
     const inspectedRequest = call("/v1/browser/connect", "POST", { browser: "chrome" }).finally(() => { settled = true; });
@@ -183,9 +186,17 @@ describe("browser login HTTP handshake", () => {
     expect((await call("/v1/records")).status).toBe(200);
     expect((await call("/v1/sync", "POST")).body.error).toBe("collector_busy");
     // 应用内登录时工作台在这里取二维码扫；要验证时把藏着的窗口亮出来
-    expect((await call("/v1/browser/login-qrcode")).body).toEqual({ qrcode: { image: "data:image/png;base64,QUJD", hint: "扫码成功" } });
+    expect((await call("/v1/browser/login-qrcode")).body).toEqual({ qrcode: { image: "data:image/png;base64,QUJD", hint: "扫码成功", verify: false } });
+    // 登录或导入时后台弹了身份验证：工作台查得到，「打开验证窗口」亮的是正在验证的那一页
+    expect((await call("/v1/browser/verification")).body).toEqual({ verifying: true,
+      sms: { stage: "code", phone: "182****8686", sendLabel: "获取验证码", canSend: true, error: null } });
+    // 验证码只接受数字，转给后台页面提交
+    expect((await call("/v1/browser/verification", "POST", { action: "submit", code: "12ab" })).body.error).toBe("verification_invalid");
+    expect((await call("/v1/browser/verification", "POST", { action: "submit", code: "123456" })).body).toEqual({ ok: true });
+    expect(connections[0].smsVerify).toHaveBeenCalledWith("submit", "123456");
     expect((await call("/v1/browser/login-window", "POST", {})).status).toBe(200);
-    expect(page.reveal).toHaveBeenCalledOnce();
+    expect(connections[0].revealVerification).toHaveBeenCalledOnce();
+    expect(page.reveal).not.toHaveBeenCalled();
 
     loggedIn = true;
     const inspected = await inspectedRequest;
