@@ -231,6 +231,14 @@ export interface TipInput {
   syncing: boolean;
   ready: boolean;
   autoSyncEnabled: boolean;
+  /** 桌面版：登录在首屏扫码，采集器自己连 */
+  desktop?: boolean;
+}
+
+/** 桌面版首屏：连上了但凭据还没就绪（新装、新账号或失效）都算要登录，二维码就摆在那儿 */
+export function desktopLoginNeeded(login: unknown, connected: boolean, status: CollectorStatus | null): boolean {
+  const credentials = status?.browserSource?.credentials;
+  return Boolean(login) && connected && status !== null && credentials !== "ready" && credentials !== "exporting";
 }
 
 /**
@@ -242,9 +250,13 @@ export function tipNotes(state: TipInput, layout: "sketch" | "minimal" = "sketch
   const tip = state.fromArchive
     ? { title: "用的是导入的文件", body: state.connected ? `报告和工作台都用这份文件。想换回采集器的数据，${minimal ? "把这份文件「移除」" : "点右边的「移除」"}就行。` : "报告和工作台都用这份文件，关掉应用后要重新导入。" }
     : state.loginNeeded
-      ? { title: "要先登录抖音", body: "在设置 → 账号中扫码登录（或连接已登录的浏览器），确认账号并导入凭据后再读取。" }
+      ? state.desktop
+        ? { title: "扫码以后", body: "在手机上确认登录，这里会显示是哪个抖音号；核对后导入凭据，读取会自动开始。" }
+        : { title: "要先登录抖音", body: "在设置 → 账号中扫码登录（或连接已登录的浏览器），确认账号并导入凭据后再读取。" }
       : !state.connected
-        ? { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。然后在设置 → 账号中扫码登录（或连接已登录的浏览器）并导入凭据。" }
+        ? state.desktop
+          ? { title: "第一次用？", body: "应用自带的采集器连上后就能扫码登录抖音，确认账号后自动开始读取。" }
+          : { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。然后在设置 → 账号中扫码登录（或连接已登录的浏览器）并导入凭据。" }
         : state.syncing
           ? { title: "正在读取", body: "随时可以点「停止读取」停下，已经读到的会先存好。" }
           : state.ready

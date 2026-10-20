@@ -19,6 +19,7 @@ import {
 import Svg, { Path } from "react-native-svg";
 import {
   ArrowLeftRight,
+  CircleCheck,
   ArrowRight,
   BookOpen,
   Bookmark,
@@ -36,7 +37,9 @@ import {
   NotebookPen,
   Pause,
   Play,
+  QrCode,
   RefreshCw,
+  ScanLine,
   Settings,
   Trash2,
   Unplug,
@@ -51,6 +54,7 @@ import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type Coll
 import type { AppStyle } from "../../services/appStyle";
 import type { SettingsSection } from "./SettingsDialog";
 import { MinimalSetupWorkspace } from "./MinimalSetupWorkspace";
+import { FirstScreenLogin, type DesktopLogin, type LoginStartProps } from "./BrowserConnectionPanel";
 import {
   accountBlockedReason,
   activeAccountLabel,
@@ -64,6 +68,7 @@ import {
   readActions,
   recordSummary,
   runReadCommand,
+  desktopLoginNeeded,
   tipNotes,
   type ReadActionIcon,
   type SetupTip,
@@ -143,6 +148,8 @@ export interface SetupWorkspaceProps {
   onCheckAppUpdate: () => Promise<void>;
   onDownloadAppUpdate: () => Promise<void>;
   onInstallAppUpdate: () => Promise<void>;
+  /** 桌面版：首屏直接扫码登录，采集器在后台自己连（没连上时 token 为 null）；网页版是 null，照旧填地址、点连接 */
+  desktopLogin: DesktopLogin | null;
 }
 
 const web = Platform.OS === "web";
@@ -270,6 +277,7 @@ function SketchSetupWorkspace({
   onCheckAppUpdate,
   onDownloadAppUpdate,
   onInstallAppUpdate,
+  desktopLogin,
 }: SetupWorkspaceProps) {
   useSetupDecor();
   const { width, height } = useWindowDimensions();
@@ -289,7 +297,7 @@ function SketchSetupWorkspace({
   const digest = useMemo(() => digestRecords(records, 24), [records]);
 
   const recordDetail = recordSummary(total, digest.first);
-  const notes = tipNotes({ fromArchive, connected, loginNeeded, syncing, ready, autoSyncEnabled: autoSyncEnabled && setup.videosAllowed }).map((tip) => ({ ...tip, ...NOTE_LOOK[tip.key] }));
+  const notes = tipNotes({ fromArchive, connected, loginNeeded: loginNeeded || desktopLoginNeeded(desktopLogin, connected, status), syncing, ready, autoSyncEnabled: autoSyncEnabled && setup.videosAllowed, desktop: Boolean(desktopLogin) }).map((tip) => ({ ...tip, ...NOTE_LOOK[tip.key] }));
   const cardPad = narrow ? styles.cardNarrow : short ? styles.cardShort : roomy ? styles.cardRoomy : null;
 
   const [accountMenu, setAccountMenu] = useState(false);
@@ -316,28 +324,16 @@ function SketchSetupWorkspace({
         <HRule seed="topbar-rule" style={styles.topRule} />
       </View>
 
-      {/* 标题行 + 流向条 + 三张卡（连接 / 内容记录 / 档案与维护），整页锁在一屏里；ScrollView 只是兜底 */}
+      {/* 流向条 + 三张卡（连接 / 内容记录 / 档案与维护），整页锁在一屏里；ScrollView 只是兜底 */}
       <ScrollView contentContainerStyle={[styles.scrollContent, short && styles.scrollContentShort, narrow && styles.scrollContentNarrow]} showsVerticalScrollIndicator={false} style={styles.scroll}>
         <View style={[styles.page, short && styles.pageShort]}>
-          <View style={styles.header}>
-            <View style={styles.flex}>
-              <View style={styles.titleRow}>
-                {/* 荧光笔划的是「再打开报告」而不是「打开报告」：脚本按全文等于「打开报告」找按钮，这里别跟它重名 */}
-                <Hand style={[styles.title, roomy && styles.titleRoomy, short && styles.titleShort, tight && styles.titleTight]}>先连接数据，</Hand>
-                <Highlight seed="title-mark"><Hand style={[styles.title, roomy && styles.titleRoomy, short && styles.titleShort, tight && styles.titleTight]}>再打开报告</Hand></Highlight>
-                <Hand style={[styles.title, roomy && styles.titleRoomy, short && styles.titleShort, tight && styles.titleTight]}>。</Hand>
-              </View>
-              <Text numberOfLines={1} style={styles.meta}>连接本地采集器，或导入一份个人档案；数据只留在这台设备上。</Text>
-            </View>
-          </View>
-
           <SketchBox seed="flow-strip" fill={C.card} stroke={C.pencil} passes={2} amp={1.8} style={[styles.statusBar, narrow && styles.statusBarNarrow]}>
             <FlowDiagram archive={fromArchive} compact={narrow} done={flow.done} note={flow.note} step={flow.step} />
             <VRule height={34} seed="flow-divider" />
             <View style={[styles.statusCopy, narrow && styles.statusCopyNarrow]}>
               {/* 窄窗口里流向图已经圈出了状态，标题让位给说明 */}
               {narrow ? null : <Hand numberOfLines={1} style={styles.statusTitle}>{fromArchive ? "正在用导入的文件" : connected ? "采集器已就绪" : "等待连接数据源"}</Hand>}
-              <Text numberOfLines={2} style={[styles.meta, styles.flex]}>{switchingAccount ? "正在切换抖音账号，等旧账号的浏览器关好就换过去。" : status?.message ?? "所有操作均在本机执行"}</Text>
+              <Text numberOfLines={2} style={[styles.meta, styles.flex]}>{switchingAccount && !desktopLogin?.loggingIn ? "正在切换抖音账号，等旧账号的浏览器关好就换过去。" : status?.message ?? "所有操作均在本机执行"}</Text>
             </View>
           </SketchBox>
 
@@ -346,6 +342,7 @@ function SketchSetupWorkspace({
             <SketchBox seed="card-connect" fill={C.card} style={[styles.card, cardPad]}>
               <Tape seed="tape-1" />
               <CardHead index="01" done={connected} title="连接数据源" detail="本地采集器，不上传云端" size={narrow ? "small" : roomy ? "large" : "medium"} />
+              {desktopLogin ? <FirstScreenLogin busy={busy} login={desktopLogin} onConnect={() => void onConnect()} renderStart={(start) => <SketchLoginStart {...start} short={short} />} status={status} /> : <>
               <Text style={styles.label}>服务地址</Text>
               <SketchBox seed="input-url" fill={connected ? C.sunken : "#FFFFFF"} stroke={C.pencil} passes={1} amp={1.3} style={[styles.inputBox, short && styles.inputShort]}>
                 <TextInput accessibilityLabel="采集服务地址" autoCapitalize="none" autoCorrect={false} editable={!connected && !busy} onChangeText={onChangeCollectorUrl} placeholder="http://127.0.0.1:4765" placeholderTextColor={C.faint} style={[styles.input, connected && styles.inputDisabled]} value={collectorUrl} />
@@ -358,6 +355,7 @@ function SketchSetupWorkspace({
                 </SketchBox>
               </> : null}
               <SketchButton seed="connect" busy={busy} disabled={busy} full icon={connected ? Unplug : Link2} kind={connected ? "outline" : "ink"} label={connected ? "断开连接" : "连接采集器"} onPress={() => void (connected ? onDisconnect() : onConnect())} tall={!short} />
+              </>}
               {/* 报错和便签共用按钮下面这块地方：报错先写，能写几行写几行，剩下的再贴便签 */}
               <FitSlot style={styles.slotTop}>{(size) => <NoteStack error={error} notes={notes} size={size} roomy={roomy} />}</FitSlot>
             </SketchBox>
@@ -382,7 +380,7 @@ function SketchSetupWorkspace({
                   <ActionButton key={action.key} seed={`act-${action.key}`} compact={narrow} disabled={action.disabled} icon={READ_ICONS[action.icon]} label={action.label} onPress={() => runReadCommand(action.command, handlers)} busy={action.busy} />
                 ))}
               </View>
-              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。在设置 → 账号中重新导入凭据可调整。` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
+              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在设置 → 账号中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
               <HRule seed="auto-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />
               <Pressable accessibilityRole="switch" disabled={!setup.videosAllowed} accessibilityState={{ checked: autoSyncEnabled && setup.videosAllowed, disabled: !setup.videosAllowed }} aria-checked={autoSyncEnabled && setup.videosAllowed} onPress={onToggleAutoSync} style={(state) => [styles.auto, state.pressed && styles.pressed, pointer]}>
                 <Text style={[styles.strong, styles.flex]}>自动补读新记录</Text>
@@ -575,18 +573,6 @@ function Tape({ seed }: { seed: string }) {
   return <View style={[styles.tape, { left: `${left}%`, transform: [{ rotate: `${tilt.toFixed(1)}deg` }] }]} />;
 }
 
-/** 荧光笔划过文字下半截。 */
-function Highlight({ children, seed }: { children: React.ReactNode; seed: string }) {
-  const [size, onLayout] = useSize();
-  const path = useMemo(() => (size ? roughLine(3, size.h * 0.66, size.w - 2, size.h * 0.62, seed, { amp: 1.5 }) : ""), [seed, size]);
-  return (
-    <View onLayout={onLayout}>
-      {size ? <Svg height={size.h} style={styles.under} width={size.w}><Path d={path} fill="none" stroke={C.highlight} strokeLinecap="round" strokeWidth={size.h * 0.36} /></Svg> : null}
-      {children}
-    </View>
-  );
-}
-
 /** 占住卡里剩下的高度，按量到的空间决定里面画多少；内容绝对定位，不会反过来把卡撑高。 */
 function FitSlot({ children, style }: { children: (size: Size) => React.ReactNode; style?: StyleProp<ViewStyle> }) {
   const [size, onLayout] = useSize();
@@ -598,6 +584,24 @@ function FitSlot({ children, style }: { children: (size: Size) => React.ReactNod
 }
 
 // ---------- 按钮 ----------
+
+// 首屏扫码登录点开二维码之前：手画方框里一个二维码记号，手写标题，下面一个墨色按钮
+function SketchLoginStart({ title, detail, label, busy, disabled, done, onStart, short }: LoginStartProps & { short: boolean }) {
+  return (
+    <View style={styles.loginStart} testID="login-start">
+      <View style={styles.loginRow}>
+        <SketchBox seed="login-mark" fill={done ? C.noteYellow : "#FFFFFF"} passes={2} amp={1} style={styles.loginMark}>
+          {done ? <CircleCheck color={C.green} size={22} strokeWidth={1.8} /> : <QrCode color={C.ink} size={22} strokeWidth={1.7} />}
+        </SketchBox>
+        <View style={styles.flex}>
+          <Hand style={styles.loginTitle}>{title}</Hand>
+          <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
+        </View>
+      </View>
+      <SketchButton seed="login-start" busy={busy} disabled={disabled} full icon={done ? RefreshCw : ScanLine} kind={done ? "outline" : "ink"} label={label} onPress={onStart} tall={!short} testID="login-start-button" />
+    </View>
+  );
+}
 
 function SketchButton({ busy, compact, disabled, full, icon: ButtonIcon, iconAfter, kind = "outline", label, onPress, seed, tall, accessibilityLabel, style, testID }: { busy?: boolean; compact?: boolean; disabled?: boolean; full?: boolean; icon: Icon; iconAfter?: boolean; kind?: "ink" | "outline" | "small"; label: string; onPress: () => void; seed: string; tall?: boolean; accessibilityLabel?: string; style?: StyleProp<ViewStyle>; testID?: string }) {
   const [size, onLayout] = useSize();
@@ -1130,6 +1134,8 @@ const styles = StyleSheet.create({
   strong: { color: C.text, fontSize: 13, fontWeight: "600" }, meta: { color: C.muted, fontSize: 12, lineHeight: 18 }, fine: { color: C.faint, fontSize: 11, lineHeight: 16, fontVariant: ["tabular-nums"] },
   topbar: { height: 56, flexDirection: "row", alignItems: "center", gap: 16, paddingHorizontal: 24 }, topbarNarrow: { height: 52, paddingHorizontal: 14 },
   topRule: { position: "absolute", left: 10, right: 10, bottom: -2 },
+  loginStart: { gap: 12, marginTop: 2 }, loginRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  loginMark: { width: 46, height: 46, alignItems: "center", justifyContent: "center" }, loginTitle: { fontSize: 22, lineHeight: 26 },
   brand: { minWidth: 180, flexDirection: "row", alignItems: "center", gap: 10 }, mark: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
   brandName: { fontSize: 24, lineHeight: 30 }, brandNameNarrow: { fontSize: 21, lineHeight: 26 },
   topStatus: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 }, statusText: { flexShrink: 1, color: C.muted, fontSize: 12 },
@@ -1140,9 +1146,6 @@ const styles = StyleSheet.create({
   inkText: { color: C.inkText, fontSize: 13, fontWeight: "600" }, outlineText: { flexShrink: 1, color: C.text, fontSize: 13, fontWeight: "500" }, textCompact: { fontSize: 12 },
   scroll: { flex: 1, minHeight: 0 }, scrollContent: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 18, paddingBottom: 22 }, scrollContentShort: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 14 }, scrollContentNarrow: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12 },
   page: { flex: 1, width: "100%", maxWidth: 1640, alignSelf: "center", gap: 14 }, pageShort: { gap: 10 },
-  header: { flexDirection: "row", alignItems: "center", gap: 16 },
-  titleRow: { flexDirection: "row", alignItems: "flex-end", flexWrap: "wrap" },
-  title: { fontSize: 34, lineHeight: 42 }, titleRoomy: { fontSize: 40, lineHeight: 50 }, titleShort: { fontSize: 30, lineHeight: 38 }, titleTight: { fontSize: 27, lineHeight: 34 },
   menuCloseHover: { transform: [{ translateY: -2 }] },
   statusBar: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 16, paddingVertical: 8 }, statusBarNarrow: { gap: 8, paddingHorizontal: 10, paddingVertical: 6 },
   statusCopy: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 12 }, statusCopyNarrow: { gap: 8 },

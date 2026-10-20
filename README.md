@@ -31,7 +31,7 @@
 **阅读导航：** [主要功能](#主要功能) · [实现方式](#实现方式) · [快速开始](#快速开始) · [本地数据与接口](#本地数据与接口) · [常见问题](#常见问题) · [面向开发者](#面向开发者)
 
 > [!NOTE]
-> 桌面版可以直接在设置里扫抖音的登录二维码，不用打开浏览器调试；也可以从 Chrome 144+、提供远程调试开关的 Edge 或 macOS Comet 导入登录凭据。导入成功后自动断开；凭据失效后重新扫码或连接并导入。无需安装扩展。工具读取本人账号在平台接口当前可访问的记录，不能保证取回全部历史数据；采集使用抖音未公开承诺的私有接口，可能失效或触发账号风控。
+> 桌面版打开就在首屏扫抖音的登录二维码，不用打开浏览器调试、也不用手动连接采集器；也可以从 Chrome 144+、提供远程调试开关的 Edge 或 macOS Comet 导入登录凭据。导入成功后自动断开；凭据失效后重新扫码或连接并导入。无需安装扩展。工具读取本人账号在平台接口当前可访问的记录，不能保证取回全部历史数据；采集使用抖音未公开承诺的私有接口，可能失效或触发账号风控。
 
 ## 主要功能
 
@@ -55,7 +55,7 @@ DouyinDataReview 由 **React / React Native / Expo 工作台、Node.js 本地采
 
 ### 登录、采集与本地报告的数据流
 
-1. **导入登录凭据**：桌面版在一个不显示的应用内窗口里打开抖音网页（`desktop/inAppBrowser.mjs`，独立会话，只通过窗口自己的调试通道读取，不开调试端口），把登录框的二维码搬到设置里给本人扫；也可以在 Chrome、Edge、macOS Comet（Playwright 的 CDP 连接）里登录。采集器核对账号、本人确认后导出抖音 Cookie、请求参数和签名凭据，按账号保存，然后断开。
+1. **导入登录凭据**：桌面版在一个不显示的应用内窗口里打开抖音网页（`desktop/inAppBrowser.mjs`，独立会话，只通过窗口自己的调试通道读取，不开调试端口），把登录框的二维码搬到采集器页首屏给本人扫；也可以在 Chrome、Edge、macOS Comet（Playwright 的 CDP 连接）里登录。采集器核对账号、本人确认后导出抖音 Cookie、请求参数和签名凭据，按账号保存，然后断开。
 2. **请求平台接口**：采集器复用导入的会话发起 HTTP 请求，通过签名器生成所需请求签名。观看历史、喜欢和收藏按接口游标分页读取，完整读取与增量读取都不依赖网页滚动；聊天和直播弹幕通过 WebSocket 接收。
 3. **保存个人记录**：接口返回的数据经过归一化和合并，写入当前账号的 `records.json`。观看事件保留重复观看的信息；喜欢和收藏按作品身份处理。记录文件与登录凭据分别保存。
 4. **生成统计与报告**：工作台通过本地 API 读取记录，在本机计算时间分布、作者与话题排行、观看和收藏交集、聊天统计等，再把汇总快照交给年度回顾页面。报告生成不需要外部 AI 服务。
@@ -130,14 +130,14 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
    **macOS 首次打开前需在终端执行一次 `xattr -cr "/Applications/DouyinDataReview.app"`，否则会提示应用已损坏；Windows 可能出现 SmartScreen 提示，点「更多信息」，再点「仍要运行」。**
 
-2. 启动「DouyinDataReview」，点击「连接采集器」。应用会从本机采集器自动取一次性配对码完成连接，之后默认在前台自动读取新记录，也可以手动点「增量读取」。关掉窗口应用会留在托盘里接着每 3 小时读一次，要完全退出就在托盘图标的菜单里点「退出」。
-3. 首次使用请在「设置 → 账号」选「在应用里登录」，点「扫码登录」，用抖音 App 扫设置里显示的二维码并在手机上确认，核对昵称，勾选读取视频、读取聊天后导入凭据。导入成功后只启动所选类型的读取。也可以改选已登录抖音的 Chrome、Edge 或 macOS Comet。凭据失效或需要调整读取权限时重新登录并导入。
+2. 启动「DouyinDataReview」。桌面版会在后台自动连上自带的采集器（从源码在浏览器里打开时点「连接采集器」，配对码自动获取），之后默认在前台自动读取新记录，也可以手动点「增量读取」。关掉窗口应用会留在托盘里接着每 3 小时读一次，要完全退出就在托盘图标的菜单里点「退出」。
+3. 首次使用在首屏「数据来源」里点「显示二维码」（二维码已在后台备好，点了直接出来），用抖音 App 扫码并在手机上确认，核对昵称，勾选读取视频、读取聊天后点「确认导入」，读取会自动开始，只读所选类型。也可以点「改用 Chrome / Edge / Comet 导入」。凭据失效或需要调整读取权限时重新登录并导入。
 4. 进入内容库，在观看历史、喜欢、收藏、聊天和持续报告之间切换；在「设置」里换界面风格、选报告用哪一套，点「打开报告」看年度回顾。
 
 ### 在应用里登录（桌面版默认）
 
-1. 在「设置 → 账号 → 导入登录凭据」选「在应用里登录」，点「扫码登录」。应用在后台打开抖音网页，把登录框的二维码显示在设置里（抖音大约一分钟换一张码，这里跟着换）。打开抖音 App，点左上角的扫一扫，扫码后在手机上确认。最多等待 5 分钟，期间可点「取消连接」。
-2. 用密码或手机验证码登录后，抖音可能要求「使用原设备扫码」的二次验证，这张验证码同样显示在设置里，用登着这个号的抖音 App 扫一下即可。抖音要求滑块、短信等其他安全验证时（扫码时或导入时都可能），后台的抖音窗口会自动显示出来，由本人在窗口里完成，完成后登录或导入接着走；关掉这个窗口只是把它藏起来。想用手机验证码登录时，点「在窗口里登录」把窗口打开，认出登录后窗口自动收起、切回工作台。等登录和导入期间点设置外面的灰色区域不会关掉设置，免得把正在进行的登录取消；要取消就点「取消连接」或设置右上角的 ×。
+1. 打开应用，首屏「数据来源」就是「扫码登录抖音」。凭据还没导入时，应用已经在后台打开抖音网页、备好二维码，点「显示二维码」直接出来（抖音大约一分钟换一张码，这里跟着换；等了 5 分钟还没登录会自动续上新的一轮）。打开抖音 App，点左上角的扫一扫，扫码后在手机上确认。可以随时点「取消」。
+2. 用密码或手机验证码登录后，抖音可能要求「使用原设备扫码」的二次验证，这张验证码同样显示在首屏，用登着这个号的抖音 App 扫一下即可。抖音要求滑块、短信等其他安全验证时（扫码时或导入时都可能），后台的抖音窗口会自动显示出来，由本人在窗口里完成，完成后登录或导入接着走；关掉这个窗口只是把它藏起来。想用手机验证码登录时，点「在窗口里登录」把窗口打开，认出登录后窗口自动收起、切回工作台。已经登录过的号在首屏显示「已登录」，凭据失效或要调整读取权限时点「重新扫码登录」。设置 → 账号里只留一个「去扫码登录」按钮，回到首屏操作；在浏览器里打开的网页版仍在设置里连接浏览器。
 3. 登录后核对昵称，勾选「读取视频」「读取聊天」，点「确认导入」。导出凭据时后台网页会打开个人主页初始化一次，完成后自动关闭。
 
 后台网页用独立的会话（`persist:douyin-login`），不和工作台页面共用 Cookie；网页标识是同版本的 Chrome，不带应用名；只允许打开抖音及其登录相关的页面，拒绝通知、摄像头等权限请求和文件下载。网页登录状态留在本机，凭据失效后再点「扫码登录」通常会直接认出原来的号，不用重新扫码；所以要添加另一个号时，先在「在窗口里登录」打开的窗口里退出抖音，或改用浏览器导入。
@@ -207,7 +207,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 ### 怎么导出抖音观看历史和聊天记录？
 
-安装 DouyinDataReview，连接采集器，并在「设置 → 账号」导入本人浏览器的抖音登录凭据。读取完成后，在「设置 → 数据」点「导出数据」，可分别选择观看历史、喜欢、收藏和聊天数据，保存为 JSON；聊天默认不勾选，未勾选的内容不会写入文件，导出不会触发平台读取。换电脑时在新电脑的采集器页「选择文件」导入，再点「并入本机记录」即可继续使用。聊天导出包含已保存的好友消息及会话信息（含群聊统计）；群聊正文不在备份里。
+安装 DouyinDataReview，在首屏扫码登录抖音并导入凭据（网页版在「设置 → 账号」连接浏览器导入）。读取完成后，在「设置 → 数据」点「导出数据」，可分别选择观看历史、喜欢、收藏和聊天数据，保存为 JSON；聊天默认不勾选，未勾选的内容不会写入文件，导出不会触发平台读取。换电脑时在新电脑的采集器页「选择文件」导入，再点「并入本机记录」即可继续使用。聊天导出包含已保存的好友消息及会话信息（含群聊统计）；群聊正文不在备份里。
 
 ### 抖音数据怎么采集？需要一直开着浏览器吗？
 
@@ -243,7 +243,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 ### 首次使用如何登录？
 
-桌面版在「设置 → 账号」选「在应用里登录」，点「扫码登录」，用抖音 App 扫设置里显示的二维码，核对账号后确认导入，不需要另外装浏览器或开调试。从源码运行、在浏览器里打开工作台时没有这个入口，要在 Chrome、Edge 或 macOS Comet 中开启远程调试再连接浏览器；未登录时在新开的抖音页面完成登录，工作台会等待并自动继续。
+桌面版打开后在首屏点「显示二维码」，用抖音 App 扫码，核对账号后确认导入，读取自动开始，不需要另外装浏览器、开调试或手动连接采集器。从源码运行、在浏览器里打开工作台时没有这个入口，要在 Chrome、Edge 或 macOS Comet 中开启远程调试再连接浏览器；未登录时在新开的抖音页面完成登录，工作台会等待并自动继续。
 
 ### 提示「采集器端口 4765 已被占用」？
 
@@ -251,7 +251,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 ### 已连接却提示需要导入凭据或读取配置不完整？
 
-在「设置 → 账号」重新扫码登录（或连接已登录的浏览器），勾选所需读取类型并确认导入。勾选视频时建立 HTTP 分页所需的请求参数，并自动读取一次（已读完过的账号只补新增）；只勾选聊天时不初始化观看历史读取。升级保留本地记录，旧版已有完整且有效的凭据也可以继续使用。
+桌面版在首屏点「重新扫码登录」（网页版在「设置 → 账号」重新连接已登录的浏览器），勾选所需读取类型并确认导入。勾选视频时建立 HTTP 分页所需的请求参数，并自动读取一次（已读完过的账号只补新增）；只勾选聊天时不初始化观看历史读取。升级保留本地记录，旧版已有完整且有效的凭据也可以继续使用。
 
 ### 报告是空的，或提示「报告有更新」？
 
@@ -383,7 +383,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 
 The app combines a React / React Native / Expo interface, a Node.js collector and an Electron desktop shell. The desktop app opens Douyin in a hidden in-app window (an isolated session read through its own debugger channel, no debugging port) and shows its login QR code in Settings for you to scan, or Playwright connects to your authorized browser through CDP, to import Douyin cookies, request parameters and signing credentials. The collector then uses signed, paginated HTTP requests for records and WebSocket connections for real-time chats and live comments. Normalized records are stored in local, per-account JSON files; TypeScript report logic computes statistics on your computer without an external AI service. See [implementation and source modules](#实现方式).
 
-To connect in the desktop app, choose 在应用里登录 (Sign in inside the app) in Settings → Account, click 扫码登录 (Scan to sign in) and scan the QR code shown in Settings with the Douyin app; use 在窗口里登录 (Sign in in a window) for verification steps or SMS sign-in. Alternatively, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, click Connect browser. If remote debugging is disabled, the app attempts to open the selected browser's debugging settings; enable the toggle and connect again, or use the displayed settings URL if opening fails. Check the account name, select video reading and/or chat reading, and confirm the credential import. At least one must be selected; first imports default to videos only. If you are not signed in, the connection waits up to five minutes and can be cancelled. After import, the app disconnects from CDP. Selected video reading starts one full read of watch history, likes and favorites; selected chat reading organizes chat history and starts reception. Unselected capabilities cannot read further platform data. Choices persist per account across restarts and can be changed by reimporting; existing local data remains viewable and exportable. Older imports retain both capabilities. You can stop reading from the collector page, turn off debugging and close the browser. Missing or incomplete credentials, a rejected login, an account mismatch or a verification requirement need a new import. No browser extension is required. Firefox, custom user-data directories and other browser channels are not supported.
+The desktop app connects to its bundled collector on launch and prepares a Douyin login QR code in the background; on the first screen, click 显示二维码 (Show QR code) and scan it with the Douyin app, then confirm the import and reading starts automatically; use 在窗口里登录 (Sign in in a window) for verification steps or SMS sign-in. Alternatively, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, click Connect browser. If remote debugging is disabled, the app attempts to open the selected browser's debugging settings; enable the toggle and connect again, or use the displayed settings URL if opening fails. Check the account name, select video reading and/or chat reading, and confirm the credential import. At least one must be selected; first imports default to videos only. If you are not signed in, the connection waits up to five minutes and can be cancelled. After import, the app disconnects from CDP. Selected video reading starts one full read of watch history, likes and favorites; selected chat reading organizes chat history and starts reception. Unselected capabilities cannot read further platform data. Choices persist per account across restarts and can be changed by reimporting; existing local data remains viewable and exportable. Older imports retain both capabilities. You can stop reading from the collector page, turn off debugging and close the browser. Missing or incomplete credentials, a rejected login, an account mismatch or a verification requirement need a new import. No browser extension is required. Firefox, custom user-data directories and other browser channels are not supported.
 
 Collection is limited to records currently returned by Douyin's private APIs and accessible to your account. It cannot guarantee a complete lifetime history or future API compatibility. Reports reflect the records you have saved and their available fields.
 

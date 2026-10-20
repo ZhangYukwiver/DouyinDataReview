@@ -52,6 +52,8 @@ export interface SettingsDialogProps {
   onDownloadAppUpdate: () => Promise<void>;
   onInstallAppUpdate: () => Promise<void>;
   browserConnection?: Omit<BrowserConnectionPanelProps, "visible" | "blocked">;
+  /** 桌面版：登录在采集器页首屏，设置里只放一个过去的按钮，不再开第二个登录面板 */
+  onShowLogin?: () => void;
 }
 
 const web = Platform.OS === "web";
@@ -281,7 +283,7 @@ function Privacy({ onTogglePrivacy, privacy }: SettingsDialogProps) {
   );
 }
 
-function Account({ accountBlocked, accounts, activeAccountName, appStyle, connected, onActivateAccount, onAddAccount, onClose, onRemoveAccount, switchingAccount = false, browserConnection, visible }: SettingsDialogProps) {
+function Account({ accountBlocked, accounts, activeAccountName, appStyle, connected, onActivateAccount, onAddAccount, onClose, onRemoveAccount, switchingAccount = false, browserConnection, onShowLogin, visible }: SettingsDialogProps) {
   if (!connected) {
     return (
       <View style={styles.row}>
@@ -329,7 +331,11 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
         <RowCopy detail="扫码登录或连接浏览器，确认账号后导入凭据。" title="添加账号" />
         <Button appStyle={appStyle} disabled={blocked} icon={UserRoundPlus} label="添加账号" onPress={() => { onClose(); onAddAccount(); }} testID="settings-account-add" />
       </View>
-      {browserConnection ? <BrowserConnectionPanel {...browserConnection} visible={visible} blocked={blocked} /> : null}
+      {browserConnection ? <BrowserConnectionPanel {...browserConnection} visible={visible} blocked={blocked} />
+        : onShowLogin ? <View style={styles.row}>
+          <RowCopy detail="在采集器页首屏扫码登录；也可以在那里改用 Chrome、Edge 或 Comet 导入。" title="登录与凭据" />
+          <Button appStyle={appStyle} label="去扫码登录" onPress={() => { onClose(); onShowLogin(); }} testID="settings-show-login" />
+        </View> : null}
     </>
   );
 }

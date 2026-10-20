@@ -252,6 +252,8 @@ function AppContent() {
   const [analysisInstalled, setAnalysisInstalled] = useState(() => Platform.OS === "web" && loadAnalysisInstalled());
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
+  // 首屏正在扫码登录或导入凭据（桌面版）：同样挡住读取和换号，但界面上不写成「正在切换账号」
+  const [loggingIn, setLoggingIn] = useState(false);
   const [collectorAccounts, setCollectorAccounts] = useState<CollectorAccounts | null>(null);
   // 每换一次账号加一，让「自动补读」像刚连上时那样对新账号再跑一次
   const [accountEpoch, setAccountEpoch] = useState(0);
@@ -557,6 +559,10 @@ function AppContent() {
     });
     return () => setCollectorTokenRenewal(null);
   }, [collectorUrl]);
+  // 桌面版一打开就在后台连上自带的采集器：首屏要靠它出扫码登录的二维码，不用再点「连接采集器」
+  useEffect(() => {
+    if (isDesktopApp()) void connectCollector({ automaticPairing: true, revealSources: false });
+  }, []);
   useEffect(() => subscribeDesktopBackgroundSync((manual) => autoSyncTriggerRef.current({ manual, timer: !manual })), []);
   // 从托盘叫回窗口等于回到前台；开机后台启动时窗口一直不出来，也要先连上采集器读一次
   useEffect(() => trackDesktopWindowVisibility(() => {
@@ -749,12 +755,12 @@ function AppContent() {
 
   async function beginSync(baseUrl: string, token: string, incremental = false, { timer = false }: { timer?: boolean } = {}) {
     if (!canReadCollector(collectorStatus, "videos")) {
-      if (!timer) openPreferences("account");
+      if (!timer) openLogin();
       return;
     }
     if (collectorStatus?.browserSource?.credentials === "reconnect_required") {
       setCollectorError("请先连接浏览器并导入登录凭据。");
-      if (!timer) openPreferences("account");
+      if (!timer) openLogin();
       return;
     }
     timerSyncRef.current = timer;
@@ -872,7 +878,7 @@ function AppContent() {
   async function beginChatObservation(baseUrl: string, token: string, automatic = false) {
     if (!canReadCollector(collectorStatus, "chat")) {
       chatStartupRef.current.cancel();
-      if (!automatic) openPreferences("account");
+      if (!automatic) openLogin();
       return;
     }
     if (chatCollectionInFlightRef.current || switchingAccount) return;
@@ -980,7 +986,7 @@ function AppContent() {
   }
 
   async function collectChatHistory(baseUrl: string, token: string) {
-    if (!canReadCollector(collectorStatus, "chat")) { openPreferences("account"); return; }
+    if (!canReadCollector(collectorStatus, "chat")) { openLogin(); return; }
     if (switchingAccount || chatBusy) return;
     chatStartupRef.current.cancel();
     chatAutomaticRequestRef.current.clear();
@@ -1052,7 +1058,7 @@ function AppContent() {
       setCollectorToken(pairedToken);
       setPairingCode("");
       const status = await adoptCollector(normalizedUrl, pairedToken, requestId);
-      if (revealSources && status?.browserSource?.credentials === "reconnect_required") openPreferences("account");
+      if (revealSources && status?.browserSource?.credentials === "reconnect_required") openLogin();
     } catch (error) {
       if (pollRequest.current !== requestId) return;
       if (!pairedToken) {
@@ -1089,7 +1095,8 @@ function AppContent() {
       chatPollRequestRef.current = requestId;
     } else if (status.browserSource?.credentials === "reconnect_required") {
       chatStartupRef.current.cancel();
-      setCollectorError("请在设置 → 账号中连接已登录的浏览器并导入凭据。");
+      // 桌面版首屏就是扫码登录，不用再写一句去设置
+      if (!isDesktopApp()) setCollectorError("请在设置 → 账号中连接已登录的浏览器并导入凭据。");
     } else if (canReadCollector(status, "chat")) {
       chatStartupRef.current.request();
     } else {
@@ -1105,8 +1112,8 @@ function AppContent() {
 
   function confirmFullSync() {
     if (!collectorToken || collectorBusy || syncConfirmationOpenRef.current) return;
-    if (!canReadCollector(collectorStatus, "videos")) { openPreferences("account"); return; }
-    if (collectorStatus?.browserSource?.credentials === "reconnect_required") { openPreferences("account"); return; }
+    if (!canReadCollector(collectorStatus, "videos")) { openLogin(); return; }
+    if (collectorStatus?.browserSource?.credentials === "reconnect_required") { openLogin(); return; }
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "开始读取全部可见记录",
@@ -1123,8 +1130,8 @@ function AppContent() {
 
   function confirmIncrementalSync() {
     if (!collectorToken || collectorBusy || syncConfirmationOpenRef.current) return;
-    if (!canReadCollector(collectorStatus, "videos")) { openPreferences("account"); return; }
-    if (collectorStatus?.browserSource?.credentials === "reconnect_required") { openPreferences("account"); return; }
+    if (!canReadCollector(collectorStatus, "videos")) { openLogin(); return; }
+    if (collectorStatus?.browserSource?.credentials === "reconnect_required") { openLogin(); return; }
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "增量读取",
@@ -1258,7 +1265,7 @@ function AppContent() {
         chatStartupRef.current.cancel();
         setCollectorBusy(false);
         setAccountEpoch((value) => value + 1);
-        openPreferences("account");
+        openLogin();
         return;
       }
       if (await adoptCollector(baseUrl, token, requestId)) setAccountEpoch((value) => value + 1);
@@ -1731,6 +1738,12 @@ function AppContent() {
 
   // 设置面板：采集器页和工作台共用一个 App 级模态
   const openPreferences = (section: SettingsSection = "appearance") => setPreferences(section);
+  // 要登录或重新导入凭据：桌面版回采集器页首屏扫码，网页版去设置 → 账号连浏览器
+  const openLogin = () => {
+    if (!isDesktopApp()) { openPreferences("account"); return; }
+    setPreferences(null);
+    setActiveView("sources");
+  };
   const toggleAutoSync = () => setAutoSyncEnabled((value) => {
     saveAutoSync(!value);
     return !value;
@@ -1744,6 +1757,7 @@ function AppContent() {
   };
   const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus);
   const recordDownloading = batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running");
+  const loginBlocked = accountBlockedReason({ switchingAccount, syncing: syncingRecords, busy: collectorBusy, downloading: recordDownloading, sparkRenewing });
   const accountName = activeAccountName(collectorToken !== null, collectorStatus, collectorAccounts);
 
   return (
@@ -1798,6 +1812,8 @@ function AppContent() {
           onToggleAutoSync={toggleAutoSync}
           appStyle={appStyle}
           onOpenPreferences={openPreferences}
+          desktopLogin={isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, blocked: Boolean(loginBlocked), loggingIn,
+            onBusyChange: (busy) => { setSwitchingAccount(busy); setLoggingIn(busy); }, onChange: adoptBrowserLogin } : null}
           chatBusy={chatControlBusy}
           chatCollecting={isChatReceiving(collectorStatus)}
           pairingCode={pairingCode}
@@ -1911,13 +1927,7 @@ function AppContent() {
         accounts={collectorAccounts}
         activeAccountName={accountName}
         switchingAccount={switchingAccount}
-        accountBlocked={accountBlockedReason({
-          switchingAccount,
-          syncing: syncingRecords,
-          busy: collectorBusy,
-          downloading: recordDownloading,
-          sparkRenewing,
-        })}
+        accountBlocked={loginBlocked}
         onActivateAccount={(id) => void changeAccount({ id })}
         onAddAccount={() => void changeAccount({ add: true })}
         onRemoveAccount={confirmRemoveAccount}
@@ -1929,8 +1939,9 @@ function AppContent() {
         onCheckAppUpdate={checkForAppUpdates}
         onDownloadAppUpdate={downloadAppUpdate}
         onInstallAppUpdate={installAppUpdate}
-        browserConnection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
+        browserConnection={collectorToken && !isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
           onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined}
+        onShowLogin={isDesktopApp() ? openLogin : undefined}
       />
       {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={() => setExportSnapshot(null)} onExport={exportSelectedData} /> : null}
     </SafeAreaView>
