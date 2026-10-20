@@ -115,14 +115,16 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
     return () => { stopped = true; clearInterval(timer); };
   }, [waitingForScan, baseUrl, token]);
 
+  // 抖音常在登录跳到主页后才弹身份验证，这时已认出账号、在等确认导入（不算 busy），也要接着查
+  const watchVerify = compact && (busy || candidate !== null);
   useEffect(() => {
-    if (!compact || !busy) { setVerifying(false); setSms(null); return; }
+    if (!watchVerify) { setVerifying(false); setSms(null); return; }
     let stopped = false;
     const poll = () => getBrowserVerification(baseUrl, token).then(value => { if (!stopped) { setVerifying(value.verifying); setSms(value.sms); } }, () => {});
     void poll();
     const timer = setInterval(poll, 1500);
     return () => { stopped = true; clearInterval(timer); };
-  }, [compact, busy, baseUrl, token]);
+  }, [watchVerify, baseUrl, token]);
   const openVerifyWindow = () => { void showBrowserLoginWindow(baseUrl, token).catch(reason => setError(reason instanceof Error ? reason.message : "登录窗口打不开。")); };
   // 首屏上的短信验证码：只是替用户点后台页面里的同一个按钮、填同一个框；页面里找不到就请用户去窗口里做
   const onSms = (action: "choose" | "send" | "submit", code = "") => {
@@ -209,14 +211,15 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   // 二次验证要扫的码（使用原设备扫码）已经透传过来了就照常显示码；别的验证（短信、密码、滑块）首屏换成「打开验证窗口」
   const verifyNeeded = verifying && !(waitingForScan && qrcode?.verify);
   if (compact && renderStart && inApp && verifyNeeded) {
+    const after = candidate ? (busy ? "会接着导入凭据" : "回到这里确认导入") : "会接着登录";
     return (
       <View style={[styles.panel, styles.panelCompact]} testID="browser-login-panel">
         {renderStart({ title: "抖音要求身份验证", done: false, busy: false, revealed: false, image: null, verify: true, disabled: false, onStart: openVerifyWindow,
           label: "点击打开验证窗口", sms, onSms,
           actions: sms ? [{ kind: "window", label: "用其他方式验证", testID: "browser-login-show-window", onPress: openVerifyWindow }] : [],
           detail: sms
-            ? `为保障账号安全，抖音要先确认是你本人。可以直接在这里收短信验证码，验证码由你自己填；也可以打开验证窗口换别的方式。完成后${candidate ? "会接着导入凭据" : "会接着登录"}。`
-            : `为保障账号安全，抖音要先确认是你本人。在弹出的抖音窗口里选一种方式完成验证（短信、密码都由你自己操作），完成后${candidate ? "会接着导入凭据" : "会接着登录"}。` })}
+            ? `为保障账号安全，抖音要先确认是你本人。可以直接在这里收短信验证码，验证码由你自己填；也可以打开验证窗口换别的方式。完成后${after}。`
+            : `为保障账号安全，抖音要先确认是你本人。点一下打开抖音的验证窗口，选一种方式完成验证（短信、密码都由你自己操作），完成后${after}。` })}
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error} testID="browser-login-error">{error}</Text> : null}
       </View>
     );
@@ -314,7 +317,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       </View> : null}
       {busy && !(compact && waitingForScan) ? <View style={styles.actions}>
         <ActivityIndicator size="small" color={color.accent} />
-        <Text style={styles.detail} accessibilityLiveRegion="polite">{candidate ? (inApp ? "正在导出凭据，请稍等。抖音要求安全验证时会弹出窗口，在窗口里完成后会接着导入。" : "正在导出凭据，完成前请保持浏览器打开。")
+        <Text style={styles.detail} accessibilityLiveRegion="polite">{candidate ? (inApp ? "正在导出凭据，请稍等。抖音要求安全验证时这里会提示，完成后会接着导入。" : "正在导出凭据，完成前请保持浏览器打开。")
           : inApp ? "打开抖音 App，点左上角的扫一扫扫码并在手机上确认。要做安全验证、或想用手机验证码登录时，点“在窗口里登录”。工作台会自动继续，最多等待 5 分钟。"
           : "请按提示开启调试或允许连接；进入抖音页面后完成登录或验证，未弹出登录框时可点击“登录”。工作台会自动继续，最多等待 5 分钟。"}</Text>
         {connecting ? <Action label="取消连接" disabled={false} onPress={() => connectControllerRef.current?.abort()} testID="browser-login-cancel-connect" /> : null}
