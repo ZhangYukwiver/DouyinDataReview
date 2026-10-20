@@ -1224,9 +1224,10 @@ export async function getBrowserLoginSources(baseUrl: string, token: string): Pr
   });
 }
 
-export async function inspectBrowserLogin(baseUrl: string, token: string, browser: BrowserLoginSource["id"], accountId?: string | null, signal?: AbortSignal): Promise<BrowserLoginCandidate> {
+/** fresh：应用内登录先清掉登录窗口里上次的号，再显示新的二维码（换个号扫码） */
+export async function inspectBrowserLogin(baseUrl: string, token: string, browser: BrowserLoginSource["id"], accountId?: string | null, signal?: AbortSignal, fresh = false): Promise<BrowserLoginCandidate> {
   // Browser authorization, navigation and up to five minutes for manual login.
-  const value = await requestJson(baseUrl, withAccount("/v1/browser/connect", accountId), { method: "POST", body: JSON.stringify({ browser }), signal }, token, 7 * 60_000);
+  const value = await requestJson(baseUrl, withAccount("/v1/browser/connect", accountId), { method: "POST", body: JSON.stringify({ browser, ...(fresh ? { fresh } : {}) }), signal }, token, 7 * 60_000);
   const candidate = isObject(value) && isObject(value.candidate) ? value.candidate : null;
   if (!candidate || typeof candidate.id !== "string" || !/^[0-9a-f-]{36}$/u.test(candidate.id)
     || !BROWSER_IDS.includes(String(candidate.browser)) || typeof candidate.uid !== "string" || !/^\d{1,30}$/u.test(candidate.uid))

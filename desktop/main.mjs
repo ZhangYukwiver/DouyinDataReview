@@ -296,7 +296,7 @@ async function startDesktopRuntime() {
     signerDirectory: app.isPackaged ? path.join(process.resourcesPath, "direct-signer") : undefined,
     // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
     browserSources: [{ id: "app", label: "应用内登录", inApp: true }, ...browserDirectories()],
-    browserConnector: source => (source.inApp ? connectInApp(source) : connectExternalBrowser(source)),
+    browserConnector: (source, options) => (source.inApp ? connectInApp(source, options) : connectExternalBrowser(source)),
   });
   try {
     const rootDirectory = path.join(projectDirectory, "dist");

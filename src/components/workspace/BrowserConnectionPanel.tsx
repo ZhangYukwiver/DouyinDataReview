@@ -145,11 +145,14 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
     finally { runningRef.current = false; setBusy(false); onBusyChange(false); }
   }
 
-  const connect = () => run(async () => {
+  // fresh：换个号扫码。采集器会先关掉这个待确认的号，再清登录窗口里的登录状态
+  const connect = (fresh = false) => run(async () => {
     const controller = new AbortController();
     connectControllerRef.current = controller; setConnecting(true);
+    // 首屏换号时码直接亮出来，不再蒙遮罩
+    if (fresh) { candidateRef.current = null; setCandidate(null); setRevealed(true); }
     try {
-      const result = await inspectBrowserLogin(baseUrl, token, selected, status?.account?.id, controller.signal);
+      const result = await inspectBrowserLogin(baseUrl, token, selected, status?.account?.id, controller.signal, fresh);
       if (controller.signal.aborted || !visibleRef.current) { await cancelBrowserLogin(baseUrl, token, result.id); return; }
       candidateRef.current = result; setCandidate(result);
       setReadPermissions(result.readPermissions ?? { videos: true, chat: false });
@@ -285,6 +288,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
         <View style={styles.actions}>
           <Action label="确认导入" disabled={disabled || (!readPermissions.videos && !readPermissions.chat)} onPress={confirm} testID="browser-login-confirm" />
           <Action label="取消" disabled={disabled} onPress={cancel} testID="browser-login-cancel" />
+          {candidate.browser === "app" ? <Action label="换个号扫码" disabled={disabled} onPress={() => connect(true)} testID="browser-login-switch" /> : null}
         </View>
       </> : <>
         {compact && !showOther ? null : <View accessibilityRole="radiogroup" accessibilityLabel="登录来源浏览器" style={styles.actions}>
@@ -300,7 +304,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
           <Text style={styles.detail}>调试权限覆盖整个浏览器；工作台仅访问自己创建的抖音页面和抖音 Cookie。导出后可关闭调试开关，无需安装扩展。</Text>
         </>}
         {compact && waitingForScan ? null : <View style={styles.actions}>
-          <Action label={busy ? "连接处理中…" : inApp ? "扫码登录" : "连接浏览器"} disabled={disabled || !source?.available} onPress={connect} testID="browser-login-connect" />
+          <Action label={busy ? "连接处理中…" : inApp ? "扫码登录" : "连接浏览器"} disabled={disabled || !source?.available} onPress={() => connect()} testID="browser-login-connect" />
           {compact && inApp ? null : <Action label="刷新检测" disabled={disabled} onPress={() => { void refresh(); }} testID="browser-login-refresh" />}
           {status?.browserSource?.connected ? <Action label="断开连接" disabled={disabled} onPress={() => disconnect()} testID="browser-login-disconnect" /> : null}
           {compact && sources.length > 1 ? <Action label={showOther ? "只用扫码" : "改用 Chrome / Edge / Comet"} disabled={disabled}

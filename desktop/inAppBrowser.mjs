@@ -248,7 +248,10 @@ export function createInAppBrowserConnector({ BrowserWindow, session, focusApp, 
     return loginSession;
   };
 
-  return async function connectInAppBrowser(source) {
+  return async function connectInAppBrowser(source, { fresh = false } = {}) {
+    // 换号：清掉这个分区本地的 Cookie 和存储，抖音认不出上次的号就会给新二维码。不调抖音的退出接口，
+    // 已导入账号的凭据存在各自的账号目录（direct-session.json），服务端会话照旧有效
+    if (fresh) await prepare().clearStorageData();
     // 不显示的窗口照常跑计时器、页面也当自己可见，二维码轮询和安全组件初始化才不会被拖慢
     const preferences = { session: prepare(), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false };
     const pages = new Set(), popups = new Set();

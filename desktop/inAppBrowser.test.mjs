@@ -23,7 +23,7 @@ function fakeElectron({ saveDiagnostic } = {}) {
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; this.emit("closed"); }
   }
-  const loginSession = { setUserAgent: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), on: vi.fn() };
+  const loginSession = { setUserAgent: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), on: vi.fn(), clearStorageData: vi.fn(async () => {}) };
   const session = { fromPartition: vi.fn(() => loginSession) };
   const focusApp = vi.fn();
   return { windows, loginSession, session, focusApp, connect: createInAppBrowserConnector({ BrowserWindow, session, focusApp, saveDiagnostic }) };
@@ -78,6 +78,15 @@ describe("in-app Douyin login window", () => {
     for (const url of ["https://www.douyin.com/user/self", "https://sso.douyin.com/", "https://open.weixin.qq.com/connect"]) expect(isLoginUrl(url)).toBe(true);
     for (const url of ["http://www.douyin.com/", "https://evil-douyin.com/", "https://douyin.com.example.org/", "https://www.qq.com/", "file:///etc/passwd", "not a url"])
       expect(isLoginUrl(url)).toBe(false);
+  });
+
+  it("clears the login partition only when asked for a fresh login (switching accounts)", async () => {
+    const { loginSession, connect } = fakeElectron();
+    const source = { id: "app", label: "应用内登录", inApp: true };
+    await (await connect(source)).context.newPage();
+    expect(loginSession.clearStorageData).not.toHaveBeenCalled();
+    await connect(source, { fresh: true });
+    expect(loginSession.clearStorageData).toHaveBeenCalledExactlyOnceWith();
   });
 
   it("opens guarded pages in the isolated partition, scopes cookies and closes everything on disconnect", async () => {
