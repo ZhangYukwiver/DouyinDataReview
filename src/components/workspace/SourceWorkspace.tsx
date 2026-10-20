@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import {
+  AppWindow,
   ArrowLeftRight,
   CircleCheck,
   ArrowRight,
@@ -39,7 +40,6 @@ import {
   Play,
   QrCode,
   RefreshCw,
-  ScanLine,
   Settings,
   Trash2,
   Unplug,
@@ -54,7 +54,7 @@ import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type Coll
 import type { AppStyle } from "../../services/appStyle";
 import type { SettingsSection } from "./SettingsDialog";
 import { MinimalSetupWorkspace } from "./MinimalSetupWorkspace";
-import { FirstScreenLogin, type DesktopLogin, type LoginStartProps } from "./BrowserConnectionPanel";
+import { FirstScreenLogin, type DesktopLogin, type LoginStartAction, type LoginStartProps } from "./BrowserConnectionPanel";
 import {
   accountBlockedReason,
   activeAccountLabel,
@@ -342,7 +342,7 @@ function SketchSetupWorkspace({
             <SketchBox seed="card-connect" fill={C.card} style={[styles.card, cardPad]}>
               <Tape seed="tape-1" />
               <CardHead index="01" done={connected} title="连接数据源" detail="本地采集器，不上传云端" size={narrow ? "small" : roomy ? "large" : "medium"} />
-              {desktopLogin ? <FirstScreenLogin busy={busy} login={desktopLogin} onConnect={() => void onConnect()} renderStart={(start) => <SketchLoginStart {...start} short={short} />} status={status} /> : <>
+              {desktopLogin ? <FirstScreenLogin busy={busy} login={desktopLogin} onConnect={() => void onConnect()} renderStart={(start) => <SketchLoginStart {...start} />} status={status} /> : <>
               <Text style={styles.label}>服务地址</Text>
               <SketchBox seed="input-url" fill={connected ? C.sunken : "#FFFFFF"} stroke={C.pencil} passes={1} amp={1.3} style={[styles.inputBox, short && styles.inputShort]}>
                 <TextInput accessibilityLabel="采集服务地址" autoCapitalize="none" autoCorrect={false} editable={!connected && !busy} onChangeText={onChangeCollectorUrl} placeholder="http://127.0.0.1:4765" placeholderTextColor={C.faint} style={[styles.input, connected && styles.inputDisabled]} value={collectorUrl} />
@@ -585,22 +585,38 @@ function FitSlot({ children, style }: { children: (size: Size) => React.ReactNod
 
 // ---------- 按钮 ----------
 
-// 首屏扫码登录点开二维码之前：手画方框里一个二维码记号，手写标题，下面一个墨色按钮
-function SketchLoginStart({ title, detail, label, busy, disabled, done, onStart, short }: LoginStartProps & { short: boolean }) {
+// 首屏扫码登录：手写标题一句话，下面一个和二维码一样大的手画方框。没点之前蒙着纸色遮罩（底下隐约是备好的码），点了遮罩消失
+function SketchLoginStart({ title, detail, label, busy, disabled, done, revealed, image, onStart, actions }: LoginStartProps) {
   return (
     <View style={styles.loginStart} testID="login-start">
-      <View style={styles.loginRow}>
-        <SketchBox seed="login-mark" fill={done ? C.noteYellow : "#FFFFFF"} passes={2} amp={1} style={styles.loginMark}>
-          {done ? <CircleCheck color={C.green} size={22} strokeWidth={1.8} /> : <QrCode color={C.ink} size={22} strokeWidth={1.7} />}
-        </SketchBox>
-        <View style={styles.flex}>
-          <Hand style={styles.loginTitle}>{title}</Hand>
-          <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
-        </View>
+      <View>
+        <Hand style={styles.loginTitle}>{title}</Hand>
+        <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
       </View>
-      <SketchButton seed="login-start" busy={busy} disabled={disabled} full icon={done ? RefreshCw : ScanLine} kind={done ? "outline" : "ink"} label={label} onPress={onStart} tall={!short} testID="login-start-button" />
+      <Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
+        style={(state) => [styles.qrPress, !revealed && pointer, !revealed && state.pressed && styles.pressed]} testID="login-start-button">
+        <SketchBox seed="login-qr" fill="#FFFFFF" stroke={C.pencil} passes={2} amp={1.4} style={styles.qrBox}>
+          {image ? <Image source={{ uri: image }} style={styles.qrImage} testID={revealed ? "browser-login-qrcode" : undefined} /> : null}
+          {revealed ? (image ? null : <ActivityIndicator color={C.muted} size="small" />) : (
+            <View style={styles.qrMask}>
+              {busy ? <ActivityIndicator color={C.muted} size="small" /> : done ? <CircleCheck color={C.green} size={26} strokeWidth={1.8} /> : <QrCode color={C.ink} size={26} strokeWidth={1.7} />}
+              <Hand style={styles.qrMaskText}>{label}</Hand>
+            </View>
+          )}
+        </SketchBox>
+      </Pressable>
+      {actions.length ? <View style={styles.smallRow}>{actions.map(action => <SketchLoginAction key={action.testID} {...action} />)}</View> : null}
     </View>
   );
+}
+
+function SketchLoginAction({ kind, label, onPress, testID }: LoginStartAction) {
+  if (kind === "other") return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={(state) => [pointer, state.pressed && styles.pressed]} testID={testID}>
+      <Text style={styles.loginLink}>{label}</Text>
+    </Pressable>
+  );
+  return <SketchButton icon={kind === "window" ? AppWindow : X} kind="small" label={label} onPress={onPress} seed={`login-${kind}`} testID={testID} />;
 }
 
 function SketchButton({ busy, compact, disabled, full, icon: ButtonIcon, iconAfter, kind = "outline", label, onPress, seed, tall, accessibilityLabel, style, testID }: { busy?: boolean; compact?: boolean; disabled?: boolean; full?: boolean; icon: Icon; iconAfter?: boolean; kind?: "ink" | "outline" | "small"; label: string; onPress: () => void; seed: string; tall?: boolean; accessibilityLabel?: string; style?: StyleProp<ViewStyle>; testID?: string }) {
@@ -1134,8 +1150,12 @@ const styles = StyleSheet.create({
   strong: { color: C.text, fontSize: 13, fontWeight: "600" }, meta: { color: C.muted, fontSize: 12, lineHeight: 18 }, fine: { color: C.faint, fontSize: 11, lineHeight: 16, fontVariant: ["tabular-nums"] },
   topbar: { height: 56, flexDirection: "row", alignItems: "center", gap: 16, paddingHorizontal: 24 }, topbarNarrow: { height: 52, paddingHorizontal: 14 },
   topRule: { position: "absolute", left: 10, right: 10, bottom: -2 },
-  loginStart: { gap: 12, marginTop: 2 }, loginRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  loginMark: { width: 46, height: 46, alignItems: "center", justifyContent: "center" }, loginTitle: { fontSize: 22, lineHeight: 26 },
+  loginStart: { gap: 10, marginTop: 2 }, loginTitle: { fontSize: 22, lineHeight: 26 },
+  qrPress: { alignSelf: "flex-start" }, qrBox: { width: 180, height: 180, alignItems: "center", justifyContent: "center" },
+  qrImage: { position: "absolute", top: 6, left: 6, right: 6, bottom: 6 },
+  qrMask: { position: "absolute", top: 3, left: 3, right: 3, bottom: 3, alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "rgba(255,253,246,0.97)" },
+  loginLink: { color: C.muted, fontSize: 12, lineHeight: 18, textDecorationLine: "underline" },
+  qrMaskText: { fontSize: 20, lineHeight: 24 },
   brand: { minWidth: 180, flexDirection: "row", alignItems: "center", gap: 10 }, mark: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
   brandName: { fontSize: 24, lineHeight: 30 }, brandNameNarrow: { fontSize: 21, lineHeight: 26 },
   topStatus: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 }, statusText: { flexShrink: 1, color: C.muted, fontSize: 12 },

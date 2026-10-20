@@ -21,15 +21,30 @@ export interface BrowserConnectionPanelProps {
   preload?: boolean;
 }
 
+/** 首屏扫码那块：标题、一句说明，下面一个和二维码一样大的框——没点之前蒙着遮罩，点了遮罩消失、码在原地亮出来 */
 export interface LoginStartProps {
   title: string;
   detail: string;
+  /** 遮罩上的字 */
   label: string;
   busy: boolean;
   disabled: boolean;
   /** 已经登录、凭据可用 */
   done: boolean;
+  /** 点开了：不再蒙遮罩 */
+  revealed: boolean;
+  /** 后台备好的二维码（data URL）；还没好是 null */
+  image: string | null;
   onStart: () => void;
+  /** 码下面那一行：点开后是「在窗口里登录」「取消」，没点开是「改用浏览器导入」的链接；也由版式画，颜色才跟页面一致 */
+  actions: LoginStartAction[];
+}
+
+export interface LoginStartAction {
+  kind: "window" | "cancel" | "other";
+  label: string;
+  onPress: () => void;
+  testID: string;
 }
 
 export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocked, onBusyChange, onChange, compact = false, renderStart, preload = false }: BrowserConnectionPanelProps) {
@@ -165,19 +180,24 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   const inApp = selected === "app";
   const sourceLabel = (id: BrowserLoginSource["id"]) => sources.find(item => item.id === id)?.label ?? (id === "app" ? "应用内登录" : id);
   const disabled = busy || blocked;
-  // 首屏：没点之前只摆一块「扫码登录」，点了才出二维码；改用浏览器导入时回到完整的选项
-  if (compact && renderStart && !candidate && !showOther && inApp && !revealed && (!busy || connecting)) {
+  // 首屏：二维码那块由版式画，没点之前蒙着遮罩（码其实已在后台备好），点了遮罩消失；改用浏览器导入时回到完整的选项
+  if (compact && renderStart && !candidate && !showOther && inApp && (!busy || connecting)) {
     const loggedIn = status?.browserSource?.credentials === "ready";
     const name = status?.account?.nickname ? `「${status.account.nickname}」` : "";
     return (
       <View style={[styles.panel, styles.panelCompact]} testID="browser-login-panel">
-        {renderStart({ title: "扫码登录抖音", done: loggedIn, busy: false, disabled: (blocked && !connecting) || !source?.available,
+        {renderStart({ title: "扫码登录抖音", done: loggedIn && !revealed, busy: false, revealed, image: waitingForScan ? qrcode?.image ?? null : null,
+          disabled: (blocked && !connecting) || !source?.available,
           onStart: () => { setRevealed(true); if (!connecting) void connect(); },
-          label: loggedIn ? "重新扫码登录" : "显示二维码",
-          detail: loggedIn ? `已登录${name}。凭据失效或要调整读取权限时，再扫一次就行。` : "用抖音 App 扫一扫，核对账号后自动开始读取。" })}
-        {sources.length > 1 ? <Pressable accessibilityRole="button" onPress={() => { connectControllerRef.current?.abort(); setShowOther(true); }} style={styles.link} testID="browser-login-other">
-          <Text style={styles.linkText}>改用 Chrome / Edge / Comet 导入</Text>
-        </Pressable> : null}
+          actions: revealed ? [
+            { kind: "window", label: "在窗口里登录", testID: "browser-login-show-window",
+              onPress: () => { void showBrowserLoginWindow(baseUrl, token).catch(reason => setError(reason instanceof Error ? reason.message : "登录窗口打不开。")); } },
+            { kind: "cancel", label: "取消", testID: "browser-login-cancel-connect", onPress: () => connectControllerRef.current?.abort() },
+          ] : sources.length > 1 ? [{ kind: "other", label: "改用 Chrome / Edge / Comet 导入", testID: "browser-login-other",
+            onPress: () => { connectControllerRef.current?.abort(); setShowOther(true); } }] : [],
+          label: loggedIn ? "点击重新扫码登录" : "点击显示二维码",
+          detail: revealed ? qrcode?.hint || "打开抖音 App，点左上角的扫一扫，扫完在手机上确认。"
+            : loggedIn ? `已登录${name}。凭据失效或要调整读取权限时，再扫一次就行。` : "用抖音 App 扫一扫，核对账号后自动开始读取。" })}
         {notice ? <Text accessibilityLiveRegion="polite" style={styles.detail} testID="browser-login-notice">{notice}</Text> : null}
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error} testID="browser-login-error">{error}</Text> : null}
       </View>
@@ -227,7 +247,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
         {compact && !showOther ? null : <View accessibilityRole="radiogroup" accessibilityLabel="登录来源浏览器" style={styles.actions}>
           {sources.map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityLabel={item.label}
             accessibilityState={{ checked: item.id === selected, disabled: disabled || !item.available }} aria-checked={item.id === selected}
-            disabled={disabled || !item.available} onPress={() => { setSelected(item.id); setNotice(null); setError(null); }}
+            disabled={disabled || !item.available} onPress={() => { setSelected(item.id); setNotice(null); setError(null); if (compact && item.id === "app") setShowOther(false); }}
             style={[styles.option, item.id === selected && styles.selected, !item.available && styles.disabled]} testID={`browser-login-${item.id}`}>
             <Text style={styles.text}>{item.id === "app" ? "在应用里登录" : `${item.label} · ${!item.available ? "未找到" : item.debugging ? "可连接" : "需开启调试"}`}</Text>
           </Pressable>)}
@@ -244,13 +264,12 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
             onPress={() => { if (showOther) setSelected("app"); setShowOther(value => !value); }} testID="browser-login-other" /> : null}
         </View>}
       </>}
-      {waitingForScan && (revealed || !compact) ? <View style={styles.qrcode}>
+      {waitingForScan && !compact ? <View style={styles.qrcode}>
         {qrcode ? <Image source={{ uri: qrcode.image }} style={styles.qrcodeImage} accessibilityLabel="抖音登录二维码" testID="browser-login-qrcode" />
           : <View style={[styles.qrcodeImage, styles.qrcodePending]}><ActivityIndicator size="small" color={color.accent} /></View>}
         <Text style={styles.detail} accessibilityLiveRegion="polite">{qrcode ? qrcode.hint || "打开抖音 App，点左上角的扫一扫，扫完在手机上确认" : "正在打开抖音登录…"}</Text>
         <View style={styles.actions}>
           <Action label="在窗口里登录" disabled={false} onPress={() => { void showBrowserLoginWindow(baseUrl, token).catch(reason => setError(reason instanceof Error ? reason.message : "登录窗口打不开。")); }} testID="browser-login-show-window" />
-          {compact ? <Action label="取消" disabled={false} onPress={() => connectControllerRef.current?.abort()} testID="browser-login-cancel-connect" /> : null}
         </View>
       </View> : null}
       {busy && !(compact && waitingForScan) ? <View style={styles.actions}>
@@ -286,8 +305,8 @@ export function FirstScreenLogin({ login, status, busy, onConnect, renderStart }
   // 采集器在后台自己连，正常一两秒就好；连不上才让用户点一下重连
   if (!login.token) return (
     <View style={[styles.panel, styles.panelCompact]} testID="first-screen-login">
-      {renderStart({ title: "扫码登录抖音", done: false, busy, disabled: busy, onStart: onConnect,
-        label: busy ? "正在连接采集器…" : "重新连接采集器",
+      {renderStart({ title: "扫码登录抖音", done: false, busy, disabled: busy, onStart: onConnect, revealed: false, image: null, actions: [],
+        label: busy ? "正在连接采集器…" : "点击重新连接采集器",
         detail: busy ? "应用自带的采集器正在启动，连上后就能扫码登录。" : "本机采集器还没连上，点下面重新连接。" })}
     </View>
   );
@@ -300,8 +319,6 @@ export function FirstScreenLogin({ login, status, busy, onConnect, renderStart }
 const styles = StyleSheet.create({
   panel: { gap: 12, paddingVertical: 18, borderTopWidth: 1, borderTopColor: color.border },
   panelCompact: { paddingVertical: 0, borderTopWidth: 0, gap: 10 },
-  link: { alignSelf: "flex-start", paddingVertical: 2 },
-  linkText: { color: color.textSecondary, fontSize: 12, lineHeight: 18, textDecorationLine: "underline" },
   title: { color: color.text, fontSize: 14, fontWeight: "600" },
   detail: { color: color.textSecondary, fontSize: 12, lineHeight: 19 },
   text: { color: color.text, fontSize: 12, lineHeight: 18 },

@@ -131,12 +131,12 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
    **macOS 首次打开前需在终端执行一次 `xattr -cr "/Applications/DouyinDataReview.app"`，否则会提示应用已损坏；Windows 可能出现 SmartScreen 提示，点「更多信息」，再点「仍要运行」。**
 
 2. 启动「DouyinDataReview」。桌面版会在后台自动连上自带的采集器（从源码在浏览器里打开时点「连接采集器」，配对码自动获取），之后默认在前台自动读取新记录，也可以手动点「增量读取」。关掉窗口应用会留在托盘里接着每 3 小时读一次，要完全退出就在托盘图标的菜单里点「退出」。
-3. 首次使用在首屏「数据来源」里点「显示二维码」（二维码已在后台备好，点了直接出来），用抖音 App 扫码并在手机上确认，核对昵称，勾选读取视频、读取聊天后点「确认导入」，读取会自动开始，只读所选类型。也可以点「改用 Chrome / Edge / Comet 导入」。凭据失效或需要调整读取权限时重新登录并导入。
+3. 首次使用在首屏「数据来源」里点二维码位置的遮罩「点击显示二维码」（二维码已在后台备好，遮罩一点就消失），用抖音 App 扫码并在手机上确认，核对昵称，勾选读取视频、读取聊天后点「确认导入」，读取会自动开始，只读所选类型。也可以点「改用 Chrome / Edge / Comet 导入」。凭据失效或需要调整读取权限时重新登录并导入。
 4. 进入内容库，在观看历史、喜欢、收藏、聊天和持续报告之间切换；在「设置」里换界面风格、选报告用哪一套，点「打开报告」看年度回顾。
 
 ### 在应用里登录（桌面版默认）
 
-1. 打开应用，首屏「数据来源」就是「扫码登录抖音」。凭据还没导入时，应用已经在后台打开抖音网页、备好二维码，点「显示二维码」直接出来（抖音大约一分钟换一张码，这里跟着换；等了 5 分钟还没登录会自动续上新的一轮）。打开抖音 App，点左上角的扫一扫，扫码后在手机上确认。可以随时点「取消」。
+1. 打开应用，首屏「数据来源」就是「扫码登录抖音」。凭据还没导入时，应用已经在后台打开抖音网页、备好二维码，点二维码位置的遮罩，码当场亮出来（抖音大约一分钟换一张码，这里跟着换；等了 5 分钟还没登录会自动续上新的一轮）。打开抖音 App，点左上角的扫一扫，扫码后在手机上确认。可以随时点「取消」。
 2. 用密码或手机验证码登录后，抖音可能要求「使用原设备扫码」的二次验证，这张验证码同样显示在首屏，用登着这个号的抖音 App 扫一下即可。抖音要求滑块、短信等其他安全验证时（扫码时或导入时都可能），后台的抖音窗口会自动显示出来，由本人在窗口里完成，完成后登录或导入接着走；关掉这个窗口只是把它藏起来。想用手机验证码登录时，点「在窗口里登录」把窗口打开，认出登录后窗口自动收起、切回工作台。已经登录过的号在首屏显示「已登录」，凭据失效或要调整读取权限时点「重新扫码登录」。设置 → 账号里只留一个「去扫码登录」按钮，回到首屏操作；在浏览器里打开的网页版仍在设置里连接浏览器。
 3. 登录后核对昵称，勾选「读取视频」「读取聊天」，点「确认导入」。导出凭据时后台网页会打开个人主页初始化一次，完成后自动关闭。
 
@@ -243,7 +243,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 ### 首次使用如何登录？
 
-桌面版打开后在首屏点「显示二维码」，用抖音 App 扫码，核对账号后确认导入，读取自动开始，不需要另外装浏览器、开调试或手动连接采集器。从源码运行、在浏览器里打开工作台时没有这个入口，要在 Chrome、Edge 或 macOS Comet 中开启远程调试再连接浏览器；未登录时在新开的抖音页面完成登录，工作台会等待并自动继续。
+桌面版打开后在首屏点二维码位置的遮罩，用抖音 App 扫码，核对账号后确认导入，读取自动开始，不需要另外装浏览器、开调试或手动连接采集器。从源码运行、在浏览器里打开工作台时没有这个入口，要在 Chrome、Edge 或 macOS Comet 中开启远程调试再连接浏览器；未登录时在新开的抖音页面完成登录，工作台会等待并自动继续。
 
 ### 提示「采集器端口 4765 已被占用」？
 
@@ -383,7 +383,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 
 The app combines a React / React Native / Expo interface, a Node.js collector and an Electron desktop shell. The desktop app opens Douyin in a hidden in-app window (an isolated session read through its own debugger channel, no debugging port) and shows its login QR code in Settings for you to scan, or Playwright connects to your authorized browser through CDP, to import Douyin cookies, request parameters and signing credentials. The collector then uses signed, paginated HTTP requests for records and WebSocket connections for real-time chats and live comments. Normalized records are stored in local, per-account JSON files; TypeScript report logic computes statistics on your computer without an external AI service. See [implementation and source modules](#实现方式).
 
-The desktop app connects to its bundled collector on launch and prepares a Douyin login QR code in the background; on the first screen, click 显示二维码 (Show QR code) and scan it with the Douyin app, then confirm the import and reading starts automatically; use 在窗口里登录 (Sign in in a window) for verification steps or SMS sign-in. Alternatively, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, click Connect browser. If remote debugging is disabled, the app attempts to open the selected browser's debugging settings; enable the toggle and connect again, or use the displayed settings URL if opening fails. Check the account name, select video reading and/or chat reading, and confirm the credential import. At least one must be selected; first imports default to videos only. If you are not signed in, the connection waits up to five minutes and can be cancelled. After import, the app disconnects from CDP. Selected video reading starts one full read of watch history, likes and favorites; selected chat reading organizes chat history and starts reception. Unselected capabilities cannot read further platform data. Choices persist per account across restarts and can be changed by reimporting; existing local data remains viewable and exportable. Older imports retain both capabilities. You can stop reading from the collector page, turn off debugging and close the browser. Missing or incomplete credentials, a rejected login, an account mismatch or a verification requirement need a new import. No browser extension is required. Firefox, custom user-data directories and other browser channels are not supported.
+The desktop app connects to its bundled collector on launch and prepares a Douyin login QR code in the background; on the first screen, click the mask over the QR code (点击显示二维码) and scan it with the Douyin app, then confirm the import and reading starts automatically; use 在窗口里登录 (Sign in in a window) for verification steps or SMS sign-in. Alternatively, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, click Connect browser. If remote debugging is disabled, the app attempts to open the selected browser's debugging settings; enable the toggle and connect again, or use the displayed settings URL if opening fails. Check the account name, select video reading and/or chat reading, and confirm the credential import. At least one must be selected; first imports default to videos only. If you are not signed in, the connection waits up to five minutes and can be cancelled. After import, the app disconnects from CDP. Selected video reading starts one full read of watch history, likes and favorites; selected chat reading organizes chat history and starts reception. Unselected capabilities cannot read further platform data. Choices persist per account across restarts and can be changed by reimporting; existing local data remains viewable and exportable. Older imports retain both capabilities. You can stop reading from the collector page, turn off debugging and close the browser. Missing or incomplete credentials, a rejected login, an account mismatch or a verification requirement need a new import. No browser extension is required. Firefox, custom user-data directories and other browser channels are not supported.
 
 Collection is limited to records currently returned by Douyin's private APIs and accessible to your account. It cannot guarantee a complete lifetime history or future API compatibility. Reports reflect the records you have saved and their available fields.
 

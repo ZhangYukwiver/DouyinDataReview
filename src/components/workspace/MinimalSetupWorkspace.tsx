@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   type LayoutChangeEvent,
   Platform,
   Pressable,
@@ -17,6 +18,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import {
+  AppWindow,
   ArrowRight,
   CircleCheck,
   Database,
@@ -30,7 +32,6 @@ import {
   Play,
   QrCode,
   RefreshCw,
-  ScanLine,
   Settings,
   Unplug,
   UserRound,
@@ -39,7 +40,7 @@ import {
 
 import type { CollectorStatus } from "../../services/localCollector";
 import type { SetupWorkspaceProps } from "./SourceWorkspace";
-import { FirstScreenLogin, type LoginStartProps } from "./BrowserConnectionPanel";
+import { FirstScreenLogin, type LoginStartAction, type LoginStartProps } from "./BrowserConnectionPanel";
 import { ease, useCountUp } from "./motion";
 import {
   activeAccountLabel,
@@ -330,20 +331,36 @@ function Field({ dim, icon, inline, label, ...input }: Omit<TextInputProps, "sty
     : <><Text style={styles.label}>{label}</Text>{box}</>;
 }
 
-// 首屏扫码登录点开二维码之前：浅底卡片里一个图标、一句话，下面一个主按钮
-function LoginStart({ title, detail, label, busy, disabled, done, onStart }: LoginStartProps) {
+// 首屏扫码登录：标题一句话，下面一个和二维码一样大的框。没点之前蒙着浅色遮罩（底下隐约是已经备好的码），点了遮罩消失
+function LoginStart({ title, detail, label, busy, disabled, done, revealed, image, onStart, actions }: LoginStartProps) {
   return (
     <View style={styles.loginStart} testID="login-start">
-      <View style={styles.loginRow}>
-        <View style={styles.loginIcon}><Glyph icon={done ? CircleCheck : QrCode} size={20} tint={done ? color.green : color.text} /></View>
-        <View style={styles.flex}>
-          <Text style={styles.strong}>{title}</Text>
-          <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
-        </View>
+      <View>
+        <Text style={styles.strong}>{title}</Text>
+        <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
       </View>
-      <Button busy={busy} disabled={disabled} full icon={done ? RefreshCw : ScanLine} kind={done ? "secondary" : "primary"} label={label} onPress={onStart} testID="login-start-button" />
+      <Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
+        style={(state) => [styles.qrBox, !revealed && hovered(state) && styles.qrBoxHover, !revealed && pointer, ease("border-color", 140)]} testID="login-start-button">
+        {image ? <Image source={{ uri: image }} style={styles.qrImage} testID={revealed ? "browser-login-qrcode" : undefined} /> : null}
+        {revealed ? (image ? null : <ActivityIndicator color={color.textMuted} size="small" />) : (
+          <View style={styles.qrMask}>
+            {busy ? <ActivityIndicator color={color.textMuted} size="small" /> : <Glyph icon={done ? CircleCheck : QrCode} size={26} tint={done ? color.green : color.text} />}
+            <Text style={styles.qrMaskText}>{label}</Text>
+          </View>
+        )}
+      </Pressable>
+      {actions.length ? <View style={styles.loginActions}>{actions.map(action => <LoginAction key={action.testID} {...action} />)}</View> : null}
     </View>
   );
+}
+
+function LoginAction({ kind, label, onPress, testID }: LoginStartAction) {
+  if (kind === "other") return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={(state) => [pointer, hovered(state) && styles.linkHover]} testID={testID}>
+      <Text style={styles.link}>{label}</Text>
+    </Pressable>
+  );
+  return <Button icon={kind === "window" ? AppWindow : X} label={label} onPress={onPress} size="small" testID={testID} />;
 }
 
 function PanelHead({ detail, title }: { detail?: string; title: string }) {
@@ -704,9 +721,15 @@ const styles = StyleSheet.create({
   base: { fontFamily: sans, color: color.textSecondary },
   root: { flex: 1, minHeight: "100%", backgroundColor: color.canvas },
   flex: { flex: 1, minWidth: 0 },
-  loginStart: { gap: 12, padding: 14, borderRadius: 10, borderWidth: 1, borderColor: color.borderSoft, backgroundColor: color.surfaceMuted },
-  loginRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  loginIcon: { width: 40, height: 40, borderRadius: 10, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border, backgroundColor: color.surface },
+  loginStart: { gap: 12 },
+  qrBox: { width: 180, height: 180, borderRadius: 10, borderWidth: 1, borderColor: color.border, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  qrBoxHover: { borderColor: color.textMuted },
+  qrImage: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%" },
+  qrMask: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: alpha(color.surfaceMuted, 0.97) },
+  link: { color: color.textSecondary, fontSize: 12, lineHeight: 18, textDecorationLine: "underline" },
+  linkHover: { opacity: 0.7 },
+  loginActions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
+  qrMaskText: { color: color.text, fontSize: 13, lineHeight: 20, fontWeight: "500" },
   glyph: { flexGrow: 0, flexShrink: 0, flexBasis: "auto", alignItems: "center", justifyContent: "center" },
 
   // 顶栏
