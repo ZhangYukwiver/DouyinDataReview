@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DouyinCollector } from "./douyinCollector.mjs";
@@ -502,5 +503,94 @@ describe("collector server runtime", () => {
     const stream = await fetch(`${releaseUrl}/stream?key=guess`);
     expect(stream.status).toBe(404);
     await expect(stream.json()).resolves.toEqual({ error: "download_job_not_found" });
+  });
+});
+
+describe("collector AI edit routes", () => {
+  const fixture = fileURLToPath(new URL("fixtures/ai-edit/media/clip-720p.mp4", import.meta.url));
+
+  it("keeps AI edit behind pairing except key-protected media files, and stores everything under ai-edit/", async () => {
+    // 草稿箱指到临时目录，不碰本机真实的剪映草稿
+    vi.stubEnv("JY_JIANYING_DRAFTS_ROOT", await mkdtemp(path.join(tmpdir(), "ai-edit-drafts-")));
+    temporaryDirectories.push(process.env.JY_JIANYING_DRAFTS_ROOT);
+    try {
+      const { dataDirectory, runtime, call, headers } = await startPaired("ai-edit-routes-");
+      expect((await fetch(`${runtime.baseUrl}/v1/ai-edit/sessions`)).status).toBe(401);
+      expect((await fetch(`${runtime.baseUrl}/v1/ai-edit/media`)).status).toBe(401);
+      expect(await call("/v1/ai-edit/sessions")).toEqual({ status: 200, body: { sessions: [] } });
+
+      const bytes = await readFile(fixture);
+      const uploaded = await fetch(`${runtime.baseUrl}/v1/ai-edit/media/upload?name=clip.mp4`, { method: "POST", headers: { ...headers, "Content-Type": "application/octet-stream" }, body: bytes });
+      expect(uploaded.status).toBe(201);
+      const { item } = await uploaded.json();
+      expect(item).toMatchObject({ kind: "video", status: "ready", durationUs: 3_000_000, width: 1280, height: 720, hasAudio: true });
+      const { key } = (await call("/v1/ai-edit/media")).body;
+      const fileUrl = `${runtime.baseUrl}/v1/ai-edit/media/${item.id}/file?key=${encodeURIComponent(key)}`;
+      const file = await fetch(fileUrl, { headers: { Range: "bytes=0-9" } });
+      expect(file.status).toBe(206);
+      expect(Buffer.from(await file.arrayBuffer())).toEqual(bytes.subarray(0, 10));
+      expect((await fetch(`${runtime.baseUrl}/v1/ai-edit/media/${item.id}/file?key=nope`)).status).toBe(404);
+      // 看板取缩略图用 <video crossOrigin="anonymous">：本机页面（开发服、打包版的静态服务）要拿到 CORS 头，画布才不被污染；
+      // 别的来源照旧拒绝，也不回通配符
+      const local = await fetch(fileUrl, { headers: { Origin: "http://127.0.0.1:8099", Range: "bytes=0-9" } });
+      expect(local.status).toBe(206);
+      expect(local.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:8099");
+      expect(local.headers.get("vary")).toBe("Origin");
+      await local.arrayBuffer();
+      const full = await fetch(fileUrl, { headers: { Origin: "http://localhost:8081" } });
+      expect(full.status).toBe(200);
+      expect(full.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
+      await full.arrayBuffer();
+      const foreign = await fetch(fileUrl, { headers: { Origin: "https://example.com" } });
+      expect(foreign.status).toBe(403);
+      expect(foreign.headers.get("access-control-allow-origin")).toBeNull();
+      await foreign.arrayBuffer();
+
+      const created = await fetch(`${runtime.baseUrl}/v1/ai-edit/sessions`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ title: "测试剪辑" }) });
+      expect(created.status).toBe(201);
+      const { session, project } = await created.json();
+      expect(project).toMatchObject({ name: "测试剪辑", canvas: { width: 1080, height: 1920, fps: 30 }, tracks: [] });
+      expect(await exists(path.join(dataDirectory, "ai-edit", "sessions", `${session.id}.json`))).toBe(true);
+      expect(await exists(path.join(dataDirectory, "ai-edit", "media", `${item.id}.mp4`))).toBe(true);
+      expect((await readdir(path.join(dataDirectory, "ai-edit", "projects"))).some((name) => name.startsWith(project.id))).toBe(true);
+      expect((await call("/v1/ai-edit/draft-box")).body).toMatchObject({ status: expect.stringMatching(/^(?:available|unavailable)$/u), jianyingRunning: expect.any(Boolean) });
+      expect((await call(`/v1/ai-edit/sessions/${session.id}/export`, "POST")).body.error).toMatch(/^(?:project_empty|draft_box_unavailable)$/u);
+
+      // 关服务时页面还挂着会话长轮询，也要马上关掉
+      const polling = fetch(`${runtime.baseUrl}/v1/ai-edit/sessions/${session.id}?afterRevision=${session.revision}`, { headers }).then((response) => response.status).catch(() => null);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const startedAt = Date.now();
+      await runtime.close();
+      expect(Date.now() - startedAt).toBeLessThan(3_000);
+      expect([200, null]).toContain(await polling);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }, 20_000);
+
+  it("keeps working while the account switches, but waits to download from Douyin", async () => {
+    let releaseSwitch;
+    const initialize = DouyinCollector.prototype.initialize;
+    let calls = 0;
+    const spy = vi.spyOn(DouyinCollector.prototype, "initialize").mockImplementation(async function () {
+      calls += 1;
+      if (calls === 2) await new Promise((resolve) => { releaseSwitch = resolve; });
+      return initialize.call(this);
+    });
+    try {
+      const { runtime, call, headers } = await startPaired("ai-edit-switch-");
+      const switching = call("/v1/accounts", "POST");
+      await vi.waitFor(() => expect(releaseSwitch).toBeTypeOf("function"));
+      expect((await call("/v1/records")).body.error).toBe("collector_busy");
+      expect((await call("/v1/ai-edit/sessions")).status).toBe(200);
+      const download = await fetch(`${runtime.baseUrl}/v1/ai-edit/media/douyin`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://www.douyin.com/video/1234567890" }) });
+      expect(download.status).toBe(409);
+      expect(await download.json()).toMatchObject({ error: "collector_busy", message: "正在切换账号，请稍等。" });
+      releaseSwitch();
+      expect((await switching).status).toBe(201);
+    } finally {
+      releaseSwitch?.();
+      spy.mockRestore();
+    }
   });
 });
