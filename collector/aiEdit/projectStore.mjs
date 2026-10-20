@@ -2,11 +2,12 @@
 // 特效/滤镜/转场/动画/蒙版/混合模式名称取自 pyJianYingDraft（Apache-2.0，见 collector/licenses）导出的目录。
 // 行为以 scripts/ai-edit/generate-operation-fixtures.py 录下的原仓库输出为准，逐条回放对照。
 import { randomBytes } from "node:crypto";
-import { link, mkdir, open, readdir, readFile, realpath, rename, stat, unlink } from "node:fs/promises";
+import { link, mkdir, open, readdir, readFile, realpath, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import { members } from "./catalog.mjs";
 import { EditError, invalid } from "./errors.mjs";
+import { renameRetrying } from "./rename.mjs";
 
 export const MAX_TIME_US = 24 * 60 * 60 * 1_000_000;
 const MAX_SRT_BYTES = 4 * 1024 * 1024;
@@ -723,7 +724,7 @@ export class ProjectStore {
         await handle.close();
       }
       if (replace) {
-        await rename(temporary, target);
+        await renameRetrying(temporary, target);
       } else {
         await link(temporary, target).catch((error) => {
           if (error.code === "EEXIST") throw storeError("PROJECT_CONFLICT", "Target already exists", 409);

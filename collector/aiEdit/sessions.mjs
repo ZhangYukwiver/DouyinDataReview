@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { sealHistory } from "./chat.mjs";
+import { renameRetrying } from "./rename.mjs";
 
 // AI 剪辑的会话：一个会话对应一个剪辑工程。页面看到的是 messages（对话气泡），
 // 发给模型的原始消息历史另存在 history 里，不发给页面。每个会话一个文件 ai-edit/sessions/<id>.json。
@@ -113,7 +114,7 @@ export class SessionStore {
     const write = previous.then(async () => {
       if (!this.sessions.has(session.id)) return;
       await writeFile(`${file}.tmp`, data, { mode: 0o600 });
-      await rename(`${file}.tmp`, file);
+      await renameRetrying(`${file}.tmp`, file);
     }).catch((error) => console.error("AI 剪辑会话保存失败:", error));
     this.writes.set(session.id, write);
     return write;

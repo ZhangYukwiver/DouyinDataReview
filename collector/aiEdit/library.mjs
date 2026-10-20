@@ -1,12 +1,13 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { normalizeDouyinVideoUrl } from "../videoDownloader.mjs";
+import { renameRetrying } from "./rename.mjs";
 
 // AI 剪辑的素材库：放在采集器根数据目录的 ai-edit/media/ 下，不分抖音账号。
 // 文件名固定成 <id><后缀>，工程里存的是它的绝对路径；页面用 /v1/ai-edit/media/:id/file?key= 取文件。
@@ -195,7 +196,7 @@ export class MediaLibrary {
     const file = path.join(this.root, "index.json");
     this.saving = this.saving.then(async () => {
       await writeFile(`${file}.tmp`, data, { mode: 0o600 });
-      await rename(`${file}.tmp`, file);
+      await renameRetrying(`${file}.tmp`, file);
     }).catch((error) => console.error("AI 剪辑素材库保存失败:", error));
     return this.saving;
   }
@@ -263,7 +264,7 @@ export class MediaLibrary {
     try {
       await pipeline(stream, counter, createWriteStream(partial, { flags: "wx", mode: 0o600 }));
       if (received === 0) throw new AiEditError("media_empty", "文件是空的。", 422);
-      await rename(partial, target);
+      await renameRetrying(partial, target);
       Object.assign(item, await this.describe(item), { status: "ready" });
     } catch (error) {
       await rm(partial, { force: true }).catch(() => undefined);
@@ -339,7 +340,7 @@ export class MediaLibrary {
       if (!this.get(item.id)) return;
       // 下载任务半小时后会被清理掉，先复制一份；APFS 上是克隆，不占额外空间
       await copyFile(source, `${target}.part`, constants.COPYFILE_FICLONE);
-      await rename(`${target}.part`, target);
+      await renameRetrying(`${target}.part`, target);
       const described = await this.describe(item);
       const video = job.video ?? {};
       if (!this.get(item.id)) { await rm(target, { force: true }); return; }

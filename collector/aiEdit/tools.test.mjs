@@ -40,7 +40,7 @@ function project() {
       {
         id: "t1", track_type: "video", name: "Video", mute: false,
         segments: [{
-          id: "s1", kind: "video", path: `${ROOT}/${VIDEO_ID}.mp4`, timeline: { start_us: 0, duration_us: 4_000_000 },
+          id: "s1", kind: "video", path: path.join(ROOT, `${VIDEO_ID}.mp4`), timeline: { start_us: 0, duration_us: 4_000_000 },
           source: { start_us: 1_000_000, duration_us: 4_000_000 }, volume: 1, speed: 1, fit: "contain", transform: null,
           material_name: "海边.mp4", keyframes: [{ property: "alpha", offset_us: 500_000, value: 0.5 }], effects: [], filters: [],
           animations: [{ animation_type: "渐显", duration_us: null }], transition: { transition_type: "叠化", duration_us: 500_000 }, fade: null,
@@ -67,7 +67,7 @@ function recordingStore() {
         if (name === "listKeyframes") return { segment_id: args[1], keyframes: [{ property: "alpha", offset_us: 500_000, value: 0.5 }] };
         if (name === "listMarkers") return structuredClone(base.markers);
         const next = structuredClone(base);
-        next.tracks[0].segments.push({ id: `new-${calls.length}`, kind: "video", path: `${ROOT}/${VIDEO_ID}.mp4`, timeline: { start_us: 4_000_000, duration_us: 1_000_000 }, source: { start_us: 0, duration_us: 1_000_000 } });
+        next.tracks[0].segments.push({ id: `new-${calls.length}`, kind: "video", path: path.join(ROOT, `${VIDEO_ID}.mp4`), timeline: { start_us: 4_000_000, duration_us: 1_000_000 }, source: { start_us: 0, duration_us: 1_000_000 } });
         if (name === "createTrack") next.tracks.push({ id: "t-new", track_type: "audio", name: "Audio", mute: false, segments: [] });
         return name === "splitSegment" ? { project: next, segments: [] } : next;
       };
@@ -152,7 +152,7 @@ describe("AI edit tools", () => {
     const projectId = "p".repeat(32);
     const call = (name) => calls.find((item) => item.name === name).args;
     expect(call("addMediaSegment")).toEqual([projectId, "t1", {
-      path: `${ROOT}/${VIDEO_ID}.mp4`, timeline: { start_us: 4_000_000, duration_us: 1_000_000 }, material_name: "海边.mp4",
+      path: path.join(ROOT, `${VIDEO_ID}.mp4`), timeline: { start_us: 4_000_000, duration_us: 1_000_000 }, material_name: "海边.mp4",
     }]);
     expect(call("addTextSegment")).toEqual([projectId, "t2", { text: "标题", color: "#ff0000", timeline: { start_us: 0, duration_us: 1_500_000 } }]);
     expect(call("addTrackFilterSegment")[2]).toEqual({ filter_type: "_1980", intensity: 50, timeline: { start_us: 0, duration_us: 1_000_000 } });
@@ -175,7 +175,7 @@ describe("AI edit tools", () => {
     const { run, calls } = runnerWith();
     await run("add_media_clip", { track_id: "t1", media_id: VIDEO_ID, source_start: 2, speed: 2 });
     expect(calls.find((call) => call.name === "addMediaSegment").args[2]).toEqual({
-      path: `${ROOT}/${VIDEO_ID}.mp4`,
+      path: path.join(ROOT, `${VIDEO_ID}.mp4`),
       // 接在轨道末尾（4 秒），素材剩下 8 秒，2 倍速占 4 秒
       timeline: { start_us: 4_000_000, duration_us: 4_000_000 },
       source: { start_us: 2_000_000, duration_us: 8_000_000 },
@@ -185,7 +185,7 @@ describe("AI edit tools", () => {
     calls.length = 0;
     await run("add_media_clip", { track_id: "missing", media_id: IMAGE_ID, material_name: "图" });
     expect(calls.find((call) => call.name === "addMediaSegment").args[2]).toEqual({
-      path: `${ROOT}/${IMAGE_ID}.png`, timeline: { start_us: 0, duration_us: 3_000_000 }, material_name: "图",
+      path: path.join(ROOT, `${IMAGE_ID}.png`), timeline: { start_us: 0, duration_us: 3_000_000 }, material_name: "图",
     });
   });
 
@@ -195,7 +195,7 @@ describe("AI edit tools", () => {
     expect(calls.find((call) => call.name === "updateSegment").args[2]).toEqual({
       timeline: { start_us: 0, duration_us: 2_500_000 },
       source: { start_us: 1_500_000, duration_us: 4_000_000 },
-      path: `${ROOT}/${AUDIO_ID}.mp3`,
+      path: path.join(ROOT, `${AUDIO_ID}.mp3`),
       material_name: "配乐.mp3",
     });
     calls.length = 0;
