@@ -555,8 +555,7 @@ async function watchVideo(ctx, file, video) {
       const noVideo = error.code === "provider_error" && ([400, 415, 422].includes(status) || (status === 200 && VIDEO_WORDS.test(error.message)));
       throw new AiEditError(noVideo ? "video_unsupported" : error.code, noVideo ? `${NO_VIDEO}（${error.message}）` : error.message, error.status);
     }
-    throw new AiEditError("analysis_failed", error?.name === "TimeoutError" ? "模型太久没看完这个视频，请稍后重试。"
-      : error instanceof TypeError ? "连不上 AI 剪辑配置的接口，检查一下网络和地址。" : "参考视频没解析成功，请稍后重试。");
+    throw new AiEditError("analysis_failed", error?.name === "TimeoutError" ? "模型太久没看完这个视频，请稍后重试。" : "参考视频没解析成功，请稍后重试。");
   }
   if (!/\|\s*:?-{3,}/u.test(markdown) && CANT_SEE_VIDEO.test(markdown)) throw new AiEditError("video_unsupported", NO_VIDEO);
   return markdown;

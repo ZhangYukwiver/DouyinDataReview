@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { AnalysisLibrary, analysisPrompt, parseAnalysisConfig, requestAnalysis, startAnalysis } from "./videoAnalysis.mjs";
+import { AnalysisLibrary, analysisPrompt, apiBaseUrl, networkFailure, parseAnalysisConfig, requestAnalysis, startAnalysis } from "./videoAnalysis.mjs";
 
 const config = { baseUrl: "https://ark.example.com/api/v3", apiKey: "k", model: "doubao-seed-2-0-mini-260428", direction: "" };
 
@@ -18,6 +18,50 @@ describe("parseAnalysisConfig", () => {
   it("trims, drops the trailing slash and keeps the direction", () => {
     expect(parseAnalysisConfig({ baseUrl: " https://ark.example.com/api/v3/ ", apiKey: " k ", model: "m", direction: "美食探店" }))
       .toEqual({ baseUrl: "https://ark.example.com/api/v3", apiKey: "k", model: "m", direction: "美食探店" });
+  });
+
+  it("fills in the version path for a bare host and drops a pasted /chat/completions", () => {
+    expect(apiBaseUrl("https://api.huiliu.one")).toBe("https://api.huiliu.one/v1");
+    expect(apiBaseUrl("https://api.huiliu.one/")).toBe("https://api.huiliu.one/v1");
+    expect(apiBaseUrl("https://ark.cn-beijing.volces.com")).toBe("https://ark.cn-beijing.volces.com/api/v3");
+    expect(apiBaseUrl("https://relay.example.com/v1/chat/completions")).toBe("https://relay.example.com/v1");
+    expect(apiBaseUrl("https://relay.example.com/chat/completions")).toBe("https://relay.example.com");
+    expect(apiBaseUrl("https://openrouter.ai/api/v1")).toBe("https://openrouter.ai/api/v1");
+    expect(apiBaseUrl("http://127.0.0.1:11434")).toBe("http://127.0.0.1:11434/v1");
+    expect(apiBaseUrl("")).toBe("");
+    expect(parseAnalysisConfig({ baseUrl: "https://api.huiliu.one", apiKey: "k", model: "m" }).baseUrl).toBe("https://api.huiliu.one/v1");
+  });
+
+  it("explains network failures by their cause, and marks dropped connections for the caller", () => {
+    const failure = (message, code) => new TypeError(message, code ? { cause: Object.assign(new Error(code), { code }) } : undefined);
+    expect(networkFailure(new TypeError("x is not a function"))).toBeNull();
+    expect(networkFailure(new Error("fetch failed"))).toBeNull();
+    expect(networkFailure(failure("fetch failed", "ECONNREFUSED"))).toEqual({ text: "接口地址拒绝连接（ECONNREFUSED），检查一下地址和端口。" });
+    expect(networkFailure(failure("fetch failed", "UNABLE_TO_VERIFY_LEAF_SIGNATURE")).text).toContain("证书");
+    expect(networkFailure(failure("fetch failed", "UND_ERR_CONNECT_TIMEOUT")).text).toContain("连接接口超时");
+    expect(networkFailure(failure("terminated", "UND_ERR_SOCKET"), 5_000)).toEqual({ text: "接口连接中途断开了（UND_ERR_SOCKET）。", retry: true, dropped: true });
+    expect(networkFailure(failure("terminated", "ECONNABORTED"), 95_000).text).toBe("等了 95 秒后，接口连接中途断开了（ECONNABORTED）。");
+    // 还没收到回答就断：可以悄悄重发，但不是「中途断开」
+    expect(networkFailure(failure("fetch failed", "ECONNRESET"))).toEqual({ text: "连接还没建立好就被断开了（ECONNRESET），检查一下网络、代理和地址。", retry: true });
+    expect(networkFailure(failure("fetch failed", "UND_ERR_HEADERS_TIMEOUT"), 300_000).text).toBe("接口 300 秒都没开始回答，这边先断开了（UND_ERR_HEADERS_TIMEOUT）。");
+    expect(networkFailure(failure("terminated", "UND_ERR_BODY_TIMEOUT"), 420_000).text).toBe("接口太久没有新内容，这边先断开了（UND_ERR_BODY_TIMEOUT）。");
+    expect(networkFailure(failure("fetch failed")).text).toBe("连不上接口地址（fetch failed），检查一下网络和地址。");
+  });
+
+  it("reports a 200 reply that carries an error, and a body cut off mid-read as a dropped connection", async () => {
+    const config = { baseUrl: "https://a.com/v1", apiKey: "k", model: "m" };
+    const refused = async () => new Response(JSON.stringify({ error: { message: "当前分组下模型 m 无可用渠道", code: "model_not_found" } }), { status: 200, headers: { "content-type": "application/json" } });
+    await expect(requestAnalysis({ config, video: {}, videoBase64: "AA==", fetchImpl: refused })).rejects.toMatchObject({ code: "provider_error", message: expect.stringContaining("无可用渠道") });
+    const cut = async () => ({ ok: true, status: 200, headers: new Headers({ "content-type": "application/json" }), text: async () => { throw new TypeError("terminated", { cause: Object.assign(new Error("closed"), { code: "UND_ERR_SOCKET" }) }); } });
+    await expect(requestAnalysis({ config, video: {}, videoBase64: "AA==", fetchImpl: cut })).rejects.toMatchObject({ code: "provider_unreachable", dropped: true });
+  });
+
+  it("tells the library to re-analyze after a dropped connection, without the chat's advice", async () => {
+    const drop = () => { throw new TypeError("terminated", { cause: Object.assign(new Error("closed"), { code: "UND_ERR_SOCKET" }) }); };
+    let calls = 0;
+    const error = await requestAnalysis({ config: { baseUrl: "https://a.com/v1", apiKey: "k", model: "m" }, video: {}, videoBase64: "AA==", fetchImpl: async () => { calls += 1; drop(); } }).catch((failure) => failure);
+    expect(calls).toBe(2);
+    expect(error).toMatchObject({ code: "provider_unreachable", dropped: true, message: "接口连接中途断开了（UND_ERR_SOCKET）。" });
   });
 
   it("rejects non-http addresses and missing keys", () => {

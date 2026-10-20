@@ -46,10 +46,103 @@ export class AnalysisError extends Error {
   }
 }
 
+/**
+ * 接口地址常见两种填法错误：只填域名（中转站根路径回的是网页），或粘了整条 …/chat/completions。
+ * 前者补上 OpenAI 兼容的版本路径（方舟 /api/v3，其余 /v1），后者去掉末尾。AI 剪辑的接口设置也用这个。
+ */
+export function apiBaseUrl(value) {
+  const base = value.replace(/\/+$/u, "");
+  const stripped = base.replace(/\/chat\/completions$/iu, "");
+  if (stripped !== base) return stripped;
+  try {
+    const url = new URL(base);
+    if (url.pathname === "/" && !url.search && !url.hash) return `${base}${/(?:^|\.)volces\.com$/iu.test(url.hostname) ? "/api/v3" : "/v1"}`;
+  } catch { /* 调用方统一报错 */ }
+  return base;
+}
+
+const CERT_ERROR = /CERT|SELF_SIGNED|UNABLE_TO_VERIFY|TLS/u;
+const DROPPED = new Set(["UND_ERR_SOCKET", "ECONNRESET", "ECONNABORTED", "EPIPE", "UND_ERR_CLOSED"]);
+const QUICK_RETRY_MS = 10_000;
+
+/**
+ * fetch 的网络错误（undici 抛的 TypeError：连接时 "fetch failed"，读回答时 "terminated"）按底层原因说清楚，
+ * 不是网络错误返回 null。retry：连接被断，快的话可以悄悄重发一次；dropped：回答已经开始了又断，
+ * 重新来一次多半就好，下一步怎么做由调用方补。
+ */
+export function networkFailure(error, waitedMs = 0) {
+  if (!(error instanceof TypeError) || !(error.cause || ["fetch failed", "terminated"].includes(error.message))) return null;
+  const code = String(error.cause?.code ?? "");
+  const shown = code || error.cause?.message || error.message;
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return { text: `找不到接口地址的域名（${shown}），检查一下地址有没有写错、这台电脑能不能上网。` };
+  if (code === "ECONNREFUSED") return { text: `接口地址拒绝连接（${shown}），检查一下地址和端口。` };
+  if (CERT_ERROR.test(code)) return { text: `接口的 HTTPS 证书校验不通过（${shown}），可能被代理或网络拦下了。` };
+  if (code === "UND_ERR_CONNECT_TIMEOUT" || code === "ETIMEDOUT") return { text: `连接接口超时（${shown}），检查一下网络或代理。` };
+  // Node 的 fetch 默认 5 分钟收不到响应头、或两段数据之间隔了 5 分钟，就自己断开
+  if (code === "UND_ERR_HEADERS_TIMEOUT") return { text: `接口 ${Math.round(waitedMs / 1000)} 秒都没开始回答，这边先断开了（${shown}）。`, dropped: true };
+  if (code === "UND_ERR_BODY_TIMEOUT") return { text: `接口太久没有新内容，这边先断开了（${shown}）。`, dropped: true };
+  if (error.message === "terminated") {
+    const waited = Math.round(waitedMs / 1000);
+    return { text: `${waited >= 30 ? `等了 ${waited} 秒后，` : ""}接口连接中途断开了（${shown}）。`, retry: true, dropped: true };
+  }
+  // 还没收到回答连接就断了：可能是复用了一条已被断掉的连接（重发就好），也可能是被代理或网络拦下
+  if (DROPPED.has(code)) return { text: `连接还没建立好就被断开了（${shown}），检查一下网络、代理和地址。`, retry: true };
+  return { text: `连不上接口地址（${shown}），检查一下网络和地址。` };
+}
+
+/**
+ * 发一次模型请求。连接很快就断、还没收到文字时自动重发一次（多半是复用了一条已被中间网络断掉的连接）：
+ * 请求本身没有副作用（工具要等整段回答收完才执行），重发是安全的。网络错误交给 fail 换成调用方自己的报错。
+ */
+export async function sendWithRetry(send, { signal, received = () => false, fail }) {
+  for (let attempt = 1; ; attempt += 1) {
+    const started = Date.now();
+    try {
+      return await send();
+    } catch (error) {
+      const waited = Date.now() - started;
+      const failure = signal?.aborted ? null : networkFailure(error, waited);
+      if (!failure) throw error;
+      if (failure.retry && attempt === 1 && waited < QUICK_RETRY_MS && !received()) continue;
+      throw fail(failure);
+    }
+  }
+}
+
+/** 读整段 JSON 回答：读的时候断网、超时照常抛出（交给上面分类和重发），只有读完了解析不了才算不是 JSON。 */
+export async function readJson(response) {
+  const raw = await response.text();
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+/**
+ * 接口回非 2xx（或流里报错）时给用户看的话：原因 + 接口原文；网关的错误页是整页 HTML，不往里塞。
+ * extra 是调用方自己的状态码说法（比如 524 该怎么办，对话和解析库不一样）。
+ */
+export function providerMessage(status, body, extra = {}) {
+  let detail = String(body ?? "").trim();
+  let code = "";
+  try {
+    const parsed = JSON.parse(detail);
+    code = String(parsed?.error?.code ?? parsed?.code ?? "");
+    detail = parsed?.error?.message ?? parsed?.message ?? detail;
+  } catch { /* 不是 JSON 就用原文 */ }
+  detail = /^</u.test(detail) ? "" : String(detail).slice(0, 240);
+  // new-api / one-api 这类中转站：模型名写错或分组没开通这个模型时回 503 + model_not_found，等多久都不会好
+  const noChannel = status === 503 && (code === "model_not_found" || /无可用渠道|no available channel/iu.test(detail));
+  const reason = noChannel ? "中转站里没有能用的这个模型，检查一下模型名有没有写错，或者到中转站后台看看开通了没有"
+    : status === 401 || status === 403 ? "接口 Key 不对或没有权限"
+      : status === 404 ? "接口地址或模型名不对，或者模型还没开通"
+        : status === 429 ? "接口限流或额度用完了，稍后再试"
+          : extra[status] ?? ([502, 503, 504, 520, 522].includes(status) ? `接口服务暂时出了问题（${status}）`
+            : status ? `接口返回 ${status}` : "接口报错");
+  return detail ? `${reason}：${detail}` : `${reason}。`;
+}
+
 /** 请求体里的接口配置：信任边界，地址只认 http(s)，各项限长。 */
 export function parseAnalysisConfig(value) {
   const text = (item, max) => (typeof item === "string" ? item.trim().slice(0, max) : "");
-  const baseUrl = text(value?.baseUrl, 300).replace(/\/+$/u, "");
+  const baseUrl = apiBaseUrl(text(value?.baseUrl, 300));
   const apiKey = text(value?.apiKey, 400);
   const model = text(value?.model, 120);
   let protocol = "";
@@ -86,18 +179,10 @@ export function analysisPrompt(video, direction = "", focus = "") {
 }
 
 function providerError(status, body) {
-  let detail = String(body ?? "").trim();
-  try {
-    const parsed = JSON.parse(detail);
-    detail = parsed?.error?.message ?? parsed?.message ?? detail;
-  } catch { /* 不是 JSON 就用原文 */ }
-  detail = String(detail).slice(0, 240);
-  const reason = status === 401 || status === 403 ? "接口 Key 不对或没有权限"
-    : status === 404 ? "接口地址或模型名不对，或者模型还没开通"
-      : status === 413 ? "视频太大，接口收不下"
-        : status === 429 ? "接口限流或额度用完了，稍后再试"
-          : status ? `接口返回 ${status}` : "接口报错";
-  return new AnalysisError("provider_error", detail ? `${reason}：${detail}` : `${reason}。`, 502);
+  return new AnalysisError("provider_error", providerMessage(status, body, {
+    413: "视频太大，接口收不下",
+    524: "中转站等太久没等到回答（524），视频越长越慢，换个短一点的视频或反应快的模型再试",
+  }), 502);
 }
 
 async function* sseData(body) {
@@ -117,7 +202,14 @@ async function* sseData(body) {
 }
 
 /** 发给 OpenAI 兼容的 /chat/completions，流式读完（百炼 Qwen-Omni 只认流式，长回答也不会卡超时）。 */
-export async function requestAnalysis({ config, video, videoBase64, signal, fetchImpl = fetch }) {
+export async function requestAnalysis(options) {
+  return sendWithRetry(() => analysis(options), {
+    signal: options.signal,
+    fail: ({ text, dropped }) => Object.assign(new AnalysisError("provider_unreachable", text, 502), { dropped }),
+  });
+}
+
+async function analysis({ config, video, videoBase64, signal, fetchImpl = fetch }) {
   const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     signal,
@@ -141,7 +233,12 @@ export async function requestAnalysis({ config, video, videoBase64, signal, fetc
   let finish = null;
   if (!String(response.headers.get("content-type") ?? "").includes("event-stream")) {
     // 不支持流式的接口会直接回整段 JSON
-    const choice = (await response.json().catch(() => null))?.choices?.[0];
+    const body = await readJson(response);
+    if (!body || typeof body !== "object") {
+      throw new AnalysisError("provider_error", `接口回的内容看不懂（不是 JSON），检查一下接口地址是不是 OpenAI 兼容的地址（一般以 /v1 或 /api/v3 结尾）。这次请求的是 ${config.baseUrl}/chat/completions。`, 502);
+    }
+    if (body.error) throw providerError(0, JSON.stringify(body));
+    const choice = body.choices?.[0];
     text = choice?.message?.content ?? "";
     finish = choice?.finish_reason ?? null;
   } else {
@@ -244,10 +341,9 @@ async function runAnalysis({ library, entry, collector, jobId, config, fetchImpl
     const markdown = await requestAnalysis({ config, video: entry.video, videoBase64, signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl });
     await update({ status: "complete", stage: null, markdown, error: null });
   } catch (error) {
-    const message = error instanceof AnalysisError ? error.message
+    const message = error instanceof AnalysisError ? `${error.message}${error.dropped ? "点「重新解析」再试一次。" : ""}`
       : error?.name === "TimeoutError" ? "接口太久没答完，请稍后重试。"
-        : error instanceof TypeError ? "连不上接口地址，检查一下网络和地址。"
-          : "解析失败，请稍后重试。";
+        : "解析失败，请稍后重试。";
     await update({ status: "failed", stage: null, error: message });
   }
 }
