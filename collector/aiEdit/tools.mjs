@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { modelFetch } from "../systemProxy.mjs";
 import { AnalysisError, requestAnalysis } from "../videoAnalysis.mjs";
 import { normalizeDouyinVideoUrl } from "../videoDownloader.mjs";
 import { members } from "./catalog.mjs";
@@ -535,7 +536,7 @@ async function watchVideo(ctx, file, video) {
   if ((await stat(file)).size > ANALYSIS_BYTES) throw new AiEditError("video_too_large", "这个视频超过 45MB，模型接口收不下，换一个短一点或清晰度低一点的版本。");
   let status = 0;
   const fetchImpl = async (...args) => {
-    const response = await (ctx.fetchImpl ?? fetch)(...args);
+    const response = await (ctx.fetchImpl ?? modelFetch)(...args);
     status = response.status;
     return response;
   };
