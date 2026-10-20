@@ -21,6 +21,45 @@ export function maskDiagnostic(html) {
     .replace(/data:[^"')\s]+/gu, "data:…").replace(/\d{3,}/gu, digits => "*".repeat(digits.length)).slice(0, 300_000);
 }
 
+// 在验证框里（验证中心子框架或二次验证浮层）按文字找「接收短信验证码」那一路的元素：选项、打码手机号、获取验证码按钮、输入框、提交按钮。
+// 不认类名（抖音的类名是哈希，会变）；认不出来就什么都不做，工作台退回「打开验证窗口」。只搬这一种，别的方式、滑块都不碰
+function smsVerifyProbe({ root, action, code }) {
+  const scope = document.querySelector(root) ?? document.body;
+  const shown = element => { const box = element.getBoundingClientRect(); return box.width > 0 && box.height > 0 && getComputedStyle(element).visibility !== "hidden"; };
+  const text = element => (element.innerText || element.textContent || "").replace(/\s+/gu, " ").trim();
+  const nodes = [...scope.querySelectorAll("*")].filter(shown);
+  const leaf = pattern => nodes.filter(element => pattern.test(text(element)) && ![...element.children].some(child => pattern.test(text(child))));
+  const option = leaf(/^接收短信验证码$/u)[0] ?? null;
+  const inputs = [...scope.querySelectorAll("input")].filter(element => shown(element) && !["hidden", "checkbox", "radio", "password"].includes(element.type));
+  // 有的验证码是一格一个数字（几个 maxlength=1 的框），有的是一个框
+  const cells = inputs.length >= 4 && inputs.every(element => element.maxLength === 1) ? inputs : null;
+  const input = cells ? null : inputs.find(element => /验证码/u.test(element.placeholder || "") || element.autocomplete === "one-time-code") ?? null;
+  const all = text(scope);
+  const rawPhone = (all.match(/(?:\+86\s*)?1\d{2}[\d*]{4}\d{4}/u) ?? all.match(/1\d{2}\*{2,}\d{2,4}/u) ?? [])[0] ?? null;
+  const phone = rawPhone ? rawPhone.replace(/^(\+86\s*)?(\d{3})\d{4}(\d{4})$/u, "$1$2****$3") : null;
+  const send = leaf(/^(获取验证码|获取短信验证码|发送验证码|重新获取|重新发送|重新获取验证码)$/u)[0] ?? null;
+  const countdown = (all.match(/\d+\s*(?:s|秒)\s*后?\s*(?:可?重新)?(?:获取|发送)?/u) ?? [])[0] ?? null;
+  const submit = leaf(/^(验证|确定|提交|确认|下一步|完成|立即验证)$/u)[0] ?? null;
+  const error = leaf(/错误|有误|失效|过期|频繁|不正确|稍后再试/u).map(text).find(value => value.length <= 40) ?? null;
+  const fill = (element, value) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    element.focus(); setter.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true })); element.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  if (action === "choose") { if (!option) return false; option.click(); return true; }
+  if (action === "send") { if (!send) return false; send.click(); return true; }
+  if (action === "submit") {
+    if (cells) [...code].forEach((digit, index) => cells[index] && fill(cells[index], digit));
+    else if (input) fill(input, code);
+    else return false;
+    // 很多验证码框填满会自己提交；没提交的话再点一下提交按钮
+    setTimeout(() => { if (submit?.isConnected) submit.click(); }, 400);
+    return true;
+  }
+  const stage = cells || input ? "code" : option ? "choose" : null;
+  return stage ? { stage, phone, sendLabel: send ? text(send) : countdown, canSend: Boolean(send), error } : null;
+}
+
 export function isLoginUrl(value) {
   try {
     const url = new URL(value);
@@ -277,10 +316,19 @@ export function createInAppBrowserConnector({ BrowserWindow, session, focusApp, 
     return {
       browser: source.id, label: source.label, context,
       get connected() { return !closed; },
+      // 有没有在验证；是「接收短信验证码」那一路的话把能搬进工作台的东西一起带上（打码手机号、按钮字样、报错）
       async verification() {
         const found = closed ? null : await findVerification();
-        if (found) capture(found);
-        return Boolean(found);
+        if (!found) return { verifying: false, sms: null };
+        capture(found);
+        const sms = await withinTime(found.frame.executeJavaScript(`(${smsVerifyProbe})(${JSON.stringify({ root: found.selector })})`).catch(() => null), 2000);
+        return { verifying: true, sms: sms && typeof sms === "object" ? sms : null };
+      },
+      // 工作台上点的：选「接收短信验证码」、获取验证码、提交用户自己填的验证码。验证码只转交，不存
+      async smsVerify(action, code = "") {
+        const found = closed ? null : await findVerification();
+        if (!found || !["choose", "send", "submit"].includes(action) || (action === "submit" && !/^\d{4,8}$/u.test(code))) return false;
+        return await withinTime(found.frame.executeJavaScript(`(${smsVerifyProbe})(${JSON.stringify({ root: found.selector, action, code })})`).catch(() => false), 3000) === true;
       },
       // 「打开验证窗口」：优先亮正在验证的那一页，没有就亮最近开的那一页
       async revealVerification() {

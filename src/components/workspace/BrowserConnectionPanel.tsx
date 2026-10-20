@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { cancelBrowserLogin, confirmBrowserLogin, disconnectBrowserLogin, getBrowserLoginQrCode, getBrowserLoginSources, getBrowserVerification, inspectBrowserLogin, LocalCollectorError, showBrowserLoginWindow,
+import { cancelBrowserLogin, confirmBrowserLogin, disconnectBrowserLogin, getBrowserLoginQrCode, getBrowserLoginSources, getBrowserVerification, sendBrowserSmsVerify, type BrowserSmsVerify, inspectBrowserLogin, LocalCollectorError, showBrowserLoginWindow,
   type BrowserLoginCandidate, type BrowserLoginSource, type CollectorAccountChange, type CollectorReadPermissions, type CollectorStatus } from "../../services/localCollector";
 import { isDesktopApp } from "../../desktopRuntime";
 import { workspaceColors as color } from "./workspaceTheme";
@@ -37,6 +37,10 @@ export interface LoginStartProps {
   image: string | null;
   /** 抖音弹出了身份验证（短信、密码、滑块之类）：方框换成「打开验证窗口」 */
   verify: boolean;
+  /** 验证是「接收短信验证码」那一路时搬进工作台的东西；别的方式是 null，只给「打开验证窗口」 */
+  sms: BrowserSmsVerify | null;
+  /** 首屏上点的：选短信验证码、获取验证码、提交用户自己填的验证码 */
+  onSms: (action: "choose" | "send" | "submit", code?: string) => void;
   onStart: () => void;
   /** 码下面那一行：点开后是「在窗口里登录」「取消」，没点开是「改用浏览器导入」的链接；也由版式画，颜色才跟页面一致 */
   actions: LoginStartAction[];
@@ -69,6 +73,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   const renewRef = useRef(false);
   // 登录或导入时后台页面弹了身份验证没有：首屏要换成「去验证」，不能只剩一个转圈
   const [verifying, setVerifying] = useState(false);
+  const [sms, setSms] = useState<BrowserSmsVerify | null>(null);
   const visibleRef = useRef(visible); visibleRef.current = visible;
   const candidateRef = useRef<BrowserLoginCandidate | null>(null);
   const runningRef = useRef(false);
@@ -111,14 +116,21 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   }, [waitingForScan, baseUrl, token]);
 
   useEffect(() => {
-    if (!compact || !busy) { setVerifying(false); return; }
+    if (!compact || !busy) { setVerifying(false); setSms(null); return; }
     let stopped = false;
-    const poll = () => getBrowserVerification(baseUrl, token).then(value => { if (!stopped) setVerifying(value); }, () => {});
+    const poll = () => getBrowserVerification(baseUrl, token).then(value => { if (!stopped) { setVerifying(value.verifying); setSms(value.sms); } }, () => {});
     void poll();
     const timer = setInterval(poll, 1500);
     return () => { stopped = true; clearInterval(timer); };
   }, [compact, busy, baseUrl, token]);
   const openVerifyWindow = () => { void showBrowserLoginWindow(baseUrl, token).catch(reason => setError(reason instanceof Error ? reason.message : "登录窗口打不开。")); };
+  // 首屏上的短信验证码：只是替用户点后台页面里的同一个按钮、填同一个框；页面里找不到就请用户去窗口里做
+  const onSms = (action: "choose" | "send" | "submit", code = "") => {
+    setError(null);
+    void sendBrowserSmsVerify(baseUrl, token, action, code).then(ok => {
+      if (!ok) setError("没在验证页面里找到对应的按钮或输入框，请点「打开验证窗口」在窗口里完成。");
+    }, reason => setError(reason instanceof Error ? reason.message : "没能交给验证页面，请在验证窗口里完成。"));
+  };
 
   async function run(work: () => Promise<void>) {
     if (runningRef.current || blocked) return;
@@ -200,8 +212,11 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
     return (
       <View style={[styles.panel, styles.panelCompact]} testID="browser-login-panel">
         {renderStart({ title: "抖音要求身份验证", done: false, busy: false, revealed: false, image: null, verify: true, disabled: false, onStart: openVerifyWindow,
-          label: "点击打开验证窗口", actions: [],
-          detail: `为保障账号安全，抖音要先确认是你本人。在弹出的抖音窗口里选一种方式完成验证（短信、密码都由你自己操作），完成后${candidate ? "会接着导入凭据" : "会接着登录"}。` })}
+          label: "点击打开验证窗口", sms, onSms,
+          actions: sms ? [{ kind: "window", label: "用其他方式验证", testID: "browser-login-show-window", onPress: openVerifyWindow }] : [],
+          detail: sms
+            ? `为保障账号安全，抖音要先确认是你本人。可以直接在这里收短信验证码，验证码由你自己填；也可以打开验证窗口换别的方式。完成后${candidate ? "会接着导入凭据" : "会接着登录"}。`
+            : `为保障账号安全，抖音要先确认是你本人。在弹出的抖音窗口里选一种方式完成验证（短信、密码都由你自己操作），完成后${candidate ? "会接着导入凭据" : "会接着登录"}。` })}
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error} testID="browser-login-error">{error}</Text> : null}
       </View>
     );
@@ -212,7 +227,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
     const name = status?.account?.nickname ? `「${status.account.nickname}」` : "";
     return (
       <View style={[styles.panel, styles.panelCompact]} testID="browser-login-panel">
-        {renderStart({ title: "扫码登录抖音", done: loggedIn && !revealed, busy: false, revealed, verify: false, image: waitingForScan ? qrcode?.image ?? null : null,
+        {renderStart({ title: "扫码登录抖音", done: loggedIn && !revealed, busy: false, revealed, verify: false, sms: null, onSms, image: waitingForScan ? qrcode?.image ?? null : null,
           disabled: (blocked && !connecting) || !source?.available,
           onStart: () => { setRevealed(true); if (!connecting) void connect(); },
           actions: revealed ? [
@@ -330,7 +345,7 @@ export function FirstScreenLogin({ login, status, busy, onConnect, renderStart }
   // 采集器在后台自己连，正常一两秒就好；连不上才让用户点一下重连
   if (!login.token) return (
     <View style={[styles.panel, styles.panelCompact]} testID="first-screen-login">
-      {renderStart({ title: "扫码登录抖音", done: false, busy, disabled: busy, onStart: onConnect, revealed: false, verify: false, image: null, actions: [],
+      {renderStart({ title: "扫码登录抖音", done: false, busy, disabled: busy, onStart: onConnect, revealed: false, verify: false, sms: null, onSms: () => {}, image: null, actions: [],
         label: busy ? "正在连接采集器…" : "点击重新连接采集器",
         detail: busy ? "应用自带的采集器正在启动，连上后就能扫码登录。" : "本机采集器还没连上，点下面重新连接。" })}
     </View>

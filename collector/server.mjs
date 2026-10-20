@@ -485,7 +485,17 @@ export async function startCollectorServer({
           return;
         }
         if (request.method === "GET" && url.pathname === "/v1/browser/verification") {
-          sendJson(response, 200, { verifying: Boolean(await activeBrowserConnection?.verification?.().catch(() => false)) });
+          const state = await activeBrowserConnection?.verification?.().catch(() => null);
+          sendJson(response, 200, { verifying: state?.verifying === true, sms: state?.verifying ? state.sms ?? null : null });
+          return;
+        }
+        // 首屏上的「接收短信验证码」：选这种方式、获取验证码、提交用户自己填的验证码，都转给后台那一页去点
+        if (request.method === "POST" && url.pathname === "/v1/browser/verification") {
+          const body = await readJsonBody(request);
+          if (!["choose", "send", "submit"].includes(body.action) || (body.action === "submit" && !/^\d{4,8}$/u.test(String(body.code ?? ""))))
+            throw new BrowserConnectionError("verification_invalid", "验证码要填 4 到 8 位数字。", 400);
+          if (typeof activeBrowserConnection?.smsVerify !== "function") throw new BrowserConnectionError("browser_login_not_running", "现在没有在等验证。");
+          sendJson(response, 200, { ok: await activeBrowserConnection.smsVerify(body.action, String(body.code ?? "")) });
           return;
         }
         if (request.method === "POST" && url.pathname === "/v1/browser/login-window") {

@@ -49,11 +49,11 @@ describe("in-app Douyin login window", () => {
       const connection = await connect({ id: "app", label: "应用内登录", inApp: true });
       await connection.context.newPage();
       const [window] = windows; window.show = vi.fn(); window.focus = vi.fn();
-      expect(await connection.verification()).toBe(false);
+      expect(await connection.verification()).toEqual({ verifying: false, sms: null });
       const frame = { url: "https://rmc.bytedance.com/verifycenter/authentication?mobile=18200008686", executeJavaScript: vi.fn(async () => "<div>验证码 123456</div>") };
       window.webContents.mainFrame.framesInSubtree = [frame];
-      expect(await connection.verification()).toBe(true);
-      expect(await connection.verification()).toBe(true);
+      expect((await connection.verification()).verifying).toBe(true);
+      expect((await connection.verification()).verifying).toBe(true);
       await vi.advanceTimersByTimeAsync(3000);
       expect(saveDiagnostic).toHaveBeenCalledOnce();
       expect(saveDiagnostic.mock.calls[0]).toEqual(["<div>验证码 ******</div>", "https://rmc.bytedance.com/verifycenter/authentication?mobile=***********"]);

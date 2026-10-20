@@ -1248,10 +1248,31 @@ export async function getBrowserLoginQrCode(baseUrl: string, token: string): Pro
   return { image: qrcode.image, hint: typeof qrcode.hint === "string" ? qrcode.hint : "", verify: qrcode.verify === true };
 }
 
-/** 应用内登录或导入凭据时，后台的抖音页有没有弹出身份验证 */
-export async function getBrowserVerification(baseUrl: string, token: string): Promise<boolean> {
+/** 「接收短信验证码」那一路：choose=抖音还在让选验证方式，code=到了输验证码那步 */
+export interface BrowserSmsVerify {
+  stage: "choose" | "code";
+  /** 抖音页面上本来就打了码的手机号 */
+  phone: string | null;
+  /** 获取验证码按钮上的字，或者倒计时 */
+  sendLabel: string | null;
+  canSend: boolean;
+  error: string | null;
+}
+
+/** 应用内登录或导入凭据时，后台的抖音页有没有弹出身份验证；是短信验证码那一路的话带上能搬进工作台的信息 */
+export async function getBrowserVerification(baseUrl: string, token: string): Promise<{ verifying: boolean; sms: BrowserSmsVerify | null }> {
   const value = await requestJson(baseUrl, "/v1/browser/verification", {}, token);
-  return isObject(value) && value.verifying === true;
+  if (!isObject(value) || value.verifying !== true) return { verifying: false, sms: null };
+  const sms = isObject(value.sms) && ["choose", "code"].includes(String(value.sms.stage)) ? value.sms : null;
+  const text = (item: unknown, limit: number) => typeof item === "string" && item.trim() ? item.trim().slice(0, limit) : null;
+  return { verifying: true, sms: sms ? { stage: sms.stage as "choose" | "code", phone: text(sms.phone, 24), sendLabel: text(sms.sendLabel, 20),
+    canSend: sms.canSend === true, error: text(sms.error, 40) } : null };
+}
+
+/** 首屏上的短信验证：选这种方式、获取验证码、提交用户自己填的验证码，转给后台页面去点；ok=false 是页面里没找到对应的东西 */
+export async function sendBrowserSmsVerify(baseUrl: string, token: string, action: "choose" | "send" | "submit", code = ""): Promise<boolean> {
+  const value = await requestJson(baseUrl, "/v1/browser/verification", { method: "POST", body: JSON.stringify({ action, code }) }, token);
+  return isObject(value) && value.ok === true;
 }
 
 /** 把藏着的应用内登录窗口亮出来，用来做验证或改用验证码登录 */
