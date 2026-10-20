@@ -1,5 +1,5 @@
 import { createReadStream, existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,7 +141,7 @@ const EDIT_METHODS = [
 describe("AI edit tools", () => {
   it("cover every ProjectStore edit method and convert seconds and media ids", async () => {
     const { run, calls } = runnerWith();
-    const offline = new Set(["search_my_records", "import_douyin_video"]);
+    const offline = new Set(["search_my_records", "import_douyin_video", "search_douyin", "analyze_reference"]);
     expect(TOOL_NAMES.filter((name) => !offline.has(name)).sort()).toEqual(Object.keys(SAMPLE_ARGS).sort());
     for (const [name, args] of Object.entries(SAMPLE_ARGS)) {
       const { result, action } = await run(name, JSON.stringify(args));
@@ -295,6 +295,8 @@ describe("AI edit tools", () => {
     expect(prompt).toContain(`- ${VIDEO_ID}｜视频｜海边.mp4｜10 秒｜1080×1920｜有声音`);
     expect(prompt).toContain("（还在导入）");
     expect(prompt).toContain("search_catalog");
+    expect(prompt).toContain("先用 search_douyin 搜");
+    expect(prompt).toContain("别人的视频只当参考，不要导入");
     expect(prompt).toContain("越靠后的轨道越在上层");
     expect(prompt).toContain("所有时间参数都用秒");
     expect(prompt).toContain("\"transform\": {\"transform_y\": -0.8}");
@@ -645,6 +647,156 @@ describe.runIf(["projectStore.mjs", "media.mjs"].every((name) => existsSync(path
       // 明确给倍速照常放行；改时长又不给倍速时同样拦下
       expect(await call("add_media_clip", { track_id: audio, media_id: tone, start: 20, source_duration: 3.5, duration: 7, speed: 0.5 })).toMatchObject({ ok: true });
       expect(await call("update_clip", { clip_id: first.clip_id, source_duration: 3.5, duration: 1 })).toMatchObject({ ok: false, code: "SPEED_IMPLIED" });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("reference videos", () => {
+  const EDIT = { baseUrl: "https://ark.example.com/api/v3", apiKey: "edit-key", model: "doubao-seed-edit" };
+  const LINK = "https://www.douyin.com/video/7123456789";
+  const failure = (code, message = "原文") => Object.assign(new Error(message), { code });
+  const explorerWith = (outcome) => {
+    const calls = [];
+    return {
+      calls,
+      run: async (input, operation) => {
+        calls.push(["run", input, operation]);
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      },
+      close: async (ids) => { calls.push(["close", ids]); },
+    };
+  };
+  const answering = (content, sent = []) => async (_url, init) => {
+    sent.push(JSON.parse(init.body));
+    return Response.json({ choices: [{ message: { content }, finish_reason: "stop" }] });
+  };
+
+  it("searches Douyin through the explorer, keeps videos only and closes its page", async () => {
+    const explorer = explorerWith({
+      sessionId: "s-1",
+      items: [
+        { id: "explore:1", title: "热门转场", author: "阿明", url: "https://www.douyin.com/video/1", durationSeconds: 15, stats: { diggCount: 12_000 }, mediaType: "video" },
+        { id: "explore:2", title: "图文", url: "https://www.douyin.com/note/2", mediaType: "image" },
+        { id: "explore:3", title: "没点赞数", url: "https://www.douyin.com/video/3" },
+      ],
+    });
+    const { run } = runnerWith({ getExplorer: () => explorer });
+    const { result, action, changed } = await run("search_douyin", { query: "卡点 转场", limit: 5 });
+    expect(result).toEqual({
+      ok: true,
+      total: 2,
+      videos: [
+        { url: "https://www.douyin.com/video/1", title: "热门转场", author: "阿明", likes: 12_000, duration: 15 },
+        { url: "https://www.douyin.com/video/3", title: "没点赞数" },
+      ],
+      note: expect.stringContaining("analyze_reference"),
+    });
+    expect(action).toEqual({ name: "search_douyin", summary: "在抖音上搜了「卡点 转场」", ok: true });
+    expect(changed).toBe(false);
+    expect(explorer.calls).toEqual([["run", { kind: "videos", query: "卡点 转场" }, "read"], ["close", ["s-1"]]]);
+  });
+
+  it("tells the user to log in or pass verification when Douyin refuses the search", async () => {
+    const search = (outcome) => runnerWith({ getExplorer: () => explorerWith(outcome) }).run("search_douyin", { query: "同款" });
+    const reconnect = (cause) => Object.assign(failure("browser_reconnect_required", "导入的登录凭据已失效或不完整"), { cause });
+    for (const error of [failure("login_required"), failure("direct_session_missing"), reconnect(failure("direct_session_missing"))]) {
+      expect((await search(error)).result).toMatchObject({ ok: false, code: "login_required", message: expect.stringContaining("重新扫码登录") });
+    }
+    for (const error of [failure("verification_required"), reconnect(failure("verification_required"))]) {
+      expect((await search(error)).result).toMatchObject({ ok: false, code: "verification_required", message: expect.stringContaining("安全验证") });
+    }
+    expect((await search(failure("collector_busy", "采集器正在执行任务"))).result).toMatchObject({ ok: false, code: "collector_busy", message: "采集器正在执行任务" });
+    expect((await runnerWith().run("search_douyin", { query: "同款" })).result).toMatchObject({ ok: false, code: "collector_busy" });
+  });
+
+  it("downloads a Douyin link and watches it with the AI edit model, caching only inside AI edit", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "ai-edit-reference-"));
+    try {
+      const file = path.join(directory, "v.mp4");
+      await writeFile(file, "fake-mp4");
+      const downloads = [];
+      const collector = {
+        startVideoDownload(url, options) { downloads.push([url, options]); return { id: "job", status: "queued" }; },
+        getVideoDownloadJob: () => ({ id: "job", status: "complete", video: { title: "热门转场", author: "阿明", durationSeconds: 15 } }),
+        getVideoDownloadFilePath: () => file,
+      };
+      const sent = [];
+      const references = new Map();
+      const runner = () => runnerWith({ getCollector: () => collector, config: EDIT, references, fetchImpl: answering("③ 0–2 秒｜硬切｜白字黑边", sent), pollMs: 1 }).run;
+      const first = await runner()("analyze_reference", { url: LINK });
+      expect(first.result).toEqual({
+        ok: true,
+        video: { title: "热门转场", author: "阿明", duration: 15 },
+        analysis: "③ 0–2 秒｜硬切｜白字黑边",
+        how_to_use: expect.stringContaining("不要把这条视频放进时间线"),
+      });
+      expect(first.changed).toBe(false);
+      expect(downloads).toEqual([[LINK, { smallest: true }]]);
+      expect(sent[0].model).toBe("doubao-seed-edit");
+      expect(sent[0].messages[0].content[0].video_url.url).toBe(`data:video/mp4;base64,${Buffer.from("fake-mp4").toString("base64")}`);
+      const prompt = sent[0].messages[0].content[1].text;
+      expect(prompt).toContain("这次拆解还要给剪辑照着复刻");
+      expect(prompt).toContain("我的创作方向：没有填写");
+
+      // 解析过的直接用（别的会话也一样）：不再下载、不再问模型
+      expect((await runner()("analyze_reference", { url: LINK })).result.analysis).toBe(first.result.analysis);
+      expect(downloads).toHaveLength(1);
+      expect(sent).toHaveLength(1);
+      expect([...references.keys()]).toEqual([LINK]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("says plainly when the AI edit model cannot watch video", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "ai-edit-reference-"));
+    try {
+      const media = new MediaLibrary({ directory, probe: async () => ({}), kindOf: () => "video" });
+      media.root = directory;
+      media.items = [{ id: VIDEO_ID, kind: "video", status: "ready", name: "参考.mp4", file: `${VIDEO_ID}.mp4`, durationUs: 8_000_000, size: 8, source: { type: "local" } }];
+      await writeFile(path.join(directory, `${VIDEO_ID}.mp4`), "fake-mp4");
+      const watch = async (fetchImpl) => (await runnerWith({ library: media, config: EDIT, fetchImpl }).run("analyze_reference", { media_id: VIDEO_ID })).result;
+      const rejected = await watch(async () => new Response(JSON.stringify({ error: { message: "unknown variant `video_url`, expected `text` or `image_url`" } }), { status: 400 }));
+      expect(rejected).toMatchObject({ ok: false, code: "video_unsupported", message: expect.stringMatching(/^AI 剪辑配置的模型看不了视频，换一个支持视频输入的模型.*video_url/u) });
+      expect(await watch(answering("抱歉，我无法直接查看视频内容，可以把画面用文字描述给我吗？"))).toMatchObject({ ok: false, code: "video_unsupported" });
+      expect(await watch(answering("I can't watch videos, please describe it."))).toMatchObject({ ok: false, code: "video_unsupported" });
+      // 正常的拆解（带表格）里提到“无法读取”也不算
+      expect(await watch(answering("| 维度 | 发现 |\n|---|---|\n| 画面 | 无法读取视频里的小字 |"))).toMatchObject({ ok: true });
+      expect(await watch(async () => new Response(JSON.stringify({ error: { message: "the API key is invalid" } }), { status: 401 })))
+        .toMatchObject({ ok: false, code: "provider_error", message: expect.stringContaining("Key 不对") });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("sends a local reference video straight to the AI edit model", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "ai-edit-reference-"));
+    try {
+      const media = new MediaLibrary({ directory, probe: async () => ({}), kindOf: () => "video" });
+      media.root = directory;
+      const local = { id: VIDEO_ID, kind: "video", status: "ready", name: "参考.mp4", file: `${VIDEO_ID}.mp4`, durationUs: 8_000_000, size: 8, source: { type: "local" } };
+      const big = { ...local, id: AUDIO_ID, name: "大.mp4", file: `${AUDIO_ID}.mp4` };
+      media.items = [local, big, { ...local, id: IMAGE_ID, kind: "image", name: "图.png", file: `${IMAGE_ID}.png` }];
+      await writeFile(path.join(directory, `${VIDEO_ID}.mp4`), "fake-mp4");
+      await writeFile(path.join(directory, `${AUDIO_ID}.mp4`), "");
+      await truncate(path.join(directory, `${AUDIO_ID}.mp4`), 46 * 1024 * 1024);
+      const sent = [];
+      const { run } = runnerWith({ library: media, config: EDIT, references: new Map(), fetchImpl: answering("① 三段式", sent) });
+      const { result, action } = await run("analyze_reference", { media_id: VIDEO_ID });
+      expect(result).toMatchObject({ ok: true, video: { title: "参考.mp4", duration: 8 }, analysis: "① 三段式" });
+      expect(action.summary).toBe("解析了参考视频「参考.mp4」");
+      expect(sent[0].messages[0].content[1].text).toContain("时长：8 秒");
+
+      expect((await run("analyze_reference", { media_id: IMAGE_ID })).result).toMatchObject({ ok: false, code: "not_video" });
+      expect((await run("analyze_reference", {})).result).toMatchObject({ ok: false, code: "arguments_invalid" });
+      expect((await run("analyze_reference", { media_id: VIDEO_ID, url: LINK })).result).toMatchObject({ ok: false, code: "arguments_invalid" });
+      expect((await run("analyze_reference", { url: "https://example.com/v/1" })).result).toMatchObject({ ok: false, code: "invalid_url" });
+      expect((await run("analyze_reference", { media_id: AUDIO_ID })).result).toMatchObject({ ok: false, code: "video_too_large" });
+      expect((await runnerWith().run("analyze_reference", { url: LINK })).result).toMatchObject({ ok: false, code: "collector_busy" });
+      expect(sent).toHaveLength(1);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

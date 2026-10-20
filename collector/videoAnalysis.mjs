@@ -59,8 +59,8 @@ export function parseAnalysisConfig(value) {
   return { baseUrl, apiKey, model, direction: text(value?.direction, 600) };
 }
 
-/** 提示词后面附上抖音页面读到的公开信息和创作方向，提示词要求“只能使用已提供的数据”。 */
-export function analysisPrompt(video, direction = "") {
+/** 提示词后面附上抖音页面读到的公开信息和创作方向，提示词要求“只能使用已提供的数据”。focus 是调用方追加的要求（AI 剪辑参考视频时用）。 */
+export function analysisPrompt(video, direction = "", focus = "") {
   const stats = video?.stats ?? {};
   const counts = [["点赞", stats.diggCount], ["评论", stats.commentCount], ["收藏", stats.collectCount], ["分享", stats.shareCount], ["播放", stats.playCount]]
     .filter(([, count]) => count > 0).map(([label, count]) => `${label} ${count}`);
@@ -81,6 +81,7 @@ export function analysisPrompt(video, direction = "") {
     "",
     // 不加这句，小模型常常挑着答：随机漏掉整个维度，括号里的小问也只答一两个
     "格式要求：第②部分的表格固定 10 行，按维度 1 到 10 的顺序各占一行，每行的“具体发现”要逐个回答该维度列出的所有小问（例如第 4 项要分别写段落顺序、信息递进、冲突、悬念、转折、论据、兑现承诺的时间点），看不出来的写“未知”或“视频里没有”，不能省略。②③两张表都用标准 Markdown 表格输出（半角竖线 | 分隔，带表头分隔行）。",
+    ...(focus ? [focus] : []),
   ].join("\n");
 }
 
@@ -130,7 +131,7 @@ export async function requestAnalysis({ config, video, videoBase64, signal, fetc
         role: "user",
         content: [
           { type: "video_url", video_url: { url: `data:video/mp4;base64,${videoBase64}` } },
-          { type: "text", text: analysisPrompt(video, config.direction) },
+          { type: "text", text: analysisPrompt(video, config.direction, config.focus) },
         ],
       }],
     }),

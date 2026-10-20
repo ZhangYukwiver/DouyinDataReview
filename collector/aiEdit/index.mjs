@@ -96,13 +96,15 @@ function titleFrom(text) {
 }
 
 /**
- * dataDirectory：采集器根数据目录；getCollector()：当前采集器（切换账号时为 null）；busyReason()：采集器正忙时的说明。
+ * dataDirectory：采集器根数据目录；getCollector()：当前采集器（切换账号时为 null）；busyReason()：采集器正忙时的说明；
+ * getExplorer()：探索（参考视频搜抖音用，切换账号时为 null）。
  * 测试可以注入 store / draftBox / probe / kindOf / fetchImpl。
  */
 export function createAiEdit({
   dataDirectory,
   getCollector = () => null,
   busyReason = () => null,
+  getExplorer = () => null,
   draftBox: injectedDraftBox,
   store: injectedStore,
   probe: injectedProbe,
@@ -115,6 +117,8 @@ export function createAiEdit({
 } = {}) {
   const root = path.join(dataDirectory, "ai-edit");
   const running = new Map();
+  // 参考视频的解析结果，各会话共用（不进解析库）
+  const references = new Map();
   const exporting = new Set();
   let closing = false;
   let state = null;
@@ -220,6 +224,7 @@ export function createAiEdit({
     };
     const runTool = createToolRunner({
       store, library, projectId: session.projectId, getCollector, signal,
+      getExplorer, config, references, fetchImpl, pollMs,
       exportDraft: () => exportSession(session),
       onRename: (name) => { session.title = name; },
     });

@@ -251,6 +251,7 @@ export async function startCollectorServer({
     dataDirectory,
     getCollector: () => (switching ? null : collector),
     busyReason: () => (explorer.busy ? "请等待当前探索操作完成后继续。" : null),
+    getExplorer: () => (switching ? null : explorer),
   });
   // 账号操作（切换、新建、删除）一次只做一个；切换期间旧采集器在关、新的还没接上
   let accountWork = null;

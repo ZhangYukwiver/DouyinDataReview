@@ -558,6 +558,8 @@ export class DouyinCollector {
     }
     this.externalSessionState = "reconnect_required";
     const problem = new DirectHistoryError("browser_reconnect_required", "导入的登录凭据已失效或不完整，请在设置 → 账号中重新扫码登录或连接浏览器，完成登录或验证后再次导入。");
+    // 调用方要分清是登录失效还是安全验证（AI 剪辑搜抖音时给不同的提示）
+    problem.cause = error;
     // Each caller owns its task state; only publish the shared credential flag here.
     this.updateStatus({});
     return problem;
