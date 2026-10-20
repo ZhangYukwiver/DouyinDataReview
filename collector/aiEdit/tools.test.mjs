@@ -9,7 +9,8 @@ import { EditError, invalid } from "./errors.mjs";
 import { MediaLibrary } from "./library.mjs";
 import { TOOL_DEFINITIONS, TOOL_NAMES, buildContextMessage, buildSystemPrompt, createToolRunner, micros, timelineSummary } from "./tools.mjs";
 
-const ROOT = "/data/ai-edit/media";
+// 按本机格式生成（Windows 上带盘符和反斜杠），和素材库 path.join 出来的路径对得上
+const ROOT = path.resolve("/data/ai-edit/media");
 const VIDEO_ID = "a".repeat(32);
 const IMAGE_ID = "b".repeat(32);
 const AUDIO_ID = "c".repeat(32);
