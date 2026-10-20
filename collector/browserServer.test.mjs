@@ -197,6 +197,17 @@ describe("browser login HTTP handshake", () => {
     expect(connections[0].disconnect).toHaveBeenCalledOnce();
     expect(readRecords).not.toHaveBeenCalled();
   });
+  it("closes the pending candidate before asking the connector for a fresh login", async () => {
+    const { call, connections, browserConnector } = await fixture();
+    const first = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
+    expect(browserConnector).toHaveBeenLastCalledWith(expect.objectContaining({ id: "chrome" }), { fresh: false });
+    const second = await call("/v1/browser/connect", "POST", { browser: "chrome", fresh: true });
+    expect(second.status).toBe(200);
+    expect(browserConnector).toHaveBeenLastCalledWith(expect.objectContaining({ id: "chrome" }), { fresh: true });
+    // 上一个号的窗口先关掉，连接器才去清登录分区
+    expect(connections[0].disconnect.mock.invocationCallOrder[0]).toBeLessThan(browserConnector.mock.invocationCallOrder[1]);
+    expect((await call("/v1/browser/confirm", "POST", { id: first.id })).body.error).toBe("browser_candidate_expired");
+  });
   it("disconnects the temporary browser when the login wait is cancelled", async () => {
     let loggedIn = false;
     const { runtime, headers, connections, browserConnector } = await fixture({ isLoggedIn: () => loggedIn });
