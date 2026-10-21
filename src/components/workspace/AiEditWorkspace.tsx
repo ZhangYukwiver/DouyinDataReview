@@ -314,6 +314,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   /** 存目标；还没有剪辑就先新建一个。成功返回 true，失败提示在错误条里 */
   const saveGoal = async (goal: string): Promise<boolean> => {
     if (!conn) return false;
+    setError(null);
     try {
       const id = currentId ?? (await createSession())?.session.id;
       if (!id) return false;
@@ -397,7 +398,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
         onCreate={() => void createSession()}
         onToggleConfig={() => setConfigOpen((value) => !value)}
       />
-      {configOpen ? null : <GoalBar key={currentId ?? "new"} goal={session?.goal ?? ""} onSave={saveGoal} />}
+      {configOpen ? null : <GoalBar sessionId={currentId} goal={session?.goal ?? ""} onSave={saveGoal} />}
       <View style={styles.middle}>
         {error ? <View accessibilityRole="alert" style={styles.errorBar}>
           <Text style={styles.errorText}>{error}</Text>
@@ -487,13 +488,18 @@ function SessionBar({ title, open, configOpen, onToggle, onCreate, onToggleConfi
 const MAX_GOAL_CHARS = 2000;
 
 /** 这条片子的目标：每次都写进给 AI 的系统提示，对话再长被裁掉也还在；随时能改，清空保存就是删掉。 */
-function GoalBar({ goal, onSave }: { goal: string; onSave: (goal: string) => Promise<boolean> }) {
+function GoalBar({ sessionId, goal, onSave }: { sessionId: string | null; goal: string; onSave: (goal: string) => Promise<boolean> }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(goal);
   const [saving, setSaving] = useState(false);
+  // 换了剪辑就收起；自己保存时先新建了剪辑那次不收（没存上要留着编辑框和草稿）
+  const savingRef = useRef(false);
+  useEffect(() => { if (!savingRef.current) setEditing(false); }, [sessionId]);
   const save = async () => {
+    savingRef.current = true;
     setSaving(true);
     const ok = await onSave(draft.trim());
+    savingRef.current = false;
     setSaving(false);
     if (ok) setEditing(false);
   };

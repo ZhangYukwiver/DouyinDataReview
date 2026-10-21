@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadAiEditConfig, sendAiEditMessage } from "./aiEdit";
+import { loadAiEditConfig, sendAiEditMessage, setAiEditGoal } from "./aiEdit";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -17,6 +17,19 @@ describe("sendAiEditMessage", () => {
     await sendAiEditMessage({ baseUrl: "http://127.0.0.1:4765", token: "t" }, "s", "参考同款", config);
 
     expect(bodies).toEqual([{ text: "参考同款", config }]);
+  });
+});
+
+describe("setAiEditGoal", () => {
+  it("posts the goal to the session and returns the updated session", async () => {
+    const calls: { url: string; method?: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, method: init.method, body: JSON.parse(String(init.body)) });
+      return Response.json({ session: { id: "s", goal: "30 秒快闪" } });
+    }));
+    const session = await setAiEditGoal({ baseUrl: "http://127.0.0.1:4765", token: "t" }, "s", "30 秒快闪");
+    expect(calls).toEqual([{ url: "http://127.0.0.1:4765/v1/ai-edit/sessions/s/goal", method: "POST", body: { goal: "30 秒快闪" } }]);
+    expect(session.goal).toBe("30 秒快闪");
   });
 });
 

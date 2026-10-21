@@ -245,6 +245,9 @@ describe("AI edit sessions", () => {
     const set = await call(`/v1/ai-edit/sessions/${session.id}/goal`, { method: "POST", body: { goal: "  30 秒旅行卡点快闪，用「放空」这首歌  " } });
     expect(set).toMatchObject({ status: 200, body: { session: { goal: "30 秒旅行卡点快闪，用「放空」这首歌" } } });
     expect(set.body.session.revision).toBeGreaterThan(session.revision);
+    // 还没发消息就已经存盘了（采集器这时重启，目标也还在）
+    const stored = async () => JSON.parse(await readFile(path.join(directory, "ai-edit", "sessions", `${session.id}.json`), "utf8")).goal;
+    expect(await stored()).toBe("30 秒旅行卡点快闪，用「放空」这首歌");
     await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "开始剪", config: CONFIG } });
     await waitIdle(session.id);
     expect(requests[0].messages[0]).toMatchObject({ role: "system", content: expect.stringContaining("\n30 秒旅行卡点快闪，用「放空」这首歌\n") });
@@ -255,9 +258,10 @@ describe("AI edit sessions", () => {
     expect(requests[1].messages[0].content).toContain("\n改成 15 秒\n");
     expect(requests[1].messages[0].content).not.toContain("放空");
     // 存盘了；太长不收；清空就是删掉
-    expect(JSON.parse(await readFile(path.join(directory, "ai-edit", "sessions", `${session.id}.json`), "utf8")).goal).toBe("改成 15 秒");
+    expect(await stored()).toBe("改成 15 秒");
     expect(await call(`/v1/ai-edit/sessions/${session.id}/goal`, { method: "POST", body: { goal: "长".repeat(2_001) } })).toMatchObject({ status: 400, body: { error: "goal_too_long" } });
     expect((await call(`/v1/ai-edit/sessions/${session.id}/goal`, { method: "POST", body: { goal: "" } })).body.session.goal).toBe("");
+    expect(await stored()).toBe("");
     expect((await call(`/v1/ai-edit/sessions/${"0".repeat(32)}/goal`, { method: "POST", body: { goal: "x" } })).status).toBe(404);
   }, 20_000);
 
