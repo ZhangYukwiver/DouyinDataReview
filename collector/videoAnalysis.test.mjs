@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { LIBRARY_TEXTS, createLookDesk } from "./aiEdit/look.mjs";
 import { AnalysisLibrary, analysisPrompt, apiBaseUrl, networkFailure, parseAnalysisConfig, requestAnalysis, startAnalysis } from "./videoAnalysis.mjs";
 
 const config = { baseUrl: "https://ark.example.com/api/v3", apiKey: "k", model: "doubao-seed-2-0-mini-260428", direction: "" };
@@ -17,7 +18,7 @@ const delta = (content, finish = null) => ({ choices: [{ delta: { content }, fin
 describe("parseAnalysisConfig", () => {
   it("trims, drops the trailing slash and keeps the direction", () => {
     expect(parseAnalysisConfig({ baseUrl: " https://ark.example.com/api/v3/ ", apiKey: " k ", model: "m", direction: "美食探店" }))
-      .toEqual({ baseUrl: "https://ark.example.com/api/v3", apiKey: "k", model: "m", direction: "美食探店" });
+      .toEqual({ baseUrl: "https://ark.example.com/api/v3", apiKey: "k", model: "m", direction: "美食探店", videoInput: null });
   });
 
   it("fills in the version path for a bare host and drops a pasted /chat/completions", () => {
@@ -167,6 +168,67 @@ describe("startAnalysis", () => {
     expect(again.id).toBe(entry.id);
     expect(await settle(library, entry.id)).toMatchObject({ status: "failed", error: "抖音要求完成安全验证", markdown: "拆解结果" });
     expect(library.list()).toHaveLength(1);
+  });
+
+  it("has the analysis page cut the video into screenshots and beats when the model cannot watch video", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "analysis-"));
+    const video = path.join(dir, "v.mp4");
+    await writeFile(video, "fake-mp4");
+    const library = new AnalysisLibrary(path.join(dir, "analyses.json"));
+    const url = "https://www.douyin.com/video/7562882230080818489";
+    const looks = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS, timeoutMs: 2_000 });
+    const sent = [];
+    const fetchImpl = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      sent.push(body);
+      if (body.messages[0].content.some((part) => part.type === "video_url")) {
+        return new Response(JSON.stringify({ error: { message: "unknown variant `video_url`, expected `text` or `image_url`" } }), { status: 400 });
+      }
+      return sse([delta("① 截图拆解", "stop")]);
+    };
+    const pageAnswers = async (id) => {
+      let look = null;
+      for (let i = 0; i < 200 && !(look = library.list().find((item) => item.id === id)?.look); i += 1) await delay(5);
+      return look;
+    };
+    const answer = { duration: 8, audio: true, flashes: [], shots: [{ start: 0, end: 4, frame: "data:image/jpeg;base64,AAAA" }, { start: 4, end: 8, frame: null }], beats: { bpm: 120, beats: [0.5, 1, 1.5, 2], strong: [] } };
+
+    // 没测过：先整段发，被拒后挂给解析库页面
+    const entry = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: null }, looks, fetchImpl, pollMs: 1 });
+    const look = await pageAnswers(entry.id);
+    expect(look).toMatchObject({ kind: "reference", url: expect.stringMatching(/^\/v1\/analyses\/look\/[0-9a-f]{32}\/file$/u) });
+    expect(library.list()[0].stage).toBe("looking");
+    await library.save();
+    expect(JSON.parse(await readFile(library.file, "utf8"))[0].look).toBeUndefined();
+    looks.answer(entry.id, look.id, answer);
+    const done = await settle(library, entry.id);
+    expect(done).toMatchObject({ status: "complete", stage: null });
+    expect(done.markdown).toMatch(/^> 这个模型看不了视频[\s\S]*① 截图拆解$/u);
+    expect(done.look).toBeUndefined();
+    expect(sent[0].messages[0].content.at(-1).text).toContain("只回答一行：NO_VIDEO");
+    const parts = sent[1].messages[0].content;
+    expect(parts.filter((part) => part.type === "image_url")).toHaveLength(1);
+    expect(parts[0].text).toContain("音乐约 120 BPM");
+    expect(parts.at(-1).text).toContain("只回答一行：NO_IMAGES");
+
+    // 配置时已测出看不了：不再先发整段视频
+    sent.length = 0;
+    const direct = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks, fetchImpl, pollMs: 1 });
+    looks.answer(direct.id, (await pageAnswers(direct.id)).id, answer);
+    expect(await settle(library, direct.id)).toMatchObject({ status: "complete" });
+    expect(sent).toHaveLength(1);
+
+    // 拆的时候采集器关了：提示和下载、分析阶段被打断时一样
+    const closing = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS });
+    const cut = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks: closing, fetchImpl, pollMs: 1 });
+    await pageAnswers(cut.id);
+    closing.close();
+    expect(await settle(library, cut.id)).toMatchObject({ status: "failed", error: "上次解析到一半采集器关掉了，请重新解析。" });
+
+    // 应用页面没开着
+    const lonely = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS, timeoutMs: 30 });
+    const missed = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks: lonely, fetchImpl, pollMs: 1 });
+    expect(await settle(library, missed.id)).toMatchObject({ status: "failed", error: expect.stringContaining("打开应用，再点「重新解析」") });
   });
 
   it("refuses image posts and marks interrupted runs failed on load", async () => {

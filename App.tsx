@@ -102,6 +102,7 @@ import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEnt
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
+import { usePendingLooks } from "./src/components/workspace/aiEditLook";
 import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
 import { buildDataExport, type DataExportSelection } from "./src/services/exportData";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
@@ -251,6 +252,8 @@ function AppContent() {
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
   // 视频解析是可选功能：没装时侧栏和卡片上都不出现入口
   const [analysisInstalled, setAnalysisInstalled] = useState(() => Platform.OS === "web" && loadAnalysisInstalled());
+  // 模型看不了视频时，AI 剪辑和解析库要页面在浏览器里拆视频：应用开着就接，不管当前在哪个页面
+  usePendingLooks(Platform.OS === "web" ? collectorUrl : null, collectorToken, analysisInstalled);
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   // 首屏正在扫码登录或导入凭据（桌面版）：同样挡住读取和换号，但界面上不写成「正在切换账号」

@@ -6,8 +6,10 @@ import { modelFetch } from "../systemProxy.mjs";
 import { AnalysisError, requestAnalysis } from "../videoAnalysis.mjs";
 import { normalizeDouyinVideoUrl } from "../videoDownloader.mjs";
 import { members } from "./catalog.mjs";
+import { requestCompletion } from "./chat.mjs";
 import { EditError, invalid } from "./errors.mjs";
 import { AiEditError } from "./library.mjs";
+import { LOOK_UNAVAILABLE, lookMaterials, seesNoImages, seesNoVideo, videoRefused } from "./look.mjs";
 
 // 给模型的工具（function calling）。工程 id 由会话决定，不让模型填；时间参数对模型一律用秒（可带小数），
 // 这里换成整数微秒；素材用素材库的 media_id，这里换成素材文件的绝对路径。请求体字段保持原仓库的 snake_case，
@@ -247,6 +249,7 @@ export function buildSystemPrompt({ project, media }) {
     "- 轨道按列表顺序叠放：越靠后的轨道越在上层，会盖住前面的轨道。文字、贴纸、特效、滤镜轨道要放在视频轨道后面才看得见；画中画、叠加画面要另建一条视频轨道放在后面。需要调整层级用 reorder_tracks。",
     "- 视频和图片只能放视频轨道，音频只能放音频轨道，文字放文字轨道。同一条轨道上的片段不能重叠。轨道名字不要重复。",
     "- 背景音乐比成片短时，把同一段音乐在同一条音频轨道上接着多放几段来循环，最后一段截短；不要靠变速拉长（会变慢变调）。",
+    "- 做卡点、快闪这类跟着音乐切的片子：先用 detect_beats 测配乐的节拍，再把每一刀、文字出现和转场放在拍点上（重拍适合放转场或闪白），不要凭感觉估。参考视频解析结果里写了切点和拍点的关系，照着那个节奏来。",
     "- 视频片段可以用 source_start / source_duration 截取素材里的一段；时间线上的时长 = 截取长度 ÷ 倍速，不能超出素材本身的长度。图片最长 3 小时，不能变速。",
     "- 工具参数里没有 end：时间线里的 end 只是给你看的结束时间，改时长用 duration。",
     "- 位置、缩放、旋转、不透明度都写在 transform 对象里，例如 \"transform\": {\"transform_y\": -0.8}。transform_x / transform_y 以画布中心为 0，单位是半个画布宽 / 高，x 向右为正，y 向上为正（字幕一般放在 -0.8 左右，add_subtitles 默认就放在这里）。",
@@ -467,9 +470,8 @@ const ANALYSIS_CHARS = 12_000;
 const REFERENCE_CACHE_SIZE = 50;
 const NO_VIDEO = "AI 剪辑配置的模型看不了视频，换一个支持视频输入的模型（比如方舟 doubao-seed）再试。";
 // 模型回答自己看不到视频（正常的拆解一定带 Markdown 表格）
-const CANT_SEE_VIDEO = /(无法|不能|没法|没有办法|不支持)(直接)?(读取|查看|观看|看到|播放|处理|解析|理解|访问|打开|接收)[^。\n]{0,8}视频|看不[到了见][^。\n]{0,4}视频|(can(?:no|')t|unable to|not able to)\s+(view|watch|see|process|access|open|analy[sz]e)[^.\n]{0,30}video/iu;
-const VIDEO_WORDS = /video|视频|multimodal|多模态|unknown variant|content type/iu;
-const REFERENCE_FOCUS = "这次拆解还要给剪辑照着复刻：第③部分的时间轴表请按镜头切换细分，每行写清这一段多长、怎么切过来的（硬切还是叠化、推拉、闪白等转场）、字幕的样式和位置（大小、颜色、描边、出现方式）、配乐和音效在哪里卡点。";
+const LOOK_FOCUS = "上面不是原视频，是应用把参考视频拆出来的材料：镜头表、闪白位置、音乐节拍是程序测出来的，可以直接用；截图是镜头中间的一帧（镜头很多时只挑了一部分）。材料来源上面已经说明了，开头不用再写缺了原视频、音轨或台词，直接按①到⑤输出，听不到的项写「听不到」；如果你看不到截图，不要写拆解，只回答一行：NO_IMAGES。这次拆解要给剪辑照着复刻：第③部分的时间轴表按镜头表逐个镜头写（画面连续的相邻镜头可以合并成一行，但起止时间要和镜头表对上），写清每段多长、怎么切过来的（从截图和闪白位置推断硬切、闪白、推拉等）、截图里看得到的字幕样式和位置、哪些切点落在拍点上。听不到人声和歌词，不要编台词。";
+const REFERENCE_FOCUS = "如果你其实看不到视频画面（只拿到了文字信息），不要写拆解，只回答一行：NO_VIDEO。这次拆解还要给剪辑照着复刻：第③部分的时间轴表请按镜头切换细分，每行写清这一段多长、怎么切过来的（硬切还是叠化、推拉、闪白等转场）、字幕的样式和位置（大小、颜色、描边、出现方式）、配乐和音效在哪里卡点。";
 const SEARCH_ERRORS = {
   login_required: "没法搜索：抖音还没登录或登录已经失效。到设置 → 账号里重新扫码登录（或连接浏览器导入登录）后再搜。",
   verification_required: "抖音这次要求安全验证，没搜到结果。到设置 → 账号里重新扫码登录或连接浏览器，按提示完成验证后再搜，别马上重试。",
@@ -553,13 +555,52 @@ async function watchVideo(ctx, file, video) {
     if (error?.name === "AbortError") throw error;
     if (error instanceof AnalysisError) {
       // 收不了视频的模型一般回 400/415/422，或者流里报一句不认识视频
-      const noVideo = error.code === "provider_error" && ([400, 415, 422].includes(status) || (status === 200 && VIDEO_WORDS.test(error.message)));
+      const noVideo = error.code === "provider_error" && videoRefused(status, error.message);
       throw new AiEditError(noVideo ? "video_unsupported" : error.code, noVideo ? `${NO_VIDEO}（${error.message}）` : error.message, error.status);
     }
     throw new AiEditError("analysis_failed", error?.name === "TimeoutError" ? "模型太久没看完这个视频，请稍后重试。" : "参考视频没解析成功，请稍后重试。");
   }
-  if (!/\|\s*:?-{3,}/u.test(markdown) && CANT_SEE_VIDEO.test(markdown)) throw new AiEditError("video_unsupported", NO_VIDEO);
+  if (seesNoVideo(markdown)) {
+    throw new AiEditError("video_unsupported", NO_VIDEO);
+  }
   return markdown;
+}
+
+
+/** 看不了视频的模型：页面在浏览器里拆出镜头截图和节拍，连同镜头表一起交给模型。 */
+async function lookAtVideo(ctx, { file, video, pageUrl }) {
+  if (!ctx.askLook) throw new AiEditError("look_unavailable", LOOK_UNAVAILABLE, 409);
+  const look = await ctx.askLook({ kind: "reference", url: pageUrl ?? ctx.offerLookFile(file), name: video?.title });
+  const { parts, measured } = lookMaterials(look);
+  let markdown;
+  try {
+    markdown = await requestAnalysis({
+      config: { ...ctx.config, focus: LOOK_FOCUS },
+      video,
+      parts,
+      signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(ANALYSIS_TIMEOUT_MS)].filter(Boolean)),
+      fetchImpl: ctx.fetchImpl ?? modelFetch,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    if (error instanceof AnalysisError) throw new AiEditError(error.code, error.message, error.status);
+    throw new AiEditError("analysis_failed", error?.name === "TimeoutError" ? "模型太久没看完这些截图，请稍后重试。" : "参考视频没解析成功，请稍后重试。");
+  }
+  if (seesNoImages(markdown)) throw new AiEditError("images_unsupported", "AI 剪辑配置的模型连截图也没看到，换一个能看图片的模型再试。");
+  return { markdown, look: measured };
+}
+
+/** 配置标了看不了视频就直接拆截图；标了能看或没测过就先整段发，模型说看不到再拆截图。 */
+async function watchReference(ctx, { file, video, pageUrl }) {
+  if (ctx.config?.videoInput !== false) {
+    try {
+      return { markdown: await watchVideo(ctx, file, video) };
+    } catch (error) {
+      // 模型看不了，或者视频太大发不过去（页面那边能解到 200MB）：都改拆截图
+      if (error?.code !== "video_unsupported" && error?.code !== "video_too_large") throw error;
+    }
+  }
+  return lookAtVideo(ctx, { file, video, pageUrl });
 }
 
 async function analyzeReference(ctx, args) {
@@ -579,7 +620,9 @@ async function analyzeReference(ctx, args) {
     }
   }
   const cached = ctx.references?.get(key);
-  if (cached) return referenceResult(cached.markdown, cached.video);
+  // 截图版的结果记着是哪个模型写的：换成别的、不确定看不了视频的模型就重新看
+  const by = `${ctx.config?.baseUrl}|${ctx.config?.model}`;
+  if (cached && !(cached.look && cached.by !== by && ctx.config?.videoInput !== false)) return referenceResult(cached.markdown, cached.video, cached.look);
   let file;
   let video;
   if (item) {
@@ -588,21 +631,80 @@ async function analyzeReference(ctx, args) {
   } else {
     ({ file, video } = await downloadReference(ctx, key));
   }
-  const markdown = await watchVideo(ctx, file, video);
-  if (ctx.references) {
-    ctx.references.set(key, { markdown, video });
-    if (ctx.references.size > REFERENCE_CACHE_SIZE) ctx.references.delete(ctx.references.keys().next().value);
-  }
-  return referenceResult(markdown, video);
+  const { markdown, look } = await watchReference(ctx, { file, video, pageUrl: item ? `/v1/ai-edit/media/${item.id}/file` : null });
+  remember(ctx, key, { markdown, video, look, by });
+  return referenceResult(markdown, video, look);
 }
 
-function referenceResult(markdown, video) {
+function remember(ctx, key, value) {
+  if (!ctx.references) return;
+  ctx.references.set(key, value);
+  if (ctx.references.size > REFERENCE_CACHE_SIZE) ctx.references.delete(ctx.references.keys().next().value);
+}
+
+/** 测配乐节拍：页面在浏览器里解码音轨。时间是素材自己的时间（从素材开头算）。 */
+async function detectBeats(ctx, { media_id: id }) {
+  ctx.library.readyPath(id);
+  const item = ctx.library.get(id);
+  if (item.kind === "image" || !item.hasAudio) throw new AiEditError("no_audio", "这个素材没有声音，测不了节拍。");
+  const key = `beats:${item.id}`;
+  let beats = ctx.references?.get(key);
+  if (!beats) {
+    if (!ctx.askLook) throw new AiEditError("look_unavailable", LOOK_UNAVAILABLE, 409);
+    const look = await ctx.askLook({ kind: "beats", url: `/v1/ai-edit/media/${item.id}/file`, name: item.name });
+    beats = { duration: look.duration, ...(look.beats ? { bpm: look.beats.bpm, beats: look.beats.times, strong: look.beats.strong } : {}) };
+    remember(ctx, key, beats);
+  }
+  if (!beats.bpm) return { duration: beats.duration, note: "没测出稳定的节拍（可能是人声或环境声为主），卡点就按画面节奏来。" };
+  return {
+    duration: beats.duration,
+    bpm: beats.bpm,
+    beats: beats.beats.slice(0, 600),
+    strong: beats.strong,
+    note: "时间从这段素材开头算：片段截取了 source_start 的话要先减掉，再加上片段在时间线上的 start。切点、文字出现放在拍点上，重拍适合放转场或闪白。",
+  };
+}
+
+const PROBE_VIDEO = new URL("./probe-video.mp4", import.meta.url);
+
+/** 配置时测一下模型能不能看视频：发一段 3 秒、画面中央写着 386 的小视频，答对才算能看。 */
+export async function probeVideoInput({ config, fetchImpl = modelFetch, signal }) {
+  let status = 0;
+  const watched = async (...args) => {
+    const response = await fetchImpl(...args);
+    status = response.status;
+    return response;
+  };
+  const video = `data:video/mp4;base64,${(await readFile(PROBE_VIDEO)).toString("base64")}`;
+  try {
+    const reply = await requestCompletion({
+      config,
+      signal,
+      fetchImpl: watched,
+      messages: [{ role: "user", content: [
+        { type: "video_url", video_url: { url: video } },
+        { type: "text", text: "视频画面中央写着一个数字，是多少？只回答这个数字。看不到视频画面就回答 none。" },
+      ] }],
+    });
+    return { videoInput: /386/u.test(reply.text), answer: reply.text.trim().slice(0, 80) };
+  } catch (error) {
+    // 收不了视频的模型一般直接回 400/415/422；其他错误（Key 不对、连不上）交给页面照常报
+    // 和 watchVideo 一个口径：有的中转站回 200，错误放在正文或流里
+    if (error?.code === "provider_error" && videoRefused(status, error.message, { strict: true })) {
+      return { videoInput: false, answer: error.message.slice(0, 200) };
+    }
+    throw error;
+  }
+}
+
+function referenceResult(markdown, video, look) {
   return {
     video: {
       ...(video?.title ? { title: video.title } : {}),
       ...(video?.author ? { author: video.author } : {}),
       ...(video?.durationSeconds ? { duration: video.durationSeconds } : {}),
     },
+    ...(look ? { seen_as: "模型看不了视频，这份拆解是按应用测出的镜头截图和节拍写的", measured: look } : {}),
     analysis: markdown.length > ANALYSIS_CHARS ? `${markdown.slice(0, ANALYSIS_CHARS)}\n…（后面略）` : markdown,
     how_to_use: "只当参考，不要把这条视频放进时间线。照着第③部分时间轴的分段、每段时长、转场、字幕样式和配乐卡点，用素材库里用户自己的素材复刻；剪映里的转场、字体、特效先用 search_catalog 查到准确名称再用。",
   };
@@ -846,13 +948,20 @@ const TOOLS = [
   },
   {
     name: "analyze_reference",
-    description: "用 AI 剪辑配置的模型看懂一条参考视频（模型要支持视频输入）：返回分段时间轴、每段时长、转场、字幕风格和配乐卡点。给素材库里视频的 media_id，或者给抖音链接（search_douyin 返回的 url），两个只给一个。第一次解析一条要几分钟，解析过的马上返回。结果只当参考，不会放进时间线。",
+    description: "看懂一条参考视频：返回分段时间轴、每段时长、转场、字幕风格和配乐卡点。模型能看视频就整段看；看不了时应用会先测出镜头、截图和节拍再拆解（要开着应用）。给素材库里视频的 media_id，或者给抖音链接（search_douyin 返回的 url），两个只给一个。第一次解析一条要一两分钟，解析过的马上返回。结果只当参考，不会放进时间线。",
     parameters: obj({
       media_id: str("素材库里视频的 media_id"),
       url: str("抖音视频链接"),
     }),
     label: (args, ctx) => `解析了参考视频${quoted(args.media_id ? ctx.library.get(args.media_id)?.name : "", 16)}`,
     run: async (ctx, args) => analyzeReference(ctx, args),
+  },
+  {
+    name: "detect_beats",
+    description: "测素材库里一段音乐（或视频自带声音）的节拍：返回 BPM、每一拍的时间和重拍。做卡点、快闪时先测配乐，再把切点和文字出现放在拍点上。要开着应用（在浏览器里解码）。",
+    parameters: obj({ media_id: str("素材库里音频或视频的 media_id") }, ["media_id"]),
+    label: (args, ctx) => `测了配乐节拍${quoted(ctx.library.get(args.media_id)?.name ?? "", 16)}`,
+    run: async (ctx, args) => detectBeats(ctx, args),
   },
   {
     name: "search_catalog",

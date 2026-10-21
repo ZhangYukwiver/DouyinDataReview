@@ -22,6 +22,7 @@ import { DirectHistoryError } from "./directHistory.mjs";
 import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
+import { LIBRARY_TEXTS, createLookDesk } from "./aiEdit/look.mjs";
 import { AnalysisError, AnalysisLibrary, parseAnalysisConfig, startAnalysis } from "./videoAnalysis.mjs";
 import { VideoDownloadError, fetchMediaStream } from "./videoDownloader.mjs";
 
@@ -246,6 +247,8 @@ export async function startCollectorServer({
   // 解析库不分账号，放在根数据目录
   const analyses = new AnalysisLibrary(path.join(dataDirectory, "analyses.json"));
   await analyses.load();
+  // 解析库用的模型看不了视频时，请解析库页面在浏览器里拆截图和节拍
+  const analysisLooks = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS });
   // AI 剪辑（会话、工程、素材库）同样不分账号；切换账号期间拿不到采集器，导入抖音视频会提示稍等
   const aiEdit = createAiEdit({
     dataDirectory,
@@ -437,6 +440,12 @@ export async function startCollectorServer({
 
     // AI 剪辑的素材文件给 <video>/<img> 直接用，带不了 Bearer，靠素材库的 key
     if (await aiEdit.handle(request, response, url)) return;
+    // 解析库请页面拆视频时给 <video> 的临时地址：地址里的随机串就是凭证，半小时失效
+    const analysisLookFile = request.method === "GET" ? url.pathname.match(/^\/v1\/analyses\/look\/([0-9a-f]{32})\/file$/u) : null;
+    if (analysisLookFile) {
+      await analysisLooks.sendFile(request, response, analysisLookFile[1]);
+      return;
+    }
 
     if (!pairing.authorize(request.headers.authorization)) {
       sendJson(response, 401, { error: "not_paired" });
@@ -735,6 +744,21 @@ export async function startCollectorServer({
       } else {
         sendJson(response, 200, { job });
       }
+    } else if (url.pathname === "/v1/analyses/looks") {
+      // 应用开着就接活儿：只回挂着的拆视频任务（不带整份解析结果，轮询很轻）
+      if (request.method !== "GET") { sendJson(response, 405, { error: "method_not_allowed" }); return; }
+      sendJson(response, 200, { looks: analyses.list().filter((item) => item.status === "running" && item.look).map((item) => ({ id: item.id, look: item.look })) });
+    } else if (/^\/v1\/analyses\/[0-9a-f-]{36}\/look\/[0-9a-f]{16}$/u.test(url.pathname)) {
+      // 解析库页面交回拆好的截图和节拍（或接手、进度回执）
+      if (request.method !== "POST") { sendJson(response, 405, { error: "method_not_allowed" }); return; }
+      const [, , , id, , jobId] = url.pathname.split("/");
+      try {
+        analysisLooks.answer(id, jobId, await readJsonBody(request, 24 * 1024 * 1024));
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        sendJson(response, error?.status ?? (malformed ? 400 : 500), { error: error?.code ?? "invalid_request", message: error?.code ? error.message : "请求无效，请重试。" });
+      }
     } else if (url.pathname === "/v1/analyses" || /^\/v1\/analyses\/[0-9a-f-]{36}$/u.test(url.pathname)) {
       // 解析库：GET 全部，POST 开始解析一条（带链接和接口配置），DELETE 删一条
       try {
@@ -743,7 +767,7 @@ export async function startCollectorServer({
           const body = await readJsonBody(request, 16 * 1024);
           if (explorer.busy) { sendJson(response, 409, { error: "collector_busy", message: "请等待当前探索操作完成后继续。" }); return; }
           if (rejectWhileSwitching(response)) return;
-          sendJson(response, 202, { analysis: startAnalysis({ library: analyses, collector, url: body?.url, config: parseAnalysisConfig(body?.config) }) });
+          sendJson(response, 202, { analysis: startAnalysis({ library: analyses, collector, url: body?.url, config: parseAnalysisConfig(body?.config), looks: analysisLooks }) });
         } else if (request.method === "DELETE" && url.pathname !== "/v1/analyses") sendJson(response, 200, { removed: await analyses.remove(url.pathname.split("/").at(-1)) });
         else sendJson(response, 405, { error: "method_not_allowed" });
       } catch (error) {
@@ -882,6 +906,7 @@ export async function startCollectorServer({
     browserLoginController?.abort();
     for (const finish of statusWaiters) finish();
     try {
+      analysisLooks.close();
       await aiEdit.close();
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器
       await accountWork?.catch(() => undefined);

@@ -4,7 +4,17 @@ import type { ExploreConnection } from "./explorer";
 // AI 剪辑：对话、工程、素材库都在采集器（collector/aiEdit/），页面只负责发消息、长轮询会话、上传素材和展示。
 // 接口配置存在本机 localStorage，和解析库的配置完全分开，每次随消息带过去，采集器不保存 Key。
 
-export interface AiEditConfig { baseUrl: string; apiKey: string; model: string }
+export interface AiEditConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  /** 保存时测过：模型能不能直接看视频（看不了的话，参考视频改由页面拆成截图和节拍再给它看）；没测过是 null */
+  videoInput?: boolean | null;
+  /** 测的是哪个接口地址和模型，换了就要重测 */
+  videoProbe?: string;
+}
+
+export const videoProbeKey = (config: Pick<AiEditConfig, "baseUrl" | "model">): string => `${config.baseUrl.trim()}|${config.model.trim()}`;
 
 export const DEFAULT_AI_EDIT_CONFIG: AiEditConfig = {
   baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
@@ -17,8 +27,11 @@ const CONFIG_KEY = "dy2.aiEditConfig";
 export function loadAiEditConfig(): AiEditConfig {
   try {
     const saved = JSON.parse(globalThis.localStorage?.getItem(CONFIG_KEY) ?? "{}") as Partial<AiEditConfig> | null;
-    const pick = (key: keyof AiEditConfig) => typeof saved?.[key] === "string" ? saved[key] : DEFAULT_AI_EDIT_CONFIG[key];
-    return { baseUrl: pick("baseUrl"), apiKey: pick("apiKey"), model: pick("model") };
+    const pick = (key: "baseUrl" | "apiKey" | "model"): string => { const value = saved?.[key]; return typeof value === "string" ? value : DEFAULT_AI_EDIT_CONFIG[key]; };
+    const config: AiEditConfig = { baseUrl: pick("baseUrl"), apiKey: pick("apiKey"), model: pick("model") };
+    // 测的不是现在这个模型就当没测过
+    if (typeof saved?.videoInput === "boolean" && saved.videoProbe === videoProbeKey(config)) Object.assign(config, { videoInput: saved.videoInput, videoProbe: saved.videoProbe });
+    return config;
   } catch {
     return DEFAULT_AI_EDIT_CONFIG;
   }
@@ -160,11 +173,14 @@ export interface AiEditSession extends AiEditSessionSummary {
   revision: number;
   error: { code: string; message: string } | null;
   messages: AiEditChatItem[];
-  /** 正在进行的这一轮：已经吐出来的文字和已经做完的步骤 */
-  streaming: { text: string; actions?: AiEditAction[] } | null;
+  /** 正在进行的这一轮：已经吐出来的文字和已经做完的步骤；look 是要页面在浏览器里帮忙拆的视频 */
+  streaming: { text: string; actions?: AiEditAction[]; look?: AiEditLookJob } | null;
 }
 
 export interface AiEditSessionState { session: AiEditSession; project: EditProject }
+
+/** 采集器没有解码器，参考视频的镜头截图、闪白和配乐节拍由页面在浏览器里拆好交回。url 是采集器上的路径，访问时带素材 key。 */
+export interface AiEditLookJob { id: string; kind: "reference" | "beats"; url: string; name?: string; claimed?: boolean }
 
 export interface AiEditMediaItem {
   id: string;
@@ -259,6 +275,23 @@ export async function getAiEditDraftBox(connection: ExploreConnection): Promise<
   return request(connection, "/v1/ai-edit/draft-box");
 }
 
+/** 配置时测一下模型能不能直接看视频（采集器发一段 3 秒的小视频问画面上写的数字）。 */
+export async function probeAiEditVideo(connection: ExploreConnection, config: AiEditConfig): Promise<{ videoInput: boolean; answer: string }> {
+  const value = await request(connection, "/v1/ai-edit/probe-video", { method: "POST", body: JSON.stringify({ config }), timeoutMs: 130_000 });
+  return { videoInput: value?.videoInput === true, answer: typeof value?.answer === "string" ? value.answer : "" };
+}
+
+/** 各会话这一轮挂着的拆视频任务（url 已带素材 key），应用开着就接，不管当前在哪个页面。 */
+export async function listPendingAiEditLooks(connection: ExploreConnection): Promise<{ sessionId: string; look: AiEditLookJob }[]> {
+  const value = await request(connection, "/v1/ai-edit/looks");
+  return Array.isArray(value?.looks) ? value.looks : [];
+}
+
+/** 把页面拆好的结果（或拆不了的原因）交回给采集器。 */
+export async function answerAiEditLook(connection: ExploreConnection, sessionId: string, lookId: string, body: unknown): Promise<void> {
+  await request(connection, `${sessionPath(sessionId)}/look/${encodeURIComponent(lookId)}`, { method: "POST", body: JSON.stringify(body), timeoutMs: 60_000 });
+}
+
 export async function listAiEditMedia(connection: ExploreConnection): Promise<{ media: AiEditMediaItem[]; key: string }> {
   const value = await request(connection, "/v1/ai-edit/media");
   return { media: Array.isArray(value?.media) ? value.media : [], key: typeof value?.key === "string" ? value.key : "" };
@@ -275,6 +308,11 @@ export async function deleteAiEditMedia(connection: ExploreConnection, id: strin
 }
 
 /** 素材文件地址：不带 Bearer，靠素材库的 key，<video>/<img> 可以直接用（支持 Range）。 */
+/** 请页面拆视频时，采集器给的是路径，这里补上根地址和素材 key。 */
+export function aiEditLookUrl(baseUrl: string, path: string, key: string): string {
+  return `${normalizeCollectorBaseUrl(baseUrl)}${path}?key=${encodeURIComponent(key)}`;
+}
+
 export function aiEditMediaUrl(baseUrl: string, id: string, key: string): string {
   return `${normalizeCollectorBaseUrl(baseUrl)}/v1/ai-edit/media/${encodeURIComponent(id)}/file?key=${encodeURIComponent(key)}`;
 }

@@ -1,10 +1,20 @@
-import { LocalCollectorError, collectorFetch } from "./localCollector";
+import { type AiEditLookJob, videoProbeKey } from "./aiEdit";
+import { LocalCollectorError, collectorFetch, normalizeCollectorBaseUrl } from "./localCollector";
 import type { ExploreConnection } from "./explorer";
 
 // 解析库：工作台把视频链接和接口配置交给采集器，采集器下载视频、调用 AI、存结果（collector/videoAnalysis.mjs）。
 // 接口配置存在本机 localStorage，每次随请求带过去，采集器不保存 Key。
 
-export interface AnalysisConfig { baseUrl: string; apiKey: string; model: string; direction: string }
+export interface AnalysisConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  direction: string;
+  /** 保存时测过：模型能不能直接看视频（看不了的话由解析库页面把视频拆成截图和节拍再给它）；没测过是 null */
+  videoInput?: boolean | null;
+  /** 测的是哪个接口地址和模型，换了就要重测 */
+  videoProbe?: string;
+}
 
 export const DEFAULT_ANALYSIS_CONFIG: AnalysisConfig = {
   baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
@@ -24,7 +34,9 @@ export interface VideoAnalysis {
   id: string;
   sourceUrl: string;
   status: "running" | "complete" | "failed";
-  stage: "downloading" | "analyzing" | null;
+  stage: "downloading" | "analyzing" | "looking" | null;
+  /** 模型看不了视频时，采集器请这个页面在浏览器里拆视频（截图、节拍） */
+  look?: AiEditLookJob;
   video: AnalysisVideo | null;
   model: string;
   markdown: string | null;
@@ -36,7 +48,13 @@ export interface VideoAnalysis {
 const CONFIG_KEY = "dy2.analysisConfig";
 export function loadAnalysisConfig(): AnalysisConfig {
   try {
-    return { ...DEFAULT_ANALYSIS_CONFIG, ...JSON.parse(globalThis.localStorage?.getItem(CONFIG_KEY) ?? "{}") };
+    const config: AnalysisConfig = { ...DEFAULT_ANALYSIS_CONFIG, ...JSON.parse(globalThis.localStorage?.getItem(CONFIG_KEY) ?? "{}") };
+    // 测的不是现在这个模型就当没测过
+    if (typeof config.videoInput !== "boolean" || config.videoProbe !== videoProbeKey(config)) {
+      delete config.videoInput;
+      delete config.videoProbe;
+    }
+    return config;
   } catch {
     return DEFAULT_ANALYSIS_CONFIG;
   }
@@ -107,4 +125,18 @@ export function parseMarkdown(text: string): MarkdownBlock[] {
   }
   flush();
   return blocks;
+}
+
+/** 把解析库页面拆好的截图和节拍（或接手、进度回执、拆不了的原因）交回采集器。 */
+export async function answerAnalysisLook(connection: ExploreConnection, id: string, lookId: string, body: unknown): Promise<void> {
+  await request(connection, `/v1/analyses/${encodeURIComponent(id)}/look/${encodeURIComponent(lookId)}`, { method: "POST", body: JSON.stringify(body) });
+}
+
+/** 采集器给的是路径（里面的随机串就是凭证），补上根地址。 */
+export const analysisLookUrl = (baseUrl: string, path: string): string => `${normalizeCollectorBaseUrl(baseUrl)}${path}`;
+
+/** 解析库挂着的拆视频任务（只有任务，不带整份结果），应用开着就接。 */
+export async function listPendingAnalysisLooks(connection: ExploreConnection): Promise<{ id: string; look: AiEditLookJob }[]> {
+  const value = await request(connection, "/v1/analyses/looks");
+  return Array.isArray(value?.looks) ? value.looks : [];
 }

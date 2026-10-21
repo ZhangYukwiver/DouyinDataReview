@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { lookMaterials, seesNoImages, seesNoVideo, videoRefused } from "./aiEdit/look.mjs";
 import { modelFetch } from "./systemProxy.mjs";
 import { normalizeDouyinVideoUrl } from "./videoDownloader.mjs";
 
@@ -152,7 +153,8 @@ export function parseAnalysisConfig(value) {
   try { protocol = new URL(baseUrl).protocol; } catch { /* 下面统一报错 */ }
   if (protocol !== "https:" && protocol !== "http:") throw new AnalysisError("invalid_config", "接口地址要以 https:// 开头。");
   if (!apiKey || !model) throw new AnalysisError("invalid_config", "先在解析库的接口设置里填好 Key 和模型。");
-  return { baseUrl, apiKey, model, direction: text(value?.direction, 600) };
+  // videoInput：页面配置时测过模型能不能看视频；看不了就由开着的应用页面把视频拆成截图和节拍再给它
+  return { baseUrl, apiKey, model, direction: text(value?.direction, 600), videoInput: typeof value?.videoInput === "boolean" ? value.videoInput : null };
 }
 
 /** 提示词后面附上抖音页面读到的公开信息和创作方向，提示词要求“只能使用已提供的数据”。focus 是调用方追加的要求（AI 剪辑参考视频时用）。 */
@@ -162,7 +164,8 @@ export function analysisPrompt(video, direction = "", focus = "") {
     .filter(([, count]) => count > 0).map(([label, count]) => `${label} ${count}`);
   const published = video?.publishedAt ? new Date(video.publishedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }) : "未知";
   return [
-    ANALYSIS_PROMPT,
+    // AI 剪辑带着自己的要求来（focus 里写了看不到时只回一个标记），去掉「无法读取请说明缺什么」，不然模型照做反而像没看到
+    focus ? ANALYSIS_PROMPT.replace("如果无法读取视频，请说明当前能读取哪些材料、还缺什么；", "") : ANALYSIS_PROMPT,
     "",
     "---",
     "下面是从抖音页面读到的这条视频的信息，可以当作“已提供的数据”：",
@@ -212,7 +215,8 @@ export async function requestAnalysis(options) {
   });
 }
 
-async function analysis({ config, video, videoBase64, signal, fetchImpl = modelFetch }) {
+/** parts：不发整段视频时换成别的内容（AI 剪辑给看不了视频的模型发截图和测出来的数字），提示词照旧接在最后。 */
+async function analysis({ config, video, videoBase64, parts, signal, fetchImpl = modelFetch }) {
   const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     signal,
@@ -225,7 +229,7 @@ async function analysis({ config, video, videoBase64, signal, fetchImpl = modelF
       messages: [{
         role: "user",
         content: [
-          { type: "video_url", video_url: { url: `data:video/mp4;base64,${videoBase64}` } },
+          ...(parts ?? [{ type: "video_url", video_url: { url: `data:video/mp4;base64,${videoBase64}` } }]),
           { type: "text", text: analysisPrompt(video, config.direction, config.focus) },
         ],
       }],
@@ -289,7 +293,8 @@ export class AnalysisLibrary {
   }
 
   save() {
-    const data = JSON.stringify(this.items);
+    // look 是挂给页面拆视频的活儿，只在内存里
+    const data = JSON.stringify(this.items.map(({ look: _look, ...item }) => item));
     this.saving = this.saving.then(async () => {
       await writeFile(`${this.file}.tmp`, data, { mode: 0o600 });
       await rename(`${this.file}.tmp`, this.file);
@@ -299,7 +304,7 @@ export class AnalysisLibrary {
 }
 
 /** 开始解析一条视频：同一链接再解析就覆盖原来那条（解析中的直接返回）。下载出错会同步抛出（比如采集器正忙）。 */
-export function startAnalysis({ library, collector, url, config, fetchImpl = modelFetch, pollMs = 1_000 }) {
+export function startAnalysis({ library, collector, url, config, looks, fetchImpl = modelFetch, pollMs = 1_000 }) {
   const sourceUrl = normalizeDouyinVideoUrl(url);
   const existing = library.list().find((item) => item.sourceUrl === sourceUrl);
   if (existing?.status === "running") return existing;
@@ -319,11 +324,48 @@ export function startAnalysis({ library, collector, url, config, fetchImpl = mod
     updatedAt: now,
   };
   void library.put(entry);
-  void runAnalysis({ library, entry, collector, jobId: job.id, config, fetchImpl, pollMs });
+  void runAnalysis({ library, entry, collector, jobId: job.id, config, looks, fetchImpl, pollMs });
   return entry;
 }
 
-async function runAnalysis({ library, entry, collector, jobId, config, fetchImpl, pollMs }) {
+// 看不了视频的模型：页面在浏览器里拆出来的镜头截图、镜头表和节拍
+const LOOK_FOCUS = "上面不是原视频，是应用把这条视频拆出来的材料：镜头表、闪白位置、音乐节拍是程序测出来的，可以直接用；截图是镜头中间的一帧（镜头很多时只挑了一部分）。材料来源上面已经说明了，开头不用再写缺了原视频、音轨或台词，直接按①到⑤输出；听不到的项（台词、旁白、音效、歌词）写「听不到」，不要编。第③部分的时间轴按镜头表的分段写。如果你看不到截图，不要写拆解，只回答一行：NO_IMAGES。";
+const VIDEO_FOCUS = "如果你其实看不到视频画面（只拿到了文字信息），不要写拆解，只回答一行：NO_VIDEO。";
+const LOOK_NOTE = "> 这个模型看不了视频，下面是按应用拆出的镜头截图、镜头表和音乐节拍写的，听不到台词和旁白。\n\n";
+
+/** 整段视频发给模型；模型看不了（接口拒收、回答说没看到）就返回 null，改拆截图。 */
+async function watchWhole({ config, video, filePath, fetchImpl }) {
+  let status = 0;
+  const watched = async (...args) => {
+    const response = await fetchImpl(...args);
+    status = response.status;
+    return response;
+  };
+  try {
+    const markdown = await requestAnalysis({ config: { ...config, focus: VIDEO_FOCUS }, video, videoBase64: (await readFile(filePath)).toString("base64"), signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl: watched });
+    return seesNoVideo(markdown) ? null : markdown;
+  } catch (error) {
+    if (error instanceof AnalysisError && error.code === "provider_error" && videoRefused(status, error.message)) return null;
+    throw error;
+  }
+}
+
+async function lookAt({ library, entry, config, filePath, looks, fetchImpl, update }) {
+  await update({ stage: "looking" });
+  const look = await looks.ask({
+    id: entry.id,
+    live: () => entry.status === "running",
+    get: () => entry.look ?? null,
+    set: (job) => { if (job) entry.look = job; else delete entry.look; },
+    touch: () => { entry.updatedAt = new Date().toISOString(); },
+  }, { kind: "reference", url: looks.offerFile(filePath), name: entry.video?.title });
+  await update({ stage: "analyzing" });
+  const markdown = await requestAnalysis({ config: { ...config, focus: LOOK_FOCUS }, video: entry.video, parts: lookMaterials(look).parts, signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl });
+  if (seesNoImages(markdown)) throw new AnalysisError("images_unsupported", "解析库配置的模型连截图也没看到，换一个能看图片的模型再试。", 502);
+  return LOOK_NOTE + markdown;
+}
+
+async function runAnalysis({ library, entry, collector, jobId, config, looks, fetchImpl, pollMs }) {
   const update = (patch) => {
     Object.assign(entry, patch, { updatedAt: new Date().toISOString() });
     return library.save();
@@ -340,13 +382,17 @@ async function runAnalysis({ library, entry, collector, jobId, config, fetchImpl
     const filePath = collector.getVideoDownloadFilePath(jobId);
     if (!filePath?.toLowerCase().endsWith(".mp4")) throw new AnalysisError("not_video", "图文作品暂时不能解析，只支持视频。");
     await update({ stage: "analyzing", video: job.video ?? entry.video });
-    const videoBase64 = (await readFile(filePath)).toString("base64");
-    const markdown = await requestAnalysis({ config, video: entry.video, videoBase64, signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl });
+    // 配置时测出看不了视频就直接拆截图；能看或没测过先整段发，模型看不了再拆
+    let markdown = config.videoInput === false || !looks ? null : await watchWhole({ config, video: entry.video, filePath, fetchImpl });
+    if (markdown === null && !looks) markdown = await requestAnalysis({ config, video: entry.video, videoBase64: (await readFile(filePath)).toString("base64"), signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl });
+    if (markdown === null) markdown = await lookAt({ library, entry, config, filePath, looks, fetchImpl, update });
     await update({ status: "complete", stage: null, markdown, error: null });
   } catch (error) {
     const message = error instanceof AnalysisError ? `${error.message}${error.dropped ? "点「重新解析」再试一次。" : ""}`
+      : error?.code === "interrupted" ? "上次解析到一半采集器关掉了，请重新解析。"
+      : typeof error?.code === "string" && error.code.startsWith("look_") ? error.message
       : error?.name === "TimeoutError" ? "接口太久没答完，请稍后重试。"
-        : "解析失败，请稍后重试。";
+      : "解析失败，请稍后重试。";
     await update({ status: "failed", stage: null, error: message });
   }
 }

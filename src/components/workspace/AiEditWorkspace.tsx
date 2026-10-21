@@ -10,9 +10,9 @@ import {
 import type { PersonalRecordCollection, PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import {
-  aiEditMediaUrl, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
-  importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, saveAiEditConfig, sendAiEditMessage, sessionRunning,
-  stopAiEditSession, uploadAiEditMedia,
+  aiEditLookUrl, aiEditMediaUrl, answerAiEditLook, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
+  importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, saveAiEditConfig, sendAiEditMessage, sessionRunning,
+  stopAiEditSession, uploadAiEditMedia, videoProbeKey,
   type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditMediaItem, type AiEditSession, type AiEditSessionState,
   type AiEditSessionSummary, type EditCanvas, type EditMediaSegment, type EditProject, type EditSegment, type EditTextSegment, type EditTrack,
 } from "../../services/aiEdit";
@@ -24,6 +24,7 @@ import {
   type ClipDetail, type ExportNote, type MaskSpec, type Size, type TransitionReach,
 } from "./aiEditModel";
 import { createFrameQueue, openVideoFrames } from "./aiEditFrames";
+import { dropLookJobs, runLookJob } from "./aiEditLook";
 import { createUploadQueue } from "./aiEditUploads";
 import { kit, Segmented, SmallButton } from "./CreatorKit";
 import { Markdown } from "./markdownView";
@@ -41,6 +42,9 @@ const webAutoHeight = web ? ({ fieldSizing: "content" } as object) : null;
 const LAST_SESSION_KEY = "dy2.aiEditSession";
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error && reason.message ? reason.message : fallback;
 // 上传不随页面卸载中断：切到别的侧栏再回来，进度和失败提示都接得上
+// 测模型能不能看视频：整个页面共用，切走再回来不重复测（probing 正在测的、probeTried 自动测过的「地址|模型|Key」）
+const probing = new Set<string>();
+const probeTried = new Set<string>();
 const uploadQueue = createUploadQueue(uploadAiEditMedia, (reason) => errorText(reason, "没传上去，请稍后重试。"));
 // 轨道上视频片段的缩略图：全页一条取帧队列，结果缓存在模块里，切走再回来不用重新解码
 const frameQueue = createFrameQueue(openVideoFrames);
@@ -83,6 +87,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const uploads = useSyncExternalStore(uploadQueue.subscribe, uploadQueue.getSnapshot);
   const [config, setConfig] = useState<AiEditConfig>(loadAiEditConfig);
   const [configOpen, setConfigOpen] = useState(() => !loadAiEditConfig().apiKey);
+  // 测模型能不能直接看视频：key 是测的哪个接口地址+模型，running 时在测，error 是没测出来的原因
+  const [probe, setProbe] = useState<{ key: string; running: boolean; error?: string }>({ key: "", running: false });
   const [draftBox, setDraftBox] = useState<AiEditDraftBoxStatus | null>(null);
   // 导入状态按会话记：导入途中切到别的剪辑，那边的按钮和状态行不受影响，结果也只回到发起导入的那个剪辑
   const [exportingIds, setExportingIds] = useState<string[]>([]);
@@ -169,6 +175,46 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     })();
     return () => controller.abort();
   }, [conn, currentId, loadSessions]);
+
+  // ---------- 模型能不能直接看视频：每个接口地址+模型测一次，看不了的话参考视频改由页面拆成截图和节拍 ----------
+  const probeVideo = useCallback(async (target: AiEditConfig) => {
+    const key = videoProbeKey(target);
+    const attempt = `${key}|${target.apiKey}`;
+    if (!conn || probing.has(attempt)) return;
+    probing.add(attempt);
+    setProbe({ key, running: true });
+    // 结果只落到测的那个模型上：测的时候换了模型、切走了页面都不串
+    const settle = (next: { key: string; running: boolean; error?: string }) => setProbe((current) => (current.key === key ? next : current));
+    try {
+      const { videoInput } = await probeAiEditVideo(conn, target);
+      // 测的那几十秒里可能切走了页面：直接存进本机，不靠组件还在
+      const stored = loadAiEditConfig();
+      if (videoProbeKey(stored) === key) saveAiEditConfig({ ...stored, videoInput, videoProbe: key });
+      setConfig((current) => (videoProbeKey(current) === key ? { ...current, videoInput, videoProbe: key } : current));
+      settle({ key, running: false });
+    } catch (reason) {
+      settle({ key, running: false, error: errorText(reason, "没测出来，请稍后重试。") });
+    } finally {
+      probing.delete(attempt);
+    }
+  }, [conn]);
+  // 没测过的接口地址+模型+Key（新填的、改过的、以前存的）自动测一次；测不出来的再测点「重新测」
+  useEffect(() => {
+    const attempt = `${videoProbeKey(config)}|${config.apiKey}`;
+    if (!conn || !config.apiKey.trim() || typeof config.videoInput === "boolean" || probeTried.has(attempt)) return;
+    probeTried.add(attempt);
+    void probeVideo(config);
+  }, [conn, config, probeVideo]);
+
+  // ---------- 采集器请页面帮忙拆视频（截图、节拍），做完交回 ----------
+  const lookJob = state?.session.streaming?.look ?? null;
+  const lookSessionId = state?.session.id ?? null;
+  useEffect(() => {
+    if (!lookSessionId) return;
+    dropLookJobs(lookSessionId, lookJob?.id ?? null);
+    if (!conn || !baseUrl || !mediaKey || !lookJob) return;
+    runLookJob(lookSessionId, lookJob, aiEditLookUrl(baseUrl, lookJob.url, mediaKey), (body) => answerAiEditLook(conn, lookSessionId, lookJob.id, body));
+  }, [conn, baseUrl, mediaKey, lookJob, lookSessionId]);
 
   // ---------- 素材库 ----------
   const loadMedia = useCallback(async () => {
@@ -342,7 +388,19 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
           <Pressable accessibilityRole="button" accessibilityLabel="关闭提示" hitSlop={8} onPress={() => setError(null)} style={webPointer}><X size={13} color={color.danger} /></Pressable>
         </View> : null}
         {configOpen
-          ? <ConfigPanel config={config} onSave={(next) => { saveAiEditConfig(next); setConfig(next); setConfigOpen(false); setError(null); }} onCancel={config.apiKey ? () => setConfigOpen(false) : undefined} />
+          ? <ConfigPanel
+              config={config}
+              probe={probe.key === videoProbeKey(config) ? probe : { key: "", running: false }}
+              onRetest={() => void probeVideo(config)}
+              onSave={(saved) => {
+                // 接口地址和模型没变就沿用测过的结果，变了重测；面板留着显示测的结果
+                const next = videoProbeKey(saved) === config.videoProbe ? { ...saved, videoInput: config.videoInput, videoProbe: config.videoProbe } : saved;
+                saveAiEditConfig(next);
+                setConfig(next);
+                setError(null);
+              }}
+              onCancel={config.apiKey ? () => setConfigOpen(false) : undefined}
+            />
           : <Conversation session={session} loaded={sessionsLoaded} onSuggest={(text) => setInput(text)} />}
         {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)} /> : null}
       </View>
@@ -440,9 +498,31 @@ function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove }: {
   </View>;
 }
 
-function ConfigPanel({ config, onSave, onCancel }: { config: AiEditConfig; onSave: (config: AiEditConfig) => void; onCancel?: () => void }) {
+function videoInputNote(config: AiEditConfig, probe: { running: boolean; error?: string; key?: string }): string {
+  if (probe.running) return "正在测这个模型能不能直接看视频……";
+  const known = config.videoInput === true ? "这个模型能直接看视频，参考视频会整段发给它（画面和声音都能用上）。"
+    : config.videoInput === false ? "这个模型看不了视频。解析参考视频时，应用会先把视频拆成镜头截图和音乐节拍再交给它，这时要开着应用。"
+      : null;
+  if (probe.error) return known ? `这次没测出来（${probe.error}），先沿用上次的结果：${known}` : `没测出这个模型能不能直接看视频（${probe.error}）。解析参考视频时会先整段发给它，看不了再拆成截图。`;
+  return known ?? "还没测过这个模型能不能直接看视频。";
+}
+
+function ConfigPanel({ config, probe, onSave, onRetest, onCancel }: {
+  config: AiEditConfig;
+  probe: { running: boolean; error?: string; key?: string };
+  onSave: (config: AiEditConfig) => void;
+  onRetest: () => void;
+  onCancel?: () => void;
+}) {
   const [draft, setDraft] = useState(config);
-  const field = (key: keyof AiEditConfig, label: string, props: Partial<React.ComponentProps<typeof TextInput>> = {}) => <View style={styles.field}>
+  // 保存后面板留着显示测的结果，按钮上闪一下「已保存」
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (!saved) return undefined;
+    const timer = setTimeout(() => setSaved(false), 1600);
+    return () => clearTimeout(timer);
+  }, [saved]);
+  const field = (key: "apiKey" | "model" | "baseUrl", label: string, props: Partial<React.ComponentProps<typeof TextInput>> = {}) => <View style={styles.field}>
     <Text style={styles.label}>{label}</Text>
     <TextInput accessibilityLabel={label} value={draft[key]} onChangeText={(text) => setDraft((current) => ({ ...current, [key]: text }))} placeholderTextColor={color.textMuted} style={styles.fieldInput} {...props} />
   </View>;
@@ -455,9 +535,13 @@ function ConfigPanel({ config, onSave, onCancel }: { config: AiEditConfig; onSav
       {field("model", "模型", { placeholder: "doubao-seed-2-1-lite-260915" })}
       {field("baseUrl", "接口地址", { placeholder: "https://ark.cn-beijing.volces.com/api/v3" })}
       <View style={kit.row}>
-        <SmallButton label="保存" disabled={!ready} onPress={() => onSave({ apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim() })} />
+        <SmallButton label={saved ? "已保存" : "保存"} disabled={!ready} onPress={() => { onSave({ apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim() }); setSaved(true); }} />
         {onCancel ? <SmallButton label="收起" onPress={onCancel} /> : null}
       </View>
+      {config.apiKey ? <View style={styles.probeRow}>
+        <Text style={[kit.muted, { flex: 1 }]}>{videoInputNote(config, probe)}</Text>
+        {probe.running ? <ActivityIndicator size="small" color={color.cyan} /> : <SmallButton label="重新测" onPress={onRetest} />}
+      </View> : null}
     </View>
   </ScrollView>;
 }
@@ -1310,6 +1394,7 @@ const styles = StyleSheet.create({
 
   configScroll: { padding: 12 },
   configBox: { gap: 10, padding: 14, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
+  probeRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: color.borderSoft },
   configTitle: { color: color.text, fontFamily: font.body, fontSize: 14, fontWeight: "600" },
   field: { gap: 5 },
   label: { color: color.textSecondary, fontFamily: font.body, fontSize: 12 },

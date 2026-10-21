@@ -167,6 +167,44 @@ async function uploadFixture(call, name, as = name) {
 
 // ---------- 测试 ----------
 
+describe("AI edit help from the open page", () => {
+  it("hangs a beat job on the running turn, serves the clip to the page and resumes with its answer", async () => {
+    const requests = [];
+    const ids = {};
+    const fetchImpl = async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      return requests.length === 1 ? toolReply([{ name: "detect_beats", args: { media_id: ids.tone } }]) : textReply("测好了");
+    };
+    const { call, base, until, waitIdle } = await start({ fetchImpl });
+    ids.tone = (await uploadFixture(call, "tone.mp3", "配乐.mp3")).body.item.id;
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "测一下配乐的节拍", config: CONFIG } });
+    const look = await until(async () => (await call(`/v1/ai-edit/sessions/${session.id}`)).body.session.streaming?.look, Boolean, "look job");
+    expect(look).toMatchObject({ kind: "beats", url: `/v1/ai-edit/media/${ids.tone}/file`, name: "配乐.mp3" });
+    // 应用开着就能接：不在 AI 剪辑页面时，最外层每 3 秒问一次待拆的活儿（地址带好素材 key）
+    const pending = (await call("/v1/ai-edit/looks")).body.looks;
+    expect(pending).toEqual([{ sessionId: session.id, look: expect.objectContaining({ id: look.id, url: expect.stringMatching(new RegExp(`^/v1/ai-edit/media/${ids.tone}/file\\?key=.+`, "u")) }) }]);
+    expect((await fetch(`${base}/v1/ai-edit/looks`)).status).toBe(401);
+    // 页面用素材库的 key 取文件（和看板取缩略图一样，不用配对）
+    const { key } = (await call("/v1/ai-edit/media")).body;
+    expect((await fetch(`${base}${look.url}?key=${key}`)).status).toBe(200);
+    expect((await call(`/v1/ai-edit/sessions/${session.id}/look/${"0".repeat(16)}`, { method: "POST", body: {} })).status).toBe(404);
+    expect((await fetch(`${base}/v1/ai-edit/sessions/${session.id}/look/${look.id}`, { method: "POST", body: "{}" })).status).toBe(401);
+    const answered = await call(`/v1/ai-edit/sessions/${session.id}/look/${look.id}`, { method: "POST", body: { duration: 3, audio: true, beats: { bpm: 120, beats: [0.5, 1, 1.5], strong: [1] } } });
+    expect(answered.body).toEqual({ ok: true });
+    const done = await waitIdle(session.id);
+    expect(done.session).toMatchObject({ status: "idle", streaming: null });
+    expect(lastToolResult(requests[1])).toMatchObject({ ok: true, bpm: 120, beats: [0.5, 1, 1.5], strong: [1] });
+  }, 20_000);
+
+  it("probes whether the configured model can watch video", async () => {
+    const fetchImpl = async () => Response.json({ choices: [{ message: { content: "386" }, finish_reason: "stop" }] });
+    const { call } = await start({ fetchImpl });
+    expect((await call("/v1/ai-edit/probe-video", { method: "POST", body: { config: CONFIG } })).body).toEqual({ videoInput: true, answer: "386" });
+    expect((await call("/v1/ai-edit/probe-video", { method: "POST", body: { config: { ...CONFIG, apiKey: "" } } })).body).toMatchObject({ error: "invalid_config" });
+  });
+});
+
 describe("AI edit sessions", () => {
   it("creates, lists, long-polls and deletes sessions together with their projects", async () => {
     const { call, store, base } = await start();
