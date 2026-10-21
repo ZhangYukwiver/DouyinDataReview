@@ -810,6 +810,9 @@ describe("reference videos", () => {
       expect(direct).toMatchObject({ ok: true, analysis: "② 截图拆解" });
       expect(sent).toHaveLength(1);
       expect(sent[0].messages[0].content.some((part) => part.type === "video_url")).toBe(false);
+      // 截图按低清晰度发、让推理模型少想（中转站 100 秒没回第一个字就 524）
+      expect(sent[0].reasoning_effort).toBe("low");
+      expect(sent[0].messages[0].content.filter((part) => part.type === "image_url").every((part) => part.image_url.detail === "low")).toBe(true);
 
       // 截图也没看到（中转站连图片也丢了）
       expect(await watch(answering(BLIND_REPLY), { askLook, config: { ...EDIT, videoInput: false } })).toMatchObject({ ok: false, code: "images_unsupported" });

@@ -237,11 +237,11 @@ async function analysis({ config, video, videoBase64, parts, signal, fetchImpl =
     }),
   });
   // 截图版的镜头、节拍都是测好的，让推理模型少想一会儿：想太久，套着 Cloudflare 的中转站 100 秒没回第一个字就断（524）。
-  // 不是推理模型的接口可能不认这个参数（400 里会提到它），去掉再发一次
+  // 不认这个参数的接口回 400/422，说法各家不一（OpenAI 点名参数，Ollama 说模型 does not support thinking），所以不看正文：
+  // 去掉再发一次，真是别的错（比如图片太大）第二次照样报出来
   let response = await send(parts ? "low" : null);
-  if (parts && response.status === 400) {
-    const body = await response.text().catch(() => "");
-    if (!/reasoning/iu.test(body)) throw providerError(400, body);
+  if (parts && (response.status === 400 || response.status === 422)) {
+    await response.text().catch(() => "");
     response = await send(null);
   }
   if (!response.ok) throw providerError(response.status, await response.text().catch(() => ""));
