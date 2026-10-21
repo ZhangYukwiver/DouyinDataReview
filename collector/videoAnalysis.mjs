@@ -104,12 +104,24 @@ export function networkFailure(error, waitedMs = 0) {
  */
 export async function sendWithRetry(send, { signal, received = () => false, fail }) {
   let drops = 0;
+  // 歇的时候到了超时：抛信号自己的原因（TimeoutError），别让 timers 的 AbortError 冒充用户停止
+  const pause = () => delay(DROP_PAUSE_MS, undefined, { signal }).catch((reason) => { signal?.throwIfAborted(); throw reason; });
   for (let attempt = 1; ; attempt += 1) {
     const started = Date.now();
     try {
       return await send();
     } catch (error) {
       const waited = Date.now() - started;
+      // 中转站回了临时性的错（和上游之间的流断了、网关出错）：和连接被掐一样歇一下重发，共用「最多两次」
+      if (error?.transient && !signal?.aborted) {
+        if (drops < DROP_RETRIES) {
+          drops += 1;
+          await pause();
+          continue;
+        }
+        error.message = `${error.message.replace(/。$/u, "")}，自动重发了 ${drops} 次还是这样。`;
+        throw error;
+      }
       const failure = signal?.aborted ? null : networkFailure(error, waited);
       if (!failure) throw error;
       // 断过一次之后，重发时连接没建好就被重置也算同一回事，一起占「最多两次」
@@ -117,8 +129,7 @@ export async function sendWithRetry(send, { signal, received = () => false, fail
       if (failure.retry && again) {
         if (failure.dropped || drops) {
           drops += 1;
-          // 歇的时候到了超时：抛信号自己的原因（TimeoutError），别让 timers 的 AbortError 冒充用户停止
-          await delay(DROP_PAUSE_MS, undefined, { signal }).catch((reason) => { signal?.throwIfAborted(); throw reason; });
+          await pause();
         }
         continue;
       }
@@ -199,10 +210,21 @@ export function analysisPrompt(video, direction = "", focus = "") {
 }
 
 function providerError(status, body) {
-  return new AnalysisError("provider_error", providerMessage(status, body, {
+  return Object.assign(new AnalysisError("provider_error", providerMessage(status, body, {
     413: "视频太大，接口收不下",
     524: "中转站等太久没等到回答（524），视频越长越慢，换个短一点的视频或反应快的模型再试",
-  }), 502);
+  }), 502), { transient: transientFailure(status, body) });
+}
+
+// 远端中转站在回答流里回过「Upstream HTTP/2 stream failed」：它和上游之间断了，重发多半就好
+const TRANSIENT = /stream (failed|error|closed|reset)|HTTP\/2|timed? ?out|connection (reset|closed|refused|error)|\bEOF\b|overloaded|temporarily|try again|bad gateway|gateway time-?out|service unavailable/iu;
+
+/**
+ * 接口这次的报错是不是临时的（重发多半就好）：网关 502/504/520/522，或者 500/503、回答流里报错（status 0），
+ * 正文说的是上游断流、超时、网关这类。参数不对、Key 不对、没开通模型（503 model_not_found）、限流都不算。
+ */
+export function transientFailure(status, body) {
+  return [502, 504, 520, 522].includes(status) || ([0, 500, 503].includes(status) && TRANSIENT.test(String(body ?? "")));
 }
 
 async function* sseData(body) {

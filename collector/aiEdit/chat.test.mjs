@@ -265,6 +265,28 @@ describe("runConversation edge replies", () => {
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: noChannel })).rejects.toMatchObject({ message: expect.stringContaining("中转站里没有能用的这个模型") });
   });
 
+  it("resends when the relay says its upstream stream failed, and asks the user to continue if it keeps failing", async () => {
+    const upstream = { error: { message: "Upstream HTTP/2 stream failed", type: "upstream_error" } };
+    let calls = 0;
+    const flaky = async () => { calls += 1; return calls === 1 ? sse([delta({ role: "assistant", content: "" }), upstream]) : textReply("好"); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: flaky })).resolves.toMatchObject({ text: "好" });
+    expect(calls).toBe(2);
+    calls = 0;
+    const broken = async () => { calls += 1; return sse([upstream]); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: broken }))
+      .rejects.toMatchObject({ code: "provider_error", message: "接口报错：Upstream HTTP/2 stream failed，自动重发了 2 次还是这样。可以发「继续」接着做。" });
+    expect(calls).toBe(3);
+    // 网关 502 也重发；参数不对的 400 不重发
+    calls = 0;
+    const gateway = async () => { calls += 1; return calls === 1 ? new Response("<html>502 Bad Gateway</html>", { status: 502, headers: { "content-type": "text/html" } }) : textReply("好"); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: gateway })).resolves.toMatchObject({ text: "好" });
+    expect(calls).toBe(2);
+    calls = 0;
+    const invalid = async () => { calls += 1; return new Response(JSON.stringify({ error: { message: "Invalid value for tool_choice" } }), { status: 400 }); };
+    await expect(requestCompletion({ config: ARK, messages: [], tools: [{}], fetchImpl: invalid })).rejects.toMatchObject({ code: "provider_error" });
+    expect(calls).toBe(1);
+  });
+
   it("reports an empty reply or a body that is not JSON, and never stores an empty assistant message", async () => {
     const empty = scripted([sse([delta({ role: "assistant", content: "" }), delta({}, "stop")])]);
     const history = [{ role: "user", content: "剪" }];
