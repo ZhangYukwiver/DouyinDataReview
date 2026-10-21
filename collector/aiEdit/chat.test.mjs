@@ -134,13 +134,14 @@ describe("runConversation", () => {
   });
 
   it(`stops after ${MAX_TOOL_CALLS} tool calls and asks for a text-only wrap-up`, async () => {
-    const replies = Array.from({ length: 30 }, () => toolReply([{ name: "a" }, { name: "b" }]));
-    const { fetchImpl, requests } = scripted([...replies.slice(0, 20), sse([delta({ content: "先做到这里。" }), delta({ tool_calls: [{ index: 0, id: "late", function: { name: "a", arguments: "{}" } }] })])]);
+    const rounds = MAX_TOOL_CALLS / 2;
+    const replies = Array.from({ length: rounds }, () => toolReply([{ name: "a" }, { name: "b" }]));
+    const { fetchImpl, requests } = scripted([...replies, sse([delta({ content: "先做到这里。" }), delta({ tool_calls: [{ index: 0, id: "late", function: { name: "a", arguments: "{}" } }] })])]);
     const history = [{ role: "user", content: "做很多事" }];
     let executed = 0;
     const result = await runConversation({ config: ARK, history, tools: [{}], fetchImpl, system: async () => "s", execute: async () => { executed += 1; return { ok: true }; } });
     expect(executed).toBe(MAX_TOOL_CALLS);
-    expect(requests).toHaveLength(21);
+    expect(requests).toHaveLength(rounds + 1);
     expect(requests.at(-1).body.tool_choice).toBe("none");
     expect(requests.slice(0, -1).every((request) => request.body.tool_choice === "auto")).toBe(true);
     expect(result.text).toBe("先做到这里。");

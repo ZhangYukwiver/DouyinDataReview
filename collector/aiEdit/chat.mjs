@@ -5,7 +5,9 @@ import { AiEditError } from "./library.mjs";
 // 对话循环：OpenAI 兼容的 /chat/completions + function calling，流式读回答，
 // 模型要调工具就执行完把结果回给它，直到它不再调工具为止。接口 Key 每次随请求带来，不落盘。
 
-export const MAX_TOOL_CALLS = 40;
+// 一轮最多调几次工具：40 个画面逐个改切点、加转场和关键帧就要一百多次，40 次常常做到一半被叫停（远端 DeepSeek 实测）。
+// 只防模型原地打转；历史超预算时 trimHistory 只裁更早的轮次，这一轮整轮保留
+export const MAX_TOOL_CALLS = 200;
 const MAX_ANSWER_TOKENS = 16_000;
 const MAX_HISTORY_CHARS = 120_000;
 const REQUEST_TIMEOUT_MS = 10 * 60_000;
