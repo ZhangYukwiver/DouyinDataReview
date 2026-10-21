@@ -5,7 +5,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { LIBRARY_TEXTS, createLookDesk } from "./aiEdit/look.mjs";
-import { AnalysisLibrary, analysisPrompt, apiBaseUrl, networkFailure, parseAnalysisConfig, requestAnalysis, startAnalysis } from "./videoAnalysis.mjs";
+import { AnalysisLibrary, analysisPrompt, apiBaseUrl, networkFailure, parseAnalysisConfig, requestAnalysis, startAnalysis, transientFailure } from "./videoAnalysis.mjs";
 
 const config = { baseUrl: "https://ark.example.com/api/v3", apiKey: "k", model: "doubao-seed-2-0-mini-260428", direction: "" };
 
@@ -55,6 +55,36 @@ describe("parseAnalysisConfig", () => {
     await expect(requestAnalysis({ config, video: {}, videoBase64: "AA==", fetchImpl: refused })).rejects.toMatchObject({ code: "provider_error", message: expect.stringContaining("无可用渠道") });
     const cut = async () => ({ ok: true, status: 200, headers: new Headers({ "content-type": "application/json" }), text: async () => { throw new TypeError("terminated", { cause: Object.assign(new Error("closed"), { code: "UND_ERR_SOCKET" }) }); } });
     await expect(requestAnalysis({ config, video: {}, videoBase64: "AA==", fetchImpl: cut })).rejects.toMatchObject({ code: "provider_unreachable", dropped: true });
+  });
+
+  it("resends when the relay reports a passing upstream failure, but not errors that will not go away", async () => {
+    const upstream = { error: { message: "Upstream HTTP/2 stream failed", type: "upstream_error" } };
+    const noChannel = { error: { message: "分组 default 下模型 m 无可用渠道", code: "model_not_found" } };
+    expect(transientFailure(0, JSON.stringify(upstream))).toBe(true);
+    expect(transientFailure(502, "")).toBe(true);
+    expect(transientFailure(529, JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }))).toBe(true);
+    expect(transientFailure(0, JSON.stringify({ error: { code: 502, message: "Provider disconnected unexpectedly" } }))).toBe(true);
+    expect(transientFailure(500, JSON.stringify({ error: { code: "InternalServiceError", message: "The service encountered an unexpected internal error. Please retry later." } }))).toBe(true);
+    expect(transientFailure(500, JSON.stringify({ error: { message: "invalid image format" } }))).toBe(false);
+    expect(transientFailure(503, JSON.stringify(noChannel))).toBe(false);
+    expect(transientFailure(0, JSON.stringify({ error: { message: "content violates our usage policy" } }))).toBe(false);
+    expect(transientFailure(400, "timeout")).toBe(false);
+    expect(transientFailure(429, "try again later")).toBe(false);
+    const config = { baseUrl: "https://a.com/v1", apiKey: "k", model: "m" };
+    let calls = 0;
+    // 远端中转站在回答流里回过这句：重发一次就拿到了
+    const flaky = async () => { calls += 1; return calls === 1 ? sse([upstream]) : sse([delta("拆解", "stop")]); };
+    await expect(requestAnalysis({ config, video: {}, videoBase64: "AA==", fetchImpl: flaky })).resolves.toBe("拆解");
+    expect(calls).toBe(2);
+    calls = 0;
+    const broken = async () => { calls += 1; return sse([upstream]); };
+    await expect(requestAnalysis({ config, video: {}, videoBase64: "AA==", fetchImpl: broken }))
+      .rejects.toMatchObject({ code: "provider_error", message: "接口报错：Upstream HTTP/2 stream failed，自动重发了 2 次还是这样。" });
+    expect(calls).toBe(3);
+    calls = 0;
+    const gone = async () => { calls += 1; return new Response(JSON.stringify(noChannel), { status: 503 }); };
+    await expect(requestAnalysis({ config, video: {}, videoBase64: "AA==", fetchImpl: gone })).rejects.toMatchObject({ message: expect.stringContaining("中转站里没有能用的这个模型") });
+    expect(calls).toBe(1);
   });
 
   it("tells the library to re-analyze after a dropped connection, without the chat's advice", async () => {

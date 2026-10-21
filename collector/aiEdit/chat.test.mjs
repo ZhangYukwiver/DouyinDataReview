@@ -212,7 +212,7 @@ describe("runConversation edge replies", () => {
     let calls = 0;
     const alwaysDrops = async () => { calls += 1; throw dropError(); };
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: alwaysDrops }))
-      .rejects.toMatchObject({ code: "provider_unreachable", message: "接口连接中途断开了（UND_ERR_SOCKET），自动重发了 2 次还是断开。可以发「继续」接着做。" });
+      .rejects.toMatchObject({ code: "provider_unreachable", dropped: true, message: "接口连接中途断开了（UND_ERR_SOCKET），自动重发了 2 次还是断开。" });
     expect(calls).toBe(3);
     // 回答流到一半被掐断：重发拿完整回答，新回答一来就替换掉页面上的半句
     const shown = [];
@@ -263,6 +263,32 @@ describe("runConversation edge replies", () => {
     // new-api 没有这个模型的渠道：别叫用户稍后再试
     const noChannel = async () => new Response(JSON.stringify({ error: { message: "分组 default 下模型 gpt-x 无可用渠道（distributor）", code: "model_not_found" } }), { status: 503 });
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: noChannel })).rejects.toMatchObject({ message: expect.stringContaining("中转站里没有能用的这个模型") });
+  });
+
+  it("resends when the relay says its upstream stream failed, and asks the user to continue if it keeps failing", async () => {
+    const upstream = { error: { message: "Upstream HTTP/2 stream failed", type: "upstream_error" } };
+    let calls = 0;
+    const flaky = async () => { calls += 1; return calls === 1 ? sse([delta({ role: "assistant", content: "" }), upstream]) : textReply("好"); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: flaky })).resolves.toMatchObject({ text: "好" });
+    expect(calls).toBe(2);
+    calls = 0;
+    const broken = async () => { calls += 1; return sse([upstream]); };
+    // 设置里测模型也走这里：不叫用户发「继续」
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: broken }))
+      .rejects.toMatchObject({ code: "provider_error", message: "接口报错：Upstream HTTP/2 stream failed，自动重发了 2 次还是这样。" });
+    expect(calls).toBe(3);
+    // 对话里才提示发「继续」
+    await expect(runConversation({ config: ARK, history: [{ role: "user", content: "剪" }], tools: [{}], fetchImpl: broken, system: async () => "s", execute: async () => ({ ok: true }) }))
+      .rejects.toMatchObject({ code: "provider_error", message: "接口报错：Upstream HTTP/2 stream failed，自动重发了 2 次还是这样。可以发「继续」接着做。" });
+    // 网关 502 也重发；参数不对的 400 不重发
+    calls = 0;
+    const gateway = async () => { calls += 1; return calls === 1 ? new Response("<html>502 Bad Gateway</html>", { status: 502, headers: { "content-type": "text/html" } }) : textReply("好"); };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: gateway })).resolves.toMatchObject({ text: "好" });
+    expect(calls).toBe(2);
+    calls = 0;
+    const invalid = async () => { calls += 1; return new Response(JSON.stringify({ error: { message: "Invalid value for tool_choice" } }), { status: 400 }); };
+    await expect(requestCompletion({ config: ARK, messages: [], tools: [{}], fetchImpl: invalid })).rejects.toMatchObject({ code: "provider_error" });
+    expect(calls).toBe(1);
   });
 
   it("reports an empty reply or a body that is not JSON, and never stores an empty assistant message", async () => {

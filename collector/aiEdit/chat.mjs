@@ -1,5 +1,5 @@
 import { modelFetch } from "../systemProxy.mjs";
-import { apiBaseUrl, providerMessage, readJson, sendWithRetry } from "../videoAnalysis.mjs";
+import { apiBaseUrl, providerMessage, readJson, sendWithRetry, transientFailure } from "../videoAnalysis.mjs";
 import { AiEditError } from "./library.mjs";
 
 // 对话循环：OpenAI 兼容的 /chat/completions + function calling，流式读回答，
@@ -39,11 +39,11 @@ function isArk(baseUrl) {
 }
 
 function providerError(status, body, withTools = true) {
-  return new AiEditError("provider_error", providerMessage(status, body, {
+  return Object.assign(new AiEditError("provider_error", providerMessage(status, body, {
     // 不带工具的请求（配置时测能不能看视频）被拒和工具调用无关
     400: withTools ? "接口不接受这次请求（模型可能不支持工具调用）" : "接口不接受这次请求",
     524: "中转站等了两分钟左右，模型还没开始回答（524），换个反应快的模型或把要求拆小一点再试",
-  }), 502);
+  }), 502), { transient: transientFailure(status, body) });
 }
 
 async function* sseData(body) {
@@ -91,7 +91,7 @@ export async function requestCompletion(options) {
   return sendWithRetry(() => completion({ ...options, onText: (text) => { received = true; onText(text); } }), {
     signal: options.signal,
     received: () => received,
-    fail: ({ text, dropped }) => new AiEditError("provider_unreachable", dropped ? `${text}可以发「继续」接着做。` : text, 502),
+    fail: ({ text, dropped }) => Object.assign(new AiEditError("provider_unreachable", text, 502), { dropped }),
   });
 }
 
@@ -228,6 +228,8 @@ export async function runConversation({ config, history, tools, system, context,
     } catch (error) {
       // 停止时把已经说出来的半句留在历史里，下一轮模型知道自己说到哪了
       if (streamed.trim()) history.push({ role: "assistant", content: streamed });
+      // 断线或中转站临时出错、自动重发也没好：待会儿发「继续」就行（只在对话里这么说，设置里测模型时不说）
+      if (error?.dropped || error?.transient) error.message += "可以发「继续」接着做。";
       throw error;
     }
     if (reply.finishReason === "content_filter") {
