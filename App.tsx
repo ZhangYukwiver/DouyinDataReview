@@ -252,8 +252,9 @@ function AppContent() {
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
   // AI 视频工作台（AI 剪辑 + AI 解析）是可选功能：没装时侧栏和卡片上都不出现入口
   const [aiVideoInstalled, setAiVideoInstalled] = useState(() => Platform.OS === "web" && loadAiVideoInstalled());
-  // 模型看不了视频时，AI 剪辑和 AI 解析要页面在浏览器里拆视频：应用开着就接，不管当前在哪个页面
-  usePendingLooks(Platform.OS === "web" && aiVideoInstalled ? collectorUrl : null, collectorToken, aiVideoInstalled);
+  // 模型看不了视频时，AI 剪辑和 AI 解析要页面在浏览器里拆视频：应用开着就接，不管当前在哪个页面。
+  // AI 剪辑的活儿不看装没装：剪到一半移除了工作台，那一轮在采集器上还在跑，要的截图照样有人接
+  usePendingLooks(Platform.OS === "web" ? collectorUrl : null, collectorToken, aiVideoInstalled);
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   // 首屏正在扫码登录或导入凭据（桌面版）：同样挡住读取和换号，但界面上不写成「正在切换账号」

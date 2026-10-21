@@ -147,6 +147,8 @@ const AI_VIDEO_TABS: Array<{ label: string; value: AiVideoView }> = [{ label: "A
 const isAiVideoView = (view: WorkspaceViewKey): view is AiVideoView => view === "aiEdit" || view === "analysis";
 /** 侧栏里哪一项算选中：AI 剪辑和 AI 解析共用「AI 视频工作台」那一项 */
 const navKey = (view: WorkspaceViewKey): WorkspaceViewKey => (view === "analysis" ? "aiEdit" : view);
+// 上次用的页签记在模块里：去「连接与采集」再回来，工作台卸载重挂也还记得
+let lastAiView: AiVideoView = "aiEdit";
 
 // 探索、创作者中心、解析库和 AI 剪辑是工具页：不显示条数、隐私和重新读取
 const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator" || view === "analysis" || view === "aiEdit";
@@ -219,8 +221,7 @@ export function ContentWorkspace({
   const nav = aiEdit ? navItems : navItems.filter((item) => item.id !== "aiEdit");
   const currentNav = nav.find((item) => item.id === navKey(activeView)) ?? nav[0]!;
   // 点侧栏的 AI 视频工作台：回到上次用的页签
-  const [lastAiView, setLastAiView] = useState<AiVideoView>("aiEdit");
-  useEffect(() => { if (isAiVideoView(activeView)) setLastAiView(activeView); }, [activeView]);
+  useEffect(() => { if (isAiVideoView(activeView)) lastAiView = activeView; }, [activeView]);
   const [reportUpdateNotice, setReportUpdateNotice] = useState(false);
   // 侧栏当前项的指示条：一根，随选中项滑动（各按钮 onLayout 报自己的 y）
   const [navTops, setNavTops] = useState<Record<string, number>>({});
