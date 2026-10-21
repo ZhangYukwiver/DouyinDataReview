@@ -403,8 +403,8 @@ async function parseMedia(src) {
   throw malformed("Unknown media format");
 }
 
-function image(width, height) {
-  const stream = { type: "video", width, height, timeBase: [1, 25], start: null, duration: null };
+function image(width, height, rotation = 0) {
+  const stream = { type: "video", width, height, rotation, timeBase: [1, 25], start: null, duration: null };
   return { streams: [stream], durationUs: null };
 }
 
@@ -428,6 +428,7 @@ async function parsePng(src) {
 
 async function parseJpeg(src) {
   let pos = 2;
+  let rotation = 0;
   while (pos + 1 < src.size) {
     const marker = await src.exact(pos, 2);
     // 段与段之间的填充字节和垃圾跳过去，跟解码器一样找下一个 0xFF。
@@ -443,14 +444,36 @@ async function parseJpeg(src) {
     if (code === 0xd9 || code === 0xda) break;
     const length = (await src.exact(pos + 2, 2)).readUInt16BE(0);
     if (length < 2) throw malformed("Bad JPEG segment");
+    // 手机竖拍的照片常是横着存 + EXIF 方向标记，看图软件和剪映都会转正；按转正后的宽高算，分屏和画面适配才对得上
+    if (code === 0xe1 && !rotation) rotation = exifRotation(await src.exact(pos + 4, length - 2));
     const isFrame = code >= 0xc0 && code <= 0xcf && code !== 0xc4 && code !== 0xc8 && code !== 0xcc;
     if (isFrame) {
       const frame = await src.exact(pos + 4, 5);
-      return image(frame.readUInt16BE(3), frame.readUInt16BE(1));
+      return image(frame.readUInt16BE(3), frame.readUInt16BE(1), rotation);
     }
     pos += 2 + length;
   }
   throw malformed("JPEG without frame header");
+}
+
+/** EXIF（APP1 段）里的方向标记换成旋转角：5、6 是转 90 度，7、8 是 270 度，3、4 是 180 度；读不懂就当 0。 */
+export function exifRotation(data) {
+  if (data.length < 14 || data.toString("latin1", 0, 6) !== "Exif\0\0") return 0;
+  const tiff = data.subarray(6);
+  const order = tiff.toString("latin1", 0, 2);
+  if (order !== "II" && order !== "MM") return 0;
+  const little = order === "II";
+  const u16 = (offset) => (little ? tiff.readUInt16LE(offset) : tiff.readUInt16BE(offset));
+  const ifd = little ? tiff.readUInt32LE(4) : tiff.readUInt32BE(4);
+  if (ifd + 2 > tiff.length) return 0;
+  for (let index = 0, count = u16(ifd); index < count; index += 1) {
+    const entry = ifd + 2 + index * 12;
+    if (entry + 12 > tiff.length) break;
+    if (u16(entry) !== 0x0112) continue;
+    const orientation = u16(entry + 8);
+    return orientation === 5 || orientation === 6 ? 90 : orientation === 7 || orientation === 8 ? 270 : orientation === 3 || orientation === 4 ? 180 : 0;
+  }
+  return 0;
 }
 
 /**

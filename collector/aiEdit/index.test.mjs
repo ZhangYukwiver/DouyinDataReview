@@ -265,6 +265,24 @@ describe("AI edit sessions", () => {
     expect((await call(`/v1/ai-edit/sessions/${"0".repeat(32)}/goal`, { method: "POST", body: { goal: "x" } })).status).toBe(404);
   }, 20_000);
 
+  it("switches the canvas from the board, but not while the AI is editing", async () => {
+    let release;
+    const fetchImpl = async () => { await new Promise((resolve) => { release = resolve; }); return textReply("好"); };
+    const { call, waitIdle } = await start({ real: true, fetchImpl });
+    const { session, project } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    expect(project.canvas).toEqual({ width: 1080, height: 1920, fps: 30 });
+    const wide = await call(`/v1/ai-edit/sessions/${session.id}/canvas`, { method: "POST", body: { width: 1920, height: 1080 } });
+    expect(wide).toMatchObject({ status: 200, body: { project: { canvas: { width: 1920, height: 1080, fps: 30 } } } });
+    expect(wide.body.session.revision).toBeGreaterThan(session.revision);
+    expect(await call(`/v1/ai-edit/sessions/${session.id}/canvas`, { method: "POST", body: { width: 0, height: 1080 } })).toMatchObject({ status: 422, body: { error: "invalid_canvas" } });
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "剪", config: CONFIG } });
+    expect(await call(`/v1/ai-edit/sessions/${session.id}/canvas`, { method: "POST", body: { width: 1080, height: 1080 } })).toMatchObject({ status: 409, body: { error: "session_busy" } });
+    for (let i = 0; i < 100 && !release; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    release();
+    await waitIdle(session.id);
+    expect((await call(`/v1/ai-edit/sessions/${session.id}/canvas`, { method: "POST", body: { width: 1080, height: 1080 } })).body.project.canvas).toEqual({ width: 1080, height: 1080, fps: 30 });
+  }, 20_000);
+
   it("runs a conversation: tools edit the project, the page sees revisions and a tidy chat", async () => {
     const requests = [];
     let mediaId;

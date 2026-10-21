@@ -12,6 +12,7 @@ import {
   IMAGE_SUFFIXES,
   MAX_TIME_US,
   VIDEO_SUFFIXES,
+  exifRotation,
   mediaKind,
   probeMedia,
   resolveMediaPath,
@@ -265,6 +266,30 @@ describe("构造的坏文件不会卡住采集器", () => {
     ]);
     const got = await probe(await place("dos/padded.jpg", padded));
     expect([got.kind, got.width, got.height]).toEqual(["image", 1920, 1080]);
+  });
+
+  it("JPEG 带 EXIF 方向：记成旋转角，素材库按转正后的宽高算（手机竖拍照片）", async () => {
+    const jpeg = await readFile(path.join(MEDIA, "still.jpg"));
+    const app1 = (orientation, little = true) => {
+      const tiff = Buffer.alloc(8 + 2 + 12 + 4);
+      tiff.write(little ? "II" : "MM", 0, "latin1");
+      const u16 = (value, offset) => (little ? tiff.writeUInt16LE(value, offset) : tiff.writeUInt16BE(value, offset));
+      const u32 = (value, offset) => (little ? tiff.writeUInt32LE(value, offset) : tiff.writeUInt32BE(value, offset));
+      u16(42, 2); u32(8, 4); u16(1, 8);
+      u16(0x0112, 10); u16(3, 12); u32(1, 14); u16(orientation, 18);
+      const data = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), tiff]);
+      const head = Buffer.alloc(4);
+      head.writeUInt16BE(0xffe1, 0);
+      head.writeUInt16BE(data.length + 2, 2);
+      return Buffer.concat([head, data]);
+    };
+    const withExif = (segment) => Buffer.concat([jpeg.subarray(0, 2), segment, jpeg.subarray(2)]);
+    const portrait = await probe(await place("exif/six.jpg", withExif(app1(6))));
+    expect([portrait.width, portrait.height, portrait.rotation]).toEqual([1920, 1080, 90]);
+    expect((await probe(await place("exif/eight.jpg", withExif(app1(8, false))))).rotation).toBe(270);
+    expect((await probe(await place("exif/one.jpg", withExif(app1(1))))).rotation).toBe(0);
+    expect(exifRotation(Buffer.from("Exif\0\0garbage", "latin1"))).toBe(0);
+    expect(exifRotation(Buffer.from("not exif at all", "latin1"))).toBe(0);
   });
 
   it("一直解析不完的文件：期间照常让出事件循环，到时报 MEDIA_PROBE_FAILED", async () => {

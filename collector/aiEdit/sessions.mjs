@@ -57,6 +57,8 @@ export class SessionStore {
       session.revision = Number.isSafeInteger(session.revision) ? session.revision : 1;
       // 加目标之前存的会话没有这个字段
       session.goal = typeof session.goal === "string" ? session.goal : "";
+      // arrange_grid 排过的格子（片段 id → 位置），换画布时重排用
+      session.grids = session.grids && typeof session.grids === "object" && !Array.isArray(session.grids) ? session.grids : {};
       session.streaming = null;
       this.sessions.set(id, session);
       // 一轮进行中也会存盘（比如导入剪映后），那时 history 里可能有还没回结果的工具调用；
@@ -92,6 +94,7 @@ export class SessionStore {
       projectId,
       draftBox: null,
       goal: "",
+      grids: {},
       revision: 1,
       error: null,
       messages: [],

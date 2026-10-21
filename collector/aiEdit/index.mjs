@@ -10,7 +10,7 @@ import { EditError } from "./errors.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
 import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, sessionDetail } from "./sessions.mjs";
-import { TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, createToolRunner, describeToolError, probeVideoInput } from "./tools.mjs";
+import { TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, createToolRunner, describeToolError, probeVideoInput, rearrangeGrids } from "./tools.mjs";
 
 // AI 剪辑在采集器里的入口：会话、工程、素材库、对话循环和导入剪映草稿箱的 HTTP 接口。
 // 数据都在采集器根数据目录的 ai-edit/ 下，不分抖音账号。server.mjs 在配对校验前后各调一次 handle：
@@ -24,6 +24,7 @@ const BODY_BYTES = 16 * 1024;
 const LOOK_BODY_BYTES = 24 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 20_000;
 const MAX_GOAL_CHARS = 2_000;
+const pickCanvas = (body) => Object.fromEntries(["width", "height", "fps"].filter((key) => body?.[key] !== undefined).map((key) => [key, body[key]]));
 const STORED_HISTORY_CHARS = 600_000;
 const STREAM_THROTTLE_MS = 150;
 const REPAIR_FALLBACK = new Set(["DRAFT_BOX_NOT_FOUND", "DRAFT_BOX_NOT_OWNED", "DRAFT_BOX_PROJECT_MISMATCH"]);
@@ -240,6 +241,8 @@ export function createAiEdit({
       offerLookFile: (file) => state.looks.offerFile(file),
       exportDraft: () => exportSession(session),
       onRename: (name) => { session.title = name; },
+      // arrange_grid 排过的格子记在会话上（跟着会话存盘），换画布时按新画布重排
+      grids: session.grids,
     });
     let text = "";
     let status = "idle";
@@ -387,7 +390,7 @@ export function createAiEdit({
       return;
     }
 
-    const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export|goal))?$/u);
+    const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export|goal|canvas))?$/u);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!isSessionId(id)) throw new AiEditError("session_not_found", "这个剪辑不存在或已经删除了。", 404);
@@ -438,6 +441,25 @@ export function createAiEdit({
         session.goal = goal;
         await sessions.touch(session, { persist: true });
         sendJson(response, 200, { session: sessionDetail(session) });
+        return;
+      }
+      if (action === "canvas") {
+        // 看板上直接换画面比例；AI 正在剪或正在导入时不换，免得它按旧画布算的位置跟着歪
+        const body = await readJson(request, BODY_BYTES);
+        const session = requireSession(id);
+        if (running.has(id)) throw new AiEditError("session_busy", "AI 正在剪，等它做完再换画面比例。", 409);
+        if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
+        const { canvas } = await store.getProject(session.projectId);
+        try {
+          await store.setCanvas(session.projectId, { ...canvas, ...pickCanvas(body) });
+        } catch (error) {
+          if (error instanceof EditError) throw new AiEditError("invalid_canvas", "画布宽高要在 16 到 7680 之间的整数，帧率 1 到 120。", 422);
+          throw error;
+        }
+        // 分屏的缩放和蒙版跟画布比例有关：arrange_grid 排过的按新画布重排
+        await rearrangeGrids({ store, library: state.library, projectId: session.projectId }, session.grids);
+        await sessions.touch(session, { persist: true });
+        sendJson(response, 200, await sessionState(session));
         return;
       }
       if (action === "stop") {
