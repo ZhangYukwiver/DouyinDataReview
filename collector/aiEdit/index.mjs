@@ -24,6 +24,7 @@ const BODY_BYTES = 16 * 1024;
 const LOOK_BODY_BYTES = 24 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 20_000;
 const MAX_GOAL_CHARS = 2_000;
+const pickCanvas = (body) => Object.fromEntries(["width", "height", "fps"].filter((key) => body?.[key] !== undefined).map((key) => [key, body[key]]));
 const STORED_HISTORY_CHARS = 600_000;
 const STREAM_THROTTLE_MS = 150;
 const REPAIR_FALLBACK = new Set(["DRAFT_BOX_NOT_FOUND", "DRAFT_BOX_NOT_OWNED", "DRAFT_BOX_PROJECT_MISMATCH"]);
@@ -387,7 +388,7 @@ export function createAiEdit({
       return;
     }
 
-    const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export|goal))?$/u);
+    const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export|goal|canvas))?$/u);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!isSessionId(id)) throw new AiEditError("session_not_found", "这个剪辑不存在或已经删除了。", 404);
@@ -438,6 +439,23 @@ export function createAiEdit({
         session.goal = goal;
         await sessions.touch(session, { persist: true });
         sendJson(response, 200, { session: sessionDetail(session) });
+        return;
+      }
+      if (action === "canvas") {
+        // 看板上直接换画面比例；AI 正在剪或正在导入时不换，免得它按旧画布算的位置跟着歪
+        const body = await readJson(request, BODY_BYTES);
+        const session = requireSession(id);
+        if (running.has(id)) throw new AiEditError("session_busy", "AI 正在剪，等它做完再换画面比例。", 409);
+        if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
+        const { canvas } = await store.getProject(session.projectId);
+        try {
+          await store.setCanvas(session.projectId, { ...canvas, ...pickCanvas(body) });
+        } catch (error) {
+          if (error instanceof EditError) throw new AiEditError("invalid_canvas", "画布宽高要在 16 到 7680 之间的整数，帧率 1 到 120。", 422);
+          throw error;
+        }
+        await sessions.touch(session);
+        sendJson(response, 200, await sessionState(session));
         return;
       }
       if (action === "stop") {

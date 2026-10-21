@@ -260,6 +260,8 @@ export function buildSystemPrompt({ project, media, goal = "" }) {
     "- 视频片段可以用 source_start / source_duration 截取素材里的一段；时间线上的时长 = 截取长度 ÷ 倍速，不能超出素材本身的长度。图片最长 3 小时，不能变速。",
     "- 工具参数里没有 end：时间线里的 end 只是给你看的结束时间，改时长用 duration。",
     "- 位置、缩放、旋转、不透明度都写在 transform 对象里，例如 \"transform\": {\"transform_y\": -0.8}。transform_x / transform_y 以画布中心为 0，单位是半个画布宽 / 高，x 向右为正，y 向上为正（字幕一般放在 -0.8 左右，add_subtitles 默认就放在这里）。",
+    "- 分屏、宫格、拼图（七分屏、左右或上下分屏、九宫格等）：先把片段放上时间线，再用 arrange_grid 一次排好，不要自己算 transform 和蒙版。",
+    "- 画布：新建的剪辑默认竖屏 1080×1920。用户提到横屏、16:9、方形、1:1、B 站、电脑上看这类说法，或者参考视频是横屏的，先用 set_canvas 改好画布再排时间线；用户没说、素材又大多是横拍的，照竖屏做，在回复里提一句可以改成横屏。",
     "- add_subtitles 建的字幕轨（时间线里标着 subtitles: true）只能整组加、删；已有的字幕可以用 update_clip 逐条改，但不能往字幕轨上单独加片段，要加标题或单独一句文字就另建一条文字轨道。",
     "- 每个片段的入场、出场、组合（文字是循环）动画各只能有一个，视频的组合动画不能和入场、出场同时用；音频片段的同类音效只能有一个。要换掉就先用 clear_clip_feature 去掉那一类再加。",
     "- 特效、滤镜、转场、动画、蒙版、混合模式、字体只能用剪映内置的名称：先用 search_catalog 查到准确名称再用，不要自己编。尽量挑不需要会员的（vip 为 false）。",
@@ -832,6 +834,57 @@ function checkFont(args) {
   }
 }
 
+/**
+ * 分屏、宫格：画布按列、行等分，每个片段等比缩放铺满（cover）或放进（contain）自己那一格，cover 再套一个格子大小的矩形蒙版遮掉多出的部分。
+ * 模型自己算 transform 常错（远端实测七分屏把「半个画布宽」当成整个画布宽，七格全挤在中间，还用不等比缩放把图压扁），所以交给应用算。
+ * 按 contain 的基准算（剪映里缩放 1.0 = 等比放进画布，草稿和看板都按这个）；蒙版的高、宽分别按素材高、宽的比例。
+ */
+async function arrangeGrid(ctx, args) {
+  const columns = args.columns;
+  const rows = args.rows ?? 1;
+  const cover = (args.fit ?? "cover") === "cover";
+  const project = await ctx.store.getProject(ctx.projectId);
+  const { width, height } = project.canvas;
+  const [cellWidth, cellHeight] = [width / columns, height / rows];
+  // 先全部核对，免得改到一半才发现某一格不对
+  const cells = [];
+  for (const cell of Array.isArray(args.cells) ? args.cells : []) {
+    const row = cell?.row ?? 1;
+    if (!Number.isInteger(cell?.column) || !Number.isInteger(row) || cell.column < 1 || row < 1 || cell.column > columns || row > rows) {
+      throw invalid("GRID_CELL_INVALID", `格子位置不对：一共 ${columns} 列 ${rows} 行，列和行都从 1 数。`);
+    }
+    const segment = await ctx.store.getSegment(ctx.projectId, cell.clip_id);
+    if (!segment || (segment.kind !== "video" && segment.kind !== "image")) throw invalid("GRID_CLIP_INVALID", "只有视频和图片片段能排进格子。");
+    const item = ctx.library.get(ctx.library.idForPath(segment.path));
+    // 尺寸不知道就当和画布同比例
+    const material = item?.width && item?.height ? { width: item.width, height: item.height } : { width, height };
+    cells.push({ id: cell.clip_id, column: cell.column, row, segment, material });
+  }
+  if (!cells.length) throw invalid("GRID_CELL_INVALID", "cells 里至少放一个片段。");
+  const round = (value) => Math.round(value * 10_000) / 10_000;
+  for (const { id, column, row, segment, material } of cells) {
+    const base = Math.min(width / material.width, height / material.height);
+    const [baseWidth, baseHeight] = [material.width * base, material.height * base];
+    const scale = (cover ? Math.max : Math.min)(cellWidth / baseWidth, cellHeight / baseHeight);
+    const transform = {
+      ...(segment.transform ?? {}),
+      scale_x: round(scale),
+      scale_y: round(scale),
+      transform_x: round(((column - 0.5) * cellWidth) / (width / 2) - 1),
+      transform_y: round(1 - ((row - 0.5) * cellHeight) / (height / 2)),
+      rotation: 0,
+    };
+    await ctx.store.updateSegment(ctx.projectId, id, { fit: "contain", transform });
+    if (segment.crop) await ctx.store.clearFeature(ctx.projectId, id, "crop");
+    if (segment.mask) await ctx.store.clearFeature(ctx.projectId, id, "mask");
+    const [maskHeight, maskWidth] = [cellHeight / (baseHeight * scale), cellWidth / (baseWidth * scale)];
+    if (cover && (maskHeight < 0.999 || maskWidth < 0.999)) {
+      await ctx.store.addMask(ctx.projectId, id, { mask_type: "矩形", size: round(Math.min(1, maskHeight)), rect_width: round(Math.min(1, maskWidth)) });
+    }
+  }
+  return ctx.store.getProject(ctx.projectId);
+}
+
 function checkMask(args) {
   if (!has(args, "rect_width") && !has(args, "round_corner")) return;
   const found = catalogMember(["MaskType"], args.mask_type);
@@ -1297,6 +1350,27 @@ const TOOLS = [
       checkMask(args);
       return ctx.store.addMask(ctx.projectId, args.clip_id, pick(args, ["mask_type", "center_x", "center_y", "size", "rotation", "feather", "invert", "rect_width", "round_corner"]));
     },
+  },
+  {
+    name: "arrange_grid",
+    description: "把视频/图片片段排成分屏、宫格（七分屏、左右或上下分屏、九宫格等）：当前画布按几列几行等分，每个片段放进指定的格子。位置、等比缩放和遮住格子外部分的矩形蒙版都由应用算好，不要自己算 transform。片段原来的蒙版和裁剪会被换掉。",
+    parameters: obj({
+      columns: int("横向分几列，1 到 12", { minimum: 1, maximum: 12 }),
+      rows: int("纵向分几行，1 到 12，默认 1", { minimum: 1, maximum: 12 }),
+      cells: {
+        type: "array",
+        description: "每个片段放哪一格；同一时刻可以放满所有格子，也可以只放一部分",
+        items: obj({
+          clip_id: CLIP_ID,
+          column: int("第几列，从 1 数，最左边是 1", { minimum: 1, maximum: 12 }),
+          row: int("第几行，从 1 数，最上面是 1，默认 1", { minimum: 1, maximum: 12 }),
+        }, ["clip_id", "column"]),
+      },
+      fit: choice(["cover", "contain"], "cover 等比铺满格子、多出的部分遮掉（默认）；contain 完整放进格子，空出的地方露出下层画面"),
+    }, ["columns", "cells"]),
+    write: true,
+    label: (args) => `排成了 ${args.columns ?? "?"} 列${args.rows > 1 ? ` ${args.rows} 行` : ""}的分屏`,
+    run: arrangeGrid,
   },
   {
     name: "add_chroma",

@@ -117,6 +117,7 @@ const SAMPLE_ARGS = {
   add_transition: { clip_id: "s1", transition_type: "叠化", duration: 0.5 },
   add_fade: { clip_id: "s1", fade_in: 0.3, fade_out: 0.4 },
   add_mask: { clip_id: "s1", mask_type: "圆形", size: 0.6 },
+  arrange_grid: { columns: 2, cells: [{ clip_id: "s1", column: 1 }] },
   add_chroma: { clip_id: "s1", color: "#00FF00FF" },
   add_background_filling: { clip_id: "s1", fill_type: "blur", blur: 0.2 },
   set_mix_mode: { clip_id: "s1", mode: "滤色" },
@@ -300,6 +301,9 @@ describe("AI edit tools", () => {
     expect(prompt).toContain("越靠后的轨道越在上层");
     expect(prompt).toContain("所有时间参数都用秒");
     expect(prompt).toContain("\"transform\": {\"transform_y\": -0.8}");
+    // 分屏交给 arrange_grid；画布按用户说的改（横屏剪辑出过错）
+    expect(prompt).toContain("再用 arrange_grid 一次排好");
+    expect(prompt).toContain("先用 set_canvas 改好画布再排时间线");
     // 每做一步都会变的总时长和时间线不放系统提示（否则接口的前缀缓存一轮里都命中不了），附在最后一条
     expect(prompt).not.toContain("当前总时长 4 秒");
     expect(prompt).not.toContain("\"clip_id\":\"s1\"");
@@ -497,6 +501,44 @@ describe.runIf(["projectStore.mjs", "media.mjs"].every((name) => existsSync(path
       await rm(directory, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it("arranges clips into a grid on the canvas: centred in each cell, scaled evenly, masked to the cell", async () => {
+    // 远端七分屏：模型把「半个画布宽」当成整个画布宽，七格全挤在中间，还把图压扁了
+    const calls = [];
+    const segments = {
+      photo: { id: "photo", kind: "image", path: path.join(ROOT, `${IMAGE_ID}.png`), transform: { scale_x: 0.166, scale_y: 0.3, transform_x: -0.3857, transform_y: 0.333, alpha: 0.8 } },
+      clip: { id: "clip", kind: "video", path: path.join(ROOT, `${VIDEO_ID}.mp4`), mask: { mask_type: "圆形" }, crop: { upper_left_x: 0.1 } },
+      words: { id: "words", kind: "text", text: "标题" },
+    };
+    const store = {
+      getProject: async () => ({ ...project(), canvas: { width: 1920, height: 1080, fps: 30 } }),
+      getSegment: async (_project, id) => structuredClone(segments[id] ?? null),
+      updateSegment: async (...args) => { calls.push(["update", ...args.slice(1)]); return project(); },
+      clearFeature: async (...args) => { calls.push(["clear", ...args.slice(1)]); return project(); },
+      addMask: async (...args) => { calls.push(["mask", ...args.slice(1)]); return project(); },
+    };
+    const { run } = runnerWith({ store });
+    // 7 列：4:3 的图放第 1 列，竖拍视频放第 4 列（正中）
+    const arranged = await run("arrange_grid", { columns: 7, cells: [{ clip_id: "photo", column: 1 }, { clip_id: "clip", column: 4 }] });
+    expect(arranged).toMatchObject({ result: { ok: true }, action: { summary: "排成了 7 列的分屏", ok: true } });
+    expect(calls).toEqual([
+      ["update", "photo", { fit: "contain", transform: { scale_x: 1, scale_y: 1, transform_x: -0.8571, transform_y: 0, alpha: 0.8, rotation: 0 } }],
+      ["mask", "photo", { mask_type: "矩形", size: 1, rect_width: 0.1905 }],
+      ["update", "clip", { fit: "contain", transform: { scale_x: 1, scale_y: 1, transform_x: 0, transform_y: 0, rotation: 0 } }],
+      ["clear", "clip", "crop"],
+      ["clear", "clip", "mask"],
+      ["mask", "clip", { mask_type: "矩形", size: 1, rect_width: 0.4515 }],
+    ]);
+    // contain：完整放进格子，不加蒙版；上下两行
+    calls.length = 0;
+    await run("arrange_grid", { columns: 1, rows: 2, fit: "contain", cells: [{ clip_id: "photo", column: 1, row: 1 }] });
+    expect(calls).toEqual([["update", "photo", { fit: "contain", transform: { scale_x: 0.5, scale_y: 0.5, transform_x: 0, transform_y: 0.5, alpha: 0.8, rotation: 0 } }]]);
+    // 格子越界、文字片段：报错，一个都不改
+    calls.length = 0;
+    expect((await run("arrange_grid", { columns: 7, cells: [{ clip_id: "photo", column: 1 }, { clip_id: "clip", column: 8 }] })).result).toMatchObject({ ok: false, code: "GRID_CELL_INVALID" });
+    expect((await run("arrange_grid", { columns: 2, cells: [{ clip_id: "photo", column: 1 }, { clip_id: "words", column: 2 }] })).result).toMatchObject({ ok: false, code: "GRID_CLIP_INVALID" });
+    expect(calls).toEqual([]);
+  });
 
   it("refuses misplaced or unknown arguments, treats null as not given and styles subtitles as a group", async () => {
     const { ProjectStore } = await import("./projectStore.mjs");

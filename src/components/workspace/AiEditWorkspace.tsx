@@ -12,7 +12,7 @@ import type { ExploreConnection } from "../../services/explorer";
 import {
   aiEditLookUrl, aiEditMediaUrl, answerAiEditLook, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
   importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, saveAiEditConfig, sendAiEditMessage, sessionRunning,
-  setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey,
+  setAiEditCanvas, setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey,
   type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditMediaItem, type AiEditSession, type AiEditSessionState,
   type AiEditSessionSummary, type EditCanvas, type EditMediaSegment, type EditProject, type EditSegment, type EditTextSegment, type EditTrack,
 } from "../../services/aiEdit";
@@ -64,6 +64,9 @@ const CANVASES: Array<{ label: string; canvas: EditCanvas }> = [
   { label: "横屏 16:9", canvas: { width: 1920, height: 1080, fps: 30 } },
   { label: "方形 1:1", canvas: { width: 1080, height: 1080, fps: 30 } },
 ];
+
+const CANVAS_OPTIONS = CANVASES.map(({ label }) => ({ label: label.split(" ")[0]!, value: label }));
+const canvasPreset = (canvas: EditCanvas) => CANVASES.find((item) => item.canvas.width === canvas.width && item.canvas.height === canvas.height)?.label ?? null;
 
 const SUGGESTIONS = [
   "把素材库里的视频剪成 30 秒的竖屏短片，配上字幕",
@@ -327,6 +330,18 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     }
   };
 
+  /** 看板上换画面比例：位置按比例存，换完片段跟着画布走，不用重排 */
+  const changeCanvas = async (canvas: EditCanvas) => {
+    if (!conn || !currentId) return;
+    setError(null);
+    try {
+      const next = await setAiEditCanvas(conn, currentId, { width: canvas.width, height: canvas.height });
+      setState((current) => current?.session.id === next.session.id ? next : current);
+    } catch (reason) {
+      setError(errorText(reason, "画面比例没换成，请稍后重试。"));
+    }
+  };
+
   const stop = async () => {
     if (!conn || !currentId) return;
     try {
@@ -443,6 +458,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       exportNote={exportNote}
       running={running}
       onExport={() => void exportDraft()}
+      onCanvas={(canvas) => void changeCanvas(canvas)}
     />
 
     {pickerOpen ? <LibraryPicker records={records} media={media} onAdd={addRecord} onClose={() => setPickerOpen(false)} /> : null}
@@ -907,9 +923,10 @@ function LibraryPicker({ records, media, onAdd, onClose }: {
 
 // ============================== 右栏：看板 ==============================
 
-function Board({ session, project, media, mediaUrl, draftBox, exporting, exportNote, running, onExport }: {
+function Board({ session, project, media, mediaUrl, draftBox, exporting, exportNote, running, onExport, onCanvas }: {
   session: AiEditSession | null; project: EditProject | null; media: AiEditMediaItem[]; mediaUrl: (id: string) => string | null;
   draftBox: AiEditDraftBoxStatus | null; exporting: boolean; exportNote: ExportNote | null; running: boolean; onExport: () => void;
+  onCanvas: (canvas: EditCanvas) => void;
 }) {
   const duration = projectDuration(project);
   const playback = usePlayback(duration, project?.id ?? null);
@@ -958,9 +975,15 @@ function Board({ session, project, media, mediaUrl, draftBox, exporting, exportN
     <View style={styles.boardHead}>
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <Text numberOfLines={1} style={styles.boardTitle}>{project?.name || session?.title || "剪辑看板"}</Text>
-        <Text numberOfLines={1} style={kit.muted}>
-          {project ? `${project.canvas.width}×${project.canvas.height} · ${project.canvas.fps} 帧 · 时长 ${formatDuration(duration)}` : "还没有时间线"}
-        </Text>
+        <View style={styles.boardMeta}>
+          <Text numberOfLines={1} style={kit.muted}>
+            {project ? `${project.canvas.width}×${project.canvas.height} · ${project.canvas.fps} 帧 · 时长 ${formatDuration(duration)}` : "还没有时间线"}
+          </Text>
+          {project ? <Segmented small options={CANVAS_OPTIONS} value={canvasPreset(project.canvas)} onChange={(label) => {
+            const preset = CANVASES.find((item) => item.label === label);
+            if (preset && label !== canvasPreset(project.canvas)) onCanvas(preset.canvas);
+          }} /> : null}
+        </View>
       </View>
       <Pressable
         {...ws("btn-solid")}
@@ -1527,6 +1550,7 @@ const styles = StyleSheet.create({
 
   board: { flex: 1, minWidth: 0, minHeight: 0, gap: 8, padding: 14 },
   boardHead: { flexDirection: "row", alignItems: "center", gap: 12 },
+  boardMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 2 },
   boardTitle: { color: color.text, fontFamily: font.body, fontSize: 15, fontWeight: "600" },
   status: { marginTop: -4, color: color.textMuted, fontFamily: font.body, fontSize: 11.5, lineHeight: 17 },
   exportButton: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 13, height: 34, borderRadius: radius.small, backgroundColor: color.button },

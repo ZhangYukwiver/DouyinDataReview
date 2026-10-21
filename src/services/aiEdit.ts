@@ -263,6 +263,11 @@ export async function sendAiEditMessage(connection: ExploreConnection, id: strin
   return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify({ text, config }) })).session;
 }
 
+/** 看板上换画面比例（AI 正在剪时采集器会拒绝）。 */
+export async function setAiEditCanvas(connection: ExploreConnection, id: string, canvas: Pick<EditCanvas, "width" | "height">): Promise<AiEditSessionState> {
+  return request(connection, `${sessionPath(id)}/canvas`, { method: "POST", body: JSON.stringify(canvas) });
+}
+
 export async function setAiEditGoal(connection: ExploreConnection, id: string, goal: string): Promise<AiEditSession> {
   return (await request(connection, `${sessionPath(id)}/goal`, { method: "POST", body: JSON.stringify({ goal }) })).session;
 }
