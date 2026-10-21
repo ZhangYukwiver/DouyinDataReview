@@ -552,6 +552,7 @@ function Conversation({ session, loaded, onSuggest }: { session: AiEditSession |
   const messages = session?.messages ?? [];
   const streaming = session?.streaming?.text ?? "";
   const liveActions = session?.streaming?.actions ?? [];
+  const look = session?.streaming?.look;
   const busy = sessionRunning(session);
   // 新消息、流式文字一长就贴着底部；用户往上翻了就不打扰
   useLayoutEffect(() => {
@@ -588,7 +589,7 @@ function Conversation({ session, loaded, onSuggest }: { session: AiEditSession |
     {busy ? <View {...ws("c-bubble", "in")} style={[styles.bubble, styles.bubbleIn]}>
       {streaming ? <Markdown compact text={streaming} /> : null}
       {liveActions.length ? <ActionList actions={liveActions} live /> : null}
-      <View style={kit.row}><ActivityIndicator size="small" color={color.cyan} /><Text style={kit.muted}>{liveActions.length ? "正在改时间线…" : streaming ? "还在写…" : "AI 正在想…"}</Text></View>
+      <View style={kit.row}><ActivityIndicator size="small" color={color.cyan} /><Text style={kit.muted}>{look ? (look.kind === "beats" ? "正在测配乐的节拍…" : "正在把参考视频拆成镜头截图和节拍，拆完交给 AI 看…") : liveActions.length ? "正在改时间线…" : streaming ? "还在写…" : "AI 正在想…"}</Text></View>
     </View> : null}
     {session?.error ? <View accessibilityRole="alert" style={styles.sessionError}><Text style={styles.errorText}>{session.error.message}</Text></View> : null}
   </ScrollView>;

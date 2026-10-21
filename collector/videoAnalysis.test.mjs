@@ -207,7 +207,8 @@ describe("startAnalysis", () => {
     expect(done.look).toBeUndefined();
     expect(sent[0].messages[0].content.at(-1).text).toContain("只回答一行：NO_VIDEO");
     const parts = sent[1].messages[0].content;
-    expect(parts.filter((part) => part.type === "image_url")).toHaveLength(1);
+    expect(parts.filter((part) => part.type === "image_url")).toEqual([{ type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA", detail: "low" } }]);
+    expect([sent[0].reasoning_effort, sent[1].reasoning_effort]).toEqual([undefined, "low"]);
     expect(parts[0].text).toContain("音乐约 120 BPM");
     expect(parts.at(-1).text).toContain("只回答一行：NO_IMAGES");
 
@@ -216,6 +217,45 @@ describe("startAnalysis", () => {
     const direct = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks, fetchImpl, pollMs: 1 });
     looks.answer(direct.id, (await pageAnswers(direct.id)).id, answer);
     expect(await settle(library, direct.id)).toMatchObject({ status: "complete" });
+    expect(sent).toHaveLength(1);
+
+    // 不认 reasoning_effort 的接口（各家说法不一，有的回 422）：去掉再发
+    const refusals = [
+      [400, "Unrecognized request argument supplied: reasoning_effort"],
+      [400, "\"gemma3:12b\" does not support thinking"],
+      [422, "Extra inputs are not permitted"],
+    ];
+    for (const [status, message] of refusals) {
+      sent.length = 0;
+      const picky = async (_url, init) => {
+        const body = JSON.parse(init.body);
+        sent.push(body);
+        if (body.reasoning_effort) return new Response(JSON.stringify({ error: { message } }), { status });
+        return sse([delta("③ 不带推理参数", "stop")]);
+      };
+      const retried = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks, fetchImpl: picky, pollMs: 1 });
+      looks.answer(retried.id, (await pageAnswers(retried.id)).id, answer);
+      expect(await settle(library, retried.id)).toMatchObject({ status: "complete", markdown: expect.stringContaining("③ 不带推理参数") });
+      expect(sent.map((body) => body.reasoning_effort)).toEqual(["low", undefined]);
+    }
+    // 真是别的错：重发一次照样失败，报第二次的原话；限流之类不重发
+    sent.length = 0;
+    const refusing = async (_url, init) => {
+      sent.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ error: { message: `image too large (${sent.length})` } }), { status: 400 });
+    };
+    const refused = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks, fetchImpl: refusing, pollMs: 1 });
+    looks.answer(refused.id, (await pageAnswers(refused.id)).id, answer);
+    expect(await settle(library, refused.id)).toMatchObject({ status: "failed", error: expect.stringContaining("image too large (2)") });
+    expect(sent.map((body) => body.reasoning_effort)).toEqual(["low", undefined]);
+    sent.length = 0;
+    const limited = async (_url, init) => {
+      sent.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ error: { message: "rate limited" } }), { status: 429 });
+    };
+    const throttled = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks, fetchImpl: limited, pollMs: 1 });
+    looks.answer(throttled.id, (await pageAnswers(throttled.id)).id, answer);
+    expect(await settle(library, throttled.id)).toMatchObject({ status: "failed", error: expect.stringContaining("限流") });
     expect(sent).toHaveLength(1);
 
     // 拆的时候采集器关了：提示和下载、分析阶段被打断时一样
