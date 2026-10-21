@@ -82,15 +82,23 @@ export function saveAutoSync(enabled: boolean, storage: StyleStorage | undefined
   save(AUTO_SYNC_KEY, enabled ? "on" : "off", storage);
 }
 
-// 视频解析是可选功能，默认不装；在设置里装或移除，Windows 安装时勾过的由桌面外壳交过来
-const ANALYSIS_KEY = "content-insights.analysis";
+// AI 视频工作台（AI 剪辑 + AI 解析）是可选功能，默认不装；在设置里装或移除，安装时选过的由桌面外壳交过来。
+// 沿用原来「视频解析」的开关：装过解析的算装了；从没选过、但填过 AI 剪辑接口的也算装了（合并前 AI 剪辑一直在侧栏，别一更新入口就没了）
+const AI_VIDEO_KEY = "content-insights.analysis";
+const AI_EDIT_CONFIG_KEY = "dy2.aiEditConfig";
 
-export function loadAnalysisInstalled(storage: StyleStorage | undefined = globalThis.localStorage): boolean {
-  return load<"on" | "off">(ANALYSIS_KEY, ON_OFF, "off", storage) === "on";
+export function loadAiVideoInstalled(storage: StyleStorage | undefined = globalThis.localStorage): boolean {
+  const chosen = load<"on" | "off" | "">(AI_VIDEO_KEY, ON_OFF, "", storage);
+  if (chosen) return chosen === "on";
+  try {
+    return Boolean(JSON.parse(storage?.getItem(AI_EDIT_CONFIG_KEY) ?? "null")?.apiKey);
+  } catch {
+    return false;
+  }
 }
 
-export function saveAnalysisInstalled(installed: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
-  save(ANALYSIS_KEY, installed ? "on" : "off", storage);
+export function saveAiVideoInstalled(installed: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(AI_VIDEO_KEY, installed ? "on" : "off", storage);
 }
 
 /** 报告（故事页、分享图、纪念卡）实际用哪套：极简借用单独选的那套，其余风格就是自己。 */

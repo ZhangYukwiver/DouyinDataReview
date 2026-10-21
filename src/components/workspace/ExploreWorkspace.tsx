@@ -19,7 +19,7 @@ type ActionIntent = { action: ExploreAction["action"]; label: string; desired?: 
 type Props = {
   connection: ExploreConnection | null; collectorBusy: boolean; onOpenSettings: () => void; onOpenRecord: (url: string) => Promise<void>;
   onDownloadRecord?: (record: ExploreVideo) => Promise<void>; downloadStates?: Record<string, RecordDownloadState>; onBatchDownloadActiveChange?: (active: boolean) => void;
-  /** 交给解析库；返回 true 表示已经开始、页面留在原地 */
+  /** 交给 AI 解析；返回 true 表示已经开始、页面留在原地 */
   onAnalyzeRecord?: (record: ExploreVideo) => Promise<boolean> | void;
 };
 // 正在下载以实际状态为准；否则存过 ZIP 的算已下载，哪怕之前单条下载失败过
@@ -163,7 +163,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
   async function analyze(item: ExploreVideo) {
     if (!await onAnalyzeRecord?.(item)) return;
     setAnalyzed((current) => new Set(current).add(item.id));
-    setNotice(`开始解析“${item.title}”了，结果在侧栏「解析库」。视频下好之前（一般几秒）先别翻页。`);
+    setNotice(`开始解析“${item.title}”了，结果在侧栏「AI 视频工作台」的「AI 解析」里。视频下好之前（一般几秒）先别翻页。`);
   }
   // 点热点榜里的热点：热点是内容话题，直接按内容搜
   function searchHotTopic(topic: string) { setMode("videos"); setQuery(topic); void load({ kind: "videos", query: topic }, "results"); }

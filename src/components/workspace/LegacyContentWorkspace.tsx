@@ -37,7 +37,6 @@ import {
   Play,
   Radio,
   RefreshCw,
-  Scissors,
   Search,
   Plug,
   Settings,
@@ -68,6 +67,7 @@ import { LiveRoomPlayer, type LiveTarget } from "./LiveRoomPlayer";
 import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../services/liveRoom";
 import { waitForCollector } from "../../services/videoFeed";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
+import { Segmented } from "./CreatorKit";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { earliestRecordDate, searchRecords } from "../../services/recordSearch";
 import { ReportDashboard } from "./ReportDashboard";
@@ -130,8 +130,8 @@ type IconComponent = React.ComponentType<{
 const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent; accent: string }> = [
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
-  { id: "analysis", label: "解析库", icon: Clapperboard, accent: color.amber },
-  { id: "aiEdit", label: "AI 剪辑", icon: Scissors, accent: color.cyan },
+  // AI 剪辑和 AI 解析合成一个板块：侧栏一项，进去顶上两个页签
+  { id: "aiEdit", label: "AI 视频工作台", icon: Clapperboard, accent: color.amber },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
@@ -141,6 +141,14 @@ const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent
   { id: "highlights", label: "变化线索", icon: Star, accent: color.cyan },
 ];
 
+
+type AiVideoView = "aiEdit" | "analysis";
+const AI_VIDEO_TABS: Array<{ label: string; value: AiVideoView }> = [{ label: "AI 剪辑", value: "aiEdit" }, { label: "AI 解析", value: "analysis" }];
+const isAiVideoView = (view: WorkspaceViewKey): view is AiVideoView => view === "aiEdit" || view === "analysis";
+/** 侧栏里哪一项算选中：AI 剪辑和 AI 解析共用「AI 视频工作台」那一项 */
+const navKey = (view: WorkspaceViewKey): WorkspaceViewKey => (view === "analysis" ? "aiEdit" : view);
+// 上次用的页签记在模块里：去「连接与采集」再回来，工作台卸载重挂也还记得
+let lastAiView: AiVideoView = "aiEdit";
 
 // 探索、创作者中心、解析库和 AI 剪辑是工具页：不显示条数、隐私和重新读取
 const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator" || view === "analysis" || view === "aiEdit";
@@ -209,9 +217,11 @@ export function ContentWorkspace({
   const sidebarWidth = mobile ? 0 : compactSidebar ? 82 : 224;
   // root 的桌面内边距与 stage 边框会占掉 36px，使用同一个主区宽度供各内容页计算。
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
-  // 解析库是可选功能，没装（App 不给 analysis）就不进侧栏
-  const nav = analysis ? navItems : navItems.filter((item) => item.id !== "analysis");
-  const currentNav = nav.find((item) => item.id === activeView) ?? nav[0]!;
+  // AI 视频工作台是可选功能，没装（App 不给 aiEdit）就不进侧栏
+  const nav = aiEdit ? navItems : navItems.filter((item) => item.id !== "aiEdit");
+  const currentNav = nav.find((item) => item.id === navKey(activeView)) ?? nav[0]!;
+  // 点侧栏的 AI 视频工作台：回到上次用的页签
+  useEffect(() => { if (isAiVideoView(activeView)) lastAiView = activeView; }, [activeView]);
   const [reportUpdateNotice, setReportUpdateNotice] = useState(false);
   // 侧栏当前项的指示条：一根，随选中项滑动（各按钮 onLayout 报自己的 y）
   const [navTops, setNavTops] = useState<Record<string, number>>({});
@@ -226,7 +236,7 @@ export function ContentWorkspace({
   useEffect(() => {
     if (Platform.OS !== "web" || !sidebarOverflow) return;
     const body = sidebarBodyRef.current as unknown as HTMLElement | null;
-    const item = body?.querySelector<HTMLElement>(`[data-testid="workspace-nav-${activeView}"]`);
+    const item = body?.querySelector<HTMLElement>(`[data-testid="workspace-nav-${navKey(activeView)}"]`);
     if (!body || !item) return;
     const frame = body.getBoundingClientRect();
     const rect = item.getBoundingClientRect();
@@ -286,6 +296,7 @@ export function ContentWorkspace({
     if (isReportView(nextView) && !reportView) setReportAutoCollapsed(true);
     onChangeView(nextView);
   };
+  const openNav = (id: WorkspaceViewKey) => changeView(id === "aiEdit" ? (isAiVideoView(activeView) ? activeView : lastAiView) : id);
 
   const toggleSidebar = () => {
     if (reportView) {
@@ -303,8 +314,8 @@ export function ContentWorkspace({
         <View {...ws("w-side g-ink")} testID="workspace-sidebar" style={[styles.sidebar, collapseWidth, compactSidebar && styles.sidebarCompact]}>
           <View {...SIDENAV} onLayout={measureSidebar} ref={sidebarBodyRef} style={[styles.sidebarBody, sidebarOverflow && sidebarScroll]}>
           <View accessibilityRole="tablist" onLayout={measureSidebar} style={styles.sidebarNav}>
-            {Platform.OS === "web" && navTops[activeView] !== undefined ? (
-              <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[activeView]! + 14, backgroundColor: currentNav.accent }]} />
+            {Platform.OS === "web" && navTops[navKey(activeView)] !== undefined ? (
+              <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[navKey(activeView)]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
             {nav.map((item) => (
               <NavButton
@@ -313,8 +324,8 @@ export function ContentWorkspace({
                 count={counts[item.id]}
                 item={item}
                 onLayoutTop={(y) => reportNavTop(item.id, y)}
-                onPress={() => changeView(item.id)}
-                selected={item.id === activeView}
+                onPress={() => openNav(item.id)}
+                selected={item.id === navKey(activeView)}
               />
             ))}
           </View>
@@ -376,6 +387,7 @@ export function ContentWorkspace({
             <View style={styles.topbarTitleRow}>
               <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{currentNav.label}</Text>
               {!toolView(activeView) ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
+              {isAiVideoView(activeView) && analysis ? <View style={styles.topbarTabs}><Segmented small options={AI_VIDEO_TABS} value={activeView} onChange={changeView} /></View> : null}
             </View>
           </View>
           <View style={styles.topbarActions}>
@@ -505,10 +517,10 @@ export function ContentWorkspace({
       {mobile ? (
         <View {...ws("w-bottom g-ink")} accessibilityRole="tablist" style={styles.bottomNav}>
           {Platform.OS === "web" ? (
-            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(nav.findIndex((item) => item.id === activeView) + 0.5) / nav.length * 100}%`, backgroundColor: currentNav.accent }]} />
+            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(nav.findIndex((item) => item.id === navKey(activeView)) + 0.5) / nav.length * 100}%`, backgroundColor: currentNav.accent }]} />
           ) : null}
           {nav.map((item) => {
-            const selected = item.id === activeView;
+            const selected = item.id === navKey(activeView);
             const Icon = item.icon;
             return (
               <Pressable
@@ -516,7 +528,7 @@ export function ContentWorkspace({
                 accessibilityLabel={toolView(item.id) ? item.label : `${item.label}，${counts[item.id]} 条`}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
-                onPress={() => changeView(item.id)}
+                onPress={() => openNav(item.id)}
                 style={({ pressed }) => [styles.bottomNavItem, pressed && styles.buttonPressed, webPointer]}
               >
                 <Icon color={selected ? item.accent : color.textMuted} size={20} strokeWidth={selected ? 2.5 : 2} />
@@ -1546,6 +1558,7 @@ const styles = StyleSheet.create({
   topbarHeading: { flex: 1, minWidth: 0 },
   topbarEyebrow: { color: color.accent, fontSize: 9, fontWeight: "600", letterSpacing: 3.5, fontFamily: font.mono },
   topbarTitleRow: { flexDirection: "row", alignItems: "baseline", gap: 9, marginTop: 3 },
+  topbarTabs: { alignSelf: "center", marginLeft: 6 },
   topbarTitle: { maxWidth: "80%", color: color.text, fontSize: 20, fontWeight: "600", letterSpacing: 3, fontFamily: font.serif },
   topbarTitleMobile: { fontSize: 17 },
   topbarCount: { color: color.textMuted, fontSize: 13, fontFamily: font.didot, letterSpacing: 1, fontVariant: ["tabular-nums"] },

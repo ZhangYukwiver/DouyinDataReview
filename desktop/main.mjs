@@ -275,8 +275,8 @@ async function askInstallChoiceOnMac() {
     buttons: ["安装", "暂不安装"],
     defaultId: 1,
     cancelId: 1,
-    message: "要安装可选功能「视频解析」吗？",
-    detail: "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备解析用大模型的 API Key。\n\n现在不装的话，以后也可以在设置里安装。",
+    message: "要安装可选功能「AI 视频工作台」吗？",
+    detail: "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱。AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key。\n\n现在不装的话，以后也可以在设置里安装。",
   });
   try { writeFileSync(marker, ""); } catch { /* 记不下就下次再问 */ }
   return { analysis: response === 0 };
@@ -362,7 +362,7 @@ async function launch() {
       updateInstallRequested = true;
     },
   });
-  // 「视频解析」装不装：Windows 看安装向导里勾没勾（build/installer.nsh 写的），Mac 第一次打开时问；
+  // 「AI 视频工作台」装不装：Windows 看安装向导里勾没勾（build/installer.nsh 写的），Mac 第一次打开时问；
   // 只交给页面一次，页面记进设置后就以设置为准
   let installChoice = takeInstallChoice() ?? await askInstallChoiceOnMac();
   ipcMain.handle("desktop:take-install-choice", () => {
