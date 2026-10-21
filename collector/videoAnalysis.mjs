@@ -217,7 +217,7 @@ export async function requestAnalysis(options) {
 
 /** parts：不发整段视频时换成别的内容（AI 剪辑给看不了视频的模型发截图和测出来的数字），提示词照旧接在最后。 */
 async function analysis({ config, video, videoBase64, parts, signal, fetchImpl = modelFetch }) {
-  const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
+  const send = (effort) => fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     signal,
     headers: { "Content-Type": "application/json", Accept: "text/event-stream", Authorization: `Bearer ${config.apiKey}` },
@@ -226,6 +226,7 @@ async function analysis({ config, video, videoBase64, parts, signal, fetchImpl =
       stream: true,
       // 方舟默认只答 4k，表格一多就截断
       max_tokens: MAX_ANSWER_TOKENS,
+      ...(effort ? { reasoning_effort: effort } : {}),
       messages: [{
         role: "user",
         content: [
@@ -235,6 +236,14 @@ async function analysis({ config, video, videoBase64, parts, signal, fetchImpl =
       }],
     }),
   });
+  // 截图版的镜头、节拍都是测好的，让推理模型少想一会儿：想太久，套着 Cloudflare 的中转站 100 秒没回第一个字就断（524）。
+  // 不是推理模型的接口可能不认这个参数（400 里会提到它），去掉再发一次
+  let response = await send(parts ? "low" : null);
+  if (parts && response.status === 400) {
+    const body = await response.text().catch(() => "");
+    if (!/reasoning/iu.test(body)) throw providerError(400, body);
+    response = await send(null);
+  }
   if (!response.ok) throw providerError(response.status, await response.text().catch(() => ""));
   let text = "";
   let finish = null;

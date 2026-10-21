@@ -207,7 +207,8 @@ describe("startAnalysis", () => {
     expect(done.look).toBeUndefined();
     expect(sent[0].messages[0].content.at(-1).text).toContain("只回答一行：NO_VIDEO");
     const parts = sent[1].messages[0].content;
-    expect(parts.filter((part) => part.type === "image_url")).toHaveLength(1);
+    expect(parts.filter((part) => part.type === "image_url")).toEqual([{ type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA", detail: "low" } }]);
+    expect([sent[0].reasoning_effort, sent[1].reasoning_effort]).toEqual([undefined, "low"]);
     expect(parts[0].text).toContain("音乐约 120 BPM");
     expect(parts.at(-1).text).toContain("只回答一行：NO_IMAGES");
 
@@ -217,6 +218,23 @@ describe("startAnalysis", () => {
     looks.answer(direct.id, (await pageAnswers(direct.id)).id, answer);
     expect(await settle(library, direct.id)).toMatchObject({ status: "complete" });
     expect(sent).toHaveLength(1);
+
+    // 不是推理模型的接口不认 reasoning_effort：去掉再发；别的 400 照常报
+    sent.length = 0;
+    const picky = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      sent.push(body);
+      if (body.reasoning_effort) return new Response(JSON.stringify({ error: { message: "Unrecognized request argument supplied: reasoning_effort" } }), { status: 400 });
+      return sse([delta("③ 不带推理参数", "stop")]);
+    };
+    const retried = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks, fetchImpl: picky, pollMs: 1 });
+    looks.answer(retried.id, (await pageAnswers(retried.id)).id, answer);
+    expect(await settle(library, retried.id)).toMatchObject({ status: "complete", markdown: expect.stringContaining("③ 不带推理参数") });
+    expect(sent.map((body) => body.reasoning_effort)).toEqual(["low", undefined]);
+    const refusing = async () => new Response(JSON.stringify({ error: { message: "image too large" } }), { status: 400 });
+    const refused = startAnalysis({ library, collector: fakeCollector({ file: video }), url, config: { ...config, videoInput: false }, looks, fetchImpl: refusing, pollMs: 1 });
+    looks.answer(refused.id, (await pageAnswers(refused.id)).id, answer);
+    expect(await settle(library, refused.id)).toMatchObject({ status: "failed", error: expect.stringContaining("image too large") });
 
     // 拆的时候采集器关了：提示和下载、分析阶段被打断时一样
     const closing = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS });

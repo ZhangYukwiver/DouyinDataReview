@@ -267,7 +267,8 @@ export function lookMaterials(look) {
   ];
   const parts = [{ type: "text", text: lines.join("\n") }];
   look.shots.forEach((shot, index) => {
-    if (shot.frame) parts.push({ type: "text", text: `镜头 ${index + 1}（${span(shot)} 秒）` }, { type: "image_url", image_url: { url: shot.frame } });
+    // 截图只有 384 宽，按低清晰度算 token 几乎不丢细节，40 张少算四五倍，模型也回得快
+    if (shot.frame) parts.push({ type: "text", text: `镜头 ${index + 1}（${span(shot)} 秒）` }, { type: "image_url", image_url: { url: shot.frame, detail: "low" } });
   });
   const measured = { shots: look.shots.length, ...(look.beats ? { bpm: look.beats.bpm } : {}), ...(align ? { cuts_on_beat: `${align.onBeat}/${align.total}`, beat_synced: SYNC_WORDS[align.verdict] } : {}) };
   return { parts, measured };
