@@ -261,7 +261,7 @@ export function buildSystemPrompt({ project, media, goal = "" }) {
     "- 工具参数里没有 end：时间线里的 end 只是给你看的结束时间，改时长用 duration。",
     "- 位置、缩放、旋转、不透明度都写在 transform 对象里，例如 \"transform\": {\"transform_y\": -0.8}。transform_x / transform_y 以画布中心为 0，单位是半个画布宽 / 高，x 向右为正，y 向上为正（字幕一般放在 -0.8 左右，add_subtitles 默认就放在这里）。",
     "- 分屏、宫格、拼图（七分屏、左右或上下分屏、九宫格等）：先把片段放上时间线，再用 arrange_grid 一次排好，不要自己算 transform 和蒙版。",
-    "- 画布：新建的剪辑默认竖屏 1080×1920。用户提到横屏、16:9、方形、1:1、B 站、电脑上看这类说法，或者参考视频是横屏的，先用 set_canvas 改好画布再排时间线；用户没说、素材又大多是横拍的，照竖屏做，在回复里提一句可以改成横屏。",
+    "- 画布以上面写的为准，用户可能已经在界面上选好了比例，没被要求就别改。用户在对话里要横屏、竖屏、方形、16:9，或者说要发到 B 站、YouTube 这类横屏平台，先用 set_canvas 改好画布再排时间线；当前是竖屏而素材大多横拍时，在回复里提一句可以改成横屏。改了画布，用 arrange_grid 排过的分屏会自动按新画布重排。",
     "- add_subtitles 建的字幕轨（时间线里标着 subtitles: true）只能整组加、删；已有的字幕可以用 update_clip 逐条改，但不能往字幕轨上单独加片段，要加标题或单独一句文字就另建一条文字轨道。",
     "- 每个片段的入场、出场、组合（文字是循环）动画各只能有一个，视频的组合动画不能和入场、出场同时用；音频片段的同类音效只能有一个。要换掉就先用 clear_clip_feature 去掉那一类再加。",
     "- 特效、滤镜、转场、动画、蒙版、混合模式、字体只能用剪映内置的名称：先用 search_catalog 查到准确名称再用，不要自己编。尽量挑不需要会员的（vip 为 false）。",
@@ -838,34 +838,56 @@ function checkFont(args) {
  * 分屏、宫格：画布按列、行等分，每个片段等比缩放铺满（cover）或放进（contain）自己那一格，cover 再套一个格子大小的矩形蒙版遮掉多出的部分。
  * 模型自己算 transform 常错（远端实测七分屏把「半个画布宽」当成整个画布宽，七格全挤在中间，还用不等比缩放把图压扁），所以交给应用算。
  * 按 contain 的基准算（剪映里缩放 1.0 = 等比放进画布，草稿和看板都按这个）；蒙版的高、宽分别按素材高、宽的比例。
+ * 缩放和蒙版跟画布比例有关，排过的记在 ctx.grids 里，换画布时 rearrangeGrids 按新画布重排。
  */
 async function arrangeGrid(ctx, args) {
   const columns = args.columns;
   const rows = args.rows ?? 1;
-  const cover = (args.fit ?? "cover") === "cover";
-  const project = await ctx.store.getProject(ctx.projectId);
-  const { width, height } = project.canvas;
-  const [cellWidth, cellHeight] = [width / columns, height / rows];
   // 先全部核对，免得改到一半才发现某一格不对
+  const seen = new Set();
   const cells = [];
   for (const cell of Array.isArray(args.cells) ? args.cells : []) {
     const row = cell?.row ?? 1;
     if (!Number.isInteger(cell?.column) || !Number.isInteger(row) || cell.column < 1 || row < 1 || cell.column > columns || row > rows) {
       throw invalid("GRID_CELL_INVALID", `格子位置不对：一共 ${columns} 列 ${rows} 行，列和行都从 1 数。`);
     }
-    const segment = await ctx.store.getSegment(ctx.projectId, cell.clip_id);
-    if (!segment || (segment.kind !== "video" && segment.kind !== "image")) throw invalid("GRID_CLIP_INVALID", "只有视频和图片片段能排进格子。");
-    const item = ctx.library.get(ctx.library.idForPath(segment.path));
-    // 尺寸不知道就当和画布同比例
-    const material = item?.width && item?.height ? { width: item.width, height: item.height } : { width, height };
-    cells.push({ id: cell.clip_id, column: cell.column, row, segment, material });
+    if (seen.has(cell.clip_id)) throw invalid("GRID_CELL_INVALID", "一个片段只能放一格；同一段画面要放好几格，先多放几个片段。");
+    seen.add(cell.clip_id);
+    cells.push(await gridCell(ctx, cell.clip_id, cell.column, row));
   }
   if (!cells.length) throw invalid("GRID_CELL_INVALID", "cells 里至少放一个片段。");
+  const keyed = cells.filter(({ segment }) => (segment.keyframes ?? []).some((keyframe) => GRID_KEYFRAMES.has(keyframe.property))).length;
+  const records = await placeInGrid(ctx, cells, { columns, rows, fit: args.fit ?? "cover" });
+  if (ctx.grids) for (const record of records) ctx.grids[record.id] = record;
+  return {
+    project: await ctx.store.getProject(ctx.projectId),
+    ...(keyed ? { note: `有 ${keyed} 个片段原来带位置、缩放或旋转关键帧，会盖住排好的格子，已经去掉。` } : {}),
+  };
+}
+
+// 位置、缩放、旋转的关键帧会盖住格子算好的静态 transform
+const GRID_KEYFRAMES = new Set(["transform_x", "transform_y", "scale_x", "scale_y", "uniform_scale", "rotation"]);
+const GRID_KEYS = ["scale_x", "scale_y", "transform_x", "transform_y"];
+
+async function gridCell(ctx, id, column, row) {
+  const segment = await ctx.store.getSegment(ctx.projectId, id);
+  if (!segment || (segment.kind !== "video" && segment.kind !== "image")) throw invalid("GRID_CLIP_INVALID", "只有视频和图片片段能排进格子。");
+  const item = ctx.library.get(ctx.library.idForPath(segment.path));
+  return { id, column, row, segment, material: item?.width && item?.height ? { width: item.width, height: item.height } : null };
+}
+
+/** 把核对过的片段放进格子，返回每个片段的记录（格子位置和写进去的 transform）。 */
+async function placeInGrid(ctx, cells, { columns, rows, fit }) {
+  const { width, height } = (await ctx.store.getProject(ctx.projectId)).canvas;
+  const [cellWidth, cellHeight] = [width / columns, height / rows];
   const round = (value) => Math.round(value * 10_000) / 10_000;
-  for (const { id, column, row, segment, material } of cells) {
+  const records = [];
+  for (const { id, column, row, segment, material: known } of cells) {
+    // 尺寸不知道就当和画布同比例
+    const material = known ?? { width, height };
     const base = Math.min(width / material.width, height / material.height);
     const [baseWidth, baseHeight] = [material.width * base, material.height * base];
-    const scale = (cover ? Math.max : Math.min)(cellWidth / baseWidth, cellHeight / baseHeight);
+    const scale = (fit === "cover" ? Math.max : Math.min)(cellWidth / baseWidth, cellHeight / baseHeight);
     const transform = {
       ...(segment.transform ?? {}),
       scale_x: round(scale),
@@ -874,15 +896,41 @@ async function arrangeGrid(ctx, args) {
       transform_y: round(1 - ((row - 0.5) * cellHeight) / (height / 2)),
       rotation: 0,
     };
+    for (const keyframe of segment.keyframes ?? []) {
+      if (GRID_KEYFRAMES.has(keyframe.property)) await ctx.store.removeKeyframe(ctx.projectId, id, keyframe.property, keyframe.offset_us);
+    }
     await ctx.store.updateSegment(ctx.projectId, id, { fit: "contain", transform });
     if (segment.crop) await ctx.store.clearFeature(ctx.projectId, id, "crop");
     if (segment.mask) await ctx.store.clearFeature(ctx.projectId, id, "mask");
     const [maskHeight, maskWidth] = [cellHeight / (baseHeight * scale), cellWidth / (baseWidth * scale)];
-    if (cover && (maskHeight < 0.999 || maskWidth < 0.999)) {
+    if (fit === "cover" && (maskHeight < 0.999 || maskWidth < 0.999)) {
       await ctx.store.addMask(ctx.projectId, id, { mask_type: "矩形", size: round(Math.min(1, maskHeight)), rect_width: round(Math.min(1, maskWidth)) });
     }
+    records.push({ id, columns, rows, column, row, fit, transform: Object.fromEntries(GRID_KEYS.map((key) => [key, transform[key]])) });
   }
-  return ctx.store.getProject(ctx.projectId);
+  return records;
+}
+
+/**
+ * 画布换了比例（看板上点的或 set_canvas）：arrange_grid 排过、之后位置没被改过的片段按新画布重排；
+ * 改过的（模型或用户有意调过）不动，记录作废。片段删了也作废。
+ */
+export async function rearrangeGrids(ctx, grids) {
+  const layouts = new Map();
+  for (const [id, record] of Object.entries(grids)) {
+    const cell = await gridCell(ctx, id, record.column, record.row).catch(() => null);
+    const current = cell?.segment.transform ?? {};
+    if (!cell || !GRID_KEYS.every((key) => Math.abs((current[key] ?? Number.NaN) - record.transform[key]) < 1e-6)) {
+      delete grids[id];
+      continue;
+    }
+    const key = `${record.columns}|${record.rows}|${record.fit}`;
+    if (!layouts.has(key)) layouts.set(key, { layout: { columns: record.columns, rows: record.rows, fit: record.fit }, cells: [] });
+    layouts.get(key).cells.push(cell);
+  }
+  for (const { layout, cells } of layouts.values()) {
+    for (const record of await placeInGrid(ctx, cells, layout)) grids[record.id] = record;
+  }
 }
 
 function checkMask(args) {
@@ -1065,7 +1113,9 @@ const TOOLS = [
     label: () => "改了画布",
     run: async (ctx, args) => {
       const { canvas } = await ctx.store.getProject(ctx.projectId);
-      return ctx.store.setCanvas(ctx.projectId, { ...canvas, ...pick(args, ["width", "height", "fps"]) });
+      await ctx.store.setCanvas(ctx.projectId, { ...canvas, ...pick(args, ["width", "height", "fps"]) });
+      if (ctx.grids) await rearrangeGrids(ctx, ctx.grids);
+      return ctx.store.getProject(ctx.projectId);
     },
   },
   {
@@ -1353,7 +1403,7 @@ const TOOLS = [
   },
   {
     name: "arrange_grid",
-    description: "把视频/图片片段排成分屏、宫格（七分屏、左右或上下分屏、九宫格等）：当前画布按几列几行等分，每个片段放进指定的格子。位置、等比缩放和遮住格子外部分的矩形蒙版都由应用算好，不要自己算 transform。片段原来的蒙版和裁剪会被换掉。",
+    description: "把视频/图片片段排成分屏、宫格（七分屏、左右或上下分屏、九宫格等）：当前画布按几列几行等分，每个片段放进指定的格子。位置、等比缩放和遮住格子外部分的矩形蒙版都由应用算好，不要自己算 transform。片段原来的蒙版、裁剪和位置/缩放/旋转关键帧会被换掉；之后换画布会自动按新画布重排。一个片段只能放一格。",
     parameters: obj({
       columns: int("横向分几列，1 到 12", { minimum: 1, maximum: 12 }),
       rows: int("纵向分几行，1 到 12，默认 1", { minimum: 1, maximum: 12 }),
@@ -1687,6 +1737,7 @@ export function createToolRunner(ctx) {
           ...(newClips.length === 1 ? { clip_id: newClips[0] } : {}),
           ...(newClips.length > 1 ? { clip_ids: newClips.slice(0, 50), clip_count: newClips.length } : {}),
           total_duration: seconds(projectDurationUs(project)),
+          ...(typeof output?.note === "string" ? { note: output.note } : {}),
         };
       } else {
         result = { ok: true, ...output };

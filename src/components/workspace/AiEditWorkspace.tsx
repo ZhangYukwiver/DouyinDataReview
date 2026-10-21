@@ -330,7 +330,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     }
   };
 
-  /** 看板上换画面比例：位置按比例存，换完片段跟着画布走，不用重排 */
+  /** 看板上换画面比例：位置按比例存，跟着画布走；arrange_grid 排过的分屏由采集器按新画布重排 */
   const changeCanvas = async (canvas: EditCanvas) => {
     if (!conn || !currentId) return;
     setError(null);

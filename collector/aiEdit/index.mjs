@@ -10,7 +10,7 @@ import { EditError } from "./errors.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
 import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, sessionDetail } from "./sessions.mjs";
-import { TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, createToolRunner, describeToolError, probeVideoInput } from "./tools.mjs";
+import { TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, createToolRunner, describeToolError, probeVideoInput, rearrangeGrids } from "./tools.mjs";
 
 // AI 剪辑在采集器里的入口：会话、工程、素材库、对话循环和导入剪映草稿箱的 HTTP 接口。
 // 数据都在采集器根数据目录的 ai-edit/ 下，不分抖音账号。server.mjs 在配对校验前后各调一次 handle：
@@ -241,6 +241,8 @@ export function createAiEdit({
       offerLookFile: (file) => state.looks.offerFile(file),
       exportDraft: () => exportSession(session),
       onRename: (name) => { session.title = name; },
+      // arrange_grid 排过的格子记在会话上（跟着会话存盘），换画布时按新画布重排
+      grids: session.grids,
     });
     let text = "";
     let status = "idle";
@@ -454,7 +456,9 @@ export function createAiEdit({
           if (error instanceof EditError) throw new AiEditError("invalid_canvas", "画布宽高要在 16 到 7680 之间的整数，帧率 1 到 120。", 422);
           throw error;
         }
-        await sessions.touch(session);
+        // 分屏的缩放和蒙版跟画布比例有关：arrange_grid 排过的按新画布重排
+        await rearrangeGrids({ store, library: state.library, projectId: session.projectId }, session.grids);
+        await sessions.touch(session, { persist: true });
         sendJson(response, 200, await sessionState(session));
         return;
       }
