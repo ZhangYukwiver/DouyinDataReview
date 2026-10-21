@@ -214,27 +214,43 @@ describe("runConversation edge replies", () => {
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: alwaysDrops }))
       .rejects.toMatchObject({ code: "provider_unreachable", message: "接口连接中途断开了（UND_ERR_SOCKET），自动重发了 2 次还是断开。可以发「继续」接着做。" });
     expect(calls).toBe(3);
-    // 回答流到一半被掐断：页面上的半句先清掉，重发拿完整回答
+    // 回答流到一半被掐断：重发拿完整回答，新回答一来就替换掉页面上的半句
     const shown = [];
     let tries = 0;
-    const cutMidway = async (url, init) => {
-      tries += 1;
-      if (tries > 1) return scripted([sse([delta({ role: "assistant", content: "完整" }), delta({ content: "回答" }), delta({}, "stop")])]).fetchImpl(url, init);
+    const halfThenDrop = () => {
       let sent = false;
       const body = new ReadableStream({ pull(controller) { if (sent) return controller.error(dropError()); sent = true; controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(delta({ content: "半句" }))}\n\n`)); } });
       return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
     };
+    const cutMidway = async (url, init) => {
+      tries += 1;
+      if (tries > 1) return scripted([sse([delta({ role: "assistant", content: "完整" }), delta({ content: "回答" }), delta({}, "stop")])]).fetchImpl(url, init);
+      return halfThenDrop();
+    };
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: cutMidway, onText: (text) => shown.push(text) })).resolves.toMatchObject({ text: "完整回答" });
-    expect(shown).toEqual(["半句", "", "完整", "完整回答"]);
-    // 第一次复用了断掉的连接，重发一次就好
+    expect(shown).toEqual(["半句", "完整", "完整回答"]);
+    // 断过之后重发连握手都被重置：也占「最多两次」，两次用完照样叫用户发「继续」，半句留在历史里
+    const reset = () => new TypeError("fetch failed", { cause: Object.assign(new Error("Client network socket disconnected before secure TLS connection was established"), { code: "ECONNRESET" }) });
+    tries = 0;
+    const thenResets = async () => { tries += 1; if (tries > 1) throw reset(); return halfThenDrop(); };
+    const history = [{ role: "user", content: "剪" }];
+    await expect(runConversation({ config: ARK, history, tools: [{}], fetchImpl: thenResets, system: async () => "s", execute: async () => ({ ok: true }) }))
+      .rejects.toMatchObject({ code: "provider_unreachable", message: "连接还没建立好就被断开了（ECONNRESET），检查一下网络、代理和地址，自动重发了 2 次还是断开。可以发「继续」接着做。" });
+    expect(tries).toBe(3);
+    expect(history.at(-1)).toEqual({ role: "assistant", content: "半句" });
+    // 还没收到回答连接就断（第一次复用了断掉的连接）：马上重发一次就好
     const flaky = scripted([sse([delta({ role: "assistant", content: "好" }), delta({}, "stop")])]);
-    let first = true;
-    const once = async (url, init) => { if (first) { first = false; throw dropError(); } return flaky.fetchImpl(url, init); };
+    tries = 0;
+    const staleSocket = new TypeError("fetch failed", { cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }) });
+    const once = async (url, init) => { tries += 1; if (tries === 1) throw staleSocket; return flaky.fetchImpl(url, init); };
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: once })).resolves.toMatchObject({ text: "好" });
-    // 握手阶段就被重置、重发也一样：说连不上，不叫用户发「继续」
-    const blocked = async () => { throw new TypeError("fetch failed", { cause: Object.assign(new Error("Client network socket disconnected before secure TLS connection was established"), { code: "ECONNRESET" }) }); };
+    expect(tries).toBe(2);
+    // 握手阶段就被重置、重发也一样：只重发一次，说连不上，不叫用户发「继续」
+    tries = 0;
+    const blocked = async () => { tries += 1; throw reset(); };
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: blocked }))
       .rejects.toMatchObject({ code: "provider_unreachable", message: "连接还没建立好就被断开了（ECONNRESET），检查一下网络、代理和地址。" });
+    expect(tries).toBe(2);
     const dns = async () => { throw new TypeError("fetch failed", { cause: Object.assign(new Error("getaddrinfo ENOTFOUND x"), { code: "ENOTFOUND" }) }); };
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: dns })).rejects.toMatchObject({ message: expect.stringContaining("找不到接口地址的域名") });
     // 不是网络错误的 TypeError 原样抛出，不冒充「连不上」

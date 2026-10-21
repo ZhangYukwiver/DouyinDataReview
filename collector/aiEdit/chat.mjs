@@ -91,8 +91,6 @@ export async function requestCompletion(options) {
   return sendWithRetry(() => completion({ ...options, onText: (text) => { received = true; onText(text); } }), {
     signal: options.signal,
     received: () => received,
-    // 断了重发：页面上流到一半的字先清掉，等新回答从头流
-    onRetry: () => { if (received) onText(""); received = false; },
     fail: ({ text, dropped }) => new AiEditError("provider_unreachable", dropped ? `${text}可以发「继续」接着做。` : text, 502),
   });
 }

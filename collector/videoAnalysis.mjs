@@ -99,10 +99,10 @@ export function networkFailure(error, waitedMs = 0) {
 /**
  * 发一次模型请求，网络断了悄悄重发：还没收到文字、10 秒内连接就断（多半复用了一条已被中间网络断掉的连接）马上重发一次；
  * 回答已经开始又被掐断（中转站或代理节点不稳，远端实测 21 秒、47 秒都断过）歇一下再发，最多两次。
- * 请求本身没有副作用（工具要等整段回答收完才执行），重发是安全的；重发前 onRetry 让调用方清掉流到一半的字。
+ * 请求本身没有副作用（工具要等整段回答收完才执行），重发是安全的。流到一半的字不清：新回答一来自然替换，重发全失败时半句还留着。
  * 网络错误交给 fail 换成调用方自己的报错。
  */
-export async function sendWithRetry(send, { signal, received = () => false, fail, onRetry = () => undefined }) {
+export async function sendWithRetry(send, { signal, received = () => false, fail }) {
   let drops = 0;
   for (let attempt = 1; ; attempt += 1) {
     const started = Date.now();
@@ -112,16 +112,17 @@ export async function sendWithRetry(send, { signal, received = () => false, fail
       const waited = Date.now() - started;
       const failure = signal?.aborted ? null : networkFailure(error, waited);
       if (!failure) throw error;
-      const again = failure.dropped ? drops < DROP_RETRIES : attempt === 1 && waited < QUICK_RETRY_MS && !received();
+      // 断过一次之后，重发时连接没建好就被重置也算同一回事，一起占「最多两次」
+      const again = failure.dropped || drops ? drops < DROP_RETRIES : attempt === 1 && waited < QUICK_RETRY_MS && !received();
       if (failure.retry && again) {
-        if (failure.dropped) {
+        if (failure.dropped || drops) {
           drops += 1;
-          await delay(DROP_PAUSE_MS, undefined, { signal });
+          // 歇的时候到了超时：抛信号自己的原因（TimeoutError），别让 timers 的 AbortError 冒充用户停止
+          await delay(DROP_PAUSE_MS, undefined, { signal }).catch((reason) => { signal?.throwIfAborted(); throw reason; });
         }
-        onRetry();
         continue;
       }
-      throw fail(drops ? { ...failure, text: failure.text.replace(/。$/u, `，自动重发了 ${drops} 次还是断开。`) } : failure);
+      throw fail(drops ? { ...failure, dropped: true, text: failure.text.replace(/。$/u, `，自动重发了 ${drops} 次还是断开。`) } : failure);
     }
   }
 }

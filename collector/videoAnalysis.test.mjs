@@ -74,6 +74,8 @@ describe("parseAnalysisConfig", () => {
     };
     await expect(requestAnalysis({ config: { baseUrl: "https://a.com/v1", apiKey: "k", model: "m" }, video: {}, videoBase64: "AA==", fetchImpl: cutOnce })).resolves.toBe("完整的拆解");
     expect(calls).toBe(2);
+    // 歇着准备重发时正好到了超时：报超时，不冒充用户停止
+    await expect(requestAnalysis({ config: { baseUrl: "https://a.com/v1", apiKey: "k", model: "m" }, video: {}, videoBase64: "AA==", signal: AbortSignal.timeout(100), fetchImpl: async () => drop() })).rejects.toMatchObject({ name: "TimeoutError" });
     // 等太久这边自己断开的（5 分钟没开始回答）不重发
     calls = 0;
     const slow = async () => { calls += 1; throw new TypeError("fetch failed", { cause: Object.assign(new Error("timeout"), { code: "UND_ERR_HEADERS_TIMEOUT" }) }); };
