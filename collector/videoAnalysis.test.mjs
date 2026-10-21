@@ -61,8 +61,24 @@ describe("parseAnalysisConfig", () => {
     const drop = () => { throw new TypeError("terminated", { cause: Object.assign(new Error("closed"), { code: "UND_ERR_SOCKET" }) }); };
     let calls = 0;
     const error = await requestAnalysis({ config: { baseUrl: "https://a.com/v1", apiKey: "k", model: "m" }, video: {}, videoBase64: "AA==", fetchImpl: async () => { calls += 1; drop(); } }).catch((failure) => failure);
+    expect(calls).toBe(3);
+    expect(error).toMatchObject({ code: "provider_unreachable", dropped: true, message: "接口连接中途断开了（UND_ERR_SOCKET），自动重发了 2 次还是断开。" });
+    // 写到一半被掐断（远端中转站 21 秒、47 秒都断过）：自己重发，从头拿完整的回答
+    calls = 0;
+    const cutOnce = async () => {
+      calls += 1;
+      if (calls > 1) return sse([delta("完整的拆解", "stop")]);
+      let sent = false;
+      const body = new ReadableStream({ pull(controller) { if (sent) return controller.error(new TypeError("terminated", { cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }) })); sent = true; controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(delta("写到一半"))}\n\n`)); } });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+    await expect(requestAnalysis({ config: { baseUrl: "https://a.com/v1", apiKey: "k", model: "m" }, video: {}, videoBase64: "AA==", fetchImpl: cutOnce })).resolves.toBe("完整的拆解");
     expect(calls).toBe(2);
-    expect(error).toMatchObject({ code: "provider_unreachable", dropped: true, message: "接口连接中途断开了（UND_ERR_SOCKET）。" });
+    // 等太久这边自己断开的（5 分钟没开始回答）不重发
+    calls = 0;
+    const slow = async () => { calls += 1; throw new TypeError("fetch failed", { cause: Object.assign(new Error("timeout"), { code: "UND_ERR_HEADERS_TIMEOUT" }) }); };
+    await expect(requestAnalysis({ config: { baseUrl: "https://a.com/v1", apiKey: "k", model: "m" }, video: {}, videoBase64: "AA==", fetchImpl: slow })).rejects.toMatchObject({ code: "provider_unreachable" });
+    expect(calls).toBe(1);
   });
 
   it("rejects non-http addresses and missing keys", () => {

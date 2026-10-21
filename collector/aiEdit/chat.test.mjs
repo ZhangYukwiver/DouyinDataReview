@@ -212,8 +212,20 @@ describe("runConversation edge replies", () => {
     let calls = 0;
     const alwaysDrops = async () => { calls += 1; throw dropError(); };
     await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: alwaysDrops }))
-      .rejects.toMatchObject({ code: "provider_unreachable", message: "接口连接中途断开了（UND_ERR_SOCKET）。可以发「继续」接着做。" });
-    expect(calls).toBe(2);
+      .rejects.toMatchObject({ code: "provider_unreachable", message: "接口连接中途断开了（UND_ERR_SOCKET），自动重发了 2 次还是断开。可以发「继续」接着做。" });
+    expect(calls).toBe(3);
+    // 回答流到一半被掐断：页面上的半句先清掉，重发拿完整回答
+    const shown = [];
+    let tries = 0;
+    const cutMidway = async (url, init) => {
+      tries += 1;
+      if (tries > 1) return scripted([sse([delta({ role: "assistant", content: "完整" }), delta({ content: "回答" }), delta({}, "stop")])]).fetchImpl(url, init);
+      let sent = false;
+      const body = new ReadableStream({ pull(controller) { if (sent) return controller.error(dropError()); sent = true; controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(delta({ content: "半句" }))}\n\n`)); } });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    };
+    await expect(requestCompletion({ config: ARK, messages: [], fetchImpl: cutMidway, onText: (text) => shown.push(text) })).resolves.toMatchObject({ text: "完整回答" });
+    expect(shown).toEqual(["半句", "", "完整", "完整回答"]);
     // 第一次复用了断掉的连接，重发一次就好
     const flaky = scripted([sse([delta({ role: "assistant", content: "好" }), delta({}, "stop")])]);
     let first = true;
