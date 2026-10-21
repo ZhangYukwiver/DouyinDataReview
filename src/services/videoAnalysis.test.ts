@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { parseMarkdown } from "./videoAnalysis";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadAnalysisConfig, parseMarkdown } from "./videoAnalysis";
 
 describe("parseMarkdown", () => {
   it("reads the shapes the analysis answer uses", () => {
@@ -28,5 +28,19 @@ describe("parseMarkdown", () => {
     const blocks = parseMarkdown(["### ② 维度分析表", "维度｜具体发现｜时间戳或原话证据｜创作启示", "1.视频档案｜标题《80后》｜0-410秒｜明确基础信息", "普通一句话｜只有一个竖线"].join("\n"));
     expect(blocks.map((block) => block.kind)).toEqual(["h", "table", "p"]);
     expect((blocks[1] as { rows: string[][] }).rows[1]).toEqual(["1.视频档案", "标题《80后》", "0-410秒", "明确基础信息"]);
+  });
+});
+
+describe("loadAnalysisConfig", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("keeps the video check only for the model it was run on", () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
+    const base = { baseUrl: "https://relay.example.com/v1", apiKey: "k", model: "gpt-6.1-sol", direction: "美食" };
+    saved.set("dy2.analysisConfig", JSON.stringify({ ...base, videoInput: false, videoProbe: "https://relay.example.com/v1|gpt-6.1-sol" }));
+    expect(loadAnalysisConfig()).toEqual({ ...base, videoInput: false, videoProbe: "https://relay.example.com/v1|gpt-6.1-sol" });
+    saved.set("dy2.analysisConfig", JSON.stringify({ ...base, model: "doubao-seed-2-1-lite-260915", videoInput: false, videoProbe: "https://relay.example.com/v1|gpt-6.1-sol" }));
+    expect(loadAnalysisConfig()).toEqual({ ...base, model: "doubao-seed-2-1-lite-260915" });
   });
 });

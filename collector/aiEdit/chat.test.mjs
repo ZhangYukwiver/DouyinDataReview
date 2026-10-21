@@ -37,7 +37,9 @@ function scripted(replies) {
 
 describe("parseEditConfig", () => {
   it("accepts http(s) with a key and model, and asks for the AI edit settings otherwise", () => {
-    expect(parseEditConfig({ baseUrl: " https://example.com/v1/ ", apiKey: " k ", model: " m " })).toEqual({ baseUrl: "https://example.com/v1", apiKey: "k", model: "m" });
+    expect(parseEditConfig({ baseUrl: " https://example.com/v1/ ", apiKey: " k ", model: " m " })).toEqual({ baseUrl: "https://example.com/v1", apiKey: "k", model: "m", videoInput: null });
+    expect(parseEditConfig({ baseUrl: "https://example.com/v1", apiKey: "k", model: "m", videoInput: false }).videoInput).toBe(false);
+    expect(parseEditConfig({ baseUrl: "https://example.com/v1", apiKey: "k", model: "m", videoInput: "yes" }).videoInput).toBeNull();
     expect(parseEditConfig({ baseUrl: "https://api.huiliu.one", apiKey: "k", model: "m" }).baseUrl).toBe("https://api.huiliu.one/v1");
     expect(() => parseEditConfig({ baseUrl: "file:///etc", apiKey: "k", model: "m" })).toThrow("接口地址要以 https:// 开头。");
     expect(() => parseEditConfig({ baseUrl: "https://example.com", apiKey: "", model: "m" })).toThrow("先在 AI 剪辑的接口设置里填好 Key 和模型。");

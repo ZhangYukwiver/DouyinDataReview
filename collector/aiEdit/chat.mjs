@@ -30,16 +30,18 @@ export function parseEditConfig(value) {
   try { protocol = new URL(baseUrl).protocol; } catch { /* 下面统一报错 */ }
   if (protocol !== "https:" && protocol !== "http:") throw new AiEditError("invalid_config", "接口地址要以 https:// 开头。");
   if (!apiKey || !model) throw new AiEditError("invalid_config", "先在 AI 剪辑的接口设置里填好 Key 和模型。");
-  return { baseUrl, apiKey, model };
+  // 配置时测过能不能看视频（页面测完一起存）；没测过是 null，解析参考视频时先试整段视频
+  return { baseUrl, apiKey, model, videoInput: typeof value?.videoInput === "boolean" ? value.videoInput : null };
 }
 
 function isArk(baseUrl) {
   try { return /(?:^|\.)volces\.com$/iu.test(new URL(baseUrl).hostname); } catch { return false; }
 }
 
-function providerError(status, body) {
+function providerError(status, body, withTools = true) {
   return new AiEditError("provider_error", providerMessage(status, body, {
-    400: "接口不接受这次请求（模型可能不支持工具调用）",
+    // 不带工具的请求（配置时测能不能看视频）被拒和工具调用无关
+    400: withTools ? "接口不接受这次请求（模型可能不支持工具调用）" : "接口不接受这次请求",
     524: "中转站等了两分钟左右，模型还没开始回答（524），换个反应快的模型或把要求拆小一点再试",
   }), 502);
 }
@@ -109,7 +111,7 @@ async function completion({ config, messages, tools, toolChoice, signal, fetchIm
       ...(isArk(config.baseUrl) ? { thinking: { type: "disabled" } } : {}),
     }),
   });
-  if (!response.ok) throw providerError(response.status, await response.text().catch(() => ""));
+  if (!response.ok) throw providerError(response.status, await response.text().catch(() => ""), Boolean(tools?.length));
   let text = "";
   let finish = null;
   const calls = [];

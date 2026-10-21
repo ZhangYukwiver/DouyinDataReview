@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sendAiEditMessage } from "./aiEdit";
+import { loadAiEditConfig, sendAiEditMessage } from "./aiEdit";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -17,5 +17,17 @@ describe("sendAiEditMessage", () => {
     await sendAiEditMessage({ baseUrl: "http://127.0.0.1:4765", token: "t" }, "s", "参考同款", config);
 
     expect(bodies).toEqual([{ text: "参考同款", config }]);
+  });
+});
+
+describe("loadAiEditConfig", () => {
+  it("keeps the video check only for the model it was run on", () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
+    const base = { baseUrl: "https://relay.example.com/v1", apiKey: "k", model: "gpt-6.1-sol" };
+    saved.set("dy2.aiEditConfig", JSON.stringify({ ...base, videoInput: false, videoProbe: "https://relay.example.com/v1|gpt-6.1-sol" }));
+    expect(loadAiEditConfig()).toEqual({ ...base, videoInput: false, videoProbe: "https://relay.example.com/v1|gpt-6.1-sol" });
+    saved.set("dy2.aiEditConfig", JSON.stringify({ ...base, model: "doubao-seed-2-1-lite-260915", videoInput: false, videoProbe: "https://relay.example.com/v1|gpt-6.1-sol" }));
+    expect(loadAiEditConfig()).toEqual({ ...base, model: "doubao-seed-2-1-lite-260915" });
   });
 });

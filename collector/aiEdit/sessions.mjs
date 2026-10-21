@@ -24,7 +24,12 @@ export function sessionDetail(session) {
     revision: session.revision,
     error: session.error ? { ...session.error } : null,
     messages: session.messages.map((item) => ({ ...item, ...(item.actions ? { actions: item.actions.map((action) => ({ ...action })) } : {}) })),
-    streaming: session.streaming ? { text: session.streaming.text, actions: session.streaming.actions.map((action) => ({ ...action })) } : null,
+    streaming: session.streaming ? {
+      text: session.streaming.text,
+      actions: session.streaming.actions.map((action) => ({ ...action })),
+      // 要页面在浏览器里帮忙拆视频（截图、节拍）时挂在这里，页面做完交回
+      ...(session.streaming.look ? { look: { ...session.streaming.look } } : {}),
+    } : null,
   };
 }
 

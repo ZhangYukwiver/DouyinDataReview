@@ -8,8 +8,9 @@ import { VideoDownloadError } from "../videoDownloader.mjs";
 import { MAX_TOOL_CALLS, parseEditConfig, runConversation, sealHistory, trimHistory } from "./chat.mjs";
 import { EditError } from "./errors.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
+import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, sessionDetail } from "./sessions.mjs";
-import { TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, createToolRunner, describeToolError } from "./tools.mjs";
+import { TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, createToolRunner, describeToolError, probeVideoInput } from "./tools.mjs";
 
 // AI 剪辑在采集器里的入口：会话、工程、素材库、对话循环和导入剪映草稿箱的 HTTP 接口。
 // 数据都在采集器根数据目录的 ai-edit/ 下，不分抖音账号。server.mjs 在配对校验前后各调一次 handle：
@@ -19,6 +20,8 @@ const DEFAULT_TITLE = "未命名剪辑";
 const DEFAULT_CANVAS = { width: 1080, height: 1920, fps: 30 };
 const MESSAGE_BODY_BYTES = 64 * 1024;
 const BODY_BYTES = 16 * 1024;
+// 页面交回的参考视频截图：最多 40 张小 JPEG
+const LOOK_BODY_BYTES = 24 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 20_000;
 const STORED_HISTORY_CHARS = 600_000;
 const STREAM_THROTTLE_MS = 150;
@@ -144,7 +147,7 @@ export function createAiEdit({
     await sessions.load();
     // 素材导入完成或失败时叫醒各会话的长轮询，页面跟着刷新素材栏
     library.subscribe(() => { for (const session of sessions.sessions.values()) void sessions.touch(session, { quiet: true }); });
-    return { library, store, draftBox, sessions };
+    return { library, store, draftBox, sessions, looks: createLookDesk() };
   };
   let ready = null;
   const load = () => {
@@ -225,6 +228,15 @@ export function createAiEdit({
     const runTool = createToolRunner({
       store, library, projectId: session.projectId, getCollector, signal,
       getExplorer, config, references, fetchImpl, pollMs,
+      // 活儿挂在这一轮上（streaming 不存盘），页面长轮询看到后接手
+      askLook: (request) => state.looks.ask({
+        id: session.id,
+        live: () => Boolean(session.streaming),
+        get: () => session.streaming?.look ?? null,
+        set: (look) => { if (session.streaming) session.streaming.look = look; },
+        touch: () => void sessions.touch(session, { quiet: true }),
+      }, request, { signal }),
+      offerLookFile: (file) => state.looks.offerFile(file),
       exportDraft: () => exportSession(session),
       onRename: (name) => { session.title = name; },
     });
@@ -348,6 +360,31 @@ export function createAiEdit({
       return;
     }
 
+    // 应用开着就接活儿：只回各会话这一轮挂着的拆视频任务，地址带上素材 key（来问的是配过对的页面）
+    if (pathname === "/v1/ai-edit/looks") {
+      if (method !== "GET") { notAllowed(); return; }
+      const looks = [...sessions.sessions.values()].filter((session) => session.streaming?.look)
+        .map((session) => ({ sessionId: session.id, look: { ...session.streaming.look, url: `${session.streaming.look.url}?key=${encodeURIComponent(library.key)}` } }));
+      sendJson(response, 200, { looks });
+      return;
+    }
+
+    if (pathname === "/v1/ai-edit/probe-video") {
+      if (method !== "POST") { notAllowed(); return; }
+      const body = await readJson(request, BODY_BYTES);
+      sendJson(response, 200, await probeVideoInput({ config: parseEditConfig(body.config), fetchImpl, signal: AbortSignal.timeout(120_000) }));
+      return;
+    }
+
+    const lookMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)\/look\/([0-9a-f]{16})$/u);
+    if (lookMatch) {
+      if (method !== "POST") { notAllowed(); return; }
+      const body = await readJson(request, LOOK_BODY_BYTES);
+      state.looks.answer(lookMatch[1], lookMatch[2], body);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
     const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export))?$/u);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
@@ -459,7 +496,8 @@ export function createAiEdit({
     async handle(request, response, url, { paired = false } = {}) {
       if (!url.pathname.startsWith("/v1/ai-edit/")) return false;
       const fileMatch = url.pathname.match(/^\/v1\/ai-edit\/media\/([^/]+)\/file$/u);
-      if (!paired && !(fileMatch && request.method === "GET")) return false;
+      const lookFileMatch = url.pathname.match(/^\/v1\/ai-edit\/look\/([^/]+)\/file$/u);
+      if (!paired && !((fileMatch || lookFileMatch) && request.method === "GET")) return false;
       try {
         try { state ??= await load(); }
         catch (error) {
@@ -467,7 +505,11 @@ export function createAiEdit({
           throw new AiEditError("ai_edit_unavailable", "AI 剪辑没能启动，请重启应用。", 503);
         }
         if (fileMatch && request.method === "GET") await handleMediaFile(request, response, fileMatch[1], url);
-        else await route(request, response, url);
+        else if (lookFileMatch && request.method === "GET") {
+          // 和素材文件同一把 key：key 不对和地址失效回一样的结果
+          if (state.library.checkKey(url.searchParams.get("key"))) await state.looks.sendFile(request, response, lookFileMatch[1]);
+          else sendJson(response, 404, { error: "look_not_found", message: "这个视频地址已经失效了。" });
+        } else await route(request, response, url);
       } catch (error) {
         const failure = toHttpError(error);
         sendJson(response, failure.status, { error: failure.code, message: failure.message });
@@ -479,6 +521,7 @@ export function createAiEdit({
       closing = true;
       if (!state) return;
       state.library.close();
+      state.looks.close();
       for (const run of running.values()) run.controller.abort();
       state.sessions.wakeAll();
       await Promise.race([Promise.allSettled([...running.values()].map((run) => run.promise)), delay(3_000)]);
