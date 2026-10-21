@@ -21,6 +21,7 @@ export function sessionSummary(session) {
 export function sessionDetail(session) {
   return {
     ...sessionSummary(session),
+    goal: session.goal,
     revision: session.revision,
     error: session.error ? { ...session.error } : null,
     messages: session.messages.map((item) => ({ ...item, ...(item.actions ? { actions: item.actions.map((action) => ({ ...action })) } : {}) })),
@@ -54,6 +55,8 @@ export class SessionStore {
       session.messages = Array.isArray(session.messages) ? session.messages : [];
       session.history = Array.isArray(session.history) ? session.history.filter((entry) => entry && typeof entry === "object") : [];
       session.revision = Number.isSafeInteger(session.revision) ? session.revision : 1;
+      // 加目标之前存的会话没有这个字段
+      session.goal = typeof session.goal === "string" ? session.goal : "";
       session.streaming = null;
       this.sessions.set(id, session);
       // 一轮进行中也会存盘（比如导入剪映后），那时 history 里可能有还没回结果的工具调用；
@@ -88,6 +91,7 @@ export class SessionStore {
       status: "idle",
       projectId,
       draftBox: null,
+      goal: "",
       revision: 1,
       error: null,
       messages: [],

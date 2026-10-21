@@ -48,6 +48,21 @@ describe("SessionStore", () => {
     expect(reloaded.get(first.id)).toMatchObject({ title: "第一个", revision: 2, streaming: null, history: [{ role: "user", content: "hi" }] });
   });
 
+  it("keeps the goal across restarts, and gives sessions saved before goals an empty one", async () => {
+    const { sessions, directory } = await store();
+    const session = await sessions.create({ title: "x", projectId: "p" });
+    expect(sessionDetail(session).goal).toBe("");
+    session.goal = "30 秒旅行卡点快闪";
+    await sessions.touch(session, { persist: true });
+    const old = await sessions.create({ title: "旧的", projectId: "q" });
+    const { goal: _goal, ...stored } = old;
+    await writeFile(path.join(directory, `${old.id}.json`), JSON.stringify(stored));
+    const reloaded = new SessionStore({ directory });
+    await reloaded.load();
+    expect(sessionDetail(reloaded.get(session.id)).goal).toBe("30 秒旅行卡点快闪");
+    expect(sessionDetail(reloaded.get(old.id)).goal).toBe("");
+  });
+
   it("marks a session that was running when the collector stopped as failed", async () => {
     const { sessions, directory } = await store();
     const session = await sessions.create({ title: "x", projectId: "p" });

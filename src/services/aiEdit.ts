@@ -170,6 +170,8 @@ export interface AiEditChatItem {
 }
 
 export interface AiEditSession extends AiEditSessionSummary {
+  /** 用户给这条片子定的目标：每次请求都写进系统提示，对话再长被裁掉也还在；空字符串表示没定 */
+  goal?: string;
   revision: number;
   error: { code: string; message: string } | null;
   messages: AiEditChatItem[];
@@ -259,6 +261,10 @@ export async function deleteAiEditSession(connection: ExploreConnection, id: str
 
 export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig): Promise<AiEditSession> {
   return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify({ text, config }) })).session;
+}
+
+export async function setAiEditGoal(connection: ExploreConnection, id: string, goal: string): Promise<AiEditSession> {
+  return (await request(connection, `${sessionPath(id)}/goal`, { method: "POST", body: JSON.stringify({ goal }) })).session;
 }
 
 export async function stopAiEditSession(connection: ExploreConnection, id: string): Promise<AiEditSession> {

@@ -23,6 +23,7 @@ const BODY_BYTES = 16 * 1024;
 // 页面交回的参考视频截图：最多 40 张小 JPEG
 const LOOK_BODY_BYTES = 24 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 20_000;
+const MAX_GOAL_CHARS = 2_000;
 const STORED_HISTORY_CHARS = 600_000;
 const STREAM_THROTTLE_MS = 150;
 const REPAIR_FALLBACK = new Set(["DRAFT_BOX_NOT_FOUND", "DRAFT_BOX_NOT_OWNED", "DRAFT_BOX_PROJECT_MISMATCH"]);
@@ -248,7 +249,8 @@ export function createAiEdit({
       const result = await runConversation({
         config, history: session.history, tools: TOOL_DEFINITIONS, signal, fetchImpl, onText, maxToolCalls: MAX_TOOL_CALLS,
         // 系统提示只放不常变的；工程现状每步都变，附在每次请求的最后，不打断接口的前缀缓存
-        system: async () => buildSystemPrompt({ project: await store.getProject(session.projectId), media: library.list() }),
+        // 目标每次请求都读最新的：一轮做到一半改了，下一步就照新的来
+        system: async () => buildSystemPrompt({ project: await store.getProject(session.projectId), media: library.list(), goal: session.goal }),
         context: async () => buildContextMessage({ project: await store.getProject(session.projectId), library }),
         execute: async (call) => {
           const { result: output, action } = await runTool(call.name, call.arguments);
@@ -385,7 +387,7 @@ export function createAiEdit({
       return;
     }
 
-    const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export))?$/u);
+    const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export|goal))?$/u);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!isSessionId(id)) throw new AiEditError("session_not_found", "这个剪辑不存在或已经删除了。", 404);
@@ -425,6 +427,17 @@ export function createAiEdit({
         if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
         await startTurn(session, text, config);
         sendJson(response, 202, { session: sessionDetail(session) });
+        return;
+      }
+      if (action === "goal") {
+        // 目标不进对话历史，写在每次请求的系统提示里，历史再长被裁掉也还在；AI 正在剪的时候也能改
+        const body = await readJson(request, BODY_BYTES);
+        const session = requireSession(id);
+        const goal = typeof body.goal === "string" ? body.goal.trim() : "";
+        if (goal.length > MAX_GOAL_CHARS) throw new AiEditError("goal_too_long", `目标写在 ${MAX_GOAL_CHARS} 字以内。`);
+        session.goal = goal;
+        await sessions.touch(session, { persist: true });
+        sendJson(response, 200, { session: sessionDetail(session) });
         return;
       }
       if (action === "stop") {

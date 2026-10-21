@@ -5,14 +5,14 @@ import {
 } from "react-native";
 import {
   Check, ChevronDown, Film, FolderInput, FolderOpen, Library, Music2, Pause, Play, Plus, Scissors, Send, Settings2, SlidersHorizontal,
-  Sparkles, Square, Sticker, Trash2, Type, X,
+  Sparkles, Square, Sticker, Target, Trash2, Type, X,
 } from "lucide-react-native";
 import type { PersonalRecordCollection, PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import {
   aiEditLookUrl, aiEditMediaUrl, answerAiEditLook, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
   importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, saveAiEditConfig, sendAiEditMessage, sessionRunning,
-  stopAiEditSession, uploadAiEditMedia, videoProbeKey,
+  setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey,
   type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditMediaItem, type AiEditSession, type AiEditSessionState,
   type AiEditSessionSummary, type EditCanvas, type EditMediaSegment, type EditProject, type EditSegment, type EditTextSegment, type EditTrack,
 } from "../../services/aiEdit";
@@ -311,6 +311,21 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     }
   };
 
+  /** 存目标；还没有剪辑就先新建一个。成功返回 true，失败提示在错误条里 */
+  const saveGoal = async (goal: string): Promise<boolean> => {
+    if (!conn) return false;
+    try {
+      const id = currentId ?? (await createSession())?.session.id;
+      if (!id) return false;
+      const next = await setAiEditGoal(conn, id, goal);
+      setState((current) => current?.session.id === next.id ? { ...current, session: next } : current);
+      return true;
+    } catch (reason) {
+      setError(errorText(reason, "目标没存上，请稍后重试。"));
+      return false;
+    }
+  };
+
   const stop = async () => {
     if (!conn || !currentId) return;
     try {
@@ -382,6 +397,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
         onCreate={() => void createSession()}
         onToggleConfig={() => setConfigOpen((value) => !value)}
       />
+      {configOpen ? null : <GoalBar key={currentId ?? "new"} goal={session?.goal ?? ""} onSave={saveGoal} />}
       <View style={styles.middle}>
         {error ? <View accessibilityRole="alert" style={styles.errorBar}>
           <Text style={styles.errorText}>{error}</Text>
@@ -466,6 +482,55 @@ function SessionBar({ title, open, configOpen, onToggle, onCreate, onToggleConfi
     <Pressable {...ws("btn square")} accessibilityRole="button" accessibilityLabel="新建剪辑" onPress={onCreate} style={[styles.iconButton, webPointer]}><Plus size={16} color={color.text} /></Pressable>
     <Pressable {...ws("btn square", configOpen && "on")} accessibilityRole="button" accessibilityLabel="接口设置" accessibilityState={{ expanded: configOpen }} onPress={onToggleConfig} style={[styles.iconButton, webPointer]}><Settings2 size={16} color={color.text} /></Pressable>
   </View>;
+}
+
+const MAX_GOAL_CHARS = 2000;
+
+/** 这条片子的目标：每次都写进给 AI 的系统提示，对话再长被裁掉也还在；随时能改，清空保存就是删掉。 */
+function GoalBar({ goal, onSave }: { goal: string; onSave: (goal: string) => Promise<boolean> }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(goal);
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    const ok = await onSave(draft.trim());
+    setSaving(false);
+    if (ok) setEditing(false);
+  };
+  if (editing) return <View {...ws("e-box")} style={styles.goalBox}>
+    <View style={kit.row}>
+      <Target size={14} color={color.accent} />
+      <Text style={styles.goalLabel}>目标</Text>
+      <Text style={[kit.muted, { flex: 1 }]}>每次都会带给 AI，对话再长也不会被裁掉</Text>
+    </View>
+    <TextInput
+      accessibilityLabel="剪辑目标"
+      multiline
+      autoFocus
+      value={draft}
+      maxLength={MAX_GOAL_CHARS}
+      onChangeText={setDraft}
+      placeholder="比如：30 秒旅行卡点快闪，用「放空」这首歌，越往后切得越快，结尾停在海边"
+      placeholderTextColor={color.textMuted}
+      style={[styles.fieldInput, styles.goalInput]}
+    />
+    <View style={kit.row}>
+      <SmallButton label={saving ? "保存中…" : "保存"} disabled={saving || draft.trim() === goal} onPress={() => void save()} />
+      <SmallButton label="取消" onPress={() => { setDraft(goal); setEditing(false); }} />
+    </View>
+  </View>;
+  return <Pressable
+    accessibilityRole="button"
+    accessibilityLabel={goal ? `剪辑目标：${goal}，点一下修改` : "设定剪辑目标"}
+    onPress={() => { setDraft(goal); setEditing(true); }}
+    style={[styles.goalRow, webPointer]}
+  >
+    <Target size={14} color={goal ? color.accent : color.textMuted} />
+    {goal
+      ? <Text numberOfLines={2} style={styles.goalText}>{goal}</Text>
+      : <Text numberOfLines={1} style={[kit.muted, { flex: 1 }]}>定个目标，AI 每一步都照着做</Text>}
+    <Text style={styles.linkText}>{goal ? "修改" : "设定"}</Text>
+  </Pressable>;
 }
 
 function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove }: {
@@ -1377,6 +1442,11 @@ const styles = StyleSheet.create({
   sessionPick: { flex: 1, minWidth: 0, minHeight: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, borderRadius: radius.small },
   sessionTitle: { flexShrink: 1, color: color.text, fontFamily: font.body, fontSize: 14, fontWeight: "600" },
   iconButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
+  goalRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  goalText: { flex: 1, color: color.text, fontFamily: font.body, fontSize: 12, lineHeight: 18 },
+  goalBox: { gap: 8, margin: 10, marginBottom: 0, padding: 10, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
+  goalLabel: { color: color.text, fontFamily: font.body, fontSize: 13, fontWeight: "600" },
+  goalInput: { minHeight: 76, paddingVertical: 8, textAlignVertical: "top" },
   middle: { flex: 1, minHeight: 0, position: "relative" },
   errorBar: { flexDirection: "row", alignItems: "flex-start", gap: 8, margin: 10, marginBottom: 0, padding: 10, borderRadius: radius.small, backgroundColor: color.dangerSoft },
   errorText: { flex: 1, color: color.danger, fontFamily: font.body, fontSize: 12, lineHeight: 18 },
