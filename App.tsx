@@ -98,7 +98,7 @@ import {
 import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAnalysisInstalled, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAnalysisInstalled, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAiVideoInstalled, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAiVideoInstalled, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
@@ -250,10 +250,10 @@ function AppContent() {
   const [collectorBusy, setCollectorBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
-  // 视频解析是可选功能：没装时侧栏和卡片上都不出现入口
-  const [analysisInstalled, setAnalysisInstalled] = useState(() => Platform.OS === "web" && loadAnalysisInstalled());
-  // 模型看不了视频时，AI 剪辑和解析库要页面在浏览器里拆视频：应用开着就接，不管当前在哪个页面
-  usePendingLooks(Platform.OS === "web" ? collectorUrl : null, collectorToken, analysisInstalled);
+  // AI 视频工作台（AI 剪辑 + AI 解析）是可选功能：没装时侧栏和卡片上都不出现入口
+  const [aiVideoInstalled, setAiVideoInstalled] = useState(() => Platform.OS === "web" && loadAiVideoInstalled());
+  // 模型看不了视频时，AI 剪辑和 AI 解析要页面在浏览器里拆视频：应用开着就接，不管当前在哪个页面
+  usePendingLooks(Platform.OS === "web" && aiVideoInstalled ? collectorUrl : null, collectorToken, aiVideoInstalled);
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   // 首屏正在扫码登录或导入凭据（桌面版）：同样挡住读取和换号，但界面上不写成「正在切换账号」
@@ -544,8 +544,8 @@ function AppContent() {
   useEffect(() => {
     void takeDesktopAnalysisChoice().then((choice) => {
       if (choice === null) return;
-      saveAnalysisInstalled(choice);
-      setAnalysisInstalled(choice);
+      saveAiVideoInstalled(choice);
+      setAiVideoInstalled(choice);
     });
   }, []);
   // 配对闲置过期（电脑睡过一夜）时悄悄重新配对，不用用户先断开再连
@@ -1752,12 +1752,12 @@ function AppContent() {
     saveAutoSync(!value);
     return !value;
   });
-  // 移除只收起入口，解析过的结果和填过的 Key 都留着，重新安装就回来
-  const toggleAnalysis = () => {
-    const next = !analysisInstalled;
-    saveAnalysisInstalled(next);
-    setAnalysisInstalled(next);
-    if (!next && dashboardView === "analysis") setDashboardView("summary");
+  // 移除只收起入口，剪辑、解析过的结果和填过的 Key 都留着，重新安装就回来
+  const toggleAiVideo = () => {
+    const next = !aiVideoInstalled;
+    saveAiVideoInstalled(next);
+    setAiVideoInstalled(next);
+    if (!next && (dashboardView === "analysis" || dashboardView === "aiEdit")) setDashboardView("summary");
   };
   const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus);
   const recordDownloading = batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running");
@@ -1836,11 +1836,11 @@ function AppContent() {
         />
       ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
-          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onAnalyzeRecord={analysisInstalled ? (record) => analyzeRecord(record, true) : undefined} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
+          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onAnalyzeRecord={aiVideoInstalled ? (record) => analyzeRecord(record, true) : undefined} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
-          analysis={analysisInstalled ? <AnalysisWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} /> : undefined}
-          aiEdit={<AiEditWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} records={workspaceRecords} onOpenSettings={openSettings} />}
-          onAnalyzeRecord={analysisInstalled ? analyzeRecord : undefined}
+          analysis={aiVideoInstalled ? <AnalysisWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} /> : undefined}
+          aiEdit={aiVideoInstalled ? <AiEditWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} records={workspaceRecords} onOpenSettings={openSettings} /> : undefined}
+          onAnalyzeRecord={aiVideoInstalled ? analyzeRecord : undefined}
           activeView={dashboardView}
           appStyle={appStyle}
           storyStyle={storyStyle}
@@ -1924,8 +1924,8 @@ function AppContent() {
         }}
         autoSyncEnabled={autoSyncEnabled}
         onToggleAutoSync={toggleAutoSync}
-        analysisInstalled={analysisInstalled}
-        onToggleAnalysis={toggleAnalysis}
+        aiVideoInstalled={aiVideoInstalled}
+        onToggleAiVideo={toggleAiVideo}
         privacy={privacy}
         onTogglePrivacy={() => setPrivacy((value) => !value)}
         connected={collectorToken !== null}

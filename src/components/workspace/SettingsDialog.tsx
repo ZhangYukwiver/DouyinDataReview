@@ -25,9 +25,9 @@ export interface SettingsDialogProps {
   onChangeStoryStyle: (style: StoryStyle) => void;
   autoSyncEnabled: boolean;
   onToggleAutoSync: () => void;
-  /** 可选功能「视频解析」装没装 */
-  analysisInstalled: boolean;
-  onToggleAnalysis: () => void;
+  /** 可选功能「AI 视频工作台」（AI 剪辑 + AI 解析）装没装 */
+  aiVideoInstalled: boolean;
+  onToggleAiVideo: () => void;
   privacy: boolean;
   onTogglePrivacy: () => void;
   connected: boolean;
@@ -362,16 +362,16 @@ function Data({ appStyle, canClear, connected, onClearCache, onExportData }: Set
   );
 }
 
-function Features({ analysisInstalled, appStyle, onToggleAnalysis }: SettingsDialogProps) {
+function Features({ aiVideoInstalled, appStyle, onToggleAiVideo }: SettingsDialogProps) {
   return (
     <View style={styles.row}>
       <RowCopy
-        detail={analysisInstalled
-          ? "已安装，在侧栏的「解析库」里用。移除后入口会收起来，解析过的结果和填过的 Key 都还留着。"
-          : "用 AI 拆解视频的选题、结构和拍法，结果存在侧栏的「解析库」里。需要自备解析用大模型的 API Key。"}
-        title="视频解析"
+        detail={aiVideoInstalled
+          ? "已安装，在侧栏的「AI 视频工作台」里用。移除后入口会收起来，剪辑、解析过的结果和填过的 Key 都还留着。"
+          : "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱；AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key。"}
+        title="AI 视频工作台"
       />
-      <Button appStyle={appStyle} icon={analysisInstalled ? undefined : Download} label={analysisInstalled ? "移除" : "安装"} onPress={onToggleAnalysis} testID="settings-analysis" />
+      <Button appStyle={appStyle} icon={aiVideoInstalled ? undefined : Download} label={aiVideoInstalled ? "移除" : "安装"} onPress={onToggleAiVideo} testID="settings-ai-video" />
     </View>
   );
 }

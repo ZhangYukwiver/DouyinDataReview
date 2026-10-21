@@ -209,7 +209,7 @@ export async function setDesktopOpenAtLogin(enabled: boolean): Promise<boolean |
   }
 }
 
-/** 安装时选没选「视频解析」（Windows 安装向导勾选、Mac 第一次打开时问）；只在装完第一次打开时有，之后和浏览器里是 null */
+/** 安装时选没选「AI 视频工作台」（Windows 安装向导勾选、Mac 第一次打开时问）；只在装完第一次打开时有，之后和浏览器里是 null */
 export async function takeDesktopAnalysisChoice(): Promise<boolean | null> {
   const runtime = getDesktopRuntime();
   if (typeof runtime?.takeInstallChoice !== "function") return null;
