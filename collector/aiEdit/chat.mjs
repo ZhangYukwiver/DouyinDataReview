@@ -34,6 +34,9 @@ export function parseEditConfig(value) {
   return { baseUrl, apiKey, model, videoInput: typeof value?.videoInput === "boolean" ? value.videoInput : null };
 }
 
+// 不认 reasoning_effort 的接口（地址|模型），采集器重启前不再带
+const NO_EFFORT = new Set();
+
 function isArk(baseUrl) {
   try { return /(?:^|\.)volces\.com$/iu.test(new URL(baseUrl).hostname); } catch { return false; }
 }
@@ -97,7 +100,7 @@ export async function requestCompletion(options) {
 
 async function completion({ config, messages, tools, toolChoice, signal, fetchImpl = modelFetch, onText = () => undefined }) {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
+  const send = (effort) => fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     headers: { "Content-Type": "application/json", Accept: "text/event-stream", Authorization: `Bearer ${config.apiKey}` },
@@ -109,8 +112,19 @@ async function completion({ config, messages, tools, toolChoice, signal, fetchIm
       ...(tools?.length ? { tools, tool_choice: toolChoice ?? "auto" } : {}),
       // 方舟的 seed 模型默认会先深度思考，剪辑指令用不上，还慢
       ...(isArk(config.baseUrl) ? { thinking: { type: "disabled" } } : {}),
+      ...(effort ? { reasoning_effort: effort } : {}),
     }),
   });
+  // 别家的推理模型同理少想：想太久，套着 Cloudflare 的中转站 100 秒没回第一个字就断（524，远端排时间线时碰上过）。
+  // 不认这个参数的接口回 400/422（各家说法不一），去掉再发；重发成功就记住，这个接口以后不带
+  const key = `${config.baseUrl}|${config.model}`;
+  const effort = isArk(config.baseUrl) || NO_EFFORT.has(key) ? null : "low";
+  let response = await send(effort);
+  if (effort && (response.status === 400 || response.status === 422)) {
+    await response.text().catch(() => "");
+    response = await send(null);
+    if (response.ok) NO_EFFORT.add(key);
+  }
   if (!response.ok) throw providerError(response.status, await response.text().catch(() => ""), Boolean(tools?.length));
   let text = "";
   let finish = null;

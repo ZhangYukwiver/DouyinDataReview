@@ -291,6 +291,31 @@ describe("runConversation edge replies", () => {
     expect(calls).toBe(1);
   });
 
+  it("asks reasoning models to think less, and stops sending that to an endpoint that refuses it", async () => {
+    // 远端 gpt-6.1-sol 排时间线时想了 100 多秒，中转站回 524
+    const relay = { baseUrl: "https://relay.example.com/v1", apiKey: "k", model: "gpt-x" };
+    const first = scripted([textReply("好")]);
+    await requestCompletion({ config: relay, messages: [], fetchImpl: first.fetchImpl });
+    expect(first.requests[0].body).toMatchObject({ reasoning_effort: "low" });
+    const ark = scripted([textReply("好")]);
+    await requestCompletion({ config: ARK, messages: [], fetchImpl: ark.fetchImpl });
+    expect(ark.requests[0].body.reasoning_effort).toBeUndefined();
+    expect(ark.requests[0].body.thinking).toEqual({ type: "disabled" });
+    // 本地 Ollama 上不会思考的模型：400 正文里没提参数名，照样去掉重发，之后这个接口不再带
+    const ollama = { baseUrl: "http://127.0.0.1:11434/v1", apiKey: "k", model: "gemma3:12b" };
+    const refusing = scripted([new Response(JSON.stringify({ error: { message: "\"gemma3:12b\" does not support thinking" } }), { status: 400 }), textReply("好"), textReply("又好")]);
+    await expect(requestCompletion({ config: ollama, messages: [], fetchImpl: refusing.fetchImpl })).resolves.toMatchObject({ text: "好" });
+    await expect(requestCompletion({ config: ollama, messages: [], fetchImpl: refusing.fetchImpl })).resolves.toMatchObject({ text: "又好" });
+    expect(refusing.requests.map((request) => request.body.reasoning_effort)).toEqual(["low", undefined, undefined]);
+    // 别的 400（不支持工具调用）：重发一次也一样，照常报，也不记成「不认这个参数」
+    const noTools = { baseUrl: "https://no-tools.example.com/v1", apiKey: "k", model: "m" };
+    const invalid = () => new Response(JSON.stringify({ error: { message: "tools is not supported" } }), { status: 400 });
+    const rejecting = scripted([invalid(), invalid(), textReply("好")]);
+    await expect(requestCompletion({ config: noTools, messages: [], tools: [{}], fetchImpl: rejecting.fetchImpl })).rejects.toMatchObject({ code: "provider_error", message: expect.stringContaining("tools is not supported") });
+    await requestCompletion({ config: noTools, messages: [], fetchImpl: rejecting.fetchImpl });
+    expect(rejecting.requests.map((request) => request.body.reasoning_effort)).toEqual(["low", undefined, "low"]);
+  });
+
   it("reports an empty reply or a body that is not JSON, and never stores an empty assistant message", async () => {
     const empty = scripted([sse([delta({ role: "assistant", content: "" }), delta({}, "stop")])]);
     const history = [{ role: "user", content: "剪" }];
