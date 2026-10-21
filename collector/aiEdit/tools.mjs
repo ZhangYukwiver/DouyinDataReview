@@ -232,7 +232,7 @@ function mediaLine(item) {
  * 系统提示只放一轮里基本不变的内容（规则、工程名和画布、素材清单）：方舟等接口按前缀缓存，
  * 系统提示一变后面整段历史都得重新算。总时长和当前时间线每做一步都会变，放在 buildContextMessage 里、每次请求附在最后。
  */
-export function buildSystemPrompt({ project, media }) {
+export function buildSystemPrompt({ project, media, goal = "" }) {
   const { width, height, fps } = project.canvas;
   const orientation = width === height ? "方形" : width > height ? "横屏" : "竖屏";
   const listed = media.slice(0, 120);
@@ -240,6 +240,13 @@ export function buildSystemPrompt({ project, media }) {
     "你是「AI 剪辑」助手：按用户的要求，用工具在这个剪辑工程里编排时间线（加素材、剪切、字幕、特效、转场、动画等），用户最后把它导入剪映草稿箱继续精修或导出。用户在右边只能看、不能手动改，所以所有改动都要通过工具完成。",
     "",
     `工程「${project.name}」：画布 ${width}×${height}（${orientation}），${fps} 帧/秒。`,
+    // 目标写在系统提示里，对话历史太长被裁掉时也还在
+    ...(goal ? [
+      "",
+      // 改目标不进对话历史，模型分不出它和历史里的话谁先谁后：目标就算最新的，只让用户最新一条消息压过它
+      "用户给这条片子定的目标（用户随时会改，这里永远是最新的）：每一步都朝着它做，做完对照它检查一遍还差什么。对话里更早的要求和它冲突时以目标为准；只有用户最新一条消息明确要求不一样的做法时才照那条做，并提醒用户可以顺手改一下目标。",
+      goal,
+    ] : []),
     "每次请求的最后一条消息是应用自动附上的「工程现状」（当前总时长和时间线），以它为准；那条不是用户说的话，不用回应它。",
     "",
     "规则：",

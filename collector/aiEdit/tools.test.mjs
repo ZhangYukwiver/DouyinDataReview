@@ -306,6 +306,11 @@ describe("AI edit tools", () => {
     const changed = project();
     changed.tracks[0].segments[0].timeline.duration_us = 9_000_000;
     expect(buildSystemPrompt({ project: changed, media: media.list(), library: media })).toBe(prompt);
+    // 用户定的目标写在系统提示里（对话历史被裁掉也还在）；没定就不提
+    expect(prompt).not.toContain("定的目标");
+    const goal = buildSystemPrompt({ project: project(), media: media.list(), goal: "30 秒旅行卡点快闪，越往后切得越快" });
+    expect(goal).toContain("用户给这条片子定的目标");
+    expect(goal).toContain("\n30 秒旅行卡点快闪，越往后切得越快\n");
     const context = buildContextMessage({ project: project(), library: media });
     expect(context).toContain("当前总时长 4 秒");
     expect(context).toContain("\"clip_id\":\"s1\"");
