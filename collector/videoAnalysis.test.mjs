@@ -62,6 +62,10 @@ describe("parseAnalysisConfig", () => {
     const noChannel = { error: { message: "分组 default 下模型 m 无可用渠道", code: "model_not_found" } };
     expect(transientFailure(0, JSON.stringify(upstream))).toBe(true);
     expect(transientFailure(502, "")).toBe(true);
+    expect(transientFailure(529, JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }))).toBe(true);
+    expect(transientFailure(0, JSON.stringify({ error: { code: 502, message: "Provider disconnected unexpectedly" } }))).toBe(true);
+    expect(transientFailure(500, JSON.stringify({ error: { code: "InternalServiceError", message: "The service encountered an unexpected internal error. Please retry later." } }))).toBe(true);
+    expect(transientFailure(500, JSON.stringify({ error: { message: "invalid image format" } }))).toBe(false);
     expect(transientFailure(503, JSON.stringify(noChannel))).toBe(false);
     expect(transientFailure(0, JSON.stringify({ error: { message: "content violates our usage policy" } }))).toBe(false);
     expect(transientFailure(400, "timeout")).toBe(false);

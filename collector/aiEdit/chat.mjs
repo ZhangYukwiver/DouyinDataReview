@@ -91,11 +91,7 @@ export async function requestCompletion(options) {
   return sendWithRetry(() => completion({ ...options, onText: (text) => { received = true; onText(text); } }), {
     signal: options.signal,
     received: () => received,
-    fail: ({ text, dropped }) => new AiEditError("provider_unreachable", dropped ? `${text}可以发「继续」接着做。` : text, 502),
-  }).catch((error) => {
-    // 中转站临时出错、自动重发也没好：和断线一样，待会儿发「继续」就行
-    if (error?.transient) error.message += "可以发「继续」接着做。";
-    throw error;
+    fail: ({ text, dropped }) => Object.assign(new AiEditError("provider_unreachable", text, 502), { dropped }),
   });
 }
 
@@ -232,6 +228,8 @@ export async function runConversation({ config, history, tools, system, context,
     } catch (error) {
       // 停止时把已经说出来的半句留在历史里，下一轮模型知道自己说到哪了
       if (streamed.trim()) history.push({ role: "assistant", content: streamed });
+      // 断线或中转站临时出错、自动重发也没好：待会儿发「继续」就行（只在对话里这么说，设置里测模型时不说）
+      if (error?.dropped || error?.transient) error.message += "可以发「继续」接着做。";
       throw error;
     }
     if (reply.finishReason === "content_filter") {

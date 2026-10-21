@@ -217,14 +217,15 @@ function providerError(status, body) {
 }
 
 // 远端中转站在回答流里回过「Upstream HTTP/2 stream failed」：它和上游之间断了，重发多半就好
-const TRANSIENT = /stream (failed|error|closed|reset)|HTTP\/2|timed? ?out|connection (reset|closed|refused|error)|\bEOF\b|overloaded|temporarily|try again|bad gateway|gateway time-?out|service unavailable/iu;
+// OpenRouter 流里断了回「Provider disconnected unexpectedly」，方舟内部错误 500 让「Please retry later」
+const TRANSIENT = /stream (failed|error|closed|reset)|HTTP\/2|timed? ?out|connection (reset|closed|refused|error)|\bEOF\b|disconnected|overloaded|temporarily|try again|retry later|bad gateway|gateway time-?out|service unavailable/iu;
 
 /**
- * 接口这次的报错是不是临时的（重发多半就好）：网关 502/504/520/522，或者 500/503、回答流里报错（status 0），
+ * 接口这次的报错是不是临时的（重发多半就好）：网关 502/504/520/522、过载 529，或者 500/503、回答流里报错（status 0），
  * 正文说的是上游断流、超时、网关这类。参数不对、Key 不对、没开通模型（503 model_not_found）、限流都不算。
  */
 export function transientFailure(status, body) {
-  return [502, 504, 520, 522].includes(status) || ([0, 500, 503].includes(status) && TRANSIENT.test(String(body ?? "")));
+  return [502, 504, 520, 522, 529].includes(status) || ([0, 500, 503].includes(status) && TRANSIENT.test(String(body ?? "")));
 }
 
 async function* sseData(body) {
