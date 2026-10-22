@@ -412,6 +412,17 @@ describe("review fixes", () => {
     expect(record.args.join(" ")).not.toContain("sk-secret");
   });
 
+  it("ignores what the CLI says after it was stopped", async () => {
+    const { ai } = await fakeAi({ steps: [{ say: "我来测节拍" }, { call: "echo" }, { say: "不该出现" }] });
+    const controller = new AbortController();
+    const mcp = await openMcp({ tools: ECHO, call: async () => { controller.abort(); return { ok: false, code: "stopped" }; } });
+    cleanups.push(() => mcp.close());
+    const said = [];
+    await expect(ai.converse("codex", { systemPrompt: "s", prompt: "p", mcp: { url: mcp.url, secret: mcp.secret }, signal: controller.signal, onText: (text) => said.push(text) }))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(said).toEqual(["我来测节拍"]);
+  });
+
   it("can be stopped before it starts without leaving an unhandled failure behind", async () => {
     const directory = await temporaryDirectory("local-ai-");
     const ai = createLocalAi({ dataDirectory: directory, resolve: async () => null, shellEnv: async () => ({ PATH: "/bin" }), proxy: async () => null });

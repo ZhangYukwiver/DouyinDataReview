@@ -568,7 +568,8 @@ export function createLocalAi({
     child.stdin.end(input);
     const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on("line", (line) => {
-      if (!line.startsWith("{")) return;
+      // 停了以后 CLI 还要一会儿才退，这期间吐出来的话不算数（用户已经看到「已停止」了）
+      if (stop.aborted || !line.startsWith("{")) return;
       let event;
       try { event = JSON.parse(line); } catch { return; }
       try { reader.line(event); } catch (error) { console.error("本机 AI 事件处理出错:", error); }
