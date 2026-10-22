@@ -177,7 +177,7 @@ export function buildStoryData(model: ReportModel, input: StoryInput): StoryData
     entry.count += 1;
     musicCounts.set(key, entry);
   }
-  const musics = [...musicCounts.values()].sort((a, b) => b.count - a.count || a.title.localeCompare(b.title, "zh-CN"));
+  const musics = [...musicCounts.values()].sort((a, b) => b.count - a.count || zhCompare(a.title, b.title));
   const topMusic = musics[0] ?? null;
 
   // one entry per content; like counts are a property of the content, so they are reported as a snapshot only
@@ -481,6 +481,8 @@ const CHAT_STOPWORDS = new Set(
 );
 
 type TermRank = { key: string; name: string; count: number };
+// localeCompare with a locale argument builds a collator per comparison
+const zhCompare = new Intl.Collator("zh-CN").compare;
 
 function hashtags(text: string | null | undefined): string[] {
   const found: string[] = [];
@@ -488,13 +490,20 @@ function hashtags(text: string | null | undefined): string[] {
   return found;
 }
 
+// termsOf runs over every record several times (lexicon, coverage, then once per topic card): ten topics over
+// ten thousand records re-parsed the same titles for most of the half second "open the report" froze on
+const termsCache = new WeakMap<PersonalVideoRecord, string[]>();
+
 /** Explicit topic tags only: segmenting a title would cut game and product names in half. */
 function termsOf(record: PersonalVideoRecord): string[] {
+  const cached = termsCache.get(record);
+  if (cached) return cached;
   const terms: string[] = [];
   for (const raw of [...(record.topics ?? []), ...hashtags(record.title)]) {
     const term = String(raw).replace(/^#/u, "").trim();
     if (term && !terms.some((item) => item.toLowerCase() === term.toLowerCase())) terms.push(term);
   }
+  termsCache.set(record, terms);
   return terms;
 }
 
@@ -512,7 +521,7 @@ function rankTerms(docs: string[][]): TermRank[] {
       counts.set(key, entry);
     }
   }
-  return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"));
+  return [...counts.values()].sort((a, b) => b.count - a.count || zhCompare(a.name, b.name));
 }
 
 function termField(docs: string[][], total: number, excluded = 0): StoryTermField {

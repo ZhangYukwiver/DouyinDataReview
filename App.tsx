@@ -110,6 +110,17 @@ import { AnalysisWorkspace } from "./src/components/workspace/AnalysisWorkspace"
 import { AiEditWorkspace } from "./src/components/workspace/AiEditWorkspace";
 import { aiConfigReady } from "./src/services/aiEdit";
 import { loadAnalysisConfig, startAnalysis } from "./src/services/videoAnalysis";
+// @ts-expect-error react-native-web 没给内部模块出类型
+import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
+
+// react-native-web 给每个列表都挂一个非被动的 wheel 监听，只为支持倒序列表（这里没有）。有它在，滚轮每一下都得等主线程，
+// 浏览器没法在合成线程上滚；主线程一忙（排版新出现的行、来消息重渲染），整个滚动就跟着一顿一顿
+if (Platform.OS === "web") {
+  const setup = VirtualizedList.prototype.setupWebWheelHandler;
+  VirtualizedList.prototype.setupWebWheelHandler = function (this: { props: { inverted?: boolean | null } }) {
+    if (this.props.inverted) setup.call(this);
+  };
+}
 
 type ViewKey = "summary" | "highlights" | "records" | "chat" | "sources";
 // 官方档案没有聊天字段：每次渲染都给新的 []，按引用记忆的报告模型（上万条记录要算两百毫秒）就会跟着白算

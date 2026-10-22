@@ -690,8 +690,15 @@ function RecordsGallery({
   // 每行差不多一样高（封面宽高比固定、标题限两行），量第一行就能推出所有行的位置。只认第一行：海报、内容年志的列表行
   // 会差一两像素，谁挂上来都改一次的话，行高在几个值之间来回翻，滚动时渲染窗口算偏、整屏空白
   const [rowFrame, setRowFrame] = useState<{ start: number; length: number } | null>(null);
+  // 列表在视口上下各渲染十屏，四五千个节点；一张封面加载完、一行新挂上，浏览器就要把这些行全部重排一遍，滚动掉到三十帧。
+  // 量到行高以后挂上的行交给 content-visibility：不在屏幕附近就跳过排版和绘制，占位高度就是量到的行高，滚到时不会跳。
+  // 它自带绘制隔离，悬停上浮的卡片和阴影会被行边裁掉，overflowClipMargin 留出余量
+  const rowFrameRef = useRef(rowFrame);
+  rowFrameRef.current = rowFrame;
   const RowCell = useMemo(() => function RowCell({ index, onLayout, children, style }: CellRendererProps<PersonalVideoRecord>) {
-    return <View style={style} onLayout={(event) => {
+    const frame = rowFrameRef.current;
+    const skip = Platform.OS === "web" && frame ? { contentVisibility: "auto", containIntrinsicSize: `auto ${frame.length}px`, overflowClipMargin: 24 } as object : null;
+    return <View style={[style, skip]} onLayout={(event) => {
       onLayout?.(event);
       const { y, height } = event.nativeEvent.layout;
       const start = y - index * height;
@@ -1463,8 +1470,11 @@ function formatShortDate(value: string | null): string {
   if (!value) return "时间未知";
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "时间未知";
-  return date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+  return SHORT_DATE.format(date);
 }
+
+// 每张卡片都要格式化日期，toLocaleDateString 带参数每次新建格式器，建一次复用
+const SHORT_DATE = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit" });
 
 function formatLongDate(value: string): string {
   const date = new Date(value);
