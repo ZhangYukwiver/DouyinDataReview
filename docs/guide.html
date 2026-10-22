@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- geo:meta:start -->
+<title>如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南</title>
+<meta name="description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://zhangyukwiver.github.io/DouyinDataReview/guide.html">
+<link rel="alternate" type="text/plain" href="https://zhangyukwiver.github.io/DouyinDataReview/llms.txt" title="项目事实与文档索引">
+<meta property="og:type" content="article">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:site_name" content="DouyinDataReview">
+<meta property="og:title" content="如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南">
+<meta property="og:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。">
+<meta property="og:url" content="https://zhangyukwiver.github.io/DouyinDataReview/guide.html">
+<meta property="og:image" content="https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg">
+<meta property="og:image:alt" content="DouyinDataReview 持续报告界面，使用合成示例数据">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南">
+<meta name="twitter:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。">
+<meta name="twitter:image" content="https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "TechArticle",
+      "@id": "https://zhangyukwiver.github.io/DouyinDataReview/guide.html#page",
+      "url": "https://zhangyukwiver.github.io/DouyinDataReview/guide.html",
+      "name": "如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南",
+      "headline": "如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南",
+      "author": {
+        "@type": "Person",
+        "name": "ZhangYukwiver",
+        "url": "https://github.com/ZhangYukwiver"
+      },
+      "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。",
+      "inLanguage": "zh-CN",
+      "dateModified": "2026-10-22",
+      "isPartOf": {
+        "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
+      },
+      "about": {
+        "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#software"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "DouyinDataReview 下载",
+          "item": "https://zhangyukwiver.github.io/DouyinDataReview/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "使用指南",
+          "item": "https://zhangyukwiver.github.io/DouyinDataReview/guide.html"
+        }
+      ]
+    }
+  ]
+}
+</script>
+<!-- geo:meta:end -->
+<link rel="icon" href="icon.png">
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--ink:#1c1b19;--sub:#6b675f;--line:#e4e0d6;--accent:#cc2b45;--code:#f0ede5}
+@media(prefers-color-scheme:dark){:root{--bg:#141412;--card:#1e1d1a;--ink:#eeebe3;--sub:#a29d92;--line:#33312c;--accent:#ff5570;--code:#2a2925}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.8 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+main{max-width:880px;margin:auto;padding:32px 16px 64px}
+a{color:var(--accent);overflow-wrap:anywhere}
+nav{display:flex;gap:8px 20px;flex-wrap:wrap;margin:20px 0}
+nav a{padding:8px 0}
+h1{font-size:30px;line-height:1.4;margin:24px 0 12px}
+h2{font-size:22px;line-height:1.5;margin:40px 0 12px}
+h3{font-size:18px;margin:24px 0 8px}
+p,ol,ul{margin:12px 0}
+li{margin:8px 0}
+.sub,footer{color:var(--sub);font-size:14px}
+.note{border-left:3px solid var(--accent);padding:12px 16px;background:var(--card)}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;margin:20px 0}
+table{width:100%;min-width:600px;border-collapse:collapse;text-align:left;background:var(--card)}
+caption{text-align:left;font-weight:600;padding:12px}
+th,td{padding:12px;vertical-align:top;border-top:1px solid var(--line)}
+thead th{border-top:0}
+tbody th{min-width:120px}
+footer{margin-top:48px;border-top:1px solid var(--line);padding-top:20px}
+:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+html{scroll-padding-top:24px}
+@media(max-width:480px){h1{font-size:26px}h2{font-size:21px}}
+</style>
+</head>
+<body>
+<main>
+<a href="./">DouyinDataReview 下载与项目介绍</a>
+<h1>抖音数据导出与年度报告使用指南</h1>
+<p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏和好友聊天记录保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
+<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-10-22">2026 年 10 月 22 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
+<nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#coverage">数据范围</a><a href="#privacy">隐私与 AI</a><a href="#sources">源码依据</a></nav>
+
+<h2 id="export">如何导出抖音观看历史和聊天记录？</h2>
+<p>先在桌面版首屏扫码并导入本人登录凭据，读取所需记录，再到「设置 → 数据」选择导出内容。输出为 JSON；导出只使用已保存的数据，不会额外向抖音读取。</p>
+<ol>
+  <li>从<a href="./#download">下载页</a>或 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">Releases</a> 安装对应系统的版本。macOS 首次打开和 Windows SmartScreen 的处理方式见<a href="./#install">安装说明</a>。</li>
+  <li>启动桌面版，在首屏显示二维码，用抖音 App 扫码。核对账号，勾选「读取视频」和／或「读取聊天」，再确认导入。首次默认只勾选视频；要备份聊天，需要同时勾选聊天。</li>
+  <li>等待读取完成。新账号的视频读取会分页获取接口当前提供的观看历史、喜欢和收藏；已有完整读取记录的账号重新导入后只补新增。聊天按所选权限整理和接收。</li>
+  <li>在「设置 → 数据」点「导出数据」，勾选需要的部分后保存 JSON。聊天默认不勾选；没有勾选的类型不会写入导出文件。</li>
+  <li>换电脑时，在新电脑的采集器页选择这份备份，再点「并入本机记录」。登录凭据不在备份内；需要继续在线采集时，重新登录并导入。</li>
+</ol>
+<p class="note">聊天备份包含已保存的好友消息及会话信息（含群聊统计），不包含群聊正文。接口不再返回的历史数据无法由本工具恢复。</p>
+<p>桌面版自带采集器和扫码入口。从源码运行 Web 工作台时，需启动本地采集器，并通过 Chrome 144+、带远程调试开关的 Edge 或 macOS Comet 导入凭据；导入完成后可关闭浏览器。详见 <a href="https://github.com/ZhangYukwiver/DouyinDataReview#快速开始">README 快速开始</a>。</p>
+
+<h2 id="official-archive">能不登录，直接导入抖音官方档案吗？</h2>
+<p>可以。已有抖音官方「个人信息下载」的 JSON 或 ZIP 时，在采集器页「或者导入个人档案」处选择文件，就能基于该档案生成报告，不需要登录抖音或配置 AI。</p>
+<p>官方档案与本应用备份的作用不同：官方档案直接作为本次报告的输入，可分析的内容取决于档案实际字段；此导入在关闭应用后需要重新选择文件。本应用备份则可以通过「并入本机记录」继续保存在当前账号的记录中。不要把官方档案理解为平台保证完整的全部历史。</p>
+
+<h2 id="annual-report">如何生成抖音年度报告（Douyin Wrapped）？</h2>
+<p>读取记录或导入档案后，打开报告即可生成自己的年度回顾，不用等平台年度活动，也不用向 AI 服务发送个人记录。</p>
+<ol>
+  <li>在「设置 → 界面风格」选择报告风格，再点「打开报告」。内容年志、档案馆和海报是三种可用的年度报告风格。</li>
+  <li>查看观看、喜欢、收藏和聊天的统计，以及数据覆盖情况。报告仅使用记录中存在的日期、作者、话题、音乐、时长等信息，不补造缺失记录。</li>
+  <li>需要分享时，导出独立 HTML 或 1080 × 1440 PNG。分享前检查报告中显示的昵称、作者、聊天统计等内容。</li>
+</ol>
+<p>可以先看<a href="demo/story-entry.html">内容年志</a>、<a href="demo/story-archive.html">档案馆</a>和<a href="demo/story-poster.html">海报</a>的合成数据示例。示例不是实际用户记录，也不是你账号的数据。</p>
+
+<h2 id="coverage">哪些数据能保存？哪些不能保证？</h2>
+<div class="table-wrap" role="region" aria-label="数据范围表，可横向滚动" tabindex="0">
+<table>
+  <caption>DouyinDataReview 的数据来源与功能边界</caption>
+  <thead><tr><th scope="col">内容</th><th scope="col">处理方式</th><th scope="col">边界</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">观看、喜欢、收藏</th><td>读取本人账号可访问的接口，归一化后保存本机，可选择导出 JSON</td><td>不保证全部历史；记录缺少日期或字段会影响报告</td></tr>
+    <tr><th scope="row">好友与群聊</th><td>保存好友聊天，接收新消息；群聊按需在线读取</td><td>群聊正文不写入记录备份；官方火花状态不等于本地估算</td></tr>
+    <tr><th scope="row">创作者中心</th><td>只读展示本人账号的数据总览、作品与粉丝指标</td><td>按平台当前权限返回；不代表可以查看任意账号的后台数据</td></tr>
+    <tr><th scope="row">视频与图文</th><td>支持单条下载、批量 ZIP 和图文全部图片下载</td><td>在线下载需要有效会话和当前账号可访问的作品</td></tr>
+    <tr><th scope="row">年度与持续报告</th><td>本机计算；持续报告比较最近 30 天，样本不足时回退到 90 天</td><td>年度回顾仅代表已保存样本；持续报告与年度回顾是不同视图</td></tr>
+  </tbody>
+</table>
+</div>
+<p>采集依赖抖音未公开承诺的私有接口，可能失效或触发账号风控。本项目与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。仅用于本人账号和个人数据管理；不能承诺账号不会受到平台限制。</p>
+
+<h2 id="privacy">数据会传到哪里？AI 视频解析和剪辑有什么区别？</h2>
+<p><strong>个人记录保存和年度报告计算在本机完成，均不依赖 AI 接口。</strong>在线采集和互动需要请求抖音。可选的「AI 视频工作台」支持自行配置接口，或使用这台电脑上已安装并登录的 Codex CLI / Claude Code；解析与剪辑分别配置，使用自己的订阅或服务商计费。本机 CLI 仍会联网把输入发送到相应 AI 服务，使用本机提取的截图与音乐节拍处理视频。</p>
+<div class="table-wrap" role="region" aria-label="AI 数据流表，可横向滚动" tabindex="0">
+<table>
+  <caption>使用不同功能时发送的数据</caption>
+  <thead><tr><th scope="col">功能</th><th scope="col">目的地与输入</th><th scope="col">补充说明</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">采集与互动</th><td>向抖音请求本人可访问的记录；主动发送的消息、点赞、评论等提交至抖音</td><td>使用已导入的账号会话；未开启的读取类型不能继续联网读取</td></tr>
+    <tr><th scope="row">本地报告</th><td>不需要发送原始记录到 AI 服务；统计在电脑完成</td><td>记录和汇总保存在当前设备；公开分享报告会暴露其中显示的内容</td></tr>
+    <tr><th scope="row">AI 视频解析</th><td>通过接口向 AI 服务发送选中视频、公开作品资料、提示词；模型不支持视频或选用本机 CLI 时，改发本机提取的镜头截图和音乐节拍等输入</td><td>截图模式听不到台词或旁白；解析结果属于模型生成内容</td></tr>
+    <tr><th scope="row">AI 剪辑对话</th><td>向所选 AI 服务发送对话、素材清单、当前时间线；检索本地内容库时还发送匹配作品的标题、作者、话题、时长、链接、观看／点赞／收藏日期及来源列表</td><td>普通剪辑不上传素材文件本身；检索摘要会进入对话，后续轮次也可能再次发送</td></tr>
+    <tr><th scope="row">剪辑参考视频</th><td>接口支持视频输入时发送该视频；模型不支持视频或选用本机 CLI 时，发送本机提取的镜头截图、镜头表、音乐节拍等输入</td><td>让 AI 搜抖音同款时，搜索词发往抖音，搜索结果的公开资料发送给所选 AI 服务</td></tr>
+    <tr><th scope="row">保存 AI 设置</th><td>接口模式向所配置接口发送一段 3 秒测试小视频，检查模型是否支持视频输入</td><td>本机 CLI 使用文字和图片，无需视频能力测试；解析与剪辑的配置可以不同</td></tr>
+    <tr><th scope="row">本机 CLI</th><td>由本机 Codex / Claude Code 使用你的订阅及网络配置，将文字、图片和工具返回的内容发送到对应 AI 服务</td><td>应用以不保存 CLI 会话的方式调用，不加载用户配置的规则、插件或 MCP；应用内剪辑对话仍保存在本机</td></tr>
+  </tbody>
+</table>
+</div>
+<p>抖音 Cookie 和整份个人记录不作为 AI 输入发送。AI 接口 Key 保存在当前设备的浏览器配置中，采集器仅在请求中使用，不将 Key 写入采集器记录文件。AI 剪辑的对话、工程和素材库保存在本机，当前不按抖音账号隔离。登录凭据和个人备份都应由本人保管。</p>
+
+<h2 id="sources">这些说明依据哪些源码？</h2>
+<p>本指南依据公开仓库的实现整理。文档描述当前行为，接口可用性仍由抖音和你选择的 AI 服务决定；具体版本变更见 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases">Releases</a>。</p>
+<ul>
+  <li>导出勾选项与文件结构：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/services/exportData.ts">exportData.ts</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/components/workspace/DataExportDialog.tsx">DataExportDialog.tsx</a>。</li>
+  <li>登录与记录采集：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/browserConnection.mjs">browserConnection.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/directHistory.mjs">directHistory.mjs</a>。</li>
+  <li>官方档案与年度统计：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/domain/personalArchiveParser.ts">personalArchiveParser.ts</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/domain/annualReport.ts">annualReport.ts</a>。</li>
+  <li>AI 输入与本机配置：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/videoAnalysis.mjs">videoAnalysis.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/aiEdit/tools.mjs">aiEdit/tools.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/localAi.mjs">localAi.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/services/aiEdit.ts">services/aiEdit.ts</a>。</li>
+</ul>
+<footer>
+  <a href="./">下载与常见问题</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview">GitHub 源码</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/issues">反馈问题</a> · <a href="llms.txt">项目事实索引</a> · <a href="sitemap.xml">网站地图</a>
+</footer>
+</main>
+</body>
+</html>

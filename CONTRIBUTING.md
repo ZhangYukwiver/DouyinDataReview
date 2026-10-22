@@ -25,6 +25,8 @@ npm test
 3. 提交前运行 `npm run typecheck` 和 `npm test`。
 4. Pull Request 中说明行为变化、验证命令和已知限制。
 
+修改公开功能说明或下载页时，按 [GEO 内容维护](GEO.md) 同步 README、使用指南与 `docs/geo-content.json`，运行 `npm run sync:geo` 和 `npm run check:geo`，保持可见问答与结构化数据一致。
+
 ## 运营监测
 
 GitHub 流量监测脚本只把快照保存到用户本机，不提交到仓库。运行 `npm run ops:traffic` 前需要 `GH_TOKEN` 或已登录的 `gh auth`；不要把令牌写入 Issue、日志或提交。

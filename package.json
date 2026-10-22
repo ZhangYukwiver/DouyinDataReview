@@ -26,6 +26,8 @@
     "desktop:pack": "npm run build:web && npm run direct:setup && electron-builder --win dir --publish never",
     "desktop:build": "npm run build:web && npm run direct:setup && electron-builder --win nsis --publish never",
     "sync:story": "node scripts/sync-story.mjs",
+    "sync:geo": "node scripts/sync-geo.mjs",
+    "check:geo": "node scripts/sync-geo.mjs --check",
     "desktop:build:mac": "npm run build:web && npm run direct:setup && electron-builder --mac --publish never",
     "test:ops": "vitest run scripts/ops/github-traffic.test.mjs"
   },
