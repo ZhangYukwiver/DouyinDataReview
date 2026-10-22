@@ -24,9 +24,18 @@
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/">国内下载（加速线路）</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/#demo">在线看示例报告</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
 
-**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它通过本人登录账号的会话读取抖音观看历史、喜欢、收藏和好友聊天记录，在本机保存为 JSON，并生成持续报告与抖音年度报告（Douyin Wrapped）。工作台还提供视频下载、实时聊天、内容搜索、创作者中心、热点榜和直播观看；可选 AI 视频解析使用你配置的大模型接口。
+**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它通过本人登录账号的会话读取抖音观看历史、喜欢、收藏和好友聊天记录，在本机保存为 JSON，并生成持续报告与抖音年度报告（Douyin Wrapped）。工作台还提供视频下载、实时聊天、内容搜索、创作者中心、热点榜和直播观看；可选 AI 视频解析与 AI 剪辑可使用你配置的大模型接口，或本机已登录的 Codex / Claude Code。
 
-适合备份个人抖音记录、管理收藏内容、查看创作者数据，以及制作自己的年度回顾。项目面向抖音（Douyin，中国版），支持 Windows x64 和 macOS Apple Silicon。
+适合备份个人抖音记录、管理收藏内容、查看创作者数据，以及制作自己的年度回顾。项目面向抖音（Douyin，中国版），不支持国际版 TikTok；提供 Windows x64 和 macOS Apple Silicon 安装包。它是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。
+
+| 先了解什么 | 简要说明 |
+| --- | --- |
+| 如何导出数据 | 首屏扫码并确认读取权限，在「设置 → 数据」勾选导出 JSON；聊天默认不勾选，备份不含群聊正文 |
+| 是否能取回全部历史 | 只能读取本人账号当前可访问的接口记录；不保证完整历史，也不会补造报告中的缺失数据 |
+| 是否必须用 AI | 本地统计与年度报告不需要 AI；可选解析和剪辑通过自配接口或本机 CLI 访问 AI 服务，使用自己的订阅或服务商计费 |
+| 是否能离线导入 | 支持本应用备份与抖音官方 JSON / ZIP 档案；官方档案导入关闭后需重新选择文件 |
+
+[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)提供完整步骤、数据覆盖范围和 AI 数据流；供检索工具读取的[项目事实与文档索引](llms.txt)与下载页问答同步维护。
 
 **阅读导航：** [主要功能](#主要功能) · [实现方式](#实现方式) · [快速开始](#快速开始) · [本地数据与接口](#本地数据与接口) · [常见问题](#常见问题) · [面向开发者](#面向开发者)
 
@@ -43,7 +52,7 @@
 | 实时聊天与续火花 | 接收新消息，回复好友与群聊，查看在线状态和官方火花天数；给勾选对象一键发送续火花消息 | 发送由用户主动触发；发送成功不代表火花天数增加，以抖音官方状态为准 |
 | 创作者中心 | 查看本人账号的数据总览、作品数据、粉丝数据与画像，以及作品流量、观众和评论分析 | 读取抖音创作者中心接口，按当前账号权限返回数据；只读 |
 | 内容探索与抖音指数 | 搜索用户和作品，点赞、收藏、关注、评论；下载用户主页作品；查看实时热点、飙升热点，以及达人指标、逐日趋势、近 30 天作品和粉丝画像 | 复用当前账号会话；达人指标与画像来自官方接口，显示范围受接口权限影响 |
-| AI 视频工作台 · 解析（可选） | 拆解视频选题、开头钩子、内容结构、画面声音和可复用拍法；解析结果保存到可搜索的解析库 | 和 AI 剪辑同属可选的「AI 视频工作台」，安装时或在设置中安装、移除；自备支持视频输入的 OpenAI 兼容接口、模型和 API Key，选中视频会发送到该接口；也可以直接用这台电脑上登录好的 Codex 或 Claude Code（走自己的订阅，看不了视频，改看应用拆出的截图和节拍） |
+| AI 视频工作台 · 解析（可选） | 拆解视频选题、开头钩子、内容结构、画面声音和可复用拍法；解析结果保存到可搜索的解析库 | 和 AI 剪辑同属可选的「AI 视频工作台」，安装时或在设置中安装、移除；自备 OpenAI 兼容接口、模型和 API Key；支持视频输入时发送选中视频，否则发送本机提取的镜头截图和音乐节拍，此时听不到台词；也可以直接用这台电脑上登录好的 Codex 或 Claude Code（走自己的订阅，看不了视频，改看应用拆出的截图和节拍） |
 | AI 视频工作台 · 剪辑（可选） | 左边和 AI 对话，右边实时看到轨道和画面；AI 按你的要求剪切拼接、配字幕和文字，加特效、滤镜、转场、动画、关键帧和背景音乐，做好后一键导入剪映草稿箱继续精修。右边看板也能自己动手：拖动、裁剪、切开、复制、跨轨道挪片段，在画面上直接挪位置、缩放、旋转、改字；每一步都能撤销重做，也能退回到某句话之前；在画面上框一块，让 AI 只改框里的东西；再次导入前会检查剪映里那份草稿有没有被打开或改过，由你选另存一份还是覆盖 | 自备支持工具调用的 OpenAI 兼容接口（默认火山方舟），或者用这台电脑上登录好的 Codex、Claude Code，和视频解析分开配置；素材来自内容库或本机文件；导入前需退出剪映，macOS 版剪映 11.6 已实测 |
 | 直播观看与弹幕 | 查看正在直播的关注列表，在应用内观看直播；调整弹幕透明度、字号、速度、区域和屏蔽词 | 只观看和接收，不发弹幕、不送礼物、不点赞 |
 | 持续报告与抖音年度报告 | 比较最近 30 天与上一时段，样本不足时回退到 90 天；年度回顾提供内容年志、档案馆、海报，可导出独立 HTML 和 1080 × 1440 PNG 分享图 | 基于本机已保存的记录生成；展示数据覆盖情况，不补造缺失记录 |
@@ -233,7 +242,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 ### 收费吗？数据会传到哪里？
 
-免费，源码以 MIT 许可开源。采集记录和年度报告在本机处理，不发送到统计或分析服务。可选的「AI 视频工作台」里，AI 解析只有在你主动点「解析」时，才会把选中的视频、公开作品资料和提示词发给你配置的 AI 接口；不会把抖音登录 Cookie 或整份个人记录发给 AI。API Key 保存在当前设备的浏览器配置里，采集器只在本次请求中使用。选本机 Codex 或 Claude Code 时，内容由这台电脑上的 CLI 用你自己的订阅发出，应用以不留会话记录的方式调用它，也不加载你给 CLI 配的规则文件、插件和 MCP。
+应用免费，源码以 MIT 许可开源；可选 AI 接口由你自行配置，服务商可能收费。个人记录保存和报告统计在本机完成，在线采集会请求抖音。可选的「AI 视频工作台」里，AI 解析会把选中视频、公开资料和提示词发给解析接口；模型不支持视频或选用本机 CLI 时，改发本机提取的镜头截图和音乐节拍等输入。AI 剪辑会发送对话、素材清单、时间线和工具检索到的记录摘要，解析参考视频时还可能发送视频或截图。接口模式保存 AI 设置会发送 3 秒测试小视频检查模型能力。抖音 Cookie 和整份个人记录不作为 AI 输入发送。API Key 保存在当前设备的浏览器配置里，采集器只在请求中使用。选本机 Codex 或 Claude Code 时，内容由这台电脑上的 CLI 用你自己的订阅发出，应用以不留 CLI 会话记录的方式调用它，也不加载你给 CLI 配的规则文件、插件和 MCP；应用内剪辑对话仍保存在本机。完整说明见[数据来源与功能边界](#数据来源与功能边界)及[隐私与 AI 指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html#privacy)。
 
 ### 会被封号吗？
 
@@ -374,7 +383,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 
 ## English
 
-**DouyinDataReview is a free, open-source desktop app for exporting and analyzing your own Douyin data on Windows x64 and macOS Apple Silicon.** Douyin is the Chinese version of TikTok; this project targets Douyin. It saves watch history, likes, favorites and friend chats locally as JSON and generates rolling reports and a year-in-review ("Douyin Wrapped"). The interface is in Chinese, and the source is MIT-licensed. Download the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest).
+**DouyinDataReview is a free, open-source desktop app for exporting and analyzing your own Douyin data on Windows x64 and macOS Apple Silicon.** It targets Douyin in China; international TikTok is not supported. It saves watch history, likes, favorites and friend chats locally as JSON and generates rolling reports and a year-in-review ("Douyin Wrapped"). Group chat bodies are excluded from backups. This is an independent, unofficial project. The interface is in Chinese, and the source is MIT-licensed. Download the installer from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest); see the [export and privacy guide](https://zhangyukwiver.github.io/DouyinDataReview/guide.html).
 
 ### Features
 
@@ -383,11 +392,12 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 - Search saved content, play videos, download individual videos or image posts, and batch-download videos as ZIP files.
 - Search Douyin users and posts, interact on request, and view hot lists, Creator Center stats and Douyin Index metrics through the current account's access.
 - Watch live streams with configurable live comments; live comments are received only.
-- Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports. Optional AI video analysis and AI editing use an OpenAI-compatible endpoint you configure, or the Codex CLI / Claude Code already signed in on your computer.
+- Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports. Optional AI video analysis uses an OpenAI-compatible endpoint you configure, or the Codex CLI / Claude Code already signed in on your computer; models without video input use locally extracted frames and beat information.
+- Optional AI editing uses a separately configured endpoint or a local Codex CLI / Claude Code to edit a local timeline and export a Jianying draft; provider charges may apply.
 
 ### How it works
 
-The app combines a React / React Native / Expo interface, a Node.js collector and an Electron desktop shell. The desktop app opens Douyin in a hidden in-app window (an isolated session read through its own debugger channel, no debugging port) and shows its login QR code in Settings for you to scan, or Playwright connects to your authorized browser through CDP, to import Douyin cookies, request parameters and signing credentials. The collector then uses signed, paginated HTTP requests for records and WebSocket connections for real-time chats and live comments. Normalized records are stored in local, per-account JSON files; TypeScript report logic computes statistics on your computer without an external AI service. See [implementation and source modules](#实现方式).
+The app combines a React / React Native / Expo interface, a Node.js collector and an Electron desktop shell. The desktop app opens Douyin in a hidden in-app window (an isolated session read through its own debugger channel, no debugging port) and shows its login QR code on the first screen for you to scan, or Playwright connects to your authorized browser through CDP, to import Douyin cookies, request parameters and signing credentials. The collector then uses signed, paginated HTTP requests for records and WebSocket connections for real-time chats and live comments. Normalized records are stored in local, per-account JSON files; TypeScript report logic computes statistics on your computer without an external AI service. See [implementation and source modules](#实现方式).
 
 The desktop app connects to its bundled collector on launch and prepares a Douyin login QR code in the background; on the first screen, click the mask over the QR code (点击显示二维码) and scan it with the Douyin app, then confirm the import and reading starts automatically; use 在窗口里登录 (Sign in in a window) for verification steps or SMS sign-in. Alternatively, sign in to Douyin in Chrome 144+, an Edge version with the remote debugging toggle, or Comet on macOS. In Settings → Account, click Connect browser. If remote debugging is disabled, the app attempts to open the selected browser's debugging settings; enable the toggle and connect again, or use the displayed settings URL if opening fails. Check the account name, select video reading and/or chat reading, and confirm the credential import. At least one must be selected; first imports default to videos only. If you are not signed in, the connection waits up to five minutes and can be cancelled. After import, the app disconnects from CDP. Selected video reading starts one full read of watch history, likes and favorites; selected chat reading organizes chat history and starts reception. Unselected capabilities cannot read further platform data. Choices persist per account across restarts and can be changed by reimporting; existing local data remains viewable and exportable. Older imports retain both capabilities. You can stop reading from the collector page, turn off debugging and close the browser. Missing or incomplete credentials, a rejected login, an account mismatch or a verification requirement need a new import. No browser extension is required. Firefox, custom user-data directories and other browser channels are not supported.
 
@@ -396,7 +406,7 @@ Collection is limited to records currently returned by Douyin's private APIs and
 - **Is there a Douyin Wrapped?** DouyinDataReview builds a Wrapped-style year-in-review from your own records on your computer, any time you want; you can [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) in the browser without installing anything.
 - **How do I export my Douyin watch history?** Connect the collector and import credentials in Settings → Account with video reading selected. After the full read finishes, click 导出数据 (Export data) in Settings → Data. Select watch history, likes, favorites and/or chats. Only selected data is saved to JSON; chats are unchecked by default. Exported files can be imported again.
 - **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from Douyin's 个人信息下载 (personal data download) to generate a report without signing in.
-- **Is it free and private?** Yes. It is MIT-licensed. Personal records and reports stay on your computer. Optional video analysis sends only the selected video, public metadata and a prompt to your configured AI endpoint; it does not send your Douyin login cookies or complete personal records. The API key stays in this device's browser configuration and is used by the collector only for the requested analysis. With a local Codex CLI or Claude Code, the CLI sends the content using your own subscription; the app runs it without saving a session and without loading your CLI rules, plugins or MCP servers.
+- **Is it free and private?** The app is free and MIT-licensed; optional AI providers may charge for requests. Records are stored and reports computed locally. AI analysis sends the selected video, public metadata and a prompt, or locally extracted frames and beat information if the model cannot accept video or you use a local CLI. AI editing sends the conversation, media list, timeline and summaries retrieved by its tools, and may send reference videos or frames for analysis. Saving AI settings in API mode sends a short test video. Douyin cookies and complete personal records are not sent as AI inputs. API keys stay in this device's browser configuration and are used by the collector only for requests. With a local Codex CLI or Claude Code, the CLI sends the content using your own subscription; the app runs it without saving a CLI session and without loading your CLI rules, plugins or MCP servers. Editing conversations remain stored in the app. See the [AI data flow](https://zhangyukwiver.github.io/DouyinDataReview/guide.html#privacy).
 
 ## 交流与反馈
 
