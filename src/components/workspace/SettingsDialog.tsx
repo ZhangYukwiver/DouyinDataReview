@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View, type LayoutChangeEvent } from "react-native";
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { Check, Download, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
@@ -16,7 +16,7 @@ export type SettingsSection = "appearance" | "reading" | "privacy" | "account" |
 export interface SettingsDialogProps {
   visible: boolean;
   onClose: () => void;
-  /** 打开时先滚到哪一节（例如采集器页的账号按钮打开时直接到账号） */
+  /** 打开时先到哪一页（例如采集器页的账号按钮打开时直接到账号） */
   section?: SettingsSection;
   appStyle: AppStyle;
   onChangeAppStyle: (style: AppStyle) => void;
@@ -83,30 +83,14 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const dialogWidth = Math.min(640, Math.round(width * 0.92));
   // 左右内边距 24×2，再减去左右框线（海报 3，其余 1）；只是第一帧的估算，风格卡那一行会按量到的宽度重排
   const contentWidth = dialogWidth - 48 - (props.appStyle === "poster" ? 6 : 2);
-  const scrollRef = useRef<ScrollView>(null);
   const closeRef = useRef<View>(null);
-  // 各节在滚动内容里的位置；打开时要先到的那一节量到了就滚过去
-  const offsets = useRef<Partial<Record<SettingsSection, number>>>({});
-  const pending = useRef<SettingsSection | null>(null);
-  // 「开机后在后台运行」：null = 不是桌面版、旧版外壳或系统不支持，这一行不显示。
-  // 挂载时就先问一次，打开面板时这一行已经在了，不会在滚到某一节之后才插进来把位置顶歪
+  const [tab, setTab] = useState<SettingsSection>(section ?? "appearance");
+  // 「开机后在后台运行」：null = 不是桌面版、旧版外壳或系统不支持，这一行不显示。挂载时就先问一次，打开「读取」页时这一行已经在了
   const [openAtLogin, setOpenAtLogin] = useState<boolean | null>(null);
 
-  const scrollToPending = () => {
-    const target = pending.current;
-    const y = target ? offsets.current[target] : undefined;
-    if (!target || y === undefined) return;
-    scrollRef.current?.scrollTo({ y: target === "appearance" ? 0 : y, animated: false });
-  };
-
-  // 关上以后 Modal 还要淡出一会儿才卸掉内容，这期间再打开时各节不会重新量，所以记下的位置不清空，先按它滚；
-  // 刚打开的这一小会儿各节可能还在量（或者位置变了），量到要去的那一节就再对一次，过了这一会儿就不再替用户滚
+  // 每次打开都回到指定的那一页（没指定就是外观），不接着上次关掉时那页
   useEffect(() => {
-    if (!visible) return undefined;
-    pending.current = section ?? "appearance";
-    scrollToPending();
-    const timer = setTimeout(() => { pending.current = null; }, 600);
-    return () => clearTimeout(timer);
+    if (visible) setTab(section ?? "appearance");
   }, [section, visible]);
 
   useEffect(() => {
@@ -121,11 +105,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
     const frame = requestAnimationFrame(() => (closeRef.current as unknown as HTMLElement | null)?.focus?.());
     return () => cancelAnimationFrame(frame);
   }, [visible]);
-
-  const measure = (key: SettingsSection) => (event: LayoutChangeEvent) => {
-    offsets.current[key] = event.nativeEvent.layout.y;
-    if (pending.current === key) scrollToPending();
-  };
 
   const toggleOpenAtLogin = () => {
     if (openAtLogin === null) return;
@@ -144,7 +123,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
           {...role(props.appStyle, "w-dialog")}
           accessibilityLabel="设置"
           accessibilityViewIsModal
-          style={[styles.dialog, props.appStyle === "poster" && styles.dialogPoster, { width: dialogWidth, maxHeight: Math.round(height * 0.86) }]}
+          // 高度固定，切页时面板不跟着内容忽高忽低
+          style={[styles.dialog, props.appStyle === "poster" && styles.dialogPoster, { width: dialogWidth, height: Math.min(540, Math.round(height * 0.86)) }]}
           testID="settings-dialog"
         >
           <View style={styles.head}>
@@ -160,19 +140,34 @@ export function SettingsDialog(props: SettingsDialogProps) {
               <View style={styles.icon18}><X color={color.textSecondary} size={18} strokeWidth={1.9} /></View>
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={styles.body} ref={scrollRef} style={styles.scroll}>
-            {SECTIONS.map(({ key, title }) => (
-              <View key={key} onLayout={measure(key)} style={styles.section} testID={`settings-section-${key}`}>
-                <Text accessibilityRole="header" style={styles.sectionTitle}>{title}</Text>
-                {key === "appearance" ? <Appearance {...props} contentWidth={contentWidth} />
-                  : key === "reading" ? <Reading {...props} openAtLogin={openAtLogin} onToggleOpenAtLogin={toggleOpenAtLogin} />
-                    : key === "privacy" ? <Privacy {...props} />
-                      : key === "account" ? <Account {...props} />
-                        : key === "data" ? <Data {...props} />
-                          : key === "features" ? <Features {...props} />
-                          : <About {...props} />}
-              </View>
-            ))}
+          <View accessibilityRole="tablist" style={styles.tabs}>
+            {SECTIONS.map(({ key, title }) => {
+              const on = key === tab;
+              return (
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: on }}
+                  aria-selected={on}
+                  key={key}
+                  onPress={() => setTab(key)}
+                  {...spaceKey(() => setTab(key))}
+                  style={[styles.tab, on && styles.tabOn, pointer, ease("border-color", 140)]}
+                  testID={`settings-tab-${key}`}
+                >
+                  {(state) => <Text numberOfLines={1} style={[styles.tabText, on ? styles.tabTextOn : hovered(state) && styles.tabTextHover]}>{title}</Text>}
+                </Pressable>
+              );
+            })}
+          </View>
+          {/* key 跟着页走：换页时滚动位置回到顶 */}
+          <ScrollView contentContainerStyle={styles.body} key={tab} style={styles.scroll} testID={`settings-section-${tab}`}>
+            {tab === "appearance" ? <Appearance {...props} contentWidth={contentWidth} />
+              : tab === "reading" ? <Reading {...props} openAtLogin={openAtLogin} onToggleOpenAtLogin={toggleOpenAtLogin} />
+                : tab === "privacy" ? <Privacy {...props} />
+                  : tab === "account" ? <Account {...props} />
+                    : tab === "data" ? <Data {...props} />
+                      : tab === "features" ? <Features {...props} />
+                        : <About {...props} />}
           </ScrollView>
         </View>
       </View>
@@ -377,11 +372,22 @@ function Features({ aiVideoInstalled, appStyle, onToggleAiVideo }: SettingsDialo
 }
 
 function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, onDownloadAppUpdate, onInstallAppUpdate }: SettingsDialogProps) {
+  const feedback = (
+    <View style={styles.row}>
+      <View style={styles.copy}>
+        <Text style={styles.rowTitle}>反馈渠道</Text>
+        <Text selectable style={styles.detail} testID="settings-feedback">遇到问题或想交流，可以加 QQ 群「DDDouyin」，群号 1124211302；也可以直接加 QQ 940537208。</Text>
+      </View>
+    </View>
+  );
   if (!appUpdate) {
     return (
-      <View style={styles.row}>
-        <RowCopy detail="浏览器里打开时没有自动更新。" title="应用更新" />
-      </View>
+      <>
+        <View style={styles.row}>
+          <RowCopy detail="浏览器里打开时没有自动更新。" title="应用更新" />
+        </View>
+        {feedback}
+      </>
     );
   }
   const action = appUpdateAction(appUpdate, installBlocked);
@@ -426,6 +432,7 @@ function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, 
           />
         ) : null}
       </View>
+      {feedback}
     </>
   );
 }
@@ -591,15 +598,20 @@ const styles = StyleSheet.create({
   dialog: { overflow: "hidden", backgroundColor: color.surface, borderWidth: 1, borderColor: color.border, borderRadius: radius.large },
   // 海报的框一律是粗墨线
   dialogPoster: { borderWidth: 3 },
-  head: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 24, paddingRight: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: color.borderSoft },
+  head: { flexDirection: "row", alignItems: "center", gap: 12, paddingLeft: 24, paddingRight: 14, paddingTop: 12, paddingBottom: 4 },
   title: { flex: 1, fontFamily: font.body, color: color.text, fontSize: 17, lineHeight: 24, fontWeight: "600" },
   close: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: radius.small },
   closeHover: { backgroundColor: color.surfaceMuted },
-  scroll: { flexGrow: 0, flexShrink: 1, flexBasis: "auto" },
-  body: { paddingHorizontal: 24, paddingBottom: 24 },
-  section: { paddingTop: 22 },
-  // 节名是一组设置的小标签：比行标题小一号、灰一档
-  sectionTitle: { fontFamily: font.body, color: color.textMuted, fontSize: 13, lineHeight: 18, fontWeight: "600", paddingBottom: 8 },
+  // 页签：一排文字，选中的那页下面一道选中色的线，压在标签栏的底线上
+  tabs: { flexDirection: "row", gap: 20, paddingHorizontal: 24, borderBottomWidth: 1, borderBottomColor: color.borderSoft },
+  tab: { paddingTop: 8, paddingBottom: 9, marginBottom: -1, borderBottomWidth: 2, borderBottomColor: "transparent" },
+  tabOn: { borderBottomColor: color.accent },
+  tabText: { fontFamily: font.body, color: color.textMuted, fontSize: 13.5, lineHeight: 20, fontWeight: "500" },
+  tabTextHover: { color: color.textSecondary },
+  tabTextOn: { color: color.text },
+  scroll: { flex: 1 },
+  // 每页第一行的上边线往上藏 1 像素，免得和标签栏底线叠成两道
+  body: { marginTop: -1, paddingHorizontal: 24, paddingBottom: 24 },
   // 每行：左边标题和一句说明，右边控件；行与行之间一道发丝线
   row: { flexDirection: "row", alignItems: "center", gap: 16, paddingVertical: 14, borderTopWidth: 1, borderTopColor: color.borderSoft },
   rowStacked: { flexDirection: "column", alignItems: "stretch", gap: 12 },
