@@ -1,12 +1,13 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { Film, Music2, Sparkles, SlidersHorizontal, Sticker, Type, Volume2, VolumeX } from "lucide-react-native";
+import { Film, Maximize2, Music2, Scissors, Sparkles, SlidersHorizontal, Sticker, Trash2, Type, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react-native";
 import type { AiEditMediaItem, EditProject, EditSegment, EditTimeRange, EditTrack } from "../../services/aiEdit";
 import {
   clipExtras, clipLabel, featureName, filmstripCount, filmstripTimes, findSegment, formatClock, mediaIdFromPath, secondMark, spokenDuration, trackLabel, transitionReach,
   US_PER_SECOND, type TransitionReach,
 } from "./aiEditModel";
 import { SNAP_PX, splitOffset, trimArgs, type TrimEdge } from "./aiEditBoardEdit";
+import { lastingReason } from "./aiEditInspect";
 import { useBoard, useBoardKeys, useHeldEdit, usePlaybackTime, type BoardEdit } from "./aiEditBoardContext";
 import { IS_MAC, shortcutText } from "./aiEditKeymap";
 import { useContextMenu, type MenuEntry } from "./AiEditMenu";
@@ -20,7 +21,7 @@ import { areaProps, clipTone, mediaTitle, web } from "./aiEditShared";
 import { kit } from "./CreatorKit";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 
-// 看板下半部分的轨道区：刻度尺、每条轨道一行（左边轨道头带静音钮）、片段块（视频带缩略图）、播放头。
+// 看板下半部分的轨道区：顶上一条工具栏（分割、删除、缩放，和剪辑软件一样），刻度尺、每条轨道一行（左边轨道头带静音钮）、片段块（视频带缩略图）、播放头。
 // 点片段只选中、不挪播放头；⌘ 点击加减、⇧ 点击追加，空白处拖出框来框选；按住中间拖是挪位置（上下拖能换到同类轨道，⌥ 拖是复制一份），
 // 拖两头是裁剪；拖的时候只在这里预览，松手才发一次改动，肯定放不下的落点直接拦住不发。点刻度尺挪播放头，空白处单击挪播放头并取消选中。
 // 轨道和剪映一样倒着画：越往上的行在画面上越靠上层（列表越靠后越在上层）。
@@ -30,12 +31,19 @@ import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii
 const frameQueue = createFrameQueue(openVideoFrames);
 
 export const RULER = 22;
-export const ROW = 28;
+// 轨道行高：比对话气泡里的小字高一截，视频缩略图看得清，接近剪辑软件的轨道
+export const ROW = 36;
+/** 轨道区顶上工具栏的高度 */
+export const TOOLS = 34;
 export const HEAD = 92;
 
 /** 轨道区按轨道数定高，最多占看板的四成；剩下的都给画面 */
-export const timelineHeight = (trackCount: number, boardHeight: number) =>
-  Math.round(Math.max(96, Math.min(RULER + Math.max(1, trackCount) * ROW + 12, boardHeight ? boardHeight * 0.42 : 200)));
+/** 轨道区（连工具栏）多高：剪辑软件那样至少占看板三成，轨道多了往上长，最多四成二，再多就在里面滚 */
+export const timelineHeight = (trackCount: number, boardHeight: number) => {
+  const content = TOOLS + RULER + Math.max(1, trackCount) * ROW + 12;
+  if (!boardHeight) return Math.max(content, 240);
+  return Math.round(Math.max(130, Math.min(Math.max(content, boardHeight * 0.3), boardHeight * 0.42)));
+};
 
 const TRACK_ICON: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
   video: Film, audio: Music2, text: Type, sticker: Sticker, effect: Sparkles, filter: SlidersHorizontal,
@@ -774,13 +782,35 @@ export function Timeline({ height }: { height: number }) {
   const playheadX = Math.min(time, duration) * pxPerUs;
   const guideX = draft?.snappedUs !== null && draft?.snappedUs !== undefined ? draft.snappedUs * pxPerUs : null;
 
-  return <View {...areaProps("timeline", "e-box")} style={[styles.timeline, { height }]}>
+  const lasting = lastingReason(board.notEditableReason);
+  const tool = (label: string, title: string, blocked: string | null, onClick: () => void, icon: React.ReactNode) => <button
+    type="button"
+    data-ws="btn square"
+    aria-label={label}
+    aria-disabled={blocked ? true : undefined}
+    title={blocked ?? title}
+    // 点完焦点还留在原处，接着按快捷键照样管用
+    onMouseDown={(event) => event.preventDefault()}
+    onClick={() => { if (!blocked) onClick(); }}
+    style={{ ...toolButton, cursor: blocked ? "default" : "pointer", opacity: blocked ? 0.4 : 1 }}
+  >{icon}</button>;
+
+  return <View {...areaProps("timeline", "e-box", "ai-panel")} style={[styles.timeline, { height }]}>
+    <div role="toolbar" aria-label="时间线工具" style={toolbar}>
+      {tool("分割", `在播放头处切开选中的片段，没选就切播放头下面那段（${shortcutText("split")}）`, lasting, () => { void board.split(); }, <Scissors size={15} color={color.text} />)}
+      {tool("删除", `删除选中的片段（${shortcutText("remove")}）`, lasting ?? (selection.ids.length ? null : "先点选要删的片段"), () => { void board.removeSelected(); }, <Trash2 size={15} color={color.text} />)}
+      <span style={{ flex: 1 }} />
+      {selection.ids.length > 1 ? <span style={{ color: color.textMuted, fontFamily: font.body, fontSize: 11.5, marginRight: 6 }}>选了 {selection.ids.length} 段</span> : null}
+      {tool("缩小时间线", `缩小（${shortcutText("zoom-out")}）`, duration ? null : "时间线还是空的", () => zoomTo(view.current.px / ZOOM_STEP), <ZoomOut size={15} color={color.text} />)}
+      {tool("整条放进视图", `整条放进视图（${shortcutText("zoom-reset")}）`, duration ? null : "时间线还是空的", () => zoomTo(null), <Maximize2 size={14} color={color.text} />)}
+      {tool("放大时间线", `放大（${shortcutText("zoom-in")}）`, duration ? null : "时间线还是空的", () => zoomTo(view.current.px * ZOOM_STEP), <ZoomIn size={15} color={color.text} />)}
+    </div>
     <div
       ref={scrollRef}
       onPointerDown={(event) => onPointerDown(event.nativeEvent)}
       onContextMenu={onContextMenu}
       onScroll={(event) => setScrollX(event.currentTarget.scrollLeft)}
-      style={{ position: "absolute", inset: 0, overflow: "auto", scrollbarWidth: "thin" }}
+      style={{ position: "absolute", left: 0, right: 0, bottom: 0, top: TOOLS, overflow: "auto", scrollbarWidth: "thin" }}
     >
       <div ref={contentRef} style={{ position: "relative", display: "flex", flexDirection: "column", width: HEAD + trackPx, minWidth: "100%", minHeight: "100%" }}>
         {/* 刻度尺：上下滚时钉在顶上；左上角那格左右滚时也钉住 */}
@@ -824,6 +854,13 @@ export function Timeline({ height }: { height: number }) {
 }
 
 const line: React.CSSProperties = { position: "absolute", top: 0, bottom: 0, zIndex: 8, pointerEvents: "none" };
+const toolbar: React.CSSProperties = {
+  position: "absolute", left: 0, right: 0, top: 0, height: TOOLS, display: "flex", alignItems: "center", gap: 2, padding: "0 6px", boxSizing: "border-box",
+  borderBottom: `1px solid ${color.borderSoft}`,
+};
+const toolButton: React.CSSProperties = {
+  display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, padding: 0, borderRadius: radius.small, border: "1px solid transparent", backgroundColor: "transparent",
+};
 
 const TrackRow = memo(function TrackRow({ track, pxPerUs, width, mediaById, mediaUrl, editable, blocked, selectedIds, places, target, lifted, onMute, onPick }: {
   track: EditTrack; pxPerUs: number; width: number; mediaById: ReadonlyMap<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null; editable: boolean;

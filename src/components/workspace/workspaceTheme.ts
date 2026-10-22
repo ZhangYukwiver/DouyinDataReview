@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 
 import type { AppStyle } from "../../services/appStyle";
+import { aiCss } from "./aiCss";
 import { archiveCss } from "./archiveCss";
 import { minimalCss } from "./minimalCss";
 import { motionCss } from "./motion";
@@ -313,7 +314,7 @@ function declarations(style: AppStyle): string {
 
 export function themeCss(): string {
   // 默认极简：:root 直接发极简令牌，另外三套靠 data-style 覆盖。
-  return `:root{${declarations("minimal")}}\n:root[data-style="trace"]{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\n:root[data-style="poster"]{${declarations("poster")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}\n${posterCss}\n${archiveCss}\n${minimalCss}\n${traceCss}`;
+  return `:root{${declarations("minimal")}}\n:root[data-style="trace"]{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\n:root[data-style="poster"]{${declarations("poster")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}\n${posterCss}\n${archiveCss}\n${minimalCss}\n${traceCss}\n${aiCss}`;
 }
 
 const STYLE_ID = "content-insights-theme";

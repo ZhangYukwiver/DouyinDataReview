@@ -24,7 +24,8 @@ import { kit, Segmented, SmallButton } from "./CreatorKit";
 import { ws } from "./motion";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 
-// AI 剪辑页的右栏：剪辑看板。上面是画面预览（右边弹详情卡），下面是轨道区；标题行有撤销和导入剪映。
+// AI 剪辑页的剪辑看板，照剪辑软件排：顶栏（剪辑切换、画面比例、撤销、导入剪映），中间三块面板
+// （左边对话和素材由页面传进来、中间播放器、右边属性），底下是整宽的轨道区。
 // 这里管看板的公共状态（播放、选中、提示气泡、框选开关），把改动命令和它们一起放进 BoardContext；
 // 快捷键、Esc 分层、焦点归还都在这里统一接（规格 C1–C6），各区域只登记自己的处理。
 
@@ -57,10 +58,20 @@ export interface BoardProps {
   onExport: (mode?: AiEditExportMode) => boolean;
   /** 草稿被改过时选了取消 */
   onDismissConflict: () => void;
+  /** 顶栏最左边：剪辑切换（页面给），宽度和左边面板对齐 */
+  headStart?: React.ReactNode;
+  /** 中间一排最左边的面板：AI 对话和素材（页面给） */
+  side?: React.ReactNode;
+  /** 左边面板多宽：属性面板放不放得下按它算 */
+  sideWidth?: number;
 }
 
+/** 属性面板的宽度；中间一排除去左边面板还剩这么多（够画面 + 属性）才常驻，不然选中片段时才弹出来 */
+const INSPECTOR = 272;
+const ROOMY = 640;
+
 export function Board(props: BoardProps) {
-  const { session, project, media, mediaUrl, draftBox, exporting, exportNote, exportConflict, running, editable, notEditableReason, region, onDismissConflict } = props;
+  const { session, project, media, mediaUrl, draftBox, exporting, exportNote, exportConflict, running, editable, notEditableReason, region, onDismissConflict, headStart, side, sideWidth = 0 } = props;
   const duration = projectDuration(project);
   const canvas = project?.canvas ?? DEFAULT_CANVAS;
   const frameUs = US_PER_SECOND / (canvas.fps > 0 ? canvas.fps : 30);
@@ -362,28 +373,24 @@ export function Board(props: BoardProps) {
         : draftBox?.jianyingRunning ? { tone: "warn" as const, text: "剪映正在运行，导入前先退出剪映。" }
           : session?.draftBox ? { tone: "muted" as const, text: `${shortTime(session.draftBox.exportedAt)}放进过剪映，名字是「${session.draftBox.draftName}」${project && project.revision !== session.draftBox.exportedRevision ? "，之后又改过，再导入会更新同一份草稿" : ""}。` }
             : { tone: "muted" as const, text: "做好后放进剪映草稿箱，在剪映里接着精修、导出。" };
+  // 顶栏只在有新消息时说话（导入中、导入结果、剪映没装或开着、放进过剪映）；平常那句说明放在属性面板的草稿参数里
+  const loud = exporting || exportNote || draftBox?.status === "unavailable" || draftBox?.jianyingRunning || session?.draftBox;
 
   return <BoardContext.Provider value={value}>
     <BoardRegistryContext.Provider value={registry}>
       <BoardTimeContext.Provider value={playback.time}>
         <View ref={rootRef} {...areaProps("board")} style={styles.board} onLayout={(event: LayoutChangeEvent) => setHeight(event.nativeEvent.layout.height)}>
           <View style={styles.boardHead}>
-            <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-              <Text numberOfLines={1} style={styles.boardTitle}>{project?.name || session?.title || "剪辑看板"}</Text>
-              <View style={styles.boardMeta}>
-                <Text numberOfLines={1} style={kit.muted}>
-                  {project ? `${project.canvas.width}×${project.canvas.height} · ${project.canvas.fps} 帧 · 时长 ${formatDuration(duration)}` : "还没有时间线"}
-                </Text>
-                {project ? <WebTitle title={canvasBlocked}>
-                  <View pointerEvents={canvasBlocked ? "none" : "auto"} style={canvasBlocked ? styles.disabled : null}>
-                    <Segmented small options={CANVAS_OPTIONS} value={canvasPreset(project.canvas)} onChange={(label) => {
-                      const preset = CANVASES.find((item) => item.label === label);
-                      if (preset && label !== canvasPreset(project.canvas)) void changeCanvas(preset.canvas);
-                    }} />
-                  </View>
-                </WebTitle> : null}
+            {headStart}
+            <Text accessibilityLiveRegion="polite" numberOfLines={1} style={[styles.status, status.tone === "warn" && { color: color.danger }, status.tone === "ok" && { color: color.green }]}>{loud ? status.text : ""}</Text>
+            {project ? <WebTitle title={canvasBlocked ?? "画面比例"}>
+              <View pointerEvents={canvasBlocked ? "none" : "auto"} style={canvasBlocked ? styles.disabled : null}>
+                <Segmented small options={CANVAS_OPTIONS} value={canvasPreset(project.canvas)} onChange={(label) => {
+                  const preset = CANVASES.find((item) => item.label === label);
+                  if (preset && label !== canvasPreset(project.canvas)) void changeCanvas(preset.canvas);
+                }} />
               </View>
-            </View>
+            </WebTitle> : null}
             <HistoryControls />
             <WebTitle title={exportBlocked ?? "放进剪映草稿箱，在剪映里接着精修、导出"}>
               <Pressable
@@ -408,16 +415,18 @@ export function Board(props: BoardProps) {
               <SmallButton label="覆盖剪映里的改动" disabled={conflictBlocked} onPress={() => startExport("update")} />
               <SmallButton label="取消" onPress={onDismissConflict} />
             </View>
-          </View>
-            : <Text accessibilityLiveRegion="polite" numberOfLines={2} style={[styles.status, status.tone === "warn" && { color: color.danger }, status.tone === "ok" && { color: color.green }]}>{status.text}</Text>}
+          </View> : null}
 
-          <View style={styles.preview}>
-            {/* 详情卡放在画面右边、不压轨道区；画面跟着让出宽度，内容多时卡片里面滚 */}
-            <View style={styles.previewRow} onLayout={(event: LayoutChangeEvent) => setRowWidth(event.nativeEvent.layout.width)}>
+          <View style={styles.work} onLayout={(event: LayoutChangeEvent) => setRowWidth(event.nativeEvent.layout.width)}>
+            {side}
+            <View {...ws("e-box", "ai-panel", "ai-player")} style={styles.player}>
               <Stage />
-              <ClipCard width={Math.round(Math.min(280, Math.max(196, rowWidth * 0.42)))} projectNow={projectNow} />
+              <PlayerBar />
             </View>
-            <PlayerBar />
+            {/* 放得下就常驻一块属性面板（没选片段时是草稿参数）；放不下时选中片段才在画面右边弹出详情卡 */}
+            {rowWidth - sideWidth >= ROOMY
+              ? <View style={{ width: INSPECTOR, minHeight: 0, flexDirection: "row" }}>{selected ? <ClipCard width={INSPECTOR} projectNow={projectNow} /> : <DraftPanel project={project} duration={duration} status={status.text} />}</View>
+              : <ClipCard width={Math.round(Math.min(280, Math.max(196, (rowWidth - sideWidth) * 0.42)))} projectNow={projectNow} />}
           </View>
           <Timeline height={timelineHeight(project?.tracks.length ?? 0, height)} />
           {toastState && web ? <BoardToast key={toastState.key} text={toastState.text} tone={toastState.tone} /> : null}
@@ -425,6 +434,30 @@ export function Board(props: BoardProps) {
       </BoardTimeContext.Provider>
     </BoardRegistryContext.Provider>
   </BoardContext.Provider>;
+}
+
+/** 没选片段时属性面板里放草稿参数，和剪辑软件一样；剪映草稿的状态也在这儿说全 */
+function DraftPanel({ project, duration, status }: { project: EditProject | null; duration: number; status: string }) {
+  const clips = project?.tracks.reduce((sum, track) => sum + track.segments.length, 0) ?? 0;
+  const rows: Array<[string, string]> = project ? [
+    ["名称", project.name || "未命名"],
+    ["画面", `${project.canvas.width}×${project.canvas.height}${canvasPreset(project.canvas) ? `（${canvasPreset(project.canvas)}）` : ""}`],
+    ["帧率", `${project.canvas.fps} 帧/秒`],
+    ["时长", formatDuration(duration)],
+    ["轨道", `${project.tracks.length} 条，${clips} 段`],
+  ] : [];
+  return <View {...ws("e-box", "ai-panel")} style={styles.draft}>
+    <Text style={styles.draftTitle}>草稿参数</Text>
+    {project ? rows.map(([label, value]) => <View key={label} style={styles.draftRow}>
+      <Text style={styles.draftLabel}>{label}</Text>
+      <Text selectable numberOfLines={2} style={styles.draftValue}>{value}</Text>
+    </View>) : <Text style={kit.muted}>还没有时间线，在左边跟 AI 说想剪成什么样。</Text>}
+    <View style={styles.draftRow}>
+      <Text style={styles.draftLabel}>剪映</Text>
+      <Text style={styles.draftValue}>{status}</Text>
+    </View>
+    {project ? <Text style={[kit.muted, styles.draftHint]}>点时间线上的片段，这里能改它的开始、时长、位置和大小。</Text> : null}
+  </View>;
 }
 
 /** 看板底部中间的小药丸：普通提示 role=status，出错 role=alert、红字；不挡下面的点击。 */
@@ -481,11 +514,17 @@ function usePlayback(duration: number, projectId: string | null, frameUs: number
 }
 
 const styles = StyleSheet.create({
-  board: { flex: 1, minWidth: 0, minHeight: 0, gap: 8, padding: 14 },
-  boardHead: { flexDirection: "row", alignItems: "center", gap: 12 },
-  boardMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 2 },
-  boardTitle: { color: color.text, fontFamily: font.body, fontSize: 15, fontWeight: "600" },
-  status: { marginTop: -4, color: color.textMuted, fontFamily: font.body, fontSize: 11.5, lineHeight: 17 },
+  board: { flex: 1, minWidth: 0, minHeight: 0, gap: 8, padding: 8, paddingTop: 0 },
+  boardHead: { flexDirection: "row", alignItems: "center", gap: 10, height: 52 },
+  status: { flex: 1, minWidth: 0, color: color.textMuted, fontFamily: font.body, fontSize: 11.5, lineHeight: 17, textAlign: "right" },
+  work: { flex: 1, minHeight: 0, flexDirection: "row", gap: 8 },
+  player: { flex: 1, minWidth: 0, minHeight: 0, gap: 6, padding: 10, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
+  draft: { flex: 1, gap: 9, padding: 14, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
+  draftTitle: { color: color.text, fontFamily: font.body, fontSize: 13, fontWeight: "600", marginBottom: 2 },
+  draftRow: { flexDirection: "row", gap: 10 },
+  draftLabel: { width: 34, color: color.textMuted, fontFamily: font.body, fontSize: 12, lineHeight: 18 },
+  draftValue: { flex: 1, minWidth: 0, color: color.text, fontFamily: font.body, fontSize: 12, lineHeight: 18 },
+  draftHint: { marginTop: "auto" },
   conflict: { gap: 8, padding: 10, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
   conflictText: { color: color.text, fontFamily: font.body, fontSize: 12, lineHeight: 18 },
   conflictActions: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
@@ -493,6 +532,4 @@ const styles = StyleSheet.create({
   exportButton: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 13, height: 34, borderRadius: radius.small, backgroundColor: color.button },
   exportText: { color: color.buttonText, fontFamily: font.body, fontSize: 12.5, fontWeight: "600" },
   disabled: { opacity: 0.45 },
-  preview: { flex: 1, minHeight: 120, gap: 6 },
-  previewRow: { flex: 1, minHeight: 0, flexDirection: "row", gap: 10 },
 });

@@ -147,7 +147,7 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
   </View></View>;
 
   return <ScrollView testID="analysis-workspace" style={styles.root} contentContainerStyle={[styles.content, width < 760 && styles.contentNarrow]}>
-    <View {...ws("e-box")} style={styles.bar}>
+    <View {...ws("e-box", "an-bar")} style={styles.bar}>
       <TextInput accessibilityLabel="抖音视频链接" value={link} onChangeText={setLink} onSubmitEditing={() => void start(link)} editable={!starting} maxLength={500}
         placeholder="粘贴抖音视频链接，也可以在视频卡片上点「解析」" placeholderTextColor={color.textMuted} style={styles.input} />
       <SmallButton label={starting ? "提交中…" : "解析"} disabled={starting || !link.trim()} onPress={() => void start(link)}><Sparkles size={14} color={color.text} /></SmallButton>
@@ -175,7 +175,7 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
         <Text style={kit.muted}>{query.trim() ? `找到 ${shown.length} 条` : `一共解析了 ${items.length} 条视频`}</Text>
         {shown.map((item) => {
           const on = item.id === selected?.id;
-          return <Pressable key={item.id} accessibilityRole="button" accessibilityState={{ selected: on }} onPress={() => setSelectedId(item.id)} {...ws("e-box", on && "on")} style={[styles.item, on && styles.itemOn]}>
+          return <Pressable key={item.id} accessibilityRole="button" accessibilityState={{ selected: on }} onPress={() => setSelectedId(item.id)} {...ws("e-box", "an-item", on && "on")} style={[styles.item, on && styles.itemOn]}>
             <Text numberOfLines={2} style={styles.itemTitle}>{item.video?.title || item.sourceUrl}</Text>
             <View style={kit.row}>
               {item.status === "running" ? <ActivityIndicator size="small" color={color.cyan} /> : null}
@@ -256,7 +256,7 @@ function Detail({ item, onRetry, onRemove, onOpen }: { item: VideoAnalysis; onRe
     if (!item.markdown || Platform.OS !== "web") return;
     void navigator.clipboard?.writeText(item.markdown).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); });
   };
-  return <View {...ws("e-box")} style={styles.detail}>
+  return <View {...ws("e-box", "an-detail")} style={styles.detail}>
     <Text style={styles.detailTitle}>{video?.title || "抖音视频"}</Text>
     <Text style={kit.muted}>{facts}</Text>
     {video?.tags?.length ? <Text style={kit.muted}>{video.tags.map((tag) => `#${tag}`).join("  ")}</Text> : null}

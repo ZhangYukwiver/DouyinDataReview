@@ -69,8 +69,25 @@ export function ariaDisabledProps(reason: string | null | undefined): { "aria-di
  */
 export const pressableDisabled = (reason: string | null | undefined): object | null => (web && reason ? { accessibilityDisabled: true } : null);
 
-/** 看板里的区域标记：捕获阶段的 pointerdown 按它记下最后一次按在哪（C6），可以和 ws() 的版式角色一起写。 */
-export function areaProps(area: "board" | "timeline" | "stage", ...roles: Array<string | false | null | undefined>): { dataSet?: Record<string, string> } {
+/**
+ * 展开收起：web 上走 grid-template-rows 0fr → 1fr，高度跟着内容平滑长出来，不用量高度；
+ * 收起时内容还挂着（收的动画要它），但 inert + aria-hidden，点不到也读不到。native 直接显示或不显示。
+ */
+export function Expand({ open, gap = 0, children }: { open: boolean; gap?: number; children: React.ReactNode }) {
+  if (!web) return open ? <>{children}</> : null;
+  return <div data-expand="" aria-hidden={!open} inert={!open} style={{
+    display: "grid", gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0,
+    transition: "grid-template-rows .34s cubic-bezier(.2,.7,.2,1), opacity .24s ease",
+  }}>
+    <div style={{ minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap }}>{children}</div>
+  </div>;
+}
+
+/**
+ * 看板里的区域标记：捕获阶段的 pointerdown 按它记下最后一次按在哪（C6），可以和 ws() 的版式角色一起写。
+ * "outside" 给放在看板里、但不归看板管的地方（左边的对话和素材面板）：在那儿点了、打字，快捷键不动时间线，也不让输入框失焦。
+ */
+export function areaProps(area: "board" | "timeline" | "stage" | "outside", ...roles: Array<string | false | null | undefined>): { dataSet?: Record<string, string> } {
   if (!web) return {};
   return { dataSet: { ...(ws(...roles).dataSet ?? {}), boardArea: area } };
 }

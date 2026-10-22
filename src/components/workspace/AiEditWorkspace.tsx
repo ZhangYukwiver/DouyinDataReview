@@ -16,7 +16,7 @@ import { regionCaption, regionHint } from "./aiEditBoardEdit";
 import { IN_FLIGHT_REASON } from "./aiEditInspect";
 import type { EditOutcome, EditPerformer } from "./aiEditBoardContext";
 import { Board } from "./AiEditBoard";
-import { CANVASES, errorText, mediaTitle, shortTime, webAutoHeight, webPointer, web, type BoardRegion } from "./aiEditShared";
+import { areaProps, CANVASES, Expand, errorText, mediaTitle, shortTime, webAutoHeight, webPointer, web, type BoardRegion } from "./aiEditShared";
 import { AiRuntimeField, RUNTIME_LABELS, runtimeProblem } from "./AiRuntimeField";
 import { dropLookJobs, runLookJob } from "./aiEditLook";
 import { createUploadQueue } from "./aiEditUploads";
@@ -60,6 +60,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const conn = useMemo(() => (baseUrl && token ? { baseUrl, token } : null), [baseUrl, token]);
   const { width } = useWindowDimensions();
   const leftWidth = width >= 1280 ? 340 : 300;
+  // 左边面板两页：和 AI 说话、看素材（剪辑软件左上角的素材区）
+  const [leftTab, setLeftTab] = useState<"chat" | "media">("chat");
 
   const [sessions, setSessions] = useState<AiEditSessionSummary[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
@@ -442,53 +444,63 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     <SmallButton label="前往连接" onPress={onOpenSettings} />
   </View>;
 
-  return <View testID="ai-edit-workspace" style={styles.root}>
-    <View style={[styles.left, { width: leftWidth }]}>
-      <SessionBar
-        title={session?.title || (currentId ? "未命名剪辑" : "还没有剪辑")}
-        open={menuOpen}
-        configOpen={configOpen}
-        onToggle={() => setMenuOpen((value) => !value)}
-        onCreate={() => void createSession()}
-        onToggleConfig={() => setConfigOpen((value) => !value)}
-      />
-      {configOpen ? null : <GoalBar sessionId={currentId} goal={session?.goal ?? ""} onSave={saveGoal} />}
-      <View style={styles.middle}>
-        {error ? <View accessibilityRole="alert" style={styles.errorBar}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="关闭提示" hitSlop={8} onPress={() => setError(null)} style={webPointer}><X size={13} color={color.danger} /></Pressable>
-        </View> : null}
-        {configOpen
-          ? <ConfigPanel
-              connection={conn}
-              config={config}
-              probe={probe.key === videoProbeKey(config) ? probe : { key: "", running: false }}
-              onRetest={() => void probeVideo(config)}
-              onSave={(saved) => {
-                // 接口地址和模型没变就沿用测过的结果，变了重测；面板留着显示测的结果
-                const next = videoProbeKey(saved) === config.videoProbe ? { ...saved, videoInput: config.videoInput, videoProbe: config.videoProbe } : saved;
-                saveAiEditConfig(next);
-                setConfig(next);
-                setError(null);
-              }}
-              onCancel={aiConfigReady(config) ? () => setConfigOpen(false) : undefined}
-            />
-          : <Conversation session={session} loaded={sessionsLoaded} running={running} editable={editable} onSuggest={(text) => setInput(text)} onRevert={revert} />}
-        {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)} /> : null}
-      </View>
-      {configOpen ? null : <MediaShelf
-        media={media}
-        uploads={uploads.tasks}
-        mediaUrl={mediaUrl}
-        onPick={mention}
-        onRemove={(id) => void removeMedia(id)}
-        onOpenLibrary={() => setPickerOpen(true)}
-        onUpload={uploadFiles}
-      />}
-      {region && !configOpen ? <RegionHint region={region} onClear={() => setRegionDraft(null)} /> : null}
-      <Composer value={input} onChange={setInput} running={running} sending={sending} blocked={editBusy} onSend={() => void send()} onStop={() => void stop()} />
-    </View>
+  const sessionBar = <View style={{ width: leftWidth }}>
+    <SessionBar
+      title={session?.title || (currentId ? "未命名剪辑" : "还没有剪辑")}
+      open={menuOpen}
+      configOpen={configOpen}
+      onToggle={() => setMenuOpen((value) => !value)}
+      onCreate={() => void createSession()}
+      onToggleConfig={() => setConfigOpen((value) => !value)}
+    />
+  </View>;
 
+  // 剪辑软件左上角那块：AI 对话一页、素材一页；点素材把它提进消息里并回到对话
+  const side = <View {...areaProps("outside", "e-box", "ai-panel", "ai-left")} style={[styles.left, { width: leftWidth }]}>
+    {configOpen ? null : <View style={styles.tabs}>
+      <Segmented small value={leftTab} onChange={setLeftTab} options={[{ label: "AI 对话", value: "chat" }, { label: media.length ? `素材 ${media.length}` : "素材", value: "media" }]} />
+    </View>}
+    {error ? <View accessibilityRole="alert" style={styles.errorBar}>
+      <Text style={styles.errorText}>{error}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="关闭提示" hitSlop={8} onPress={() => setError(null)} style={webPointer}><X size={13} color={color.danger} /></Pressable>
+    </View> : null}
+    {configOpen
+      ? <View style={styles.middle}><ConfigPanel
+          connection={conn}
+          config={config}
+          probe={probe.key === videoProbeKey(config) ? probe : { key: "", running: false }}
+          onRetest={() => void probeVideo(config)}
+          onSave={(saved) => {
+            // 接口地址和模型没变就沿用测过的结果，变了重测；面板留着显示测的结果
+            const next = videoProbeKey(saved) === config.videoProbe ? { ...saved, videoInput: config.videoInput, videoProbe: config.videoProbe } : saved;
+            saveAiEditConfig(next);
+            setConfig(next);
+            setError(null);
+          }}
+          onCancel={aiConfigReady(config) ? () => setConfigOpen(false) : undefined}
+        /></View>
+      : leftTab === "media"
+        ? <MediaShelf
+            media={media}
+            uploads={uploads.tasks}
+            mediaUrl={mediaUrl}
+            onPick={(item) => { mention(item); setLeftTab("chat"); }}
+            onRemove={(id) => void removeMedia(id)}
+            onOpenLibrary={() => setPickerOpen(true)}
+            onUpload={uploadFiles}
+          />
+        : <>
+          <GoalBar sessionId={currentId} goal={session?.goal ?? ""} onSave={saveGoal} />
+          <View style={styles.middle}>
+            <Conversation session={session} loaded={sessionsLoaded} running={running} editable={editable} onSuggest={(text) => setInput(text)} onRevert={revert} />
+          </View>
+          {region ? <RegionHint region={region} onClear={() => setRegionDraft(null)} /> : null}
+          <Composer value={input} onChange={setInput} running={running} sending={sending} blocked={editBusy} onSend={() => void send()} onStop={() => void stop()} />
+        </>}
+    {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)} /> : null}
+  </View>;
+
+  return <View testID="ai-edit-workspace" style={styles.root}>
     <Board
       session={session}
       project={project}
@@ -509,6 +521,9 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       onDismissConflict={() => {
         if (currentId) setExportConflicts((all) => { const next = { ...all }; delete next[currentId]; return next; });
       }}
+      headStart={sessionBar}
+      side={side}
+      sideWidth={leftWidth}
     />
 
     {pickerOpen ? <LibraryPicker records={records} media={media} onAdd={addRecord} onClose={() => setPickerOpen(false)} /> : null}
@@ -580,6 +595,7 @@ function GoalBar({ sessionId, goal, onSave }: { sessionId: string | null; goal: 
     </View>
   </View>;
   return <Pressable
+    {...ws("ai-goal")}
     accessibilityRole="button"
     accessibilityLabel={goal ? `剪辑目标：${goal}，点一下修改` : "设定剪辑目标"}
     onPress={() => { setDraft(goal); setEditing(true); }}
@@ -597,7 +613,7 @@ function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove }: {
   sessions: AiEditSessionSummary[]; currentId: string | null; onPick: (id: string) => void; onCreate: (canvas: EditCanvas) => void; onRemove: (id: string) => void;
 }) {
   const [confirm, setConfirm] = useState<string | null>(null);
-  return <View {...ws("e-box")} style={styles.menu}>
+  return <View {...ws("e-box", "ai-float")} style={styles.menu}>
     <ScrollView style={styles.menuList} contentContainerStyle={{ paddingVertical: 4 }}>
       {sessions.length ? sessions.map((item) => {
         const on = item.id === currentId;
@@ -716,7 +732,7 @@ function Conversation({ session, loaded, running, editable, onSuggest, onRevert 
     <Sparkles size={22} color={color.accent} />
     <Text style={styles.introTitle}>说说想剪成什么样</Text>
     <Text style={kit.body}>先在下面放几段素材（内容库里的视频或本机文件），再告诉 AI 想要的时长、节奏和字幕。右边会跟着出时间线，满意了就放进剪映草稿箱接着精修。</Text>
-    {SUGGESTIONS.map((text) => <Pressable key={text} {...ws("btn")} accessibilityRole="button" onPress={() => onSuggest(text)} style={[styles.suggestion, webPointer]}>
+    {SUGGESTIONS.map((text) => <Pressable key={text} {...ws("btn", "ai-suggest")} accessibilityRole="button" onPress={() => onSuggest(text)} style={[styles.suggestion, webPointer]}>
       <Text style={styles.suggestionText}>{text}</Text>
     </Pressable>)}
   </ScrollView>;
@@ -734,9 +750,9 @@ function Conversation({ session, loaded, running, editable, onSuggest, onRevert 
   >
     {messages.map((item) => <Message key={item.id} item={item} revertible={!running && revertible.has(item.id)} editable={editable} onRevert={onRevert} />)}
     {busy ? <View {...ws("c-bubble", "in")} style={[styles.bubble, styles.bubbleIn]}>
-      {streaming ? <Markdown compact text={streaming} /> : null}
+      {streaming ? <Markdown compact ink text={streaming} /> : null}
       {liveActions.length ? <ActionList actions={liveActions} live /> : null}
-      <View style={kit.row}><ActivityIndicator size="small" color={color.cyan} /><Text style={kit.muted}>{look ? (look.kind === "beats" ? "正在测配乐的节拍…" : "正在把参考视频拆成镜头截图和节拍，拆完交给 AI 看…") : liveActions.length ? "正在改时间线…" : streaming ? "还在写…" : "AI 正在想…"}</Text></View>
+      <View style={kit.row}><ActivityIndicator size="small" color={color.cyan} /><Text {...ws("ai-shimmer")} style={kit.muted}>{look ? (look.kind === "beats" ? "正在测配乐的节拍…" : "正在把参考视频拆成镜头截图和节拍，拆完交给 AI 看…") : liveActions.length ? "正在改时间线…" : streaming ? "还在写…" : "AI 正在想…"}</Text></View>
     </View> : null}
     {session?.error ? <View accessibilityRole="alert" style={styles.sessionError}><Text style={styles.errorText}>{session.error.message}</Text></View> : null}
   </ScrollView>;
@@ -759,7 +775,7 @@ function Message({ item, revertible = false, editable = false, onRevert }: {
           <Pressable accessibilityRole="button" onPress={() => setConfirming(false)} style={webPointer}><Text style={kit.muted}>取消</Text></Pressable>
         </View>
       </View>
-      : <Pressable accessibilityRole="button" accessibilityLabel="把时间线退回到这句话之前" onPress={() => setConfirming(true)} style={webPointer}><Text style={styles.linkText}>退回到这句之前</Text></Pressable>
+      : <Pressable {...ws("ai-revert")} accessibilityRole="button" accessibilityLabel="把时间线退回到这句话之前" onPress={() => setConfirming(true)} style={webPointer}><Text style={styles.linkText}>退回到这句之前</Text></Pressable>
       : null}
   </View>;
   return <View {...ws("c-bubble", "in")} style={[styles.bubble, styles.bubbleIn]}>
@@ -768,20 +784,24 @@ function Message({ item, revertible = false, editable = false, onRevert }: {
   </View>;
 }
 
-/** AI 做过的步骤，小字列出；多了先收起，正在进行的那一轮只看最近几步。 */
+/** AI 做过的步骤，小字列出；多了先收起（展开收起走 Expand 的平滑高度），正在进行的那一轮只看最近几步、新的一步淡入。 */
 function ActionList({ actions, live = false }: { actions: AiEditAction[]; live?: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const shown = expanded ? actions : live ? actions.slice(-4) : actions.slice(0, 4);
-  const hidden = actions.length - shown.length;
-  return <View style={styles.actions}>
-    {live && hidden > 0 ? <Text style={styles.actionText}>前面已经做了 {hidden} 步</Text> : null}
-    {shown.map((action, index) => <View key={index} style={styles.actionRow}>
-      {action.ok ? <Check size={12} color={color.green} /> : <X size={12} color={color.danger} />}
-      <Text style={[styles.actionText, !action.ok && { color: color.danger }]}>{action.summary}{!action.ok && action.error ? `：${action.error}` : ""}</Text>
-    </View>)}
-    {!live && actions.length > 4 ? <Pressable accessibilityRole="button" onPress={() => setExpanded((value) => !value)} style={webPointer}>
-      <Text style={styles.linkText}>{expanded ? "收起" : `还有 ${hidden} 步`}</Text>
-    </Pressable> : null}
+  // 正在进行的那一轮按总序号当 key：新到的一步是新挂上的，才有进场；滑出前四步的直接卸掉
+  const first = live ? Math.max(0, actions.length - 4) : 0;
+  const row = (action: AiEditAction, index: number) => <View key={index} {...ws("ai-step")} style={styles.actionRow}>
+    <View style={styles.actionIcon}>{action.ok ? <Check size={12} color={color.green} /> : <X size={12} color={color.danger} />}</View>
+    <Text style={[styles.actionText, !action.ok && { color: color.danger }]}>{action.summary}{!action.ok && action.error ? `：${action.error}` : ""}</Text>
+  </View>;
+  return <View {...ws("ai-steps")} style={styles.actions}>
+    {live && first > 0 ? <Text style={styles.actionText}>前面已经做了 {first} 步</Text> : null}
+    {actions.slice(first, live ? undefined : 4).map((action, index) => row(action, first + index))}
+    {!live && actions.length > 4 ? <>
+      <Expand open={expanded} gap={3}>{actions.slice(4).map((action, index) => row(action, 4 + index))}</Expand>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => setExpanded((value) => !value)} style={webPointer}>
+        <Text style={styles.linkText}>{expanded ? "收起" : `还有 ${actions.length - 4} 步`}</Text>
+      </Pressable>
+    </> : null}
   </View>;
 }
 
@@ -791,9 +811,9 @@ function MediaShelf({ media, uploads, mediaUrl, onPick, onRemove, onOpenLibrary,
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
+  // 剪辑软件的素材区：两列网格，点一张把它提进消息里
   return <View style={styles.shelf}>
     <View style={styles.shelfHead}>
-      <Text style={styles.shelfTitle}>素材 <Text style={kit.muted}>{media.length ? `${media.length} 个` : ""}</Text></Text>
       <View style={styles.shelfActions}>
         <Pressable {...ws("btn small")} accessibilityRole="button" accessibilityLabel="从内容库添加" onPress={onOpenLibrary} style={[styles.chip, webPointer]}>
           <Library size={13} color={color.text} /><Text style={styles.chipText}>内容库</Text>
@@ -805,7 +825,7 @@ function MediaShelf({ media, uploads, mediaUrl, onPick, onRemove, onOpenLibrary,
       {web ? <input ref={inputRef} type="file" multiple accept="video/*,image/*,audio/*,.mkv,.flac" style={{ display: "none" }}
         onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; onUpload(files); }} /> : null}
     </View>
-    {media.length || uploads.length ? <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.shelfRow}>
+    {media.length || uploads.length ? <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.shelfGrid}>
       {uploads.map((item) => <View key={item.key} style={styles.card}>
         <View style={[styles.thumb, styles.thumbEmpty]}><Text style={styles.thumbProgress}>{Math.round(item.progress * 100)}%</Text></View>
         <Text numberOfLines={1} style={styles.cardName}>{item.name}</Text>
@@ -829,6 +849,7 @@ function MediaShelf({ media, uploads, mediaUrl, onPick, onRemove, onOpenLibrary,
           </Pressable>}
       </View>)}
     </ScrollView> : <Text style={[kit.muted, styles.shelfEmpty]}>还没有素材：可以从内容库挑抖音视频，也可以选本机的视频、图片和音乐。</Text>}
+    {media.length ? <Text style={[kit.muted, styles.shelfEmpty]}>点一个素材，会把它写进给 AI 的消息里。</Text> : null}
   </View>;
 }
 
@@ -962,7 +983,7 @@ function LibraryPicker({ records, media, onAdd, onClose }: {
 
   return <View style={styles.overlay}>
     <Pressable accessibilityLabel="关闭内容库" onPress={onClose} style={StyleSheet.absoluteFill} />
-    <View {...ws("e-box")} style={styles.picker}>
+    <View {...ws("e-box", "ai-float")} style={styles.picker}>
       <View style={kit.between}>
         <Text style={styles.pickerTitle}>从内容库添加素材</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="关闭" hitSlop={8} onPress={onClose} style={webPointer}><X size={16} color={color.textMuted} /></Pressable>
@@ -1015,8 +1036,9 @@ const styles = StyleSheet.create({
   gate: { flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 40 },
   gateTitle: { color: color.text, fontFamily: font.body, fontSize: 17, fontWeight: "600" },
 
-  left: { minHeight: 0, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: color.border },
-  sessionBar: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  left: { minHeight: 0, overflow: "hidden", borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
+  tabs: { flexDirection: "row", paddingHorizontal: 10, paddingTop: 10, paddingBottom: 6 },
+  sessionBar: { flexDirection: "row", alignItems: "center", gap: 6 },
   sessionPick: { flex: 1, minWidth: 0, minHeight: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, borderRadius: radius.small },
   sessionTitle: { flexShrink: 1, color: color.text, fontFamily: font.body, fontSize: 14, fontWeight: "600" },
   iconButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
@@ -1063,26 +1085,27 @@ const styles = StyleSheet.create({
   bubbleIn: { alignSelf: "stretch", borderTopLeftRadius: 4, backgroundColor: color.surfaceRaised },
   bubbleText: { color: color.text, fontFamily: font.body, fontSize: 12.5, lineHeight: 20 },
   actions: { gap: 3, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.borderSoft },
-  actionRow: { flexDirection: "row", alignItems: "flex-start", gap: 6 },
+  // 按基线对齐：图标底边落在第一行字的基线上，各风格字号行高不同也对得齐
+  actionRow: { flexDirection: "row", alignItems: "baseline", gap: 6 },
+  actionIcon: { width: 12, height: 12 },
   actionText: { flex: 1, color: color.textMuted, fontFamily: font.body, fontSize: 11, lineHeight: 16 },
   sessionError: { padding: 10, borderRadius: radius.small, backgroundColor: color.dangerSoft },
 
-  shelf: { gap: 6, paddingTop: 8, paddingBottom: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border },
+  shelf: { flex: 1, minHeight: 0, gap: 6, paddingTop: 4, paddingBottom: 8 },
   shelfHead: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  shelfTitle: { flex: 1, color: color.text, fontFamily: font.body, fontSize: 12, fontWeight: "600" },
   shelfActions: { flexDirection: "row", gap: 6 },
-  shelfRow: { gap: 8, paddingHorizontal: 12, paddingBottom: 2 },
+  shelfGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, paddingHorizontal: 12, paddingVertical: 6 },
   shelfEmpty: { paddingHorizontal: 12, paddingVertical: 6 },
   chip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   chipText: { color: color.text, fontFamily: font.body, fontSize: 11, fontWeight: "600" },
-  card: { width: 78, gap: 2, position: "relative" },
-  thumb: { width: 78, height: 48, overflow: "hidden", borderRadius: radius.small, position: "relative" },
+  card: { width: "47%", gap: 2, position: "relative" },
+  thumb: { width: "100%", aspectRatio: 16 / 10, overflow: "hidden", borderRadius: radius.small, position: "relative" },
   thumbEmpty: { alignItems: "center", justifyContent: "center", backgroundColor: color.surfaceMuted },
   thumbProgress: { color: color.textSecondary, fontFamily: font.mono, fontSize: 11 },
-  cardName: { color: color.text, fontFamily: font.body, fontSize: 10.5, lineHeight: 14 },
+  cardName: { marginTop: 3, color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 16 },
   cardMeta: { color: color.textMuted, fontFamily: font.body, fontSize: 10, lineHeight: 13 },
   cardRemove: { position: "absolute", top: 3, right: 3, width: 16, height: 16, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: alpha(color.black, 0.55) },
-  cardConfirm: { position: "absolute", top: 0, left: 0, right: 0, height: 48, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: radius.small, backgroundColor: alpha(color.surface, 0.94) },
+  cardConfirm: { position: "absolute", top: 0, left: 0, right: 0, aspectRatio: 16 / 10, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: radius.small, backgroundColor: alpha(color.surface, 0.94) },
   progressTrack: { height: 3, borderRadius: 2, overflow: "hidden", backgroundColor: color.surfaceMuted },
   progressFill: { height: 3, backgroundColor: color.accentAction },
 

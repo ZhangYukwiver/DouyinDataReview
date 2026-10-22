@@ -796,25 +796,30 @@ export function PlayerBar() {
   }, [frame]);
   const toggleRegion = useCallback(() => (regionMode ? stopRegionSelect() : startRegionSelect()), [regionMode, startRegionSelect, stopRegionSelect]);
 
+  // 照剪辑软件的播放器：时间码在左、播放钮居中、框选在右
   return <View style={styles.controls}>
+    <View style={styles.controlsSide}>
+      <Text style={styles.clock}>{formatClock(time)} <Text style={kit.muted}>/ {formatClock(duration)}</Text></Text>
+    </View>
     <Pressable {...ws("btn square")} accessibilityRole="button" accessibilityLabel={playback.playing ? "暂停" : "播放"} disabled={!duration} onPress={playback.toggle} style={[styles.playButton, !duration && styles.disabled, webPointer]}>
       {playback.playing ? <Pause size={15} color={color.text} /> : <Play size={15} color={color.text} />}
     </Pressable>
-    <Text style={styles.clock}>{formatClock(time)} <Text style={kit.muted}>/ {formatClock(duration)}</Text></Text>
-    <Pressable
-      {...ws("btn small", regionMode && "on")}
-      accessibilityRole="button"
-      accessibilityLabel="框选"
-      accessibilityState={{ selected: regionMode, disabled: !duration }}
-      disabled={!duration}
-      onPress={toggleRegion}
-      style={[styles.chip, regionMode && styles.chipOn, !duration && styles.disabled, webPointer]}
-    >
-      <SquareDashed size={13} color={regionMode ? color.accent : color.text} /><Text style={styles.chipText}>框选</Text>
-    </Pressable>
-    <Text numberOfLines={1} style={[kit.muted, { flex: 1, minWidth: 0, textAlign: "right" }]}>
-      {regionMode ? "在画面上按住拖出一个框，发消息时 AI 只改框里的东西" : names.length ? `此刻生效：${names.join("、")}` : ""}
-    </Text>
+    <View style={[styles.controlsSide, styles.controlsEnd]}>
+      <Text numberOfLines={1} style={[kit.muted, { flexShrink: 1, minWidth: 0, textAlign: "right" }]}>
+        {regionMode ? "在画面上按住拖出一个框，发消息时 AI 只改框里的东西" : names.length ? `此刻生效：${names.join("、")}` : ""}
+      </Text>
+      <Pressable
+        {...ws("btn small", regionMode && "on")}
+        accessibilityRole="button"
+        accessibilityLabel="框选"
+        accessibilityState={{ selected: regionMode, disabled: !duration }}
+        disabled={!duration}
+        onPress={toggleRegion}
+        style={[styles.chip, regionMode && styles.chipOn, !duration && styles.disabled, webPointer]}
+      >
+        <SquareDashed size={13} color={regionMode ? color.accent : color.text} /><Text style={styles.chipText}>框选</Text>
+      </Pressable>
+    </View>
   </View>;
 }
 
@@ -1031,6 +1036,8 @@ const styles = StyleSheet.create({
   // 手柄、旋转区会伸出画面外一点：画面四周留了 STAGE_PAD，在这块地方里能点，不压到旁边的详情卡和播放栏
   stageBox: { flex: 1, minWidth: 0, minHeight: 0, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   controls: { flexDirection: "row", alignItems: "center", gap: 10, height: 30 },
+  controlsSide: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 },
+  controlsEnd: { justifyContent: "flex-end" },
   playButton: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   clock: { color: color.text, fontFamily: font.mono, fontSize: 12, fontVariant: ["tabular-nums"] },
   chip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },

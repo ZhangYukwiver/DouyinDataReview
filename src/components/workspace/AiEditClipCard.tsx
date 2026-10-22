@@ -24,7 +24,7 @@ export const ClipCard = memo(function ClipCard({ width, projectNow }: { width: n
   const { selected, selection } = useBoard();
   if (!selected) return null;
   // key 取片段 id：换了片段就从卡片顶上看起，同一片段被 AI 改了内容时滚动位置不动
-  return <View {...ws("e-box", "sticky")} accessibilityLabel="片段详情" style={[styles.detail, { width }]}>
+  return <View {...ws("e-box", "ai-panel", "sticky")} accessibilityLabel="片段详情" style={[styles.detail, { width }]}>
     {selection.ids.length > 1 ? <ManyBody count={selection.ids.length} /> : <ClipBody key={selected.segment.id} projectNow={projectNow} />}
   </View>;
 });
