@@ -1152,6 +1152,40 @@ describe.each(PLATFORMS)("draft box writes (%s)", (platform) => {
     }
   });
 
+  it("fingerprints a draft so a later export can tell it was opened or changed in Jianying", async () => {
+    const { box, indexPath, mainFile } = await makeBox(platform);
+    const created = await box.createDraft({ project: makeProject() });
+    const first = await box.fingerprint(created.draftId);
+    expect(typeof first).toBe("string");
+    // 什么都没动：再算一次一样；修复后（我们自己写的）会变，记新的就行
+    expect(await box.fingerprint(created.draftId)).toBe(first);
+    await box.repairDraft({ project: makeProject(), draftId: created.draftId });
+    const exported = await box.fingerprint(created.draftId);
+    // 剪映保存：主文件变了
+    const main = path.join(created.path, mainFile);
+    writeFileSync(main, `${readFileSync(main, "utf8")} `);
+    const saved = await box.fingerprint(created.draftId);
+    expect(saved).not.toBe(exported);
+    // 剪映第一次保存后改读 Timelines 里的主时间线
+    const mainId = "4D2B6B0E-1C3A-4F5B-9D7E-2A1B3C4D5E6F";
+    mkdirSync(path.join(created.path, "Timelines", mainId), { recursive: true });
+    writeFileSync(path.join(created.path, "Timelines", "project.json"), JSON.stringify({ main_timeline_id: mainId, timelines: [{ id: mainId }] }));
+    writeFileSync(path.join(created.path, "Timelines", mainId, mainFile), "native");
+    const native = await box.fingerprint(created.draftId);
+    expect(native).not.toBe(saved);
+    writeFileSync(path.join(created.path, "Timelines", mainId, mainFile), "native, saved again");
+    expect(await box.fingerprint(created.draftId)).not.toBe(native);
+    // 只在索引里改了修改时间也算
+    const before = await box.fingerprint(created.draftId);
+    const index = JSON.parse(readFileSync(indexPath, "utf8"));
+    index.all_draft_store.find((item) => item.draft_id === created.draftId).tm_draft_modified += 5_000_000;
+    writeFileSync(indexPath, JSON.stringify(index));
+    expect(await box.fingerprint(created.draftId)).not.toBe(before);
+    // 草稿被删了
+    rmSync(created.path, { recursive: true, force: true });
+    expectEdit(await catchAsync(box.fingerprint(created.draftId)), "DRAFT_BOX_NOT_FOUND", 404);
+  });
+
   it("writes the material size from draft_meta_info.json into the index", async () => {
     const { box, indexPath } = await makeBox(platform, { draftModule: undefined, copyMaterial: async (source, destination) => writeFileSync(destination, readFileSync(source), { flag: "wx" }) });
     const media = [mediaInfo("clip-720p.mp4"), mediaInfo("tone.mp3")];

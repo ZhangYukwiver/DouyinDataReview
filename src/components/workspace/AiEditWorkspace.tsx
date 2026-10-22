@@ -1,29 +1,22 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import {
-  ActivityIndicator, FlatList, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View,
-  type LayoutChangeEvent,
-} from "react-native";
-import {
-  Check, ChevronDown, Film, FolderInput, FolderOpen, Library, Music2, Pause, Play, Plus, Scissors, Send, Settings2, SlidersHorizontal,
-  Sparkles, Square, Sticker, Target, Trash2, Type, X,
-} from "lucide-react-native";
+import { ActivityIndicator, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Check, ChevronDown, Film, FolderOpen, Library, Music2, Plus, Scissors, Send, Settings2, Sparkles, Square, SquareDashed, Target, Trash2, X } from "lucide-react-native";
 import type { PersonalRecordCollection, PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import {
   aiEditLookUrl, aiEditMediaUrl, answerAiEditLook, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
-  importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, saveAiEditConfig, sendAiEditMessage, sessionRunning,
-  setAiEditCanvas, setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey,
-  type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditMediaItem, type AiEditSession, type AiEditSessionState,
-  type AiEditSessionSummary, type EditCanvas, type EditMediaSegment, type EditProject, type EditSegment, type EditTextSegment, type EditTrack,
+  importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, revertAiEdit, saveAiEditConfig, sendAiEditMessage, sessionRunning,
+  setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey,
+  type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditExportMode, type AiEditMediaItem,
+  type AiEditSession, type AiEditSessionState, type AiEditSessionSummary, type EditCanvas,
 } from "../../services/aiEdit";
 import { searchRecords } from "../../services/recordSearch";
-import {
-  activeFrame, blendMode, clipDetail, clipExtras, draftBoxReasonText, clipLabel, clipPosition, colorFilter, cropClipPath, cssTransform, effectiveTransform, featureName,
-  filmstripCount, filmstripTimes, findSegment, formatClock, formatDuration, hasScaleKeyframes, layerBox, layerRect, maskCss, mediaIdFromPath, mediaThumbView, mediaVolume,
-  nextSegmentAfter, playbackRate, projectDuration, rgba, rulerTicks, secondMark, sourceTimeUs, spokenDuration, textCss, timeAtX, trackLabel, transitionReach, US_PER_SECOND, visibleExportNote,
-  type ClipDetail, type ExportNote, type MaskSpec, type Size, type TransitionReach,
-} from "./aiEditModel";
-import { createFrameQueue, openVideoFrames } from "./aiEditFrames";
+import { mediaThumbView, spokenDuration, US_PER_SECOND, visibleExportNote, type ExportNote } from "./aiEditModel";
+import { regionCaption, regionHint } from "./aiEditBoardEdit";
+import { IN_FLIGHT_REASON } from "./aiEditInspect";
+import type { EditOutcome, EditPerformer } from "./aiEditBoardContext";
+import { Board } from "./AiEditBoard";
+import { CANVASES, errorText, mediaTitle, shortTime, webAutoHeight, webPointer, web, type BoardRegion } from "./aiEditShared";
 import { dropLookJobs, runLookJob } from "./aiEditLook";
 import { createUploadQueue } from "./aiEditUploads";
 import { kit, Segmented, SmallButton } from "./CreatorKit";
@@ -31,23 +24,18 @@ import { Markdown } from "./markdownView";
 import { ws } from "./motion";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 
-// AI 剪辑：左边和 AI 对话（会话、素材库、输入框），右边是只读的剪辑看板（画面预览 + 轨道）。
-// 会话、工程、素材都在采集器里（collector/aiEdit/），页面只看和发消息；切走再回来按采集器的状态恢复。
+// AI 剪辑：左边和 AI 对话（会话、素材库、输入框），右边是剪辑看板（AiEditBoard：画面预览 + 轨道）。看板上也能手动挪、裁、切、删片段，
+// 改文字和位置大小，在画面上框一块让 AI 只改那里；每一步都能撤销，也能退回到某句话之前。
+// 会话、工程、素材都在采集器里（collector/aiEdit/），页面发请求、看结果；切走再回来按采集器的状态恢复。
 
 type Props = { connection: ExploreConnection | null; records: PersonalRecordCollection; onOpenSettings: () => void };
 
-const web = Platform.OS === "web";
-const webPointer = web ? ({ cursor: "pointer" } as object) : null;
-const webAutoHeight = web ? ({ fieldSizing: "content" } as object) : null;
 const LAST_SESSION_KEY = "dy2.aiEditSession";
-const errorText = (reason: unknown, fallback: string) => reason instanceof Error && reason.message ? reason.message : fallback;
 // 上传不随页面卸载中断：切到别的侧栏再回来，进度和失败提示都接得上
 // 测模型能不能看视频：整个页面共用，切走再回来不重复测（probing 正在测的、probeTried 自动测过的「地址|模型|Key」）
 const probing = new Set<string>();
 const probeTried = new Set<string>();
 const uploadQueue = createUploadQueue(uploadAiEditMedia, (reason) => errorText(reason, "没传上去，请稍后重试。"));
-// 轨道上视频片段的缩略图：全页一条取帧队列，结果缓存在模块里，切走再回来不用重新解码
-const frameQueue = createFrameQueue(openVideoFrames);
 
 function readLastSession(): string | null {
   try { return globalThis.localStorage?.getItem(LAST_SESSION_KEY) ?? null; } catch { return null; }
@@ -58,15 +46,6 @@ function rememberSession(id: string | null) {
     else globalThis.localStorage?.removeItem(LAST_SESSION_KEY);
   } catch { /* 记不住就下次进来选最近的 */ }
 }
-
-const CANVASES: Array<{ label: string; canvas: EditCanvas }> = [
-  { label: "竖屏 9:16", canvas: { width: 1080, height: 1920, fps: 30 } },
-  { label: "横屏 16:9", canvas: { width: 1920, height: 1080, fps: 30 } },
-  { label: "方形 1:1", canvas: { width: 1080, height: 1080, fps: 30 } },
-];
-
-const CANVAS_OPTIONS = CANVASES.map(({ label }) => ({ label: label.split(" ")[0]!, value: label }));
-const canvasPreset = (canvas: EditCanvas) => CANVASES.find((item) => item.canvas.width === canvas.width && item.canvas.height === canvas.height)?.label ?? null;
 
 const SUGGESTIONS = [
   "把素材库里的视频剪成 30 秒的竖屏短片，配上字幕",
@@ -96,6 +75,15 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   // 导入状态按会话记：导入途中切到别的剪辑，那边的按钮和状态行不受影响，结果也只回到发起导入的那个剪辑
   const [exportingIds, setExportingIds] = useState<string[]>([]);
   const [exportNotes, setExportNotes] = useState<Record<string, ExportNote>>({});
+  // 导入时发现草稿在剪映里被打开或改过：按剪辑记下那句说明，等用户选另存还是覆盖
+  const [exportConflicts, setExportConflicts] = useState<Record<string, string>>({});
+  // 手动改动、撤销、退回、换画面比例一次只发一个
+  const [editBusy, setEditBusy] = useState(false);
+  const editLock = useRef(false);
+  // 当前工程的版本：看板先 flush 微调再导入时，请求刚回来、还没重渲染，导入提示要记在新版本名下（perform 回来就更新）
+  const revisionNow = useRef<number | null>(null);
+  // 画面上框的一块，记在发起框选的剪辑名下；发出去或清掉就没了
+  const [regionDraft, setRegionDraft] = useState<{ sessionId: string; region: BoardRegion } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -108,6 +96,12 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const running = sessionRunning(session) || sending;
   const exporting = currentId ? exportingIds.includes(currentId) : false;
   const exportNote = visibleExportNote(currentId ? exportNotes[currentId] : null, project?.revision);
+  const exportConflict = currentId ? exportConflicts[currentId] ?? null : null;
+  const region = regionDraft?.sessionId === currentId ? regionDraft.region : null;
+  // 能在看板上手动改：有工程、AI 没在剪、没在导入、上一个手动改动已经回来
+  const notEditableReason = !project ? "还没有时间线" : running ? "AI 正在剪，等它做完再改" : exporting ? "正在导入剪映，等导完再改" : editBusy ? IN_FLIGHT_REASON : null;
+  const editable = !notEditableReason;
+  revisionNow.current = project?.revision ?? null;
 
   // ---------- 会话列表：进页面时选上次看的那个，没有就选最近的 ----------
   const loadSessions = useCallback(async (prefer?: string | null) => {
@@ -293,7 +287,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
 
   const send = async (raw = input) => {
     const text = raw.trim();
-    if (!conn || !text || running) return;
+    if (!conn || !text || running || editLock.current) return;
     if (!config.apiKey.trim() || !config.model.trim() || !config.baseUrl.trim()) {
       setConfigOpen(true);
       setError("先在 AI 剪辑的接口设置里填好 Key 和模型。");
@@ -304,8 +298,12 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     try {
       const target = currentId ? { id: currentId, project } : await createSession().then((created) => created && { id: created.session.id, project: created.project });
       if (!target) return;
-      const next = await sendAiEditMessage(conn, target.id, text, config);
+      const framed = region && target.id === currentId ? region : null;
+      const next = await sendAiEditMessage(conn, target.id, text, config, framed && {
+        time_us: framed.time_us, x: framed.x, y: framed.y, width: framed.width, height: framed.height, clip_ids: framed.clip_ids,
+      });
       setInput("");
+      if (framed) setRegionDraft((current) => (current?.sessionId === target.id ? null : current));
       setState((current) => current?.session.id === next.id ? { ...current, session: next } : target.project ? { session: next, project: target.project } : current);
     } catch (reason) {
       setError(errorText(reason, "消息没发出去，请稍后重试。"));
@@ -330,16 +328,34 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     }
   };
 
-  /** 看板上换画面比例：位置按比例存，跟着画布走；arrange_grid 排过的分屏由采集器按新画布重排 */
-  const changeCanvas = async (canvas: EditCanvas) => {
-    if (!conn || !currentId) return;
-    setError(null);
+  /**
+   * 看板上的手动改动、撤销、重做、换画面比例和左栏的退回都走这里：一次只发一个（锁被占时直接回 busy），
+   * 回来的会话和工程直接换上。失败的原因交回给发起的地方：看板弹提示气泡，退回写进左栏的错误条。
+   */
+  const perform: EditPerformer = useCallback(async (call, fallback): Promise<EditOutcome> => {
+    if (!conn || !currentId) return { ok: false, busy: false, message: "还没有剪辑。", code: null };
+    if (editLock.current) return { ok: false, busy: true, message: IN_FLIGHT_REASON, code: "session_busy" };
+    const id = currentId;
+    editLock.current = true;
+    setEditBusy(true);
     try {
-      const next = await setAiEditCanvas(conn, currentId, { width: canvas.width, height: canvas.height });
+      const next = await call(conn, id);
+      revisionNow.current = next.project.revision;
       setState((current) => current?.session.id === next.session.id ? next : current);
+      setSessions((list) => list.map((item) => item.id === next.session.id ? summaryOf(next.session) : item));
+      return { ok: true, state: next };
     } catch (reason) {
-      setError(errorText(reason, "画面比例没换成，请稍后重试。"));
+      return { ok: false, busy: false, message: errorText(reason, fallback), code: (reason as { code?: string }).code ?? null };
+    } finally {
+      editLock.current = false;
+      setEditBusy(false);
     }
+  }, [conn, currentId]);
+  const revert = async (messageId: string): Promise<boolean> => {
+    setError(null);
+    const outcome = await perform((connection, id) => revertAiEdit(connection, id, messageId), "没退回去，请稍后重试。");
+    if (!outcome.ok) setError(outcome.message);
+    return outcome.ok;
   };
 
   const stop = async () => {
@@ -352,23 +368,33 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     }
   };
 
-  const exportDraft = async () => {
-    if (!conn || !currentId) return;
+  /**
+   * mode 不给是自动：有草稿就原位更新，草稿在剪映里被改过时先停下来问另存还是覆盖。
+   * 上一个改动还没回来时不导、返回 false（看板提示稍等）：导出去的会是没带那一下的工程。
+   */
+  const exportDraft = (mode?: AiEditExportMode): boolean => {
+    if (editLock.current) return false;
+    if (conn && currentId) void writeDraft(conn, currentId, mode);
+    return true;
+  };
+  const writeDraft = async (connection: NonNullable<typeof conn>, id: string, mode?: AiEditExportMode) => {
     // 记下发起导入的剪辑和当时的工程版本：请求回来时用户可能已经切走，提示只记到这个剪辑名下
-    const id = currentId;
-    const revision = project?.revision ?? null;
+    const revision = revisionNow.current;
     const note = (value: ExportNote) => setExportNotes((notes) => ({ ...notes, [id]: value }));
     setExportingIds((ids) => [...ids, id]);
     setExportNotes((notes) => { const next = { ...notes }; delete next[id]; return next; });
+    setExportConflicts((all) => { if (!(id in all)) return all; const next = { ...all }; delete next[id]; return next; });
     try {
-      const value = await exportAiEditSession(conn, id);
+      const value = await exportAiEditSession(connection, id, mode);
       setState((current) => current && current.session.id === value.session.id ? { ...current, session: value.session } : current);
       setSessions((list) => list.map((item) => item.id === value.session.id ? summaryOf(value.session) : item));
       note({ revision: value.session.draftBox?.exportedRevision ?? revision, tone: "ok", text: value.result.created
-        ? `已放进剪映草稿箱，名字是「${value.result.draftName}」，打开剪映就能看到。`
+        ? `${mode === "new" ? "已另存一份新草稿" : "已放进剪映草稿箱"}，名字是「${value.result.draftName}」，打开剪映就能看到。`
         : `已更新剪映里的「${value.result.draftName}」，重新打开这份草稿就是最新的。` });
     } catch (reason) {
-      note({ revision, tone: "warn", text: errorText(reason, "没能导入剪映草稿箱，请稍后重试。") });
+      if ((reason as { code?: string }).code === "draft_changed") {
+        setExportConflicts((all) => ({ ...all, [id]: errorText(reason, "剪映里的这份草稿在上次导入后被打开或改过。") }));
+      } else note({ revision, tone: "warn", text: errorText(reason, "没能导入剪映草稿箱，请稍后重试。") });
     } finally {
       setExportingIds((ids) => ids.filter((item) => item !== id));
       void loadDraftBox();
@@ -394,7 +420,10 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     await loadMedia();
   };
 
-  const mention = (item: AiEditMediaItem) => setInput((text) => `${text}${text && !text.endsWith(" ") ? " " : ""}「${mediaTitle(item)}」`);
+  /** 往输入框末尾插一段（点素材、看板上「交给 AI」），和前面的字隔一个空格 */
+  const insertMention = useCallback((piece: string) => setInput((text) => `${text}${text && !text.endsWith(" ") ? " " : ""}${piece}`), []);
+  const mention = (item: AiEditMediaItem) => insertMention(`「${mediaTitle(item)}」`);
+  const pickRegion = useCallback((value: BoardRegion) => { if (currentId) setRegionDraft({ sessionId: currentId, region: value }); }, [currentId]);
 
   if (!conn) return <View style={[styles.root, styles.gate]}>
     <Scissors size={34} color={color.accent} />
@@ -433,7 +462,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
               }}
               onCancel={config.apiKey ? () => setConfigOpen(false) : undefined}
             />
-          : <Conversation session={session} loaded={sessionsLoaded} onSuggest={(text) => setInput(text)} />}
+          : <Conversation session={session} loaded={sessionsLoaded} running={running} editable={editable} onSuggest={(text) => setInput(text)} onRevert={revert} />}
         {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)} /> : null}
       </View>
       {configOpen ? null : <MediaShelf
@@ -445,7 +474,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
         onOpenLibrary={() => setPickerOpen(true)}
         onUpload={uploadFiles}
       />}
-      <Composer value={input} onChange={setInput} running={running} sending={sending} onSend={() => void send()} onStop={() => void stop()} />
+      {region && !configOpen ? <RegionHint region={region} onClear={() => setRegionDraft(null)} /> : null}
+      <Composer value={input} onChange={setInput} running={running} sending={sending} blocked={editBusy} onSend={() => void send()} onStop={() => void stop()} />
     </View>
 
     <Board
@@ -456,9 +486,18 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       draftBox={draftBox}
       exporting={exporting}
       exportNote={exportNote}
+      exportConflict={exportConflict}
       running={running}
-      onExport={() => void exportDraft()}
-      onCanvas={(canvas) => void changeCanvas(canvas)}
+      editable={editable}
+      notEditableReason={notEditableReason}
+      region={region}
+      perform={perform}
+      onRegion={pickRegion}
+      onMention={insertMention}
+      onExport={exportDraft}
+      onDismissConflict={() => {
+        if (currentId) setExportConflicts((all) => { const next = { ...all }; delete next[currentId]; return next; });
+      }}
     />
 
     {pickerOpen ? <LibraryPicker records={records} media={media} onAdd={addRecord} onClose={() => setPickerOpen(false)} /> : null}
@@ -473,18 +512,6 @@ const sortSessions = (list: AiEditSessionSummary[]) => [...list].sort((a, b) => 
 
 const summaryOf = ({ id, title, createdAt, updatedAt, status, projectId, draftBox }: AiEditSession): AiEditSessionSummary =>
   ({ id, title, createdAt, updatedAt, status, projectId, draftBox });
-
-const mediaTitle = (item: AiEditMediaItem) => (item.source.type === "douyin" && item.source.title) || item.name.replace(/\.[^.]+$/u, "");
-
-function shortTime(value: string | null | undefined): string {
-  const time = value ? Date.parse(value) : Number.NaN;
-  if (!Number.isFinite(time)) return "";
-  const date = new Date(time);
-  const today = new Date();
-  const sameDay = date.toDateString() === today.toDateString();
-  const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-  return sameDay ? `今天 ${clock}` : `${date.getMonth() + 1} 月 ${date.getDate()} 日 ${clock}`;
-}
 
 // ============================== 左栏 ==============================
 
@@ -633,7 +660,9 @@ function ConfigPanel({ config, probe, onSave, onRetest, onCancel }: {
   </ScrollView>;
 }
 
-function Conversation({ session, loaded, onSuggest }: { session: AiEditSession | null; loaded: boolean; onSuggest: (text: string) => void }) {
+function Conversation({ session, loaded, running, editable, onSuggest, onRevert }: {
+  session: AiEditSession | null; loaded: boolean; running: boolean; editable: boolean; onSuggest: (text: string) => void; onRevert: (messageId: string) => Promise<boolean>;
+}) {
   const scrollRef = useRef<ScrollView>(null);
   const stick = useRef(true);
   const messages = session?.messages ?? [];
@@ -641,6 +670,7 @@ function Conversation({ session, loaded, onSuggest }: { session: AiEditSession |
   const liveActions = session?.streaming?.actions ?? [];
   const look = session?.streaming?.look;
   const busy = sessionRunning(session);
+  const revertible = useMemo(() => new Set(session?.revertible ?? []), [session?.revertible]);
   // 新消息、流式文字一长就贴着底部；用户往上翻了就不打扰
   useLayoutEffect(() => {
     if (!stick.current) return;
@@ -672,7 +702,7 @@ function Conversation({ session, loaded, onSuggest }: { session: AiEditSession |
       stick.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 60;
     }}
   >
-    {messages.map((item) => <Message key={item.id} item={item} />)}
+    {messages.map((item) => <Message key={item.id} item={item} revertible={!running && revertible.has(item.id)} editable={editable} onRevert={onRevert} />)}
     {busy ? <View {...ws("c-bubble", "in")} style={[styles.bubble, styles.bubbleIn]}>
       {streaming ? <Markdown compact text={streaming} /> : null}
       {liveActions.length ? <ActionList actions={liveActions} live /> : null}
@@ -682,9 +712,25 @@ function Conversation({ session, loaded, onSuggest }: { session: AiEditSession |
   </ScrollView>;
 }
 
-function Message({ item }: { item: AiEditChatItem }) {
+function Message({ item, revertible = false, editable = false, onRevert }: {
+  item: AiEditChatItem; revertible?: boolean; editable?: boolean; onRevert?: (messageId: string) => Promise<boolean>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => { if (!revertible) setConfirming(false); }, [revertible]);
+  if (item.role === "note") return <Text style={styles.note}>{item.text}</Text>;
   if (item.role === "user") return <View style={styles.ownLine}>
     <View {...ws("c-bubble", "own")} style={[styles.bubble, styles.bubbleOwn]}><Text selectable style={styles.bubbleText}>{item.text}</Text></View>
+    {item.region ? <Text style={styles.ownMeta}>{regionCaption(item.region.time_us, item.region.labels)}</Text> : null}
+    {revertible && onRevert ? confirming
+      ? <View style={styles.revertConfirm}>
+        <Text style={styles.ownMeta}>这句话之后的改动都会撤掉，退回后还能撤销。</Text>
+        <View style={kit.row}>
+          <Pressable accessibilityRole="button" disabled={!editable} onPress={() => { setConfirming(false); void onRevert(item.id); }} style={[webPointer, !editable && styles.disabled]}><Text style={styles.dangerLink}>退回</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setConfirming(false)} style={webPointer}><Text style={kit.muted}>取消</Text></Pressable>
+        </View>
+      </View>
+      : <Pressable accessibilityRole="button" accessibilityLabel="把时间线退回到这句话之前" onPress={() => setConfirming(true)} style={webPointer}><Text style={styles.linkText}>退回到这句之前</Text></Pressable>
+      : null}
   </View>;
   return <View {...ws("c-bubble", "in")} style={[styles.bubble, styles.bubbleIn]}>
     {item.text ? <Markdown compact text={item.text} /> : null}
@@ -784,10 +830,21 @@ function PickCover({ uri }: { uri: string | null | undefined }) {
 }
 const thumbMedia: React.CSSProperties = { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" };
 
-function Composer({ value, onChange, running, sending, onSend, onStop }: {
-  value: string; onChange: (text: string) => void; running: boolean; sending: boolean; onSend: () => void; onStop: () => void;
+/** 输入框上方：画面上框了哪一块，发消息时一起带给 AI。 */
+function RegionHint({ region, onClear }: { region: BoardRegion; onClear: () => void }) {
+  return <View style={styles.regionHint}>
+    <SquareDashed size={13} color={color.accent} />
+    <Text numberOfLines={2} style={styles.regionHintText}>{regionHint(region.time_us, region.labels)}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel="清除框选" hitSlop={8} onPress={onClear} style={webPointer}><Text style={styles.linkText}>清除</Text></Pressable>
+  </View>;
+}
+
+function Composer({ value, onChange, running, sending, blocked, onSend, onStop }: {
+  value: string; onChange: (text: string) => void; running: boolean; sending: boolean;
+  /** 看板上的手动改动还没回来，先不发 */
+  blocked: boolean; onSend: () => void; onStop: () => void;
 }) {
-  const canSend = Boolean(value.trim()) && !running;
+  const canSend = Boolean(value.trim()) && !running && !blocked;
   return <View {...ws("c-composer")} style={styles.composer}>
     <TextInput
       accessibilityLabel="和 AI 说怎么剪"
@@ -921,544 +978,6 @@ function LibraryPicker({ records, media, onAdd, onClose }: {
   </View>;
 }
 
-// ============================== 右栏：看板 ==============================
-
-function Board({ session, project, media, mediaUrl, draftBox, exporting, exportNote, running, onExport, onCanvas }: {
-  session: AiEditSession | null; project: EditProject | null; media: AiEditMediaItem[]; mediaUrl: (id: string) => string | null;
-  draftBox: AiEditDraftBoxStatus | null; exporting: boolean; exportNote: ExportNote | null; running: boolean; onExport: () => void;
-  onCanvas: (canvas: EditCanvas) => void;
-}) {
-  const duration = projectDuration(project);
-  const playback = usePlayback(duration, project?.id ?? null);
-  const mediaById = useMemo(() => new Map(media.map((item) => [item.id, item])), [media]);
-
-  // 点轨道上的片段：选中、播放头跳到片段开头，旁边弹出只读详情。片段被 AI 删掉或切了剪辑就自动收起
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = useMemo(() => findSegment(project, selectedId), [project, selectedId]);
-  useEffect(() => { if (selectedId && !selected) setSelectedId(null); }, [selectedId, selected]);
-  const latest = useRef({ project, selectedId });
-  latest.current = { project, selectedId };
-  const { seek } = playback;
-  const closeDetail = useCallback(() => setSelectedId(null), []);
-  const pick = useCallback((id: string | null) => {
-    const { project: current, selectedId: open } = latest.current;
-    if (!id || id === open) { setSelectedId(null); return; }
-    const found = findSegment(current, id);
-    if (!found) return;
-    setSelectedId(id);
-    seek(found.segment.timeline.start_us);
-  }, [seek]);
-  useEffect(() => {
-    if (!selectedId || !web) return undefined;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setSelectedId(null); };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [selectedId]);
-  const detail = useMemo(() => {
-    if (!selected) return null;
-    const { segment, track } = selected;
-    const item = "path" in segment ? mediaById.get(mediaIdFromPath(segment.path) ?? "") : undefined;
-    return { id: segment.id, info: clipDetail(segment, { mediaName: item ? mediaTitle(item) : null, track }), tone: clipTone(segment) };
-  }, [selected, mediaById]);
-  const [height, setHeight] = useState(0);
-  const trackCount = Math.max(1, project?.tracks.length ?? 0);
-  // 轨道区按轨道数定高，最多占看板的四成；剩下的都给画面
-  const timelineHeight = Math.round(Math.max(96, Math.min(RULER + trackCount * ROW + 12, height ? height * 0.42 : 200)));
-  const status = exporting ? { tone: "muted" as const, text: "正在写进剪映草稿箱…" }
-    : exportNote ? { tone: exportNote.tone, text: exportNote.text }
-      : draftBox?.status === "unavailable" ? { tone: "warn" as const, text: draftBoxReasonText(draftBox.reason) }
-        : draftBox?.jianyingRunning ? { tone: "warn" as const, text: "剪映正在运行，导入前先退出剪映。" }
-          : session?.draftBox ? { tone: "muted" as const, text: `${shortTime(session.draftBox.exportedAt)}放进过剪映，名字是「${session.draftBox.draftName}」${project && project.revision !== session.draftBox.exportedRevision ? "，之后又改过，再导入会更新同一份草稿" : ""}。` }
-            : { tone: "muted" as const, text: "做好后放进剪映草稿箱，在剪映里接着精修、导出。" };
-
-  return <View style={styles.board} onLayout={(event: LayoutChangeEvent) => setHeight(event.nativeEvent.layout.height)}>
-    <View style={styles.boardHead}>
-      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <Text numberOfLines={1} style={styles.boardTitle}>{project?.name || session?.title || "剪辑看板"}</Text>
-        <View style={styles.boardMeta}>
-          <Text numberOfLines={1} style={kit.muted}>
-            {project ? `${project.canvas.width}×${project.canvas.height} · ${project.canvas.fps} 帧 · 时长 ${formatDuration(duration)}` : "还没有时间线"}
-          </Text>
-          {project ? <Segmented small options={CANVAS_OPTIONS} value={canvasPreset(project.canvas)} onChange={(label) => {
-            const preset = CANVASES.find((item) => item.label === label);
-            if (preset && label !== canvasPreset(project.canvas)) onCanvas(preset.canvas);
-          }} /> : null}
-        </View>
-      </View>
-      <Pressable
-        {...ws("btn-solid")}
-        accessibilityRole="button"
-        accessibilityLabel="导入剪映草稿箱"
-        disabled={!project || !duration || running || exporting}
-        onPress={onExport}
-        style={[styles.exportButton, (!project || !duration || running || exporting) && styles.disabled, webPointer]}
-      >
-        {exporting ? <ActivityIndicator size="small" color={color.buttonText} /> : <FolderInput size={15} color={color.buttonText} />}
-        <Text style={styles.exportText}>导入剪映草稿箱</Text>
-      </Pressable>
-    </View>
-    <Text accessibilityLiveRegion="polite" numberOfLines={2} style={[styles.status, status.tone === "warn" && { color: color.danger }, status.tone === "ok" && { color: color.green }]}>{status.text}</Text>
-
-    <Preview project={project} mediaById={mediaById} mediaUrl={mediaUrl} playback={playback} duration={duration} running={running}
-      detail={detail} onCloseDetail={closeDetail} />
-    <Timeline project={project} mediaById={mediaById} mediaUrl={mediaUrl} duration={duration} time={playback.time} height={timelineHeight}
-      selectedId={selected ? selectedId : null} onSeek={playback.seek} onPick={pick} />
-  </View>;
-}
-
-// ---------- 播放 ----------
-
-type Playback = { time: number; playing: boolean; toggle: () => void; seek: (us: number) => void };
-
-/** 播放头按墙上时钟走（rAF），视频元素跟着它校准，不反过来。 */
-function usePlayback(duration: number, projectId: string | null): Playback {
-  const [time, setTime] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const timeRef = useRef(0);
-  timeRef.current = time;
-  const anchor = useRef({ origin: 0, at: 0 });
-  useEffect(() => { setPlaying(false); setTime(0); }, [projectId]);
-  useEffect(() => { if (time > duration) setTime(duration); }, [duration, time]);
-  useEffect(() => {
-    if (!playing) return undefined;
-    let frame = 0;
-    anchor.current = { origin: timeRef.current, at: performance.now() };
-    const tick = (now: number) => {
-      const next = anchor.current.origin + Math.max(0, now - anchor.current.at) * 1000;
-      if (next >= duration) { setTime(duration); setPlaying(false); return; }
-      setTime(next);
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [playing, duration]);
-  const seek = useCallback((us: number) => {
-    const next = Math.min(Math.max(0, us), duration);
-    anchor.current = { origin: next, at: performance.now() };
-    setTime(next);
-  }, [duration]);
-  const toggle = useCallback(() => {
-    if (playing) { setPlaying(false); return; }
-    if (duration <= 0) return;
-    if (timeRef.current >= duration) { timeRef.current = 0; setTime(0); }
-    setPlaying(true);
-  }, [playing, duration]);
-  return { time, playing, toggle, seek };
-}
-
-// ---------- 画面预览 ----------
-
-function Preview({ project, mediaById, mediaUrl, playback, duration, running, detail, onCloseDetail }: {
-  project: EditProject | null; mediaById: Map<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null; playback: Playback; duration: number; running: boolean;
-  detail: { id: string; info: ClipDetail; tone: string } | null; onCloseDetail: () => void;
-}) {
-  const [box, setBox] = useState<Size>({ width: 0, height: 0 });
-  const [rowWidth, setRowWidth] = useState(0);
-  const canvas = project?.canvas ?? { width: 1080, height: 1920, fps: 30 };
-  const scale = box.width && box.height ? Math.min(box.width / canvas.width, box.height / canvas.height) : 0;
-  const stage = { width: Math.floor(canvas.width * scale), height: Math.floor(canvas.height * scale) };
-  // 停在结尾时显示最后一帧
-  const shownTime = duration > 0 ? Math.min(playback.time, duration - 1) : 0;
-  const frame = useMemo(() => activeFrame(project, shownTime), [project, shownTime]);
-
-  // 只挂载当前和下一段的媒体元素：同一个片段从「预加载」变成「正在放」时 key 不变，元素不重建
-  const layers = useMemo(() => {
-    const list: Array<{ layer: { track: EditTrack; trackIndex: number; segment: EditSegment }; active: boolean }> = [];
-    const active = new Set([...frame.visuals, ...frame.audios].map((layer) => layer.segment.id));
-    (project?.tracks ?? []).forEach((track, trackIndex) => {
-      for (const layer of [...frame.visuals, ...frame.audios]) if (layer.trackIndex === trackIndex) list.push({ layer, active: true });
-      const next = nextSegmentAfter(track, shownTime);
-      if (next && (next.kind === "video" || next.kind === "audio") && next.timeline.start_us - shownTime < 4 * US_PER_SECOND && !active.has(next.id)) {
-        list.push({ layer: { track, trackIndex, segment: next }, active: false });
-      }
-    });
-    return list;
-  }, [frame, project, shownTime]);
-
-  const names = useMemo(() => {
-    const items: string[] = [];
-    for (const { segment } of frame.overlays) items.push(segment.kind === "track_effect" ? `特效 ${featureName(segment.effect_type)}` : segment.kind === "track_filter" ? `滤镜 ${featureName(segment.filter_type)}` : "");
-    for (const { segment } of frame.visuals) {
-      if ("filters" in segment) for (const item of segment.filters ?? []) items.push(`滤镜 ${featureName(item.filter_type)}`);
-      if ("effects" in segment) for (const item of segment.effects ?? []) items.push(`特效 ${featureName(item.effect_type)}`);
-      if ("animations" in segment) for (const item of segment.animations ?? []) items.push(`动画 ${featureName(item.animation_type)}`);
-    }
-    return [...new Set(items.filter(Boolean))];
-  }, [frame]);
-
-  return <View style={styles.preview}>
-    <View style={styles.previewRow} onLayout={(event: LayoutChangeEvent) => setRowWidth(event.nativeEvent.layout.width)}>
-      <View style={styles.stageBox} onLayout={(event: LayoutChangeEvent) => setBox({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}>
-        {scale > 0 ? <div aria-label="画面预览" style={{ position: "relative", width: stage.width, height: stage.height, overflow: "hidden", backgroundColor: color.black, isolation: "isolate", borderRadius: 2 }}>
-          {layers.map(({ layer, active }) => <Layer key={layer.segment.id} layer={layer} active={active} canvas={canvas} stage={stage}
-            time={shownTime} playing={playback.playing} mediaById={mediaById} mediaUrl={mediaUrl} />)}
-          {!project || !duration ? <div style={stageNote}>{running ? "AI 正在搭时间线…" : "还没有画面"}</div> : null}
-        </div> : null}
-      </View>
-      {/* 详情卡放在画面右边、不压轨道区；画面跟着让出宽度，内容多时卡片里面滚。
-          key 取片段 id：换了片段就从卡片顶上看起，同一片段被 AI 改了内容时滚动位置不动 */}
-      {detail ? <ClipCard key={detail.id} detail={detail.info} tone={detail.tone} width={Math.round(Math.min(280, Math.max(196, rowWidth * 0.42)))} onClose={onCloseDetail} /> : null}
-    </View>
-    <View style={styles.controls}>
-      <Pressable {...ws("btn square")} accessibilityRole="button" accessibilityLabel={playback.playing ? "暂停" : "播放"} disabled={!duration} onPress={playback.toggle} style={[styles.playButton, !duration && styles.disabled, webPointer]}>
-        {playback.playing ? <Pause size={15} color={color.text} /> : <Play size={15} color={color.text} />}
-      </Pressable>
-      <Text style={styles.clock}>{formatClock(playback.time)} <Text style={kit.muted}>/ {formatClock(duration)}</Text></Text>
-      <Text numberOfLines={1} style={[kit.muted, { flex: 1, minWidth: 0, textAlign: "right" }]}>{names.length ? `此刻生效：${names.join("、")}` : ""}</Text>
-    </View>
-  </View>;
-}
-
-/** 片段的只读详情：只有收起按钮，没有任何能改片段的控件。播放时画面每帧重渲染，卡片不跟着重排。 */
-const ClipCard = memo(function ClipCard({ detail, tone, width, onClose }: { detail: ClipDetail; tone: string; width: number; onClose: () => void }) {
-  return <View {...ws("e-box", "sticky")} accessibilityLabel="片段详情" style={[styles.detail, { width }]}>
-    <View style={styles.detailHead}>
-      <View style={[styles.detailDot, { backgroundColor: tone }]} />
-      <Text numberOfLines={1} style={styles.detailKind}>{detail.kind}片段</Text>
-      <Pressable accessibilityRole="button" accessibilityLabel="收起片段详情" hitSlop={8} onPress={onClose} style={[styles.detailClose, webPointer]}>
-        <X size={14} color={color.textMuted} />
-      </Pressable>
-    </View>
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.detailBody}>
-      <Text selectable style={styles.detailTitle}>{detail.title}</Text>
-      {detail.rows.map((row, index) => <View key={index} style={styles.detailRow}>
-        <Text style={styles.detailLabel}>{row.label}</Text>
-        <View style={styles.detailValueBox}>
-          {row.swatch ? <View style={[styles.swatch, { backgroundColor: row.swatch }]} /> : null}
-          <Text selectable style={styles.detailValue}>{row.value}</Text>
-        </View>
-      </View>)}
-    </ScrollView>
-  </View>;
-});
-
-const stageNote: React.CSSProperties = {
-  position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 12,
-  color: alpha(color.white, 0.55), fontSize: 12, fontFamily: font.body,
-};
-
-// 元素自己读到的画面尺寸（按 url 记，同一素材换片段不用再等）。素材库的宽高只按 mp4/mov 的旋转信息转正过，
-// 不管照片的 EXIF 方向和其他容器；浏览器给的 videoWidth / naturalWidth 都已经转正，以它为准。
-const naturalSizes = new Map<string, Size>();
-
-function useNaturalSize(url: string | null): [Size | null, (width: number, height: number) => void] {
-  const [, setSeen] = useState<Size | null>(null);
-  const report = useCallback((width: number, height: number) => {
-    if (!url || !(width > 0 && height > 0)) return;
-    naturalSizes.set(url, { width, height });
-    // 每个图层自己记一份，尺寸变了才重渲染；同一素材的另一个图层先读到时这里也能跟上
-    setSeen((seen) => seen && seen.width === width && seen.height === height ? seen : { width, height });
-  }, [url]);
-  return [url ? naturalSizes.get(url) ?? null : null, report];
-}
-
-function Layer({ layer, active, canvas, stage, time, playing, mediaById, mediaUrl }: {
-  layer: { track: EditTrack; trackIndex: number; segment: EditSegment }; active: boolean; canvas: EditCanvas; stage: Size; time: number; playing: boolean;
-  mediaById: Map<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null;
-}) {
-  const { segment, track } = layer;
-  const item = "path" in segment ? mediaById.get(mediaIdFromPath(segment.path) ?? "") : undefined;
-  const url = item?.status === "ready" ? mediaUrl(item.id) : null;
-  const [natural, reportSize] = useNaturalSize(segment.kind === "audio" ? null : url);
-  const offset = Math.max(0, time - segment.timeline.start_us);
-  if (segment.kind === "text") return active ? <TextLayer segment={segment} canvas={canvas} stage={stage} offset={offset} /> : null;
-  if (segment.kind === "sticker") {
-    if (!active) return null;
-    const transform = effectiveTransform(segment, offset);
-    const side = Math.min(stage.width, stage.height) * 0.22;
-    const rect = layerRect(stage, { width: side, height: side }, transform);
-    return <div title="贴纸（导进剪映后能看到）" style={{ position: "absolute", left: rect.left, top: rect.top, width: rect.width, height: rect.height, opacity: rect.opacity, transform: cssTransform(rect), border: `1px dashed ${alpha(color.white, 0.6)}`, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: alpha(color.white, 0.75) }}>
-      <Sticker size={Math.max(12, side * 0.4)} color={alpha(color.white, 0.75)} />
-    </div>;
-  }
-  if (segment.kind !== "video" && segment.kind !== "image" && segment.kind !== "audio") return null;
-  if (segment.kind === "audio") return url ? <MediaElement kind="audio" url={url} segment={segment} track={track} time={time} playing={playing} active={active} style={{ display: "none" }} /> : null;
-
-  const transform = effectiveTransform(segment, offset);
-  const fit = segment.fit ?? "contain";
-  // 有地址时只信元素读到的尺寸；没读到之前框按画布比例、让浏览器按 fit 自己摆，不拉伸。
-  // 素材还没就绪时只画占位框，素材库的宽高够用
-  const material = url ? natural : item?.width && item.height ? { width: item.width, height: item.height } : null;
-  const box = layerBox(stage, material, fit, segment.keyframes);
-  const rect = layerRect(stage, box, transform);
-  const mask = maskCss(segment.mask as MaskSpec | null | undefined, { width: rect.width, height: rect.height }, material);
-  const style: React.CSSProperties = {
-    position: "absolute", left: rect.left, top: rect.top, width: rect.width, height: rect.height,
-    objectFit: material || (fit === "stretch" && !hasScaleKeyframes(segment.keyframes)) ? "fill" : fit === "cover" && !hasScaleKeyframes(segment.keyframes) ? "cover" : "contain",
-    transform: cssTransform(rect), opacity: active ? rect.opacity : 0,
-    filter: colorFilter(segment.keyframes, offset) || undefined,
-    mixBlendMode: (blendMode(segment.mix_mode?.mode) ?? undefined) as React.CSSProperties["mixBlendMode"],
-    clipPath: cropClipPath(segment.crop) ?? undefined,
-    pointerEvents: "none",
-    ...(mask as React.CSSProperties | null),
-  };
-  const fill = active && segment.background_filling ? <div style={{ position: "absolute", inset: 0, backgroundColor: segment.background_filling.fill_type === "color" ? rgba(segment.background_filling.color ?? "#000000") : color.black, overflow: "hidden" }}>
-    {segment.background_filling.fill_type === "blur" && segment.kind === "image" && url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", filter: `blur(${Math.round(4 + (segment.background_filling.blur ?? 0.0625) * 60)}px)`, transform: "scale(1.1)" }} /> : null}
-  </div> : null;
-  if (!url) return active ? <>{fill}<div style={{ ...style, objectFit: undefined, opacity: rect.opacity, backgroundColor: alpha(color.white, 0.08), border: `1px solid ${alpha(color.white, 0.18)}`, display: "flex", alignItems: "center", justifyContent: "center", color: alpha(color.white, 0.6), fontSize: 11, fontFamily: font.body, textAlign: "center", padding: 6, boxSizing: "border-box" }}>
-    {item?.status === "importing" ? "素材还在导入" : clipLabel(segment, item ? mediaTitle(item) : null)}
-  </div></> : null;
-  if (segment.kind === "image") return active ? <>{fill}<img src={url} alt="" draggable={false} style={style}
-    onLoad={(event) => reportSize(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} /></> : null;
-  return <>{fill}<MediaElement kind="video" url={url} segment={segment} track={track} time={time} playing={playing} active={active} style={style} onSize={reportSize} /></>;
-}
-
-function MediaElement({ kind, url, segment, track, time, playing, active, style, onSize }: {
-  kind: "video" | "audio"; url: string; segment: EditMediaSegment; track: EditTrack; time: number; playing: boolean; active: boolean; style: React.CSSProperties;
-  onSize?: (width: number, height: number) => void;
-}) {
-  const ref = useRef<HTMLVideoElement & HTMLAudioElement>(null);
-  // 每次渲染都校准：偏差超过 0.15 秒（暂停时 0.03 秒）才 seek，倍速、音量、静音跟着片段走
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    if (!active) {
-      if (!element.paused) element.pause();
-      const start = segment.source.start_us / US_PER_SECOND;
-      if (!element.seeking && Math.abs(element.currentTime - start) > 0.15) element.currentTime = start;
-      element.muted = true;
-      return;
-    }
-    const target = sourceTimeUs(segment, time) / US_PER_SECOND;
-    const rate = playbackRate(segment.speed);
-    if (element.playbackRate !== rate) element.playbackRate = rate;
-    (element as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = !segment.change_pitch;
-    const sound = mediaVolume(segment, track, time - segment.timeline.start_us);
-    element.volume = sound.volume;
-    element.muted = sound.muted;
-    if (!element.seeking && Math.abs(element.currentTime - target) > (playing ? 0.15 : 0.03)) element.currentTime = target;
-    if (playing && element.paused) void element.play().catch(() => undefined);
-    if (!playing && !element.paused) element.pause();
-  });
-  useEffect(() => () => ref.current?.pause(), []);
-  return kind === "audio"
-    ? <audio ref={ref} src={url} preload="auto" style={style} />
-    : <video ref={ref} src={url} preload="auto" playsInline muted style={style}
-      onLoadedMetadata={(event) => onSize?.(event.currentTarget.videoWidth, event.currentTarget.videoHeight)}
-      onResize={(event) => onSize?.(event.currentTarget.videoWidth, event.currentTarget.videoHeight)} />;
-}
-
-function TextLayer({ segment, canvas, stage, offset }: { segment: EditTextSegment; canvas: EditCanvas; stage: Size; offset: number }) {
-  const transform = effectiveTransform(segment, offset);
-  const css = textCss(segment, canvas, stage) as React.CSSProperties;
-  const flipX = transform.flip_horizontal ? -1 : 1;
-  const flipY = transform.flip_vertical ? -1 : 1;
-  return <div style={{
-    position: "absolute",
-    left: stage.width / 2 + transform.transform_x * stage.width / 2,
-    top: stage.height / 2 - transform.transform_y * stage.height / 2,
-    width: "max-content",
-    transform: `translate(-50%,-50%) rotate(${transform.rotation}deg) scale(${transform.scale_x * flipX},${transform.scale_y * flipY})`,
-    opacity: Math.min(1, Math.max(0, transform.alpha)),
-    fontFamily: font.body,
-    pointerEvents: "none",
-    ...css,
-  }}>{segment.text}</div>;
-}
-
-// ---------- 轨道区 ----------
-
-const RULER = 22;
-const ROW = 28;
-const HEAD = 92;
-
-const TRACK_ICON: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
-  video: Film, audio: Music2, text: Type, sticker: Sticker, effect: Sparkles, filter: SlidersHorizontal,
-};
-
-function clipTone(segment: EditSegment): string {
-  switch (segment.kind) {
-    case "video": case "image": return color.cyan;
-    case "audio": return color.green;
-    case "text": return color.amber;
-    case "sticker": case "track_effect": return color.accent;
-    default: return color.figure;
-  }
-}
-
-function Timeline({ project, mediaById, mediaUrl, duration, time, height, selectedId, onSeek, onPick }: {
-  project: EditProject | null; mediaById: Map<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null; duration: number; time: number; height: number;
-  selectedId: string | null; onSeek: (us: number) => void; onPick: (id: string | null) => void;
-}) {
-  const [laneWidth, setLaneWidth] = useState(0);
-  const laneRef = useRef<View>(null);
-  const areaRef = useRef<View>(null);
-  const tracks = project?.tracks ?? [];
-  const ticks = useMemo(() => rulerTicks(duration, laneWidth), [duration, laneWidth]);
-  const pickRef = useRef(onPick);
-  pickRef.current = onPick;
-
-  // 拖轨道区只挪播放头；单击片段是选中它看详情，单击空白处收起详情。片段本身不能动
-  useEffect(() => {
-    const area = areaRef.current as unknown as HTMLElement | null;
-    if (!web || !area?.addEventListener) return undefined;
-    const at = (event: PointerEvent) => {
-      const lane = laneRef.current as unknown as HTMLElement | null;
-      const rect = lane?.getBoundingClientRect();
-      return rect ? timeAtX(event.clientX - rect.left, rect.width, duration) : null;
-    };
-    const down = (event: PointerEvent) => {
-      const lane = (laneRef.current as unknown as HTMLElement | null)?.getBoundingClientRect();
-      if (!lane || event.button !== 0 || event.clientX < lane.left || duration <= 0) return;
-      const clip = (event.target as Element | null)?.closest?.("[data-clip]")?.getAttribute("data-clip") ?? null;
-      const startX = event.clientX;
-      let dragged = false;
-      // 按在空白处立刻挪播放头；按在片段上先不动，松手前没拖开才算点了这个片段
-      if (!clip) {
-        const first = at(event);
-        if (first !== null) onSeek(first);
-      }
-      const move = (next: PointerEvent) => {
-        if (!dragged && Math.abs(next.clientX - startX) < 4) return;
-        dragged = true;
-        const value = at(next);
-        if (value !== null) onSeek(value);
-      };
-      const up = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        window.removeEventListener("pointercancel", up);
-        if (!dragged) pickRef.current(clip);
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-      window.addEventListener("pointercancel", up);
-    };
-    area.addEventListener("pointerdown", down);
-    return () => area.removeEventListener("pointerdown", down);
-  }, [duration, onSeek]);
-
-  const playheadX = duration > 0 && laneWidth > 0 ? (Math.min(time, duration) / duration) * laneWidth : 0;
-
-  return <View {...ws("e-box")} ref={areaRef} style={[styles.timeline, { height }]}>
-    <View style={styles.rulerRow}>
-      <View style={styles.rulerCorner}><Text style={styles.rulerCornerText}>{tracks.length ? `${tracks.length} 条轨道` : ""}</Text></View>
-      <View ref={laneRef} style={[styles.rulerLane, webPointer]} onLayout={(event: LayoutChangeEvent) => setLaneWidth(event.nativeEvent.layout.width)}>
-        {ticks.map((tick) => <View key={tick.us} pointerEvents="none" style={[styles.tick, { left: tick.x }]}>
-          <Text numberOfLines={1} style={styles.tickText}>{tick.label}</Text>
-        </View>)}
-        {duration > 0 ? (project?.markers ?? []).map((marker) => <div key={marker.time_us} title={marker.label} style={{
-          position: "absolute", left: (marker.time_us / duration) * laneWidth - 4, bottom: 0, width: 0, height: 0,
-          borderLeft: "4px solid transparent", borderRight: "4px solid transparent", borderTop: `6px solid ${color.accent}`,
-        }} />) : null}
-      </View>
-    </View>
-    {tracks.length ? <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-      {tracks.map((track) => <TrackRow key={track.id} track={track} duration={duration} width={laneWidth} mediaById={mediaById} mediaUrl={mediaUrl}
-        selectedId={selectedId && track.segments.some((segment) => segment.id === selectedId) ? selectedId : null} onPick={onPick} />)}
-    </ScrollView> : <View style={styles.timelineEmpty}><Text style={kit.muted}>时间线还是空的，AI 加了片段会出现在这里。</Text></View>}
-    {duration > 0 && laneWidth > 0 ? <View pointerEvents="none" style={[styles.playhead, { left: HEAD + playheadX }]} /> : null}
-  </View>;
-}
-
-const TrackRow = memo(function TrackRow({ track, duration, width, mediaById, mediaUrl, selectedId, onPick }: {
-  track: EditTrack; duration: number; width: number; mediaById: Map<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null;
-  selectedId: string | null; onPick: (id: string | null) => void;
-}) {
-  const Icon = TRACK_ICON[track.track_type] ?? Film;
-  const label = trackLabel(track);
-  return <View style={styles.row}>
-    <View style={styles.rowHead}>
-      <Icon size={12} color={color.textMuted} />
-      <Text numberOfLines={1} style={styles.rowName}>{label}</Text>
-      {track.mute ? <Text style={styles.rowMute}>静音</Text> : null}
-    </View>
-    <View style={styles.lane}>
-      {width > 0 ? track.segments.map((segment) => <Clip key={segment.id} segment={segment} duration={duration} width={width} mediaById={mediaById} mediaUrl={mediaUrl}
-        reach={"transition" in segment && segment.transition ? transitionReach(track.segments, segment) : "next"} selected={segment.id === selectedId} onPick={onPick} />) : null}
-    </View>
-  </View>;
-});
-
-/** 视频片段里按时间均匀取的几帧：排进全页的取帧队列，卸载（切剪辑、片段没了）时撤掉还没取的。 */
-function useFilmstrip(mediaId: string | null, url: string | null, times: number[]): Array<string | null> {
-  const signature = times.join(",");
-  const [loaded, setLoaded] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (!web || !mediaId || !url || !signature) return undefined;
-    const controller = new AbortController();
-    for (const time of signature.split(",").map(Number)) {
-      if (frameQueue.peek(mediaId, time)) continue;
-      void frameQueue.request(mediaId, url, time, controller.signal).then((frame) => {
-        if (frame && !controller.signal.aborted) setLoaded((current) => ({ ...current, [`${mediaId}@${time}`]: frame }));
-      });
-    }
-    return () => controller.abort();
-  }, [mediaId, url, signature]);
-  return times.map((time) => (mediaId ? loaded[`${mediaId}@${time}`] ?? frameQueue.peek(mediaId, time) ?? null : null));
-}
-
-function Clip({ segment, duration, width, mediaById, mediaUrl, reach, selected, onPick }: {
-  segment: EditSegment; duration: number; width: number; mediaById: Map<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null;
-  /** 转场能不能接到下一段：轨道最后一段或后面隔着空当时不画转场菱形 */
-  reach: TransitionReach; selected: boolean; onPick: (id: string | null) => void;
-}) {
-  const position = clipPosition(segment.timeline, duration, width);
-  const tone = clipTone(segment);
-  const item = "path" in segment ? mediaById.get(mediaIdFromPath(segment.path) ?? "") : undefined;
-  const label = clipLabel(segment, item ? mediaTitle(item) : null);
-  const extras = clipExtras(segment, reach);
-  const span = segment.timeline.duration_us;
-  const fade = "fade" in segment ? segment.fade : null;
-  const transition = "transition" in segment ? segment.transition : null;
-  const title = [label, `${formatClock(segment.timeline.start_us)} 起，${spokenDuration(span)}`, ...extras, "点一下看详情"].join("\n");
-  // 画面：视频取几帧缩略图，图片平铺；取不到就留现在的纯色块
-  const pictureUrl = web && item?.status === "ready" && (segment.kind === "video" || segment.kind === "image") ? mediaUrl(item.id) : null;
-  const count = segment.kind === "video" && pictureUrl ? filmstripCount(position.width) : 0;
-  const source = segment.kind === "video" ? segment.source : null;
-  const times = useMemo(() => (source ? filmstripTimes(source, count) : []), [source, count]);
-  const frames = useFilmstrip(count ? item?.id ?? null : null, count ? pictureUrl : null, times);
-  const tiled = segment.kind === "image" && pictureUrl;
-  const pictured = Boolean(tiled) || frames.some(Boolean);
-  return <div
-    data-clip={segment.id}
-    role="button"
-    tabIndex={0}
-    aria-pressed={selected}
-    aria-label={`${label}，${secondMark(segment.timeline.start_us)}开始，点一下看详情`}
-    title={title}
-    onKeyDown={(event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      onPick(segment.id);
-    }}
-    style={{
-      position: "absolute", left: position.left, width: position.width, top: 3, bottom: 3, boxSizing: "border-box", overflow: "hidden", cursor: "pointer",
-      borderRadius: 4, border: selected ? `2px solid ${color.text}` : `1px solid ${alpha(tone, 0.6)}`, backgroundColor: alpha(tone, selected ? 0.3 : 0.16),
-      outline: selected ? `2px solid ${color.accent}` : undefined, outlineOffset: 1,
-      display: "flex", alignItems: "center", paddingLeft: 5, paddingRight: 5, zIndex: selected ? 1 : undefined,
-    }}
-  >
-    {tiled ? <span aria-hidden style={{ ...clipPicture, backgroundImage: `url(${JSON.stringify(pictureUrl)})`, backgroundSize: "auto 100%", backgroundRepeat: "repeat-x", backgroundPosition: "left center" }} /> : null}
-    {count ? <span aria-hidden style={{ ...clipPicture, display: "flex" }}>
-      {frames.map((frame, index) => <span key={index} style={{
-        flex: 1, minWidth: 0, backgroundImage: frame ? `url(${JSON.stringify(frame)})` : undefined, backgroundSize: "cover", backgroundPosition: "center",
-        borderLeft: index && frame ? `1px solid ${alpha(color.black, 0.35)}` : undefined,
-      }} />)}
-    </span> : null}
-    {position.width > 18 ? <span style={{
-      position: "relative", maxWidth: "100%", boxSizing: "border-box", fontSize: 10.5, lineHeight: "14px", color: color.text, fontFamily: font.body, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-      // 有画面时名字收成一个小标签，给缩略图多留点地方；设置项数在详情卡里看
-      ...(pictured ? { maxWidth: "70%", backgroundColor: alpha(color.surface, 0.82), borderRadius: 3, paddingLeft: 4, paddingRight: 4 } : null),
-    }}>
-      {label}{extras.length && position.width > 90 && !pictured ? <span style={{ color: color.textMuted }}> · {extras.length} 项设置</span> : null}
-    </span> : null}
-    {fade?.in_duration_us ? <span style={{ position: "absolute", left: 0, top: 0, height: 2, width: `${(fade.in_duration_us / span) * 100}%`, backgroundColor: tone }} /> : null}
-    {fade?.out_duration_us ? <span style={{ position: "absolute", right: 0, top: 0, height: 2, width: `${(fade.out_duration_us / span) * 100}%`, backgroundColor: tone }} /> : null}
-    {(segment.keyframes ?? []).map((keyframe, index) => <span key={index} style={{
-      position: "absolute", bottom: 1, left: `calc(${(keyframe.offset_us / span) * 100}% - 2px)`, width: 4, height: 4, transform: "rotate(45deg)", backgroundColor: color.text, opacity: 0.7,
-    }} />)}
-    {transition && reach === "next" ? <span title={`转场 ${featureName(transition.transition_type)}`} style={{
-      position: "absolute", right: 1, top: "50%", width: 7, height: 7, marginTop: -3.5, transform: "rotate(45deg)", backgroundColor: color.text, border: `1px solid ${color.surface}`,
-    }} /> : null}
-    {/* 选中：文字色边框里再描一圈底色、外面再套一圈强调色，盖在缩略图上面，哪种风格、什么画面都认得出来。
-        内圈用边框不用 box-shadow：海报风格把 box-shadow 全清掉了 */}
-    {selected ? <span aria-hidden style={{ ...clipPicture, boxSizing: "border-box", borderRadius: 2, border: `2px solid ${color.surface}` }} /> : null}
-  </div>;
-}
-
-const clipPicture: React.CSSProperties = { position: "absolute", inset: 0, pointerEvents: "none" };
-
 // ============================== 样式 ==============================
 
 const styles = StyleSheet.create({
@@ -1505,7 +1024,10 @@ const styles = StyleSheet.create({
   suggestion: { paddingHorizontal: 12, paddingVertical: 9, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
   suggestionText: { color: color.text, fontFamily: font.body, fontSize: 12, lineHeight: 18 },
   messages: { gap: 10, padding: 12 },
-  ownLine: { alignItems: "flex-end" },
+  ownLine: { alignItems: "flex-end", gap: 3 },
+  ownMeta: { maxWidth: "88%", color: color.textMuted, fontFamily: font.body, fontSize: 10.5, lineHeight: 15, textAlign: "right" },
+  revertConfirm: { alignItems: "flex-end", gap: 3 },
+  note: { alignSelf: "center", maxWidth: "92%", paddingHorizontal: 12, color: color.textMuted, fontFamily: font.body, fontSize: 11, lineHeight: 16, textAlign: "center" },
   bubble: { gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderRadius: radius.medium },
   bubbleOwn: { maxWidth: "88%", borderTopRightRadius: 4, backgroundColor: color.cyanSoft },
   bubbleIn: { alignSelf: "stretch", borderTopLeftRadius: 4, backgroundColor: color.surfaceRaised },
@@ -1534,6 +1056,8 @@ const styles = StyleSheet.create({
   progressTrack: { height: 3, borderRadius: 2, overflow: "hidden", backgroundColor: color.surfaceMuted },
   progressFill: { height: 3, backgroundColor: color.accentAction },
 
+  regionHint: { flexDirection: "row", alignItems: "center", gap: 7, marginHorizontal: 12, marginTop: 8, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.small, backgroundColor: color.accentSoft },
+  regionHintText: { flex: 1, minWidth: 0, color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 16 },
   composer: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border },
   input: { flex: 1, minWidth: 0, minHeight: 36, maxHeight: 120, paddingHorizontal: 11, paddingVertical: 8, color: color.text, fontFamily: font.body, fontSize: 12.5, lineHeight: 19, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
   send: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.medium, backgroundColor: color.surfaceMuted },
@@ -1547,47 +1071,5 @@ const styles = StyleSheet.create({
   pickCover: { width: 40, height: 54, overflow: "hidden", alignItems: "center", justifyContent: "center", borderRadius: radius.small, backgroundColor: color.surfaceMuted },
   pickTitle: { color: color.text, fontFamily: font.body, fontSize: 12.5, lineHeight: 18 },
   pickDone: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 6 },
-
-  board: { flex: 1, minWidth: 0, minHeight: 0, gap: 8, padding: 14 },
-  boardHead: { flexDirection: "row", alignItems: "center", gap: 12 },
-  boardMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 2 },
-  boardTitle: { color: color.text, fontFamily: font.body, fontSize: 15, fontWeight: "600" },
-  status: { marginTop: -4, color: color.textMuted, fontFamily: font.body, fontSize: 11.5, lineHeight: 17 },
-  exportButton: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 13, height: 34, borderRadius: radius.small, backgroundColor: color.button },
-  exportText: { color: color.buttonText, fontFamily: font.body, fontSize: 12.5, fontWeight: "600" },
   disabled: { opacity: 0.45 },
-
-  preview: { flex: 1, minHeight: 120, gap: 6 },
-  previewRow: { flex: 1, minHeight: 0, flexDirection: "row", gap: 10 },
-  stageBox: { flex: 1, minWidth: 0, minHeight: 0, alignItems: "center", justifyContent: "center" },
-  detail: { minHeight: 0, overflow: "hidden", borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
-  detailHead: { flexDirection: "row", alignItems: "center", gap: 6, paddingLeft: 12, paddingRight: 8, height: 34, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.borderSoft },
-  detailDot: { width: 8, height: 8, borderRadius: 2 },
-  detailKind: { flex: 1, minWidth: 0, color: color.textSecondary, fontFamily: font.body, fontSize: 11.5, fontWeight: "600" },
-  detailClose: { width: 24, height: 24, alignItems: "center", justifyContent: "center", borderRadius: radius.small },
-  detailBody: { gap: 7, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12 },
-  detailTitle: { marginBottom: 2, color: color.text, fontFamily: font.body, fontSize: 13, lineHeight: 19, fontWeight: "600" },
-  detailRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  detailLabel: { width: 52, flexShrink: 0, color: color.textMuted, fontFamily: font.body, fontSize: 11, lineHeight: 17 },
-  detailValueBox: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 6 },
-  detailValue: { flex: 1, minWidth: 0, color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 17 },
-  swatch: { width: 11, height: 11, marginTop: 3, borderRadius: 2, borderWidth: 1, borderColor: color.border },
-  controls: { flexDirection: "row", alignItems: "center", gap: 10, height: 30 },
-  playButton: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
-  clock: { color: color.text, fontFamily: font.mono, fontSize: 12, fontVariant: ["tabular-nums"] },
-
-  timeline: { position: "relative", overflow: "hidden", userSelect: "none", borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.small, backgroundColor: color.surface },
-  rulerRow: { flexDirection: "row", height: RULER, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
-  rulerCorner: { width: HEAD, justifyContent: "center", paddingLeft: 8, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: color.border },
-  rulerCornerText: { color: color.textMuted, fontFamily: font.body, fontSize: 10 },
-  rulerLane: { flex: 1, position: "relative" },
-  tick: { position: "absolute", top: 0, bottom: 0, paddingLeft: 3, borderLeftWidth: 1, borderLeftColor: color.borderSoft, justifyContent: "center" },
-  tickText: { color: color.textMuted, fontFamily: font.mono, fontSize: 9.5 },
-  timelineEmpty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 10 },
-  row: { flexDirection: "row", height: ROW, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.borderSoft },
-  rowHead: { width: HEAD, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 8, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: color.border },
-  rowName: { flexShrink: 1, color: color.textSecondary, fontFamily: font.body, fontSize: 11 },
-  rowMute: { color: color.textMuted, fontFamily: font.body, fontSize: 9.5 },
-  lane: { flex: 1, position: "relative" },
-  playhead: { position: "absolute", top: 0, bottom: 0, width: 1.5, marginLeft: -0.75, backgroundColor: color.danger },
 });

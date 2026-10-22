@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { EditError, invalid } from "./errors.mjs";
-import { MediaLibrary } from "./library.mjs";
-import { TOOL_DEFINITIONS, TOOL_NAMES, buildContextMessage, buildSystemPrompt, createToolRunner, micros, probeVideoInput, timelineSummary } from "./tools.mjs";
+import { AiEditError, MediaLibrary } from "./library.mjs";
+import { TOOL_DEFINITIONS, TOOL_NAMES, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, micros, probeVideoInput, timelineSummary, trackLabel } from "./tools.mjs";
 
 // 按本机格式生成（Windows 上带盘符和反斜杠），和素材库 path.join 出来的路径对得上
 const ROOT = path.resolve("/data/ai-edit/media");
@@ -106,6 +106,7 @@ const SAMPLE_ARGS = {
   add_track_filter: { track_id: "t1", filter_type: "_1980", start: 0, duration: 1, intensity: 50 },
   update_clip: { clip_id: "s1", volume: 0.5 },
   move_clip: { clip_id: "s1", start: 1.25 },
+  duplicate_clip: { clip_id: "s1", start: 6, track_id: "t3" },
   split_clip: { clip_id: "s1", offset: 2 },
   delete_clip: { clip_id: "s1" },
   add_keyframes: { clip_id: "s1", keyframes: [{ property: "alpha", offset: 0, value: 0 }, { property: "alpha", offset: 1.5, value: 1 }] },
@@ -133,7 +134,7 @@ const SAMPLE_ARGS = {
 // ProjectStore 的全部编辑方法都得有工具能调到（createProject / deleteProject / listProjects / mediaInfos 由宿主自己用）
 const EDIT_METHODS = [
   "updateProject", "setCanvas", "createTrack", "updateTrack", "deleteTrack", "reorderTracks", "addMediaSegment", "addTextSegment",
-  "addStickerSegment", "addTrackEffectSegment", "addTrackFilterSegment", "updateSegment", "moveSegment", "deleteSegment", "splitSegment",
+  "addStickerSegment", "addTrackEffectSegment", "addTrackFilterSegment", "updateSegment", "moveSegment", "duplicateSegment", "deleteSegment", "splitSegment",
   "getSegment", "addKeyframes", "listKeyframes", "removeKeyframe", "addEffect", "addFilter", "addAnimation", "addTransition", "addFade",
   "clearFeature", "addMask", "addChroma", "addBackgroundFilling", "setMixMode", "addMarker", "listMarkers", "removeMarker",
   "addSrtSubtitles", "removeSubtitleGroup",
@@ -159,6 +160,7 @@ describe("AI edit tools", () => {
     expect(call("addTextSegment")).toEqual([projectId, "t2", { text: "标题", color: "#ff0000", timeline: { start_us: 0, duration_us: 1_500_000 } }]);
     expect(call("addTrackFilterSegment")[2]).toEqual({ filter_type: "_1980", intensity: 50, timeline: { start_us: 0, duration_us: 1_000_000 } });
     expect(call("moveSegment")).toEqual([projectId, "s1", 1_250_000]);
+    expect(call("duplicateSegment")).toEqual([projectId, "s1", 6_000_000, { trackId: "t3" }]);
     expect(call("splitSegment")).toEqual([projectId, "s1", 2_000_000]);
     expect(call("addKeyframes")[2]).toEqual({ keyframes: [{ property: "alpha", value: 0, offset_us: 0 }, { property: "alpha", value: 1, offset_us: 1_500_000 }] });
     expect(call("removeKeyframe")).toEqual([projectId, "s1", "alpha", 500_000]);
@@ -238,6 +240,38 @@ describe("AI edit tools", () => {
     expect((await fresh.run("search_catalog", { kind: "stickers" })).result).toMatchObject({ ok: false, code: "arguments_invalid" });
   });
 
+  it("exports with the mode the model picked, and asks it to check with the user when the draft was changed in Jianying", async () => {
+    const modes = [];
+    const { run } = runnerWith({ exportDraft: async (mode) => { modes.push(mode); return { draftName: "旅行", created: mode === "new" }; } });
+    expect((await run("export_to_jianying", {})).action.summary).toBe("导入了剪映草稿箱");
+    expect(await run("export_to_jianying", { mode: "new" })).toMatchObject({ result: { ok: true, draft_name: "旅行", created: true }, action: { summary: "另存了一份剪映草稿", ok: true } });
+    expect((await run("export_to_jianying", { mode: "update" })).action.summary).toBe("覆盖了剪映里的草稿");
+    expect(modes).toEqual([undefined, "new", "update"]);
+
+    const changed = runnerWith({ exportDraft: async () => { throw new AiEditError("draft_changed", "剪映里的「旅行」在上次导入后被打开或改过。", 409); } });
+    const { result, action } = await changed.run("export_to_jianying", {});
+    expect(result).toMatchObject({ ok: false, code: "draft_changed", message: expect.stringContaining("先问用户是另存一份新草稿（mode 填 new）") });
+    expect(result.message).toContain("mode 填 update");
+    // 页面上只看到人话，不带参数名
+    expect(action).toEqual({ name: "export_to_jianying", summary: "导入了剪映草稿箱", ok: false, error: "剪映里的「旅行」在上次导入后被打开或改过。" });
+  });
+
+  it("names clips the way people would", () => {
+    expect(clipLabel({ kind: "video", material_name: "海边.mp4", path: "/x/a.mp4" })).toBe("视频“海边.mp4”");
+    expect(clipLabel({ kind: "image", path: path.join(ROOT, `${IMAGE_ID}.png`) })).toBe(`图片“${IMAGE_ID}.png”`);
+    expect(clipLabel({ kind: "audio", material_name: "配乐.mp3" })).toBe("音频“配乐.mp3”");
+    expect(clipLabel({ kind: "text", text: "周末去海边\n看日落，顺便拍一组照片吧" })).toBe("文字“周末去海边 看日落，顺便拍一组照”");
+    expect(clipLabel({ kind: "sticker", resource_id: "1" })).toBe("贴纸");
+    expect(clipLabel({ kind: "track_effect", effect_type: "闪白" })).toBe("特效“闪白”");
+    expect(clipLabel({ kind: "track_filter", filter_type: "清晰" })).toBe("滤镜“清晰”");
+    expect(clipLabel(null)).toBe("片段");
+    // 轨道：英文默认名换成中文，起过的名字照原样
+    expect(trackLabel({ name: "Audio", track_type: "audio" })).toBe("音频");
+    expect(trackLabel({ name: "Subtitles", track_type: "text", kind: "subtitle" })).toBe("字幕");
+    expect(trackLabel({ name: "配乐", track_type: "audio" })).toBe("配乐");
+    expect(trackLabel(null)).toBe("轨道");
+  });
+
   it("tells the model why a link cannot be imported", async () => {
     const { run } = runnerWith({ getCollector: () => ({ startVideoDownload() { throw new Error("should not download"); }, getSnapshot: () => ({ records: {} }) }) });
     for (const url of ["https://example.com/video/1", "https://www.douyin.com/user/abc"]) {
@@ -300,6 +334,12 @@ describe("AI edit tools", () => {
     expect(prompt).toContain("别人的视频只当参考，不要导入");
     expect(prompt).toContain("越靠后的轨道越在上层");
     expect(prompt).toContain("所有时间参数都用秒");
+    // 用户在看板上也能手动改，消息前面可能附着手动改动和框选的说明
+    expect(prompt).not.toContain("只能看、不能手动改");
+    expect(prompt).toContain("用户在右边的看板上也能自己动手");
+    expect(prompt).toContain("别改回去，除非用户这次明说");
+    expect(prompt).toContain("指的就是框里的片段，只改它们");
+    expect(prompt).toContain("返回 draft_changed");
     expect(prompt).toContain("\"transform\": {\"transform_y\": -0.8}");
     // 分屏交给 arrange_grid；画布按用户说的改（横屏剪辑出过错）
     expect(prompt).toContain("再用 arrange_grid 一次排好");
@@ -581,6 +621,61 @@ describe.runIf(["projectStore.mjs", "media.mjs"].every((name) => existsSync(path
     expect(Object.keys(grids)).toEqual(["photo"]);
   });
 
+  it("keeps copies and split halves of a grid clip in the grid when the canvas changes", async () => {
+    const state = {
+      canvas: { width: 1080, height: 1920, fps: 30 },
+      segments: {
+        top: { id: "top", kind: "video", path: path.join(ROOT, `${VIDEO_ID}.mp4`), timeline: { start_us: 0, duration_us: 4_000_000 }, transform: null, keyframes: [] },
+        bottom: { id: "bottom", kind: "video", path: path.join(ROOT, `${VIDEO_ID}.mp4`), timeline: { start_us: 0, duration_us: 4_000_000 }, transform: null, keyframes: [] },
+      },
+    };
+    const current = () => ({ ...project(), canvas: { ...state.canvas }, tracks: [{ id: "t1", track_type: "video", name: "V", mute: false, segments: Object.values(state.segments) }] });
+    // 复制、切开照真 ProjectStore：整段照搬，换新 id；切开后原 id 不在了
+    const store = {
+      getProject: async () => current(),
+      getSegment: async (_project, id) => structuredClone(state.segments[id] ?? null),
+      setCanvas: async (_project, canvas) => { state.canvas = canvas; },
+      updateSegment: async (_project, id, body) => { Object.assign(state.segments[id], body); },
+      removeKeyframe: async () => {},
+      clearFeature: async (_project, id, feature) => { state.segments[id][feature] = null; },
+      addMask: async (_project, id, mask) => { state.segments[id].mask = mask; },
+      duplicateSegment: async (_project, id, startUs) => {
+        const segment = { ...structuredClone(state.segments[id]), id: "copy", timeline: { start_us: startUs, duration_us: 4_000_000 } };
+        state.segments.copy = segment;
+        return { project: current(), segment };
+      },
+      splitSegment: async (_project, id, offsetUs) => {
+        const whole = state.segments[id];
+        const halves = [
+          { ...structuredClone(whole), id: "head", timeline: { start_us: 0, duration_us: offsetUs } },
+          { ...structuredClone(whole), id: "tail", timeline: { start_us: offsetUs, duration_us: 4_000_000 - offsetUs } },
+        ];
+        delete state.segments[id];
+        for (const half of halves) state.segments[half.id] = half;
+        return { project: current(), segments: halves };
+      },
+    };
+    const grids = {};
+    const { run } = runnerWith({ store, grids });
+    // 竖屏上下两格：竖拍视频基准 1080×1920，格子 1080×960
+    expect((await run("arrange_grid", { columns: 1, rows: 2, cells: [{ clip_id: "top", column: 1, row: 1 }, { clip_id: "bottom", column: 1, row: 2 }] })).result).toMatchObject({ ok: true });
+    expect(state.segments.top).toMatchObject({ transform: { scale_x: 1, transform_y: 0.5 }, mask: { size: 0.5, rect_width: 1 } });
+    expect((await run("duplicate_clip", { clip_id: "top", start: 4 })).result).toMatchObject({ ok: true, clip_id: "copy" });
+    expect((await run("split_clip", { clip_id: "bottom", offset: 1.5 })).result).toMatchObject({ ok: true });
+    expect(Object.keys(grids).sort()).toEqual(["copy", "head", "tail", "top"]);
+    expect(grids.copy).toEqual({ ...grids.top, id: "copy" });
+
+    // 换成横屏：基准 607.5×1080，格子 1920×540 → 缩放 1920/607.5，蒙版高 540/(1080×3.1605)
+    expect((await run("set_canvas", { width: 1920, height: 1080 })).result).toMatchObject({ ok: true });
+    const top = { transform: { scale_x: 3.1605, scale_y: 3.1605, transform_x: 0, transform_y: 0.5 }, mask: { size: 0.1582, rect_width: 1 } };
+    const bottom = { transform: { scale_x: 3.1605, scale_y: 3.1605, transform_x: 0, transform_y: -0.5 }, mask: { size: 0.1582, rect_width: 1 } };
+    expect(state.segments.top).toMatchObject(top);
+    expect(state.segments.copy).toMatchObject(top);
+    expect(state.segments.head).toMatchObject(bottom);
+    expect(state.segments.tail).toMatchObject(bottom);
+    expect(Object.keys(grids).sort()).toEqual(["copy", "head", "tail", "top"]);
+  });
+
   it("refuses misplaced or unknown arguments, treats null as not given and styles subtitles as a group", async () => {
     const { ProjectStore } = await import("./projectStore.mjs");
     const { probeMedia, mediaKind } = await import("./media.mjs");
@@ -698,6 +793,45 @@ describe.runIf(["projectStore.mjs", "media.mjs"].every((name) => existsSync(path
       });
       const moved = await run("move_clip", { clip_id: slowed, start: 1 });
       expect(moved.result.details.nearby_clips).toEqual([{ clip_id: next.result.clip_id, start: 2.95238, end: 3.95238 }]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("moves a clip to another track and copies one, telling the model about the target track", async () => {
+    const { ProjectStore } = await import("./projectStore.mjs");
+    const { probeMedia, mediaKind } = await import("./media.mjs");
+    const directory = await mkdtemp(path.join(tmpdir(), "ai-edit-tools-tracks-"));
+    try {
+      const media = new MediaLibrary({ directory: path.join(directory, "media"), probe: probeMedia, kindOf: mediaKind });
+      await media.load();
+      const clip = (await media.upload(createReadStream(path.join(HERE, "../fixtures/ai-edit/media/clip-720p.mp4")), "海边.mp4")).id;
+      const store = new ProjectStore({ directory: path.join(directory, "projects"), mediaRoots: [media.root], probe: probeMedia });
+      const project = await store.createProject({ name: "换轨", canvas: { width: 1080, height: 1920, fps: 30 } });
+      const run = createToolRunner({ store, library: media, projectId: project.id, getCollector: () => null, exportDraft: async () => ({}) });
+      const main = (await run("create_track", { track_type: "video", name: "主画面" })).result.track_id;
+      const pip = (await run("create_track", { track_type: "video", name: "画中画" })).result.track_id;
+      const music = (await run("create_track", { track_type: "audio", name: "配乐" })).result.track_id;
+      const first = (await run("add_media_clip", { track_id: main, media_id: clip, duration: 1, transform: { scale_x: 0.5, scale_y: 0.5 } })).result.clip_id;
+      const blocker = (await run("add_media_clip", { track_id: pip, media_id: clip, start: 2, duration: 1 })).result.clip_id;
+
+      expect((await run("move_clip", { clip_id: first, start: 0.5, track_id: pip })).result).toMatchObject({ ok: true, total_duration: 3 });
+      const copied = await run("duplicate_clip", { clip_id: first, start: 0.5, track_id: main });
+      expect(copied).toMatchObject({ result: { ok: true, clip_id: expect.any(String) }, action: { name: "duplicate_clip", summary: "复制了片段", ok: true } });
+      const tracks = (await store.getProject(project.id)).tracks;
+      expect(tracks.map((track) => track.segments.map((segment) => segment.id))).toEqual([[copied.result.clip_id], [blocker, first], []]);
+      expect(tracks[0].segments[0]).toMatchObject({ transform: { scale_x: 0.5, scale_y: 0.5 }, timeline: { start_us: 500_000, duration_us: 1_000_000 } });
+
+      // 目标轨道上重叠：把目标轨道上挨着的片段告诉模型；轨道类型不对给页面一句中文
+      const overlap = await run("duplicate_clip", { clip_id: first, start: 2.5 });
+      expect(overlap.result).toMatchObject({ ok: false, code: "TIMELINE_OVERLAP", details: { track_id: pip, nearby_clips: [{ clip_id: first }, { clip_id: blocker }] } });
+      // 复制品压到原片段自己：原片段也算挨着的片段
+      const onItself = await run("duplicate_clip", { clip_id: copied.result.clip_id, start: 1 });
+      expect(onItself.result).toMatchObject({ ok: false, code: "TIMELINE_OVERLAP", details: { track_id: main, nearby_clips: [{ clip_id: copied.result.clip_id, start: 0.5, end: 1.5 }] } });
+      const crossOverlap = await run("move_clip", { clip_id: copied.result.clip_id, start: 1.2, track_id: pip });
+      expect(crossOverlap.result.details).toMatchObject({ track_id: pip, nearby_clips: [{ clip_id: first }, { clip_id: blocker }] });
+      const wrong = await run("move_clip", { clip_id: first, start: 0, track_id: music });
+      expect(wrong).toMatchObject({ result: { ok: false, code: "TRACK_TYPE_MISMATCH" }, action: { error: "轨道类型不对" } });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

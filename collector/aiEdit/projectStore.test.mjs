@@ -107,8 +107,8 @@ describe("ProjectStore replays JianYingAPI ProjectService", () => {
       }
     }
     const methods = Object.getOwnPropertyNames(ProjectStore.prototype).filter((name) => name !== "constructor");
-    // deleteProject 是新增的，原仓库没有，下面单独测
-    expect(methods.filter((name) => !called.has(name))).toEqual(["deleteProject"]);
+    // deleteProject、restoreProject、duplicateSegment 是新增的，原仓库没有，下面单独测
+    expect(methods.filter((name) => !called.has(name))).toEqual(["deleteProject", "restoreProject", "duplicateSegment"]);
   });
 
   for (const file of fixtureFiles) {
@@ -199,6 +199,34 @@ describe("ProjectStore storage", () => {
     await expect(store.deleteProject("../escape")).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
     expect(await store.listProjects()).toEqual([keep]);
     expect(await readdir(directory)).toEqual([`${keep.id}.json`]);
+  });
+
+  it("restores a whole snapshot as the next revision", async () => {
+    const directory = await makeDirectory();
+    const store = deterministicStore(directory);
+    const created = await store.createProject({ name: "原来", canvas: { width: 1080, height: 1920, fps: 30 } });
+    const withTrack = await store.createTrack(created.id, { track_type: "text", name: "标题" });
+    const before = await store.addTextSegment(created.id, withTrack.tracks[0].id, { text: "周末去海边", timeline: { start_us: 0, duration_us: 1_000_000 } });
+    await store.addMarker(created.id, { time_us: 500_000, label: "高潮" });
+    const { name, canvas, tracks, markers } = before;
+    await store.updateProject(created.id, { name: "改过" });
+    await store.setCanvas(created.id, { width: 1920, height: 1080, fps: 60 });
+    const current = await store.deleteTrack(created.id, withTrack.tracks[0].id);
+
+    const restored = await store.restoreProject(created.id, { name, canvas, tracks, markers });
+    expect(restored).toMatchObject({ id: created.id, name: "原来", canvas: { width: 1080, height: 1920, fps: 30 }, tracks, markers: [], revision: current.revision + 1, draft: null });
+    expect(restored.created_at).toBe(created.created_at);
+    expect(restored.updated_at).not.toBe(current.updated_at);
+    expect(await store.getProject(created.id)).toEqual(restored);
+    // 快照里的数组不和存进去的共用
+    tracks[0].name = "被改了";
+    expect((await store.getProject(created.id)).tracks[0].name).toBe("标题");
+
+    await expect(store.restoreProject(created.id, { name: "", canvas, tracks, markers })).rejects.toMatchObject({ code: "VALIDATION_ERROR", status: 422 });
+    await expect(store.restoreProject(created.id, { name, canvas: { width: 0, height: 10, fps: 30 }, tracks, markers })).rejects.toMatchObject({ status: 422 });
+    await expect(store.restoreProject(created.id, { name, canvas, tracks: null, markers })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(store.restoreProject("0".repeat(32), { name, canvas, tracks, markers })).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND", status: 404 });
+    expect((await store.getProject(created.id)).revision).toBe(restored.revision);
   });
 
   it("reports unreadable project files and skips them when listing", async () => {
@@ -349,6 +377,104 @@ describe("ProjectStore storage", () => {
     const { tracks } = await store.createTrack(id, { track_type: "video" });
     await expect(store.addMediaSegment(id, tracks[0].id, { path: "/a/x.mp4", timeline: { duration_us: 1 } })).rejects.toMatchObject({ code: "MEDIA_NOT_FOUND" });
     expect(calls).toEqual([["/a/x.mp4", { roots: ["/a", "/b"], maxBytes: 10 }]]);
+  });
+});
+
+describe("ProjectStore moves and copies clips across tracks", () => {
+  /** 每种轨道各一条（视频两条）、各放一段，外加一组字幕。 */
+  async function everyTrack() {
+    const store = deterministicStore(await makeDirectory());
+    const { id } = await store.createProject({ name: "Tracks" });
+    const track = {};
+    for (const [name, type] of [["main", "video"], ["pip", "video"], ["music", "audio"], ["music2", "audio"], ["title", "text"], ["note", "text"], ["sticker", "sticker"], ["sticker2", "sticker"], ["effect", "effect"], ["effect2", "effect"], ["filter", "filter"], ["filter2", "filter"]]) {
+      track[name] = (await store.createTrack(id, { track_type: type, name })).tracks.at(-1).id;
+    }
+    const at = { timeline: { start_us: 0, duration_us: 1_000_000 } };
+    await store.addMediaSegment(id, track.main, { path: path.join(MEDIA_ROOT, "clip-720p.mp4"), ...at });
+    await store.addMediaSegment(id, track.main, { path: path.join(MEDIA_ROOT, "still.png"), timeline: { start_us: 1_000_000, duration_us: 1_000_000 } });
+    await store.addMediaSegment(id, track.music, { path: path.join(MEDIA_ROOT, "tone.aac"), ...at });
+    await store.addTextSegment(id, track.title, { text: "标题", ...at });
+    await store.addStickerSegment(id, track.sticker, { resource_id: "7001", ...at });
+    await store.addTrackEffectSegment(id, track.effect, { effect_type: "_1998", ...at });
+    await store.addTrackFilterSegment(id, track.filter, { filter_type: "_1980", ...at });
+    const project = await store.addSrtSubtitles(id, "1\n00:00:00,000 --> 00:00:01,000\n第一句");
+    const clips = Object.fromEntries(project.tracks.flatMap((item) => item.segments.map((segment) => [`${item.name}:${segment.kind}`, segment.id])));
+    const subtitles = project.tracks.find((item) => item.kind === "subtitle");
+    return { store, id, track, clips, subtitles };
+  }
+  const where = (project, clipId) => {
+    const track = project.tracks.find((item) => item.segments.some((segment) => segment.id === clipId));
+    return track ? { track: track.id, segment: track.segments.find((segment) => segment.id === clipId) } : null;
+  };
+
+  it("moves each kind of clip onto another track of its type in one write, and refuses the others", async () => {
+    const { store, id, track, clips, subtitles } = await everyTrack();
+    const fits = [
+      ["main:video", "pip"], ["main:image", "pip"], ["music:audio", "music2"], ["title:text", "note"],
+      ["sticker:sticker", "sticker2"], ["effect:track_effect", "effect2"], ["filter:track_filter", "filter2"],
+    ];
+    for (const [index, [clip, to]] of fits.entries()) {
+      const before = await store.getProject(id);
+      const start = 5_000_000 + index * 2_000_000;
+      const moved = await store.moveSegment(id, clips[clip], start, { trackId: track[to] });
+      expect(moved.revision, clip).toBe(before.revision + 1);
+      expect(where(moved, clips[clip]), clip).toMatchObject({ track: track[to], segment: { timeline: { start_us: start, duration_us: 1_000_000 } } });
+      // 别的设置原样带过去
+      const { timeline: _old, ...rest } = where(before, clips[clip]).segment;
+      expect(where(moved, clips[clip]).segment).toMatchObject(rest);
+    }
+    const refused = [
+      ["main:video", "music"], ["main:image", "title"], ["music:audio", "pip"], ["title:text", "sticker"],
+      ["sticker:sticker", "title"], ["effect:track_effect", "filter"], ["filter:track_filter", "effect"],
+    ];
+    for (const [clip, to] of refused) {
+      await expect(store.moveSegment(id, clips[clip], 30_000_000, { trackId: track[to] }), clip).rejects.toMatchObject({ code: "TRACK_TYPE_MISMATCH", status: 422 });
+    }
+    // 字幕轨上的不能挪走，别的也不能挪进字幕轨；同一条字幕轨上照旧能挪
+    await expect(store.moveSegment(id, clips["Subtitles:text"], 0, { trackId: track.title })).rejects.toMatchObject({ code: "SUBTITLE_CLIP_LOCKED" });
+    await expect(store.moveSegment(id, clips["title:text"], 30_000_000, { trackId: subtitles.id })).rejects.toMatchObject({ code: "SUBTITLE_TRACK_LOCKED" });
+    expect(where(await store.moveSegment(id, clips["Subtitles:text"], 2_000_000, { trackId: subtitles.id }), clips["Subtitles:text"]).segment.timeline.start_us).toBe(2_000_000);
+    // 目标轨道上重叠照旧报错；轨道不存在、版本对不上也是
+    await store.addMediaSegment(id, track.main, { path: path.join(MEDIA_ROOT, "clip-720p.mp4"), timeline: { start_us: 0, duration_us: 1_000_000 } });
+    await expect(store.moveSegment(id, clips["main:image"], 500_000, { trackId: track.main })).rejects.toMatchObject({ code: "TIMELINE_OVERLAP" });
+    await expect(store.moveSegment(id, clips["title:text"], 0, { trackId: "nope" })).rejects.toMatchObject({ code: "TRACK_NOT_FOUND" });
+    await expect(store.moveSegment(id, clips["title:text"], 0, { trackId: track.title, expectRevision: 1 })).rejects.toMatchObject({ code: "PROJECT_CONFLICT" });
+    // 挪回原轨道：从画中画轨拿走，放进主画面轨
+    const back = await store.moveSegment(id, clips["main:image"], 1_000_000, { trackId: track.main });
+    expect(where(back, clips["main:image"]).track).toBe(track.main);
+    expect(back.tracks.find((item) => item.id === track.pip).segments.map((segment) => segment.id)).toEqual([clips["main:video"]]);
+  });
+
+  it("copies a clip with everything on it under new ids, onto its own track or a matching one", async () => {
+    const { store, id, track, clips, subtitles } = await everyTrack();
+    const video = clips["main:video"];
+    await store.addKeyframes(id, video, { keyframes: [{ property: "alpha", offset_us: 0, value: 0 }, { property: "alpha", offset_us: 500_000, value: 1 }] });
+    await store.updateSegment(id, video, { transform: { scale_x: 1.5, rotation: 30 }, speed: 2, source: { start_us: 500_000, duration_us: 2_000_000 } });
+    await store.addEffect(id, video, { effect_type: "_1998" });
+    await store.addFilter(id, video, { filter_type: "_1980", intensity: 40 });
+    await store.addAnimation(id, video, { animation_type: "渐显" });
+    await store.addTransition(id, video, { transition_type: "叠化" });
+    await store.addFade(id, video, { in_duration_us: 100_000, out_duration_us: 100_000 });
+    await store.addMask(id, video, { mask_type: "圆形" });
+    const original = where(await store.getProject(id), video).segment;
+
+    const { project, segment } = await store.duplicateSegment(id, video, 3_000_000);
+    expect(segment.id).not.toBe(video);
+    const { id: _id, timeline: _timeline, ...settings } = original;
+    expect(where(project, segment.id)).toEqual({ track: track.main, segment: { ...settings, id: segment.id, timeline: { start_us: 3_000_000, duration_us: 1_000_000 } } });
+    // 深拷贝：改副本不影响原来那段
+    await store.updateSegment(id, segment.id, { transform: { scale_x: 3 } });
+    expect(where(await store.getProject(id), video).segment).toEqual(original);
+    // 文字连样式一起复制到另一条文字轨
+    const copied = await store.duplicateSegment(id, clips["title:text"], 0, { trackId: track.note });
+    expect(where(copied.project, copied.segment.id)).toMatchObject({ track: track.note, segment: { kind: "text", text: "标题", font_size: 8 } });
+
+    await expect(store.duplicateSegment(id, video, 500_000)).rejects.toMatchObject({ code: "TIMELINE_OVERLAP" });
+    await expect(store.duplicateSegment(id, video, 9_000_000, { trackId: track.music })).rejects.toMatchObject({ code: "TRACK_TYPE_MISMATCH" });
+    await expect(store.duplicateSegment(id, clips["Subtitles:text"], 9_000_000)).rejects.toMatchObject({ code: "SUBTITLE_CLIP_LOCKED" });
+    await expect(store.duplicateSegment(id, clips["title:text"], 9_000_000, { trackId: subtitles.id })).rejects.toMatchObject({ code: "SUBTITLE_TRACK_LOCKED" });
+    await expect(store.duplicateSegment(id, "nope", 0)).rejects.toMatchObject({ code: "SEGMENT_NOT_FOUND" });
+    await expect(store.duplicateSegment(id, video, -1)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });
 

@@ -617,6 +617,25 @@ function validatePlacement(project, trackId, timeline, ignoreSegmentId = null) {
   }
 }
 
+// 挪到或复制到别的轨道时，每种片段能去哪种轨道（原仓库没有跨轨道操作，这里是新增的规则）
+const TRACK_FOR_KIND = { video: "video", image: "video", audio: "audio", text: "text", sticker: "sticker", track_effect: "effect", track_filter: "filter" };
+
+function checkTrackFits(segment, from, to) {
+  if (from.kind === "subtitle") throw invalid("SUBTITLE_CLIP_LOCKED", "Subtitle clips stay in their subtitle group; they cannot be moved to or copied onto another track");
+  if (to.kind === "subtitle") throw invalid("SUBTITLE_TRACK_LOCKED", "Subtitle tracks only take whole subtitle groups");
+  const wanted = TRACK_FOR_KIND[segment.kind];
+  if (wanted !== to.track_type) throw invalid("TRACK_TYPE_MISMATCH", `A ${segment.kind} clip can only go on a ${wanted ?? "matching"} track`);
+}
+
+/** 复制出来的片段换新 id；嵌套里有自己 id 的也换，免得两段共用一个。 */
+function withFreshIds(value, newId) {
+  if (Array.isArray(value)) return value.map((item) => withFreshIds(item, newId));
+  if (!value || typeof value !== "object") return value;
+  const copy = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withFreshIds(item, newId)]));
+  if (typeof copy.id === "string") copy.id = newId();
+  return copy;
+}
+
 /** 依次在几个枚举里按名字找，都没有就返回 null（对应原仓库 try/except 循环）。 */
 function findMember(enumNames, raw) {
   for (const enumName of enumNames) {
@@ -870,6 +889,16 @@ export class ProjectStore {
     return this.#serial(projectId, async () => {
       const project = await this.#expected(projectId, params.expect_revision);
       return this.#touch(project, { canvas: body });
+    });
+  }
+
+  /** 原仓库没有：撤销、退回时把存档里的整份工程写回（名字、画布、轨道、标记），revision 照常 +1。 */
+  async restoreProject(projectId, { name, canvas, tracks, markers } = {}) {
+    const [body] = check([ProjectCreate, { name, canvas }]);
+    if (!Array.isArray(tracks) || !Array.isArray(markers)) throw invalid("VALIDATION_ERROR", "Snapshot tracks and markers must be lists");
+    return this.#serial(projectId, async () => {
+      const project = await this.#expected(projectId, null);
+      return this.#touch(project, { name: body.name, canvas: body.canvas, tracks: structuredClone(tracks), markers: structuredClone(markers) });
     });
   }
 
@@ -1189,12 +1218,37 @@ export class ProjectStore {
     return this.#replaceSegment(project, track.id, segmentId, updated);
   }
 
-  async moveSegment(projectId, segmentId, startUs, { expectRevision } = {}) {
+  /** trackId 是新增的：挪到另一条同类轨道，从原轨道拿走、放进新轨道是同一次写入。 */
+  async moveSegment(projectId, segmentId, startUs, { expectRevision, trackId = null } = {}) {
     const [params, body] = check([RevisionParams, revisionInput(expectRevision)], [SegmentMove, defined({ start_us: startUs })]);
     return this.#serial(projectId, async () => {
-      const [, segment] = segmentLocation(await this.#get(projectId), segmentId);
+      const [track, segment] = segmentLocation(await this.#get(projectId), segmentId);
       const timeline = timeRange({ start_us: body.start_us, duration_us: segment.timeline.duration_us });
-      return this.#updateSegment(projectId, segmentId, { timeline }, params.expect_revision);
+      if (trackId === null || trackId === track.id) return this.#updateSegment(projectId, segmentId, { timeline }, params.expect_revision);
+      const project = await this.#expected(projectId, params.expect_revision);
+      const target = trackAny(project, trackId);
+      checkTrackFits(segment, track, target);
+      validatePlacement(project, target.id, timeline);
+      return this.#saveTracks(project, project.tracks.map((item) => {
+        if (item.id === track.id) return { ...item, segments: item.segments.filter((entry) => entry.id !== segmentId) };
+        if (item.id === target.id) return { ...item, segments: [...(item.segments ?? []), { ...segment, timeline }] };
+        return item;
+      }));
+    });
+  }
+
+  /** 原仓库没有：复制一个片段（关键帧、变换、特效、动画、蒙版、截取这些全带上）放到 start_us，默认放在原轨道。返回 { project, segment }。 */
+  async duplicateSegment(projectId, segmentId, startUs, { expectRevision, trackId = null } = {}) {
+    const [params, body] = check([RevisionParams, revisionInput(expectRevision)], [SegmentMove, defined({ start_us: startUs })]);
+    return this.#serial(projectId, async () => {
+      const project = await this.#expected(projectId, params.expect_revision);
+      const [track, current] = segmentLocation(project, segmentId);
+      const target = trackId === null ? track : trackAny(project, trackId);
+      checkTrackFits(current, track, target);
+      const segment = withFreshIds(current, () => this.#segmentId());
+      segment.timeline = timeRange({ start_us: body.start_us, duration_us: current.timeline.duration_us });
+      validatePlacement(project, target.id, segment.timeline);
+      return { project: await this.#appendSegment(project, target, segment), segment };
     });
   }
 
