@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createLocalAi } from "../localAi.mjs";
 import { EditError, invalid } from "./errors.mjs";
 import { createAiEdit } from "./index.mjs";
 import { MediaLibrary } from "./library.mjs";
@@ -770,4 +771,59 @@ describe.runIf(REAL_MODULES)("AI edit with the real project store and draft box"
     // 工程用着的素材不能删
     expect((await call(`/v1/ai-edit/media/${ids.tone}`, { method: "DELETE" })).body.error).toBe("media_in_use");
   }, 20_000);
+});
+
+// ---------- 本机的 Codex / Claude Code ----------
+
+const FAKE_CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/local-ai/fake-cli.mjs");
+
+async function fakeLocalAi(plan) {
+  const directory = await temporaryDirectory("ai-edit-local-");
+  const planFile = path.join(directory, "plan.json");
+  await writeFile(planFile, JSON.stringify(plan));
+  const localAi = createLocalAi({
+    dataDirectory: directory,
+    resolve: async (id) => ({ command: process.execPath, prefix: [FAKE_CLI, id], env: {}, path: FAKE_CLI }),
+    shellEnv: async () => ({ ...process.env, FAKE_PLAN: planFile, FAKE_RECORD: path.join(directory, "record.jsonl") }),
+    proxy: async () => null,
+  });
+  cleanups.push(() => localAi.close());
+  return { localAi, setPlan: (next) => writeFile(planFile, JSON.stringify(next)) };
+}
+
+describe("AI edit through a local CLI", () => {
+  it("lists the local runtimes, skips the video probe, edits through MCP and stops mid tool call", async () => {
+    const { localAi, setPlan } = await fakeLocalAi({ steps: [{ say: "先看看时间线" }, { call: "get_timeline" }, { say: "时间线是空的" }] });
+    const fetchImpl = async () => { throw new Error("本机运行时不该请求接口"); };
+    const { call, until, waitIdle } = await start({ localAi, fetchImpl });
+    const { runtimes } = (await call("/v1/ai-edit/runtimes")).body;
+    expect(runtimes).toEqual([
+      { id: "codex", label: "Codex", state: "ready", version: "0.161.0", message: "已经找到 Codex 0.161.0，也登录好了。" },
+      { id: "claude", label: "Claude Code", state: "ready", version: "2.1.280", message: "已经找到 Claude Code 2.1.280，也登录好了。" },
+    ]);
+    expect((await call("/v1/ai-edit/probe-video", { method: "POST", body: { config: { runtime: "claude" } } })).body).toEqual({ videoInput: false, answer: "" });
+
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "看看现在有什么", config: { runtime: "codex" } } });
+    let done = await waitIdle(session.id);
+    expect(done.session).toMatchObject({ status: "idle", error: null, streaming: null });
+    expect(done.session.messages.at(-1)).toMatchObject({ role: "assistant", text: "先看看时间线\n\n时间线是空的", actions: [expect.objectContaining({ name: "get_timeline", ok: true })] });
+
+    // 停在等页面测节拍的地方：点停止，CLI 被杀、这一轮标「已停止」
+    const ids = { tone: (await uploadFixture(call, "tone.mp3", "配乐.mp3")).body.item.id };
+    await setPlan({ steps: [{ say: "我来测节拍" }, { call: "detect_beats", arguments: { media_id: ids.tone } }, { say: "不该出现" }] });
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "做卡点", config: { runtime: "claude" } } });
+    await until(async () => (await call(`/v1/ai-edit/sessions/${session.id}`)).body.session.streaming?.look, Boolean, "look job");
+    await call(`/v1/ai-edit/sessions/${session.id}/stop`, { method: "POST", body: {} });
+    done = await waitIdle(session.id);
+    expect(done.session.status).toBe("idle");
+    expect(done.session.messages.at(-1).text).toBe("我来测节拍\n\n（已停止）");
+
+    // 没登录：不起进程，直接告诉用户怎么登录
+    await setPlan({ authText: "Login: Expired — log in again" });
+    await localAi.status("claude", { fresh: true });
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "继续", config: { runtime: "claude" } } });
+    done = await waitIdle(session.id);
+    expect(done.session).toMatchObject({ status: "failed", error: { code: "local_expired", message: expect.stringContaining("claude auth login") } });
+  }, 30_000);
 });

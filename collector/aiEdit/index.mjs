@@ -5,7 +5,9 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { modelFetch } from "../systemProxy.mjs";
 import { VideoDownloadError } from "../videoDownloader.mjs";
+import { isLocalRuntime } from "../localAi.mjs";
 import { MAX_TOOL_CALLS, parseEditConfig, runConversation, sealHistory, trimHistory } from "./chat.mjs";
+import { runCliConversation } from "./cliTurn.mjs";
 import { EditError } from "./errors.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
 import { createLookDesk } from "./look.mjs";
@@ -102,7 +104,7 @@ function titleFrom(text) {
 
 /**
  * dataDirectory：采集器根数据目录；getCollector()：当前采集器（切换账号时为 null）；busyReason()：采集器正忙时的说明；
- * getExplorer()：探索（参考视频搜抖音用，切换账号时为 null）。
+ * getExplorer()：探索（参考视频搜抖音用，切换账号时为 null）；localAi：本机的 Codex / Claude Code（collector/localAi.mjs）。
  * 测试可以注入 store / draftBox / probe / kindOf / fetchImpl。
  */
 export function createAiEdit({
@@ -110,6 +112,7 @@ export function createAiEdit({
   getCollector = () => null,
   busyReason = () => null,
   getExplorer = () => null,
+  localAi = null,
   draftBox: injectedDraftBox,
   store: injectedStore,
   probe: injectedProbe,
@@ -229,7 +232,7 @@ export function createAiEdit({
     };
     const runTool = createToolRunner({
       store, library, projectId: session.projectId, getCollector, signal,
-      getExplorer, config, references, fetchImpl, pollMs,
+      getExplorer, config, references, fetchImpl, pollMs, localAi,
       // 活儿挂在这一轮上（streaming 不存盘），页面长轮询看到后接手
       askLook: (request) => state.looks.ask({
         id: session.id,
@@ -249,8 +252,11 @@ export function createAiEdit({
     let error = null;
     let stopped = false;
     try {
-      const result = await runConversation({
+      // 本机 CLI 自己跑工具循环，工具经 MCP 回调同一个 execute（cliTurn.mjs）
+      const converse = isLocalRuntime(config.runtime) ? runCliConversation : runConversation;
+      const result = await converse({
         config, history: session.history, tools: TOOL_DEFINITIONS, signal, fetchImpl, onText, maxToolCalls: MAX_TOOL_CALLS,
+        localAi, goal: () => session.goal,
         // 系统提示只放不常变的；工程现状每步都变，附在每次请求的最后，不打断接口的前缀缓存
         // 目标每次请求都读最新的：一轮做到一半改了，下一步就照新的来
         system: async () => buildSystemPrompt({ project: await store.getProject(session.projectId), media: library.list(), goal: session.goal }),
@@ -371,6 +377,15 @@ export function createAiEdit({
       const looks = [...sessions.sessions.values()].filter((session) => session.streaming?.look)
         .map((session) => ({ sessionId: session.id, look: { ...session.streaming.look, url: `${session.streaming.look.url}?key=${encodeURIComponent(library.key)}` } }));
       sendJson(response, 200, { looks });
+      return;
+    }
+
+    // 本机的 Codex / Claude Code 装没装、登没登录（不花额度）；fresh 时重新找一遍
+    if (pathname === "/v1/ai-edit/runtimes") {
+      if (method !== "GET") { notAllowed(); return; }
+      const fresh = url.searchParams.has("fresh");
+      const runtimes = localAi ? await Promise.all(["codex", "claude"].map((id) => localAi.status(id, { fresh }))) : [];
+      sendJson(response, 200, { runtimes: runtimes.map(({ id, label, state, version, message }) => ({ id, label, state, version, message })) });
       return;
     }
 

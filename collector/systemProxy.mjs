@@ -50,7 +50,7 @@ export function bypassed(hostname, bypass = []) {
 
 let cached = { at: 0, value: null };
 
-async function systemProxy() {
+export async function systemProxy() {
   if (Date.now() - cached.at < CACHE_MS) return cached.value;
   let value = envProxy(process.env);
   try {

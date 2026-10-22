@@ -18,7 +18,7 @@
     ${if} $analysisChoice == ${BST_CHECKED}
       ${NSD_Check} $analysisCheckbox
     ${endif}
-    ${NSD_CreateLabel} 12u 16u -12u 48u "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱。AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key。"
+    ${NSD_CreateLabel} 12u 16u -12u 48u "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱。AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key，或者这台电脑上装好并登录的 Codex、Claude Code。"
     Pop $0
     nsDialogs::Show
   FunctionEnd

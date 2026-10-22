@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadAnalysisConfig, parseMarkdown } from "./videoAnalysis";
+import { loadAnalysisConfig, parseMarkdown, startAnalysis } from "./videoAnalysis";
 
 describe("parseMarkdown", () => {
   it("reads the shapes the analysis answer uses", () => {
@@ -42,5 +42,25 @@ describe("loadAnalysisConfig", () => {
     expect(loadAnalysisConfig()).toEqual({ ...base, videoInput: false, videoProbe: "https://relay.example.com/v1|gpt-6.1-sol" });
     saved.set("dy2.analysisConfig", JSON.stringify({ ...base, model: "doubao-seed-2-1-lite-260915", videoInput: false, videoProbe: "https://relay.example.com/v1|gpt-6.1-sol" }));
     expect(loadAnalysisConfig()).toEqual({ ...base, model: "doubao-seed-2-1-lite-260915" });
+  });
+});
+
+describe("analysis with a local Codex / Claude Code", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("keeps the runtime when loading and sends only the runtime, model and direction", async () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
+    const base = { baseUrl: "https://relay.example.com/v1", apiKey: "k", model: "gpt-6.1-sol", direction: "美食" };
+    saved.set("dy2.analysisConfig", JSON.stringify({ ...base, runtime: "claude", localModels: { claude: "opus" } }));
+    const config = loadAnalysisConfig();
+    expect(config).toEqual({ ...base, runtime: "claude", localModels: { claude: "opus" } });
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ analysis: { id: "a" } }, { status: 202 });
+    }));
+    await startAnalysis({ baseUrl: "http://127.0.0.1:4765", token: "t" }, "https://www.douyin.com/video/1", config);
+    expect(bodies).toEqual([{ url: "https://www.douyin.com/video/1", config: { runtime: "claude", model: "opus", direction: "美食" } }]);
   });
 });

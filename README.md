@@ -43,8 +43,8 @@
 | 实时聊天与续火花 | 接收新消息，回复好友与群聊，查看在线状态和官方火花天数；给勾选对象一键发送续火花消息 | 发送由用户主动触发；发送成功不代表火花天数增加，以抖音官方状态为准 |
 | 创作者中心 | 查看本人账号的数据总览、作品数据、粉丝数据与画像，以及作品流量、观众和评论分析 | 读取抖音创作者中心接口，按当前账号权限返回数据；只读 |
 | 内容探索与抖音指数 | 搜索用户和作品，点赞、收藏、关注、评论；下载用户主页作品；查看实时热点、飙升热点，以及达人指标、逐日趋势、近 30 天作品和粉丝画像 | 复用当前账号会话；达人指标与画像来自官方接口，显示范围受接口权限影响 |
-| AI 视频工作台 · 解析（可选） | 拆解视频选题、开头钩子、内容结构、画面声音和可复用拍法；解析结果保存到可搜索的解析库 | 和 AI 剪辑同属可选的「AI 视频工作台」，安装时或在设置中安装、移除；自备支持视频输入的 OpenAI 兼容接口、模型和 API Key，选中视频会发送到该接口 |
-| AI 视频工作台 · 剪辑（可选） | 左边和 AI 对话，右边实时看到轨道和画面；AI 按你的要求剪切拼接、配字幕和文字，加特效、滤镜、转场、动画、关键帧和背景音乐，做好后一键导入剪映草稿箱继续精修 | 自备支持工具调用的 OpenAI 兼容接口（默认火山方舟），和视频解析分开配置；素材来自内容库或本机文件；导入前需退出剪映，macOS 版剪映 11.6 已实测 |
+| AI 视频工作台 · 解析（可选） | 拆解视频选题、开头钩子、内容结构、画面声音和可复用拍法；解析结果保存到可搜索的解析库 | 和 AI 剪辑同属可选的「AI 视频工作台」，安装时或在设置中安装、移除；自备支持视频输入的 OpenAI 兼容接口、模型和 API Key，选中视频会发送到该接口；也可以直接用这台电脑上登录好的 Codex 或 Claude Code（走自己的订阅，看不了视频，改看应用拆出的截图和节拍） |
+| AI 视频工作台 · 剪辑（可选） | 左边和 AI 对话，右边实时看到轨道和画面；AI 按你的要求剪切拼接、配字幕和文字，加特效、滤镜、转场、动画、关键帧和背景音乐，做好后一键导入剪映草稿箱继续精修 | 自备支持工具调用的 OpenAI 兼容接口（默认火山方舟），或者用这台电脑上登录好的 Codex、Claude Code，和视频解析分开配置；素材来自内容库或本机文件；导入前需退出剪映，macOS 版剪映 11.6 已实测 |
 | 直播观看与弹幕 | 查看正在直播的关注列表，在应用内观看直播；调整弹幕透明度、字号、速度、区域和屏蔽词 | 只观看和接收，不发弹幕、不送礼物、不点赞 |
 | 持续报告与抖音年度报告 | 比较最近 30 天与上一时段，样本不足时回退到 90 天；年度回顾提供内容年志、档案馆、海报，可导出独立 HTML 和 1080 × 1440 PNG 分享图 | 基于本机已保存的记录生成；展示数据覆盖情况，不补造缺失记录 |
 
@@ -75,7 +75,7 @@ DouyinDataReview 由 **React / React Native / Expo 工作台、Node.js 本地采
 | 创作者与达人数据 | 通过当前账号会话读取创作者中心和抖音指数接口，整理指标与图表 | [创作者中心](collector/creatorCenter.mjs)、[抖音指数服务](src/services/douyinIndex.ts) |
 | 视频播放与下载 | HTTP 获取作品详情和媒体地址，由本地接口提供播放与下载；批量视频通过 `fflate` 打包 ZIP | [媒体下载](collector/videoDownloader.mjs)、[批量打包](src/services/batchVideoDownload.ts) |
 | AI 视频解析 | 读取选中视频，以视频、公开作品资料和提示词请求用户配置的 OpenAI 兼容接口，结果存入本地 `analyses.json` | [解析服务](collector/videoAnalysis.mjs)、[前端调用](src/services/videoAnalysis.ts) |
-| AI 剪辑 | 采集器带着工具定义请求用户配置的 OpenAI 兼容接口，按模型的工具调用编辑时间线；工程编辑、剪映草稿生成和草稿箱写入移植自 [JianYingAPI](https://github.com/ZhangYukwiver/JianYingAPI) 与 pyJianYingDraft（Apache-2.0），用 Node 实现，不需要 Python 和 ffprobe | [剪辑服务](collector/aiEdit/)、[剪辑页面](src/components/workspace/AiEditWorkspace.tsx) |
+| AI 剪辑 | 采集器带着工具定义请求用户配置的 OpenAI 兼容接口，按模型的工具调用编辑时间线；选本机 Codex / Claude Code 时，采集器起一个不落盘、关掉自带命令行和文件工具的 CLI 进程，剪辑工具经一个只在本机、每轮随机密钥的 MCP 端点交给它；工程编辑、剪映草稿生成和草稿箱写入移植自 [JianYingAPI](https://github.com/ZhangYukwiver/JianYingAPI) 与 pyJianYingDraft（Apache-2.0），用 Node 实现，不需要 Python 和 ffprobe | [剪辑服务](collector/aiEdit/)、[剪辑页面](src/components/workspace/AiEditWorkspace.tsx) |
 | 报告与档案导入 | TypeScript 计算年度与持续报告，标注日期来源和覆盖率；解析本应用备份及官方 JSON / ZIP；年度页面导出 HTML 与 PNG | [年度统计](src/domain/annualReport.ts)、[持续报告](src/domain/livingReport.ts)、[档案解析](src/domain/personalArchiveParser.ts)、[汇总快照](src/services/storyData.ts)、[报告导出](prototype/story-export.js) |
 
 ### 数据来源与功能边界
@@ -188,8 +188,8 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 - 记录与账号：`/v1/status`、`/v1/records*`、`/v1/accounts*`；支持按账号操作，切换冲突时返回 `409`。
 - 聊天与探索：`/v1/chat/*`、`/v1/explore/*`；聊天通过 HTTP 整理历史、WebSocket 实时接收，发消息和转发走 IM 接口，其他探索操作走 HTTP；发送由用户触发并校验回执，结果不明时不自动重发。
 - 创作者与直播：`/v1/creator/read`、`/v1/live/*`；按需通过 HTTP 查询，直播弹幕通过 WebSocket 接收，正在直播的关注列表缓存 30 秒；群聊、火花和直播数据不写入记录文件。
-- 视频与解析：`/v1/downloads*`、`/v1/analyses*`；下载和播放由用户触发。解析时最低清晰度视频及提示词会发送到你配置的解析用大模型接口，结果存入 `analyses.json`，API Key 不落盘；播放地址使用独立密钥。
-- AI 剪辑：`/v1/ai-edit/*`；对话、剪辑工程和素材库保存在数据目录的 `ai-edit/` 下，不分账号。API Key 不落盘，素材文件地址使用独立密钥；导入剪映草稿箱前需要先退出剪映。
+- 视频与解析：`/v1/downloads*`、`/v1/analyses*`；下载和播放由用户触发。解析时最低清晰度视频及提示词会发送到你配置的解析用大模型接口，结果存入 `analyses.json`，API Key 不落盘；选本机 Codex / Claude Code 时，截图和提示词由本机 CLI 用你自己的订阅发给 OpenAI 或 Anthropic。播放地址使用独立密钥。
+- AI 剪辑：`/v1/ai-edit/*`；对话、剪辑工程和素材库保存在数据目录的 `ai-edit/` 下，不分账号。API Key 不落盘，素材文件地址使用独立密钥；`/v1/ai-edit/runtimes` 只检查本机 Codex / Claude Code 装没装、登没登录，不花额度；导入剪映草稿箱前需要先退出剪映。
 - 浏览器凭据：`/v1/browser/sources`、`/v1/browser/connect`、`/v1/browser/confirm`、DELETE `/v1/browser/pending`、`/v1/browser/disconnect`；桌面版的来源列表第一项是 `app`（应用内扫码登录），`connect` 传 `{"browser":"app"}` 会在后台打开抖音网页（再加 `"fresh":true` 先清掉后台网页的登录状态，用来换号），等待期间 `/v1/browser/login-qrcode` 返回登录二维码（data URL）和码上的提示，POST `/v1/browser/login-window` 把后台网页窗口显示出来做验证，从源码单独跑采集器时没有这一项；仅本机可用，未登录时等待最多五分钟，取消请求会释放连接；登录后预览账号，本人确认才导出凭据并自动断开，成功后新账号启动一次完整读取、已有账号只读新增；待确认连接两分钟后释放，断开连接保留有效凭据及接口任务。
 
 代码请求复用当前账号导入的登录会话。导入时一次性导出 Cookie、请求参数、签名密钥和设备凭据，之后记录、聊天、互动、创作者中心和直播都走 HTTP 或 WebSocket。直播弹幕只在内存保留最近 300 条。重启恢复缓存后先核对平台返回的账号，不仅凭短期令牌过期判断登录失效；凭据缺失或不完整、平台拒绝登录、账号不一致或要求验证时，提示本人在登录窗口或所选浏览器中完成登录或验证并重新导入，不启动后台浏览器。
@@ -233,7 +233,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 ### 收费吗？数据会传到哪里？
 
-免费，源码以 MIT 许可开源。采集记录和年度报告在本机处理，不发送到统计或分析服务。可选的「AI 视频工作台」里，AI 解析只有在你主动点「解析」时，才会把选中的视频、公开作品资料和提示词发给你配置的 AI 接口；不会把抖音登录 Cookie 或整份个人记录发给 AI。API Key 保存在当前设备的浏览器配置里，采集器只在本次请求中使用。
+免费，源码以 MIT 许可开源。采集记录和年度报告在本机处理，不发送到统计或分析服务。可选的「AI 视频工作台」里，AI 解析只有在你主动点「解析」时，才会把选中的视频、公开作品资料和提示词发给你配置的 AI 接口；不会把抖音登录 Cookie 或整份个人记录发给 AI。API Key 保存在当前设备的浏览器配置里，采集器只在本次请求中使用。选本机 Codex 或 Claude Code 时，内容由这台电脑上的 CLI 用你自己的订阅发出，应用以不留会话记录的方式调用它，也不加载你给 CLI 配的规则文件、插件和 MCP。
 
 ### 会被封号吗？
 
@@ -383,7 +383,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 - Search saved content, play videos, download individual videos or image posts, and batch-download videos as ZIP files.
 - Search Douyin users and posts, interact on request, and view hot lists, Creator Center stats and Douyin Index metrics through the current account's access.
 - Watch live streams with configurable live comments; live comments are received only.
-- Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports. Optional AI video analysis uses a video-capable OpenAI-compatible endpoint you configure.
+- Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports. Optional AI video analysis and AI editing use an OpenAI-compatible endpoint you configure, or the Codex CLI / Claude Code already signed in on your computer.
 
 ### How it works
 
@@ -396,7 +396,7 @@ Collection is limited to records currently returned by Douyin's private APIs and
 - **Is there a Douyin Wrapped?** DouyinDataReview builds a Wrapped-style year-in-review from your own records on your computer, any time you want; you can [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) in the browser without installing anything.
 - **How do I export my Douyin watch history?** Connect the collector and import credentials in Settings → Account with video reading selected. After the full read finishes, click 导出数据 (Export data) in Settings → Data. Select watch history, likes, favorites and/or chats. Only selected data is saved to JSON; chats are unchecked by default. Exported files can be imported again.
 - **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from Douyin's 个人信息下载 (personal data download) to generate a report without signing in.
-- **Is it free and private?** Yes. It is MIT-licensed. Personal records and reports stay on your computer. Optional video analysis sends only the selected video, public metadata and a prompt to your configured AI endpoint; it does not send your Douyin login cookies or complete personal records. The API key stays in this device's browser configuration and is used by the collector only for the requested analysis.
+- **Is it free and private?** Yes. It is MIT-licensed. Personal records and reports stay on your computer. Optional video analysis sends only the selected video, public metadata and a prompt to your configured AI endpoint; it does not send your Douyin login cookies or complete personal records. The API key stays in this device's browser configuration and is used by the collector only for the requested analysis. With a local Codex CLI or Claude Code, the CLI sends the content using your own subscription; the app runs it without saving a session and without loading your CLI rules, plugins or MCP servers.
 
 ## 交流与反馈
 

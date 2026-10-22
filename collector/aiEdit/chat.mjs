@@ -1,3 +1,4 @@
+import { isLocalRuntime, parseLocalConfig } from "../localAi.mjs";
 import { modelFetch } from "../systemProxy.mjs";
 import { apiBaseUrl, providerMessage, readJson, sendWithRetry, transientFailure } from "../videoAnalysis.mjs";
 import { AiEditError } from "./library.mjs";
@@ -11,7 +12,7 @@ export const MAX_TOOL_CALLS = 200;
 const MAX_ANSWER_TOKENS = 16_000;
 const MAX_HISTORY_CHARS = 120_000;
 const REQUEST_TIMEOUT_MS = 10 * 60_000;
-const LIMIT_RESULT = {
+export const LIMIT_RESULT = {
   ok: false,
   code: "tool_limit",
   message: `这一轮已经调用了 ${MAX_TOOL_CALLS} 次工具，到上限了。不要再调用工具，直接告诉用户做到了哪里、还差什么。`,
@@ -24,6 +25,8 @@ const TRUNCATED_RESULT = {
 
 /** 请求体里的接口配置：信任边界，地址只认 http(s)，各项限长（同解析库的写法，但配置是 AI 剪辑自己的）。 */
 export function parseEditConfig(value) {
+  // 本机的 Codex / Claude Code：不要地址和 Key（collector/localAi.mjs）
+  if (isLocalRuntime(value?.runtime)) return parseLocalConfig(value, (message) => new AiEditError("invalid_config", message));
   const text = (item, max) => (typeof item === "string" ? item.trim().slice(0, max) : "");
   const baseUrl = apiBaseUrl(text(value?.baseUrl, 300));
   const apiKey = text(value?.apiKey, 400);
@@ -149,7 +152,7 @@ async function completion({ config, messages, tools, toolChoice, signal, fetchIm
   return { text, toolCalls, finishReason: finish };
 }
 
-function assistantMessage(text, toolCalls) {
+export function assistantMessage(text, toolCalls) {
   return {
     role: "assistant",
     content: text ?? "",

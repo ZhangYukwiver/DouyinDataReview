@@ -10,7 +10,7 @@ import {
 import type { PersonalRecordCollection, PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import {
-  aiEditLookUrl, aiEditMediaUrl, answerAiEditLook, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
+  aiConfigReady, aiEditLookUrl, aiEditMediaUrl, aiRuntimeOf, answerAiEditLook, isLocalAiRuntime, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
   importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, saveAiEditConfig, sendAiEditMessage, sessionRunning,
   setAiEditCanvas, setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey,
   type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditMediaItem, type AiEditSession, type AiEditSessionState,
@@ -24,6 +24,7 @@ import {
   type ClipDetail, type ExportNote, type MaskSpec, type Size, type TransitionReach,
 } from "./aiEditModel";
 import { createFrameQueue, openVideoFrames } from "./aiEditFrames";
+import { AiRuntimeField, RUNTIME_LABELS, runtimeProblem } from "./AiRuntimeField";
 import { dropLookJobs, runLookJob } from "./aiEditLook";
 import { createUploadQueue } from "./aiEditUploads";
 import { kit, Segmented, SmallButton } from "./CreatorKit";
@@ -89,7 +90,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const [mediaKey, setMediaKey] = useState("");
   const uploads = useSyncExternalStore(uploadQueue.subscribe, uploadQueue.getSnapshot);
   const [config, setConfig] = useState<AiEditConfig>(loadAiEditConfig);
-  const [configOpen, setConfigOpen] = useState(() => !loadAiEditConfig().apiKey);
+  const [configOpen, setConfigOpen] = useState(() => !aiConfigReady(loadAiEditConfig()));
   // 测模型能不能直接看视频：key 是测的哪个接口地址+模型，running 时在测，error 是没测出来的原因
   const [probe, setProbe] = useState<{ key: string; running: boolean; error?: string }>({ key: "", running: false });
   const [draftBox, setDraftBox] = useState<AiEditDraftBoxStatus | null>(null);
@@ -201,10 +202,11 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       probing.delete(attempt);
     }
   }, [conn]);
-  // 没测过的接口地址+模型+Key（新填的、改过的、以前存的）自动测一次；测不出来的再测点「重新测」
+  // 没测过的接口地址+模型+Key（新填的、改过的、以前存的）自动测一次；测不出来的再测点「重新测」。
+  // 本机的 Codex / Claude Code 不用测（都看不了视频），也别拿以前存的 Key 去打接口
   useEffect(() => {
     const attempt = `${videoProbeKey(config)}|${config.apiKey}`;
-    if (!conn || !config.apiKey.trim() || typeof config.videoInput === "boolean" || probeTried.has(attempt)) return;
+    if (!conn || isLocalAiRuntime(config.runtime) || !config.apiKey.trim() || typeof config.videoInput === "boolean" || probeTried.has(attempt)) return;
     probeTried.add(attempt);
     void probeVideo(config);
   }, [conn, config, probeVideo]);
@@ -294,14 +296,22 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const send = async (raw = input) => {
     const text = raw.trim();
     if (!conn || !text || running) return;
-    if (!config.apiKey.trim() || !config.model.trim() || !config.baseUrl.trim()) {
+    if (!aiConfigReady(config)) {
       setConfigOpen(true);
-      setError("先在 AI 剪辑的接口设置里填好 Key 和模型。");
+      setError("先在 AI 设置里填好 Key 和模型。");
       return;
     }
+    // 先标成正在发：下面要等一次检测，这期间再按发送会被挡住
     setSending(true);
     setError(null);
     try {
+      // 已经查出本机的 Codex / Claude Code 用不了（没登录之类）：先说清楚，不白跑一轮
+      const problem = await runtimeProblem(conn, config.runtime);
+      if (problem) {
+        setConfigOpen(true);
+        setError(problem);
+        return;
+      }
       const target = currentId ? { id: currentId, project } : await createSession().then((created) => created && { id: created.session.id, project: created.project });
       if (!target) return;
       const next = await sendAiEditMessage(conn, target.id, text, config);
@@ -421,6 +431,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
         </View> : null}
         {configOpen
           ? <ConfigPanel
+              connection={conn}
               config={config}
               probe={probe.key === videoProbeKey(config) ? probe : { key: "", running: false }}
               onRetest={() => void probeVideo(config)}
@@ -431,7 +442,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
                 setConfig(next);
                 setError(null);
               }}
-              onCancel={config.apiKey ? () => setConfigOpen(false) : undefined}
+              onCancel={aiConfigReady(config) ? () => setConfigOpen(false) : undefined}
             />
           : <Conversation session={session} loaded={sessionsLoaded} onSuggest={(text) => setInput(text)} />}
         {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)} /> : null}
@@ -497,7 +508,7 @@ function SessionBar({ title, open, configOpen, onToggle, onCreate, onToggleConfi
       <ChevronDown size={15} color={color.textMuted} />
     </Pressable>
     <Pressable {...ws("btn square")} accessibilityRole="button" accessibilityLabel="新建剪辑" onPress={onCreate} style={[styles.iconButton, webPointer]}><Plus size={16} color={color.text} /></Pressable>
-    <Pressable {...ws("btn square", configOpen && "on")} accessibilityRole="button" accessibilityLabel="接口设置" accessibilityState={{ expanded: configOpen }} onPress={onToggleConfig} style={[styles.iconButton, webPointer]}><Settings2 size={16} color={color.text} /></Pressable>
+    <Pressable {...ws("btn square", configOpen && "on")} accessibilityRole="button" accessibilityLabel="AI 设置" accessibilityState={{ expanded: configOpen }} onPress={onToggleConfig} style={[styles.iconButton, webPointer]}><Settings2 size={16} color={color.text} /></Pressable>
   </View>;
 }
 
@@ -594,7 +605,8 @@ function videoInputNote(config: AiEditConfig, probe: { running: boolean; error?:
   return known ?? "还没测过这个模型能不能直接看视频。";
 }
 
-function ConfigPanel({ config, probe, onSave, onRetest, onCancel }: {
+function ConfigPanel({ connection, config, probe, onSave, onRetest, onCancel }: {
+  connection: ExploreConnection | null;
   config: AiEditConfig;
   probe: { running: boolean; error?: string; key?: string };
   onSave: (config: AiEditConfig) => void;
@@ -613,19 +625,37 @@ function ConfigPanel({ config, probe, onSave, onRetest, onCancel }: {
     <Text style={styles.label}>{label}</Text>
     <TextInput accessibilityLabel={label} value={draft[key]} onChangeText={(text) => setDraft((current) => ({ ...current, [key]: text }))} placeholderTextColor={color.textMuted} style={styles.fieldInput} {...props} />
   </View>;
-  const ready = Boolean(draft.apiKey.trim() && draft.model.trim() && draft.baseUrl.trim());
+  const runtime = aiRuntimeOf(draft.runtime);
+  const local = isLocalAiRuntime(runtime);
+  const ready = aiConfigReady({ ...draft, runtime });
+  const save = () => {
+    // 测视频的结果交给外面按地址和模型决定沿不沿用；本机模型名也要去掉首尾空格
+    const { videoInput: _input, videoProbe: _probe, localModels, ...rest } = draft;
+    const models = localModels ? Object.fromEntries(Object.entries(localModels).map(([key, model]) => [key, (model ?? "").trim()])) : undefined;
+    onSave({ ...rest, runtime, apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim(), ...(models ? { localModels: models } : {}) });
+    setSaved(true);
+  };
   return <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.configScroll}>
     <View {...ws("e-box")} style={styles.configBox}>
-      <Text style={styles.configTitle}>接口设置</Text>
-      <Text style={kit.muted}>AI 剪辑用自己的一套接口，和解析库的设置分开。模型要能调用工具，Key 只存在这台电脑上。</Text>
-      {field("apiKey", "API Key", { secureTextEntry: true, placeholder: "从大模型服务商获取 API Key" })}
-      {field("model", "模型", { placeholder: "doubao-seed-2-1-lite-260915" })}
-      {field("baseUrl", "接口地址", { placeholder: "https://ark.cn-beijing.volces.com/api/v3" })}
+      <Text style={styles.configTitle}>AI 设置</Text>
+      <AiRuntimeField connection={connection} value={runtime} onChange={(next) => setDraft((current) => ({ ...current, runtime: next }))} />
+      <Text style={kit.muted}>{local
+        ? `用这台电脑上登录好的 ${RUNTIME_LABELS[runtime]} 来剪，走你自己的订阅，不用填 Key。它看不了视频，解析参考视频时应用会先把视频拆成镜头截图和音乐节拍再交给它，这时要开着应用。`
+        : "AI 剪辑用自己的一套接口，和解析库的设置分开。模型要能调用工具，Key 只存在这台电脑上。"}</Text>
+      {local ? <View style={styles.field}>
+        <Text style={styles.label}>模型（选填）</Text>
+        <TextInput accessibilityLabel="模型（选填）" value={draft.localModels?.[runtime] ?? ""} onChangeText={(text) => setDraft((current) => ({ ...current, localModels: { ...current.localModels, [runtime]: text } }))}
+          placeholder={`留空就用 ${RUNTIME_LABELS[runtime]} 自己的默认模型`} placeholderTextColor={color.textMuted} style={styles.fieldInput} />
+      </View> : <>
+        {field("apiKey", "API Key", { secureTextEntry: true, placeholder: "从大模型服务商获取 API Key" })}
+        {field("model", "模型", { placeholder: "doubao-seed-2-1-lite-260915" })}
+        {field("baseUrl", "接口地址", { placeholder: "https://ark.cn-beijing.volces.com/api/v3" })}
+      </>}
       <View style={kit.row}>
-        <SmallButton label={saved ? "已保存" : "保存"} disabled={!ready} onPress={() => { onSave({ apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim() }); setSaved(true); }} />
+        <SmallButton label={saved ? "已保存" : "保存"} disabled={!ready} onPress={save} />
         {onCancel ? <SmallButton label="收起" onPress={onCancel} /> : null}
       </View>
-      {config.apiKey ? <View style={styles.probeRow}>
+      {!local && !isLocalAiRuntime(config.runtime) && config.apiKey ? <View style={styles.probeRow}>
         <Text style={[kit.muted, { flex: 1 }]}>{videoInputNote(config, probe)}</Text>
         {probe.running ? <ActivityIndicator size="small" color={color.cyan} /> : <SmallButton label="重新测" onPress={onRetest} />}
       </View> : null}
