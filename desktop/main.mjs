@@ -276,7 +276,7 @@ async function askInstallChoiceOnMac() {
     defaultId: 1,
     cancelId: 1,
     message: "要安装可选功能「AI 视频工作台」吗？",
-    detail: "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱。AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key。\n\n现在不装的话，以后也可以在设置里安装。",
+    detail: "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱。AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key，或者这台电脑上装好并登录的 Codex、Claude Code。\n\n现在不装的话，以后也可以在设置里安装。",
   });
   try { writeFileSync(marker, ""); } catch { /* 记不下就下次再问 */ }
   return { analysis: response === 0 };

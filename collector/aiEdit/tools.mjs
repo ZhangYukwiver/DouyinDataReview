@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { modelFetch } from "../systemProxy.mjs";
+import { isLocalRuntime } from "../localAi.mjs";
 import { AnalysisError, requestAnalysis } from "../videoAnalysis.mjs";
 import { normalizeDouyinVideoUrl } from "../videoDownloader.mjs";
 import { members } from "./catalog.mjs";
@@ -617,6 +618,7 @@ async function lookAtVideo(ctx, { file, video, pageUrl }) {
       parts,
       signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(ANALYSIS_TIMEOUT_MS)].filter(Boolean)),
       fetchImpl: ctx.fetchImpl ?? modelFetch,
+      localAi: ctx.localAi,
     });
   } catch (error) {
     if (error?.name === "AbortError") throw error;
@@ -658,7 +660,7 @@ async function analyzeReference(ctx, args) {
   }
   const cached = ctx.references?.get(key);
   // 截图版的结果记着是哪个模型写的：换成别的、不确定看不了视频的模型就重新看
-  const by = `${ctx.config?.baseUrl}|${ctx.config?.model}`;
+  const by = isLocalRuntime(ctx.config?.runtime) ? `local:${ctx.config.runtime}|${ctx.config.model}` : `${ctx.config?.baseUrl}|${ctx.config?.model}`;
   if (cached && !(cached.look && cached.by !== by && ctx.config?.videoInput !== false)) return referenceResult(cached.markdown, cached.video, cached.look);
   let file;
   let video;
@@ -706,6 +708,8 @@ const PROBE_VIDEO = new URL("./probe-video.mp4", import.meta.url);
 
 /** 配置时测一下模型能不能看视频：发一段 3 秒、画面中央写着 386 的小视频，答对才算能看。 */
 export async function probeVideoInput({ config, fetchImpl = modelFetch, signal }) {
+  // 本机的 Codex / Claude Code 只收文字和图片，不用测
+  if (isLocalRuntime(config?.runtime)) return { videoInput: false, answer: "" };
   let status = 0;
   const watched = async (...args) => {
     const response = await fetchImpl(...args);

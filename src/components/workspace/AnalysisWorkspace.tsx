@@ -2,12 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { ArrowUpRight, Copy, RefreshCw, Settings2, Sparkles, Trash2 } from "lucide-react-native";
 import type { ExploreConnection } from "../../services/explorer";
-import { probeAiEditVideo, videoProbeKey } from "../../services/aiEdit";
+import { aiConfigReady, aiRuntimeOf, isLocalAiRuntime, probeAiEditVideo, videoProbeKey } from "../../services/aiEdit";
 import {
   analysisLookUrl, answerAnalysisLook, deleteAnalysis, listAnalyses, loadAnalysisConfig, saveAnalysisConfig, startAnalysis,
   type AnalysisConfig, type VideoAnalysis,
 } from "../../services/videoAnalysis";
 import { dropLookJobs, runLookJob } from "./aiEditLook";
+import { AiRuntimeField, RUNTIME_LABELS, runtimeProblem } from "./AiRuntimeField";
 import { Empty, ErrorLine, kit, Panel, SmallButton } from "./CreatorKit";
 import { Markdown } from "./markdownView";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -45,7 +46,7 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
   const [query, setQuery] = useState("");
   const [link, setLink] = useState("");
   const [config, setConfig] = useState<AnalysisConfig>(loadAnalysisConfig);
-  const [editing, setEditing] = useState(() => !loadAnalysisConfig().apiKey);
+  const [editing, setEditing] = useState(() => !aiConfigReady(loadAnalysisConfig()));
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [probe, setProbe] = useState<Probe>({ key: "", running: false });
@@ -104,7 +105,8 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
   }, [connection]);
   useEffect(() => {
     const attempt = `${videoProbeKey(config)}|${config.apiKey}`;
-    if (!connection || !config.apiKey.trim() || typeof config.videoInput === "boolean" || probeTried.has(attempt)) return;
+    // 本机的 Codex / Claude Code 都看不了视频，不用测
+    if (!connection || isLocalAiRuntime(config.runtime) || !config.apiKey.trim() || typeof config.videoInput === "boolean" || probeTried.has(attempt)) return;
     probeTried.add(attempt);
     void probeVideo(config);
   }, [connection, config, probeVideo]);
@@ -119,7 +121,9 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
 
   const start = async (url: string) => {
     if (!connection || !url.trim()) return;
-    if (!config.apiKey) { setEditing(true); setError("先填好接口 Key 再解析。"); return; }
+    if (!aiConfigReady(config)) { setEditing(true); setError("先在 AI 设置里填好 Key 和模型再解析。"); return; }
+    const problem = await runtimeProblem(connection, config.runtime);
+    if (problem) { setEditing(true); setError(problem); return; }
     setStarting(true);
     try {
       const entry = await startAnalysis(connection, url.trim(), config);
@@ -139,7 +143,7 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
 
   if (!connection) return <View style={styles.root}><View style={[styles.content, styles.gate]}>
     <Sparkles size={34} color={color.accent} /><Text style={styles.gateTitle}>连接采集器后才能解析视频</Text>
-    <Text style={kit.body}>视频由采集器下载，再交给你设置的 AI 接口拆解。</Text><SmallButton label="前往连接" onPress={onOpenSettings} />
+    <Text style={kit.body}>视频由采集器下载，再交给你设置的 AI 拆解。</Text><SmallButton label="前往连接" onPress={onOpenSettings} />
   </View></View>;
 
   return <ScrollView testID="analysis-workspace" style={styles.root} contentContainerStyle={[styles.content, width < 760 && styles.contentNarrow]}>
@@ -147,9 +151,10 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
       <TextInput accessibilityLabel="抖音视频链接" value={link} onChangeText={setLink} onSubmitEditing={() => void start(link)} editable={!starting} maxLength={500}
         placeholder="粘贴抖音视频链接，也可以在视频卡片上点「解析」" placeholderTextColor={color.textMuted} style={styles.input} />
       <SmallButton label={starting ? "提交中…" : "解析"} disabled={starting || !link.trim()} onPress={() => void start(link)}><Sparkles size={14} color={color.text} /></SmallButton>
-      <SmallButton label="接口设置" onPress={() => setEditing((value) => !value)}><Settings2 size={14} color={color.text} /></SmallButton>
+      <SmallButton label="AI 设置" onPress={() => setEditing((value) => !value)}><Settings2 size={14} color={color.text} /></SmallButton>
     </View>
     {editing ? <ConfigPanel
+      connection={connection}
       config={config}
       probe={probe.key === videoProbeKey(config) ? probe : { key: "", running: false }}
       onRetest={() => void probeVideo(configRef.current)}
@@ -160,7 +165,7 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
         setConfig(next);
         setError(null);
       }}
-      onClose={config.apiKey ? () => setEditing(false) : undefined}
+      onClose={aiConfigReady(config) ? () => setEditing(false) : undefined}
     /> : null}
     {error ? <ErrorLine text={error} onRetry={() => { setError(null); void refresh(); }} /> : null}
 
@@ -185,7 +190,8 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
   </ScrollView>;
 }
 
-function ConfigPanel({ config, probe, onSave, onRetest, onClose }: {
+function ConfigPanel({ connection, config, probe, onSave, onRetest, onClose }: {
+  connection: ExploreConnection | null;
   config: AnalysisConfig;
   probe: Probe;
   onSave: (config: AnalysisConfig) => void;
@@ -204,19 +210,36 @@ function ConfigPanel({ config, probe, onSave, onRetest, onClose }: {
     <Text style={styles.label}>{label}</Text>
     <TextInput accessibilityLabel={label} value={draft[key]} onChangeText={(text) => setDraft((current) => ({ ...current, [key]: text }))} placeholderTextColor={color.textMuted} style={[styles.input, styles.fieldInput, props.multiline && styles.multiline]} {...props} />
   </View>;
-  return <Panel title="接口设置" subtitle="填写解析用大模型的接口地址、模型名称和 API Key。模型最好能直接看视频（看不了的会改成看截图和节拍），Key 只存在这台电脑上。">
-    {field("apiKey", "API Key", { secureTextEntry: true, placeholder: "从大模型服务商获取 API Key" })}
-    {field("model", "模型", { placeholder: "doubao-seed-2-1-lite-260915" })}
-    {field("baseUrl", "接口地址", { placeholder: "https://ark.cn-beijing.volces.com/api/v3" })}
+  const runtime = aiRuntimeOf(draft.runtime);
+  const local = isLocalAiRuntime(runtime);
+  const save = () => {
+    const models = draft.localModels ? Object.fromEntries(Object.entries(draft.localModels).map(([key, model]) => [key, (model ?? "").trim()])) : undefined;
+    onSave({ ...draft, runtime, apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim(), ...(models ? { localModels: models } : {}) });
+    setSaved(true);
+  };
+  return <Panel title="AI 设置" subtitle={local
+    ? `用这台电脑上登录好的 ${RUNTIME_LABELS[runtime]} 来解析，走你自己的订阅，不用填 Key。`
+    : "填写解析用大模型的接口地址、模型名称和 API Key。模型最好能直接看视频（看不了的会改成看截图和节拍），Key 只存在这台电脑上。"}>
+    <AiRuntimeField connection={connection} value={runtime} onChange={(next) => setDraft((current) => ({ ...current, runtime: next }))} />
+    {local ? <View style={styles.field}>
+      <Text style={styles.label}>模型（选填）</Text>
+      <TextInput accessibilityLabel="模型（选填）" value={draft.localModels?.[runtime] ?? ""} onChangeText={(text) => setDraft((current) => ({ ...current, localModels: { ...current.localModels, [runtime]: text } }))}
+        placeholder={`留空就用 ${RUNTIME_LABELS[runtime]} 自己的默认模型`} placeholderTextColor={color.textMuted} style={[styles.input, styles.fieldInput]} />
+    </View> : <>
+      {field("apiKey", "API Key", { secureTextEntry: true, placeholder: "从大模型服务商获取 API Key" })}
+      {field("model", "模型", { placeholder: "doubao-seed-2-1-lite-260915" })}
+      {field("baseUrl", "接口地址", { placeholder: "https://ark.cn-beijing.volces.com/api/v3" })}
+    </>}
     {field("direction", "我的创作方向（选填）", { multiline: true, maxLength: 600, placeholder: "比如：上班族的 10 分钟快手菜，口播加实拍。填了以后改编建议会贴着这个方向写。" })}
     <View style={kit.row}>
-      <SmallButton label={saved ? "已保存" : "保存"} disabled={!draft.apiKey.trim() || !draft.model.trim() || !draft.baseUrl.trim()} onPress={() => { onSave({ ...draft, apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim() }); setSaved(true); }} />
+      <SmallButton label={saved ? "已保存" : "保存"} disabled={!aiConfigReady({ ...draft, runtime })} onPress={save} />
       {onClose ? <SmallButton label="收起" onPress={onClose} /> : null}
     </View>
-    {config.apiKey ? <View style={styles.probeRow}>
-      <Text style={[kit.muted, { flex: 1 }]}>{videoInputNote(config, probe)}</Text>
-      {probe.running ? <ActivityIndicator size="small" color={color.cyan} /> : <SmallButton label="重新测" onPress={onRetest} />}
-    </View> : null}
+    {local ? <Text style={kit.muted}>{`${RUNTIME_LABELS[runtime]} 看不了视频：解析时应用会先把视频拆成镜头截图和音乐节拍再交给它，听不到台词和旁白，这时要开着应用。`}</Text>
+      : !isLocalAiRuntime(config.runtime) && config.apiKey ? <View style={styles.probeRow}>
+        <Text style={[kit.muted, { flex: 1 }]}>{videoInputNote(config, probe)}</Text>
+        {probe.running ? <ActivityIndicator size="small" color={color.cyan} /> : <SmallButton label="重新测" onPress={onRetest} />}
+      </View> : null}
   </Panel>;
 }
 

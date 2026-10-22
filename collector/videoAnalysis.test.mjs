@@ -319,6 +319,45 @@ describe("startAnalysis", () => {
     expect(await settle(library, missed.id)).toMatchObject({ status: "failed", error: expect.stringContaining("打开应用，再点「重新解析」") });
   });
 
+  it("with a local CLI skips the whole video, has the page cut screenshots and asks the CLI once", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "analysis-"));
+    const video = path.join(dir, "v.mp4");
+    await writeFile(video, "fake-mp4");
+    const library = new AnalysisLibrary(path.join(dir, "analyses.json"));
+    const looks = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS, timeoutMs: 2_000 });
+    const asked = [];
+    let reply = async () => "① 本机拆解";
+    const localAi = { ask: async (id, options) => { asked.push({ id, ...options }); return reply(); } };
+    const fetchImpl = async () => { throw new Error("本机运行时不该请求接口"); };
+    const local = parseAnalysisConfig({ runtime: "codex", model: "", direction: "美食探店", apiKey: "old", baseUrl: "https://x" });
+    expect(local).toEqual({ runtime: "codex", model: "", videoInput: false, direction: "美食探店" });
+    const answer = { duration: 8, audio: false, flashes: [], shots: [{ start: 0, end: 8, frame: "data:image/jpeg;base64,AAAA" }] };
+    const run = async () => {
+      const entry = startAnalysis({ library, collector: fakeCollector({ file: video }), url: "https://www.douyin.com/video/7562882230080818489", config: local, looks, localAi, fetchImpl, pollMs: 1 });
+      let look = null;
+      for (let i = 0; i < 200 && !(look = library.list().find((item) => item.id === entry.id)?.look); i += 1) await delay(5);
+      looks.answer(entry.id, look.id, answer);
+      return settle(library, entry.id);
+    };
+    const done = await run();
+    expect(done).toMatchObject({ status: "complete", model: "Codex（默认模型）" });
+    expect(done.markdown).toMatch(/^> 这个模型看不了视频[\s\S]*① 本机拆解$/u);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ id: "codex", model: "" });
+    expect(asked[0].parts.filter((part) => part.type === "image_url")).toHaveLength(1);
+    expect(asked[0].prompt).toContain("我的创作方向：美食探店");
+    expect(asked[0].prompt).toContain("只回答一行：NO_IMAGES");
+
+    const { LocalAiError } = await import("./localAi.mjs");
+    reply = async () => { throw new LocalAiError("local_rate_limit", "Codex 这段时间的用量到上限了，等额度恢复了再试。"); };
+    expect(await run()).toMatchObject({ status: "failed", error: "Codex 这段时间的用量到上限了，等额度恢复了再试。" });
+    reply = async () => { throw new LocalAiError("local_closed", "采集器关掉了。", 503); };
+    expect(await run()).toMatchObject({ status: "failed", error: "上次解析到一半采集器关掉了，请重新解析。" });
+    reply = async () => "  ";
+    expect(await run()).toMatchObject({ status: "failed", error: "Codex 这次什么都没回，稍后再试。" });
+    await expect(requestAnalysis({ config: local, video: null, videoBase64: "AAAA", localAi })).rejects.toMatchObject({ code: "video_unsupported" });
+  });
+
   it("refuses image posts and marks interrupted runs failed on load", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "analysis-"));
     const library = new AnalysisLibrary(path.join(dir, "analyses.json"));

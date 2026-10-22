@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { createAiEdit } from "./aiEdit/index.mjs";
+import { createLocalAi } from "./localAi.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
@@ -249,9 +250,12 @@ export async function startCollectorServer({
   await analyses.load();
   // 解析库用的模型看不了视频时，请解析库页面在浏览器里拆截图和节拍
   const analysisLooks = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS });
+  // 本机的 Codex / Claude Code：AI 剪辑和解析库共用，关采集器时把还在跑的 CLI 一起杀掉
+  const localAi = createLocalAi({ dataDirectory });
   // AI 剪辑（会话、工程、素材库）同样不分账号；切换账号期间拿不到采集器，导入抖音视频会提示稍等
   const aiEdit = createAiEdit({
     dataDirectory,
+    localAi,
     getCollector: () => (switching ? null : collector),
     busyReason: () => (explorer.busy ? "请等待当前探索操作完成后继续。" : null),
     getExplorer: () => (switching ? null : explorer),
@@ -767,7 +771,7 @@ export async function startCollectorServer({
           const body = await readJsonBody(request, 16 * 1024);
           if (explorer.busy) { sendJson(response, 409, { error: "collector_busy", message: "请等待当前探索操作完成后继续。" }); return; }
           if (rejectWhileSwitching(response)) return;
-          sendJson(response, 202, { analysis: startAnalysis({ library: analyses, collector, url: body?.url, config: parseAnalysisConfig(body?.config), looks: analysisLooks }) });
+          sendJson(response, 202, { analysis: startAnalysis({ library: analyses, collector, url: body?.url, config: parseAnalysisConfig(body?.config), looks: analysisLooks, localAi }) });
         } else if (request.method === "DELETE" && url.pathname !== "/v1/analyses") sendJson(response, 200, { removed: await analyses.remove(url.pathname.split("/").at(-1)) });
         else sendJson(response, 405, { error: "method_not_allowed" });
       } catch (error) {
@@ -908,6 +912,7 @@ export async function startCollectorServer({
     try {
       analysisLooks.close();
       await aiEdit.close();
+      await localAi.close();
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器
       await accountWork?.catch(() => undefined);
       await browserWork;

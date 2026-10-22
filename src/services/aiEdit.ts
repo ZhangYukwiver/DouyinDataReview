@@ -4,10 +4,18 @@ import type { ExploreConnection } from "./explorer";
 // AI 剪辑：对话、工程、素材库都在采集器（collector/aiEdit/），页面只负责发消息、长轮询会话、上传素材和展示。
 // 接口配置存在本机 localStorage，和解析库的配置完全分开，每次随消息带过去，采集器不保存 Key。
 
+/** 用哪个 AI：接口（自己填地址和 Key），或者这台电脑上登录好的 Codex / Claude Code（走用户自己的订阅）。 */
+export type AiRuntime = "api" | "codex" | "claude";
+export type LocalAiRuntime = Exclude<AiRuntime, "api">;
+
 export interface AiEditConfig {
+  /** 没有就是接口 */
+  runtime?: AiRuntime;
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** 本机 CLI 的模型和接口的分开存（选填，留空用 CLI 自己的默认），免得把方舟的模型名发给 Codex */
+  localModels?: Partial<Record<LocalAiRuntime, string>>;
   /** 保存时测过：模型能不能直接看视频（看不了的话，参考视频改由页面拆成截图和节拍再给它看）；没测过是 null */
   videoInput?: boolean | null;
   /** 测的是哪个接口地址和模型，换了就要重测 */
@@ -15,6 +23,29 @@ export interface AiEditConfig {
 }
 
 export const videoProbeKey = (config: Pick<AiEditConfig, "baseUrl" | "model">): string => `${config.baseUrl.trim()}|${config.model.trim()}`;
+
+export const aiRuntimeOf = (value: unknown): AiRuntime => (value === "codex" || value === "claude" ? value : "api");
+export const isLocalAiRuntime = (runtime: AiRuntime | undefined): runtime is LocalAiRuntime => runtime === "codex" || runtime === "claude";
+
+/** 存下来的本机模型名：只留字符串。 */
+export function pickLocalModels(value: unknown): Partial<Record<LocalAiRuntime, string>> | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const models = Object.fromEntries((["codex", "claude"] as const).flatMap((key) => {
+    const model = (value as Record<string, unknown>)[key];
+    return typeof model === "string" ? [[key, model]] : [];
+  }));
+  return Object.keys(models).length ? models : undefined;
+}
+
+/** 能不能开始用：接口要地址、Key、模型都填了；本机 CLI 不用填（装没装、登没登录由采集器检测）。 */
+export const aiConfigReady = (config: Pick<AiEditConfig, "runtime" | "baseUrl" | "apiKey" | "model">): boolean =>
+  isLocalAiRuntime(config.runtime) || Boolean(config.apiKey.trim() && config.model.trim() && config.baseUrl.trim());
+
+/** 随请求发给采集器的配置：本机 CLI 只发运行时和模型，存着的 Key 和地址不带过去。 */
+export function aiRequestConfig(config: AiEditConfig): Record<string, unknown> {
+  const { runtime, localModels, videoProbe: _probe, ...api } = config;
+  return isLocalAiRuntime(runtime) ? { runtime, model: localModels?.[runtime]?.trim() ?? "" } : api;
+}
 
 export const DEFAULT_AI_EDIT_CONFIG: AiEditConfig = {
   baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
@@ -29,6 +60,10 @@ export function loadAiEditConfig(): AiEditConfig {
     const saved = JSON.parse(globalThis.localStorage?.getItem(CONFIG_KEY) ?? "{}") as Partial<AiEditConfig> | null;
     const pick = (key: "baseUrl" | "apiKey" | "model"): string => { const value = saved?.[key]; return typeof value === "string" ? value : DEFAULT_AI_EDIT_CONFIG[key]; };
     const config: AiEditConfig = { baseUrl: pick("baseUrl"), apiKey: pick("apiKey"), model: pick("model") };
+    // 只有存过才带上，没选过的老配置读出来和以前一样
+    if (saved?.runtime !== undefined) config.runtime = aiRuntimeOf(saved.runtime);
+    const localModels = pickLocalModels(saved?.localModels);
+    if (localModels) config.localModels = localModels;
     // 测的不是现在这个模型就当没测过
     if (typeof saved?.videoInput === "boolean" && saved.videoProbe === videoProbeKey(config)) Object.assign(config, { videoInput: saved.videoInput, videoProbe: saved.videoProbe });
     return config;
@@ -278,7 +313,8 @@ export async function deleteAiEditSession(connection: ExploreConnection, id: str
 }
 
 export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig, region?: AiEditRegion | null): Promise<AiEditSession> {
-  const body = region ? { text, config, region } : { text, config };
+  // 本机 CLI 只带运行时和模型，存着的 Key 和地址不发
+  const body = region ? { text, config: aiRequestConfig(config), region } : { text, config: aiRequestConfig(config) };
   return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify(body) })).session;
 }
 
@@ -350,6 +386,29 @@ export async function getAiEditDraftBox(connection: ExploreConnection): Promise<
 export async function probeAiEditVideo(connection: ExploreConnection, config: AiEditConfig): Promise<{ videoInput: boolean; answer: string }> {
   const value = await request(connection, "/v1/ai-edit/probe-video", { method: "POST", body: JSON.stringify({ config }), timeoutMs: 130_000 });
   return { videoInput: value?.videoInput === true, answer: typeof value?.answer === "string" ? value.answer : "" };
+}
+
+export interface AiRuntimeStatus {
+  id: LocalAiRuntime;
+  label: string;
+  /** ready 能用；missing 没找到；broken 启动不了；logged_out 没登录；expired 登录过期；unsupported 版本对不上 */
+  state: "ready" | "missing" | "broken" | "logged_out" | "expired" | "unsupported";
+  version: string | null;
+  /** 给用户看的整句话 */
+  message: string;
+}
+
+/** 这台电脑上的 Codex / Claude Code 装没装、登没登录（不花额度）。旧版采集器没有这个接口时返回 null。 */
+export async function getAiRuntimes(connection: ExploreConnection, fresh = false): Promise<AiRuntimeStatus[] | null> {
+  try {
+    const value = await request(connection, `/v1/ai-edit/runtimes${fresh ? "?fresh=1" : ""}`, { timeoutMs: 40_000 });
+    return Array.isArray(value?.runtimes) ? value.runtimes : [];
+  } catch (error) {
+    // 404 那句「当前采集器还没有 AI 剪辑功能」在这里不对，交给调用方说
+    // 旧版采集器的 AI 剪辑路由对不认识的路径回 { error: "not_found" }
+    if (error instanceof LocalCollectorError && (error.code === "not_found" || error.code === "http_404")) return null;
+    throw error;
+  }
 }
 
 /** 各会话这一轮挂着的拆视频任务（url 已带素材 key），应用开着就接，不管当前在哪个页面。 */

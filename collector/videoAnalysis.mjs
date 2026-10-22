@@ -3,6 +3,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { lookMaterials, seesNoImages, seesNoVideo, videoRefused } from "./aiEdit/look.mjs";
+import { LOCAL_RUNTIMES, LocalAiError, isLocalRuntime, parseLocalConfig, runtimeLabel } from "./localAi.mjs";
 import { modelFetch } from "./systemProxy.mjs";
 import { normalizeDouyinVideoUrl } from "./videoDownloader.mjs";
 
@@ -171,6 +172,10 @@ export function providerMessage(status, body, extra = {}) {
 /** 请求体里的接口配置：信任边界，地址只认 http(s)，各项限长。 */
 export function parseAnalysisConfig(value) {
   const text = (item, max) => (typeof item === "string" ? item.trim().slice(0, max) : "");
+  // 本机的 Codex / Claude Code：不要地址和 Key，看不了视频，一律拆截图（collector/localAi.mjs）
+  if (isLocalRuntime(value?.runtime)) {
+    return { ...parseLocalConfig(value, (message) => new AnalysisError("invalid_config", message)), direction: text(value?.direction, 600) };
+  }
   const baseUrl = apiBaseUrl(text(value?.baseUrl, 300));
   const apiKey = text(value?.apiKey, 400);
   const model = text(value?.model, 120);
@@ -246,10 +251,30 @@ async function* sseData(body) {
 
 /** 发给 OpenAI 兼容的 /chat/completions，流式读完（百炼 Qwen-Omni 只认流式，长回答也不会卡超时）。 */
 export async function requestAnalysis(options) {
+  if (isLocalRuntime(options.config?.runtime)) return localAnalysis(options);
   return sendWithRetry(() => analysis(options), {
     signal: options.signal,
     fail: ({ text, dropped }) => Object.assign(new AnalysisError("provider_unreachable", text, 502), { dropped }),
   });
+}
+
+/**
+ * 本机 CLI 看截图：一次性、不带工具。不自动重发（重发白花订阅额度）。
+ * localAi 是 collector/localAi.mjs 的实例，由调用方带来。
+ */
+async function localAnalysis({ config, video, parts, signal, localAi }) {
+  const label = LOCAL_RUNTIMES[config.runtime].label;
+  if (!parts) throw new AnalysisError("video_unsupported", `${label} 看不了整段视频，要开着应用先拆成截图。`, 422);
+  if (!localAi) throw new AnalysisError("local_runtime_unavailable", "本机 AI 没准备好，请重启应用。", 503);
+  let markdown;
+  try {
+    markdown = await localAi.ask(config.runtime, { model: config.model, parts, prompt: analysisPrompt(video, config.direction, config.focus), signal });
+  } catch (error) {
+    if (error instanceof LocalAiError) throw new AnalysisError(error.code, error.message, error.status);
+    throw error;
+  }
+  if (!markdown.trim()) throw new AnalysisError("empty_answer", `${label} 这次什么都没回，稍后再试。`, 502);
+  return markdown;
 }
 
 /** parts：不发整段视频时换成别的内容（AI 剪辑给看不了视频的模型发截图和测出来的数字），提示词照旧接在最后。 */
@@ -350,7 +375,7 @@ export class AnalysisLibrary {
 }
 
 /** 开始解析一条视频：同一链接再解析就覆盖原来那条（解析中的直接返回）。下载出错会同步抛出（比如采集器正忙）。 */
-export function startAnalysis({ library, collector, url, config, looks, fetchImpl = modelFetch, pollMs = 1_000 }) {
+export function startAnalysis({ library, collector, url, config, looks, localAi, fetchImpl = modelFetch, pollMs = 1_000 }) {
   const sourceUrl = normalizeDouyinVideoUrl(url);
   const existing = library.list().find((item) => item.sourceUrl === sourceUrl);
   if (existing?.status === "running") return existing;
@@ -362,7 +387,7 @@ export function startAnalysis({ library, collector, url, config, looks, fetchImp
     status: "running",
     stage: "downloading",
     video: existing?.video ?? null,
-    model: config.model,
+    model: isLocalRuntime(config.runtime) ? runtimeLabel(config.runtime, config.model) : config.model,
     // 重新解析失败时留着上一次的结果
     markdown: existing?.markdown ?? null,
     error: null,
@@ -370,7 +395,7 @@ export function startAnalysis({ library, collector, url, config, looks, fetchImp
     updatedAt: now,
   };
   void library.put(entry);
-  void runAnalysis({ library, entry, collector, jobId: job.id, config, looks, fetchImpl, pollMs });
+  void runAnalysis({ library, entry, collector, jobId: job.id, config, looks, localAi, fetchImpl, pollMs });
   return entry;
 }
 
@@ -396,7 +421,7 @@ async function watchWhole({ config, video, filePath, fetchImpl }) {
   }
 }
 
-async function lookAt({ library, entry, config, filePath, looks, fetchImpl, update }) {
+async function lookAt({ library, entry, config, filePath, looks, localAi, fetchImpl, update }) {
   await update({ stage: "looking" });
   const look = await looks.ask({
     id: entry.id,
@@ -406,12 +431,12 @@ async function lookAt({ library, entry, config, filePath, looks, fetchImpl, upda
     touch: () => { entry.updatedAt = new Date().toISOString(); },
   }, { kind: "reference", url: looks.offerFile(filePath), name: entry.video?.title });
   await update({ stage: "analyzing" });
-  const markdown = await requestAnalysis({ config: { ...config, focus: LOOK_FOCUS }, video: entry.video, parts: lookMaterials(look).parts, signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl });
+  const markdown = await requestAnalysis({ config: { ...config, focus: LOOK_FOCUS }, video: entry.video, parts: lookMaterials(look).parts, signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl, localAi });
   if (seesNoImages(markdown)) throw new AnalysisError("images_unsupported", "解析库配置的模型连截图也没看到，换一个能看图片的模型再试。", 502);
   return LOOK_NOTE + markdown;
 }
 
-async function runAnalysis({ library, entry, collector, jobId, config, looks, fetchImpl, pollMs }) {
+async function runAnalysis({ library, entry, collector, jobId, config, looks, localAi, fetchImpl, pollMs }) {
   const update = (patch) => {
     Object.assign(entry, patch, { updatedAt: new Date().toISOString() });
     return library.save();
@@ -430,12 +455,13 @@ async function runAnalysis({ library, entry, collector, jobId, config, looks, fe
     await update({ stage: "analyzing", video: job.video ?? entry.video });
     // 配置时测出看不了视频就直接拆截图；能看或没测过先整段发，模型看不了再拆
     let markdown = config.videoInput === false || !looks ? null : await watchWhole({ config, video: entry.video, filePath, fetchImpl });
-    if (markdown === null && !looks) markdown = await requestAnalysis({ config, video: entry.video, videoBase64: (await readFile(filePath)).toString("base64"), signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl });
-    if (markdown === null) markdown = await lookAt({ library, entry, config, filePath, looks, fetchImpl, update });
+    if (markdown === null && !looks) markdown = await requestAnalysis({ config, video: entry.video, videoBase64: (await readFile(filePath)).toString("base64"), signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl, localAi });
+    if (markdown === null) markdown = await lookAt({ library, entry, config, filePath, looks, localAi, fetchImpl, update });
     await update({ status: "complete", stage: null, markdown, error: null });
   } catch (error) {
-    const message = error instanceof AnalysisError ? `${error.message}${error.dropped ? "点「重新解析」再试一次。" : ""}`
-      : error?.code === "interrupted" ? "上次解析到一半采集器关掉了，请重新解析。"
+    // 关应用时本机 CLI 被强杀（local_closed）也算采集器关掉
+    const message = error?.code === "interrupted" || error?.code === "local_closed" ? "上次解析到一半采集器关掉了，请重新解析。"
+      : error instanceof AnalysisError ? `${error.message}${error.dropped ? "点「重新解析」再试一次。" : ""}`
       : typeof error?.code === "string" && error.code.startsWith("look_") ? error.message
       : error?.name === "TimeoutError" ? "接口太久没答完，请稍后重试。"
       : "解析失败，请稍后重试。";

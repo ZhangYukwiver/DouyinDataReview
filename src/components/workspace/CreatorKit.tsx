@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
   muted: { color: color.textMuted, fontFamily: font.body, fontSize: 11, lineHeight: 18 },
   tipBox: { gap: 4, padding: 12, borderRadius: radius.small, backgroundColor: color.surfaceRaised },
   tipText: { color: color.textSecondary, fontFamily: font.body, fontSize: 12, lineHeight: 19 },
-  segmented: { flexDirection: "row", gap: 2, padding: 3, borderRadius: radius.small, backgroundColor: color.surfaceMuted, alignSelf: "flex-start" },
+  segmented: { flexDirection: "row", flexWrap: "wrap", gap: 2, padding: 3, borderRadius: radius.small, backgroundColor: color.surfaceMuted, alignSelf: "flex-start" },
   segment: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: radius.small },
   segmentSmall: { paddingHorizontal: 10, paddingVertical: 4 },
   segmentOn: { backgroundColor: color.surface },

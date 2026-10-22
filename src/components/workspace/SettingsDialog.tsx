@@ -367,8 +367,8 @@ function Features({ aiVideoInstalled, appStyle, onToggleAiVideo }: SettingsDialo
     <View style={styles.row}>
       <RowCopy
         detail={aiVideoInstalled
-          ? "已安装，在侧栏的「AI 视频工作台」里用。移除后入口会收起来，剪辑、解析过的结果和填过的 Key 都还留着。"
-          : "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱；AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key。"}
+          ? "已安装，在侧栏的「AI 视频工作台」里用。移除后入口会收起来，剪辑、解析过的结果和填过的设置都还留着。"
+          : "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱；AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key，或者这台电脑上装好并登录的 Codex、Claude Code。"}
         title="AI 视频工作台"
       />
       <Button appStyle={appStyle} icon={aiVideoInstalled ? undefined : Download} label={aiVideoInstalled ? "移除" : "安装"} onPress={onToggleAiVideo} testID="settings-ai-video" />

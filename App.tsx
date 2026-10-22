@@ -108,6 +108,7 @@ import { buildDataExport, type DataExportSelection } from "./src/services/export
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 import { AnalysisWorkspace } from "./src/components/workspace/AnalysisWorkspace";
 import { AiEditWorkspace } from "./src/components/workspace/AiEditWorkspace";
+import { aiConfigReady } from "./src/services/aiEdit";
 import { loadAnalysisConfig, startAnalysis } from "./src/services/videoAnalysis";
 
 type ViewKey = "summary" | "highlights" | "records" | "chat" | "sources";
@@ -1578,14 +1579,14 @@ function AppContent() {
     setDownloadStates((current) => ({ ...current, [recordId]: state }));
   }
 
-  // 卡片上的「解析」：交给采集器开始解析，再切到解析库看进度；还没填 Key 就直接去解析库填。
+  // 卡片上的「解析」：交给采集器开始解析，再切到解析库看进度；还没设置好 AI 就直接去解析库设置。
   // stay：探索页一切走，刚翻到的主页和作品就没了，所以开始后留在原地（返回 true 让它自己提示）
   async function analyzeRecord(record: { url?: string | null }, stay = false): Promise<boolean> {
     const url = record.url?.trim();
     if (!url) return false;
     if (!collectorToken) { openSettings(); return false; }
     const config = loadAnalysisConfig();
-    if (!config.apiKey) { setDashboardView("analysis"); return false; }
+    if (!aiConfigReady(config)) { setDashboardView("analysis"); return false; }
     try {
       await startAnalysis({ baseUrl: collectorUrl, token: collectorToken }, url, config);
     } catch (error) {

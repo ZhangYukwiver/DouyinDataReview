@@ -1,4 +1,4 @@
-import { type AiEditLookJob, videoProbeKey } from "./aiEdit";
+import { type AiEditLookJob, type AiRuntime, type LocalAiRuntime, aiRequestConfig, aiRuntimeOf, isLocalAiRuntime, pickLocalModels, videoProbeKey } from "./aiEdit";
 import { LocalCollectorError, collectorFetch, normalizeCollectorBaseUrl } from "./localCollector";
 import type { ExploreConnection } from "./explorer";
 
@@ -6,6 +6,10 @@ import type { ExploreConnection } from "./explorer";
 // 接口配置存在本机 localStorage，每次随请求带过去，采集器不保存 Key。
 
 export interface AnalysisConfig {
+  /** 没有就是接口；也可以用这台电脑上登录好的 Codex / Claude Code */
+  runtime?: AiRuntime;
+  /** 本机 CLI 的模型（选填），和接口的分开存 */
+  localModels?: Partial<Record<LocalAiRuntime, string>>;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -49,6 +53,10 @@ const CONFIG_KEY = "dy2.analysisConfig";
 export function loadAnalysisConfig(): AnalysisConfig {
   try {
     const config: AnalysisConfig = { ...DEFAULT_ANALYSIS_CONFIG, ...JSON.parse(globalThis.localStorage?.getItem(CONFIG_KEY) ?? "{}") };
+    if (config.runtime !== undefined) config.runtime = aiRuntimeOf(config.runtime);
+    const localModels = pickLocalModels(config.localModels);
+    if (localModels) config.localModels = localModels;
+    else delete config.localModels;
     // 测的不是现在这个模型就当没测过
     if (typeof config.videoInput !== "boolean" || config.videoProbe !== videoProbeKey(config)) {
       delete config.videoInput;
@@ -86,7 +94,9 @@ export async function listAnalyses(connection: ExploreConnection): Promise<Video
 }
 
 export async function startAnalysis(connection: ExploreConnection, url: string, config: AnalysisConfig): Promise<VideoAnalysis> {
-  return (await request(connection, "/v1/analyses", { method: "POST", body: JSON.stringify({ url, config }) })).analysis;
+  // 本机 CLI 只带运行时、模型和创作方向
+  const sent = isLocalAiRuntime(config.runtime) ? { ...aiRequestConfig(config), direction: config.direction } : aiRequestConfig(config);
+  return (await request(connection, "/v1/analyses", { method: "POST", body: JSON.stringify({ url, config: sent }) })).analysis;
 }
 
 export async function deleteAnalysis(connection: ExploreConnection, id: string): Promise<void> {
