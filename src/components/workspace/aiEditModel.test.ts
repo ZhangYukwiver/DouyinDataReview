@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { EditMediaSegment, EditProject, EditTextSegment, EditTrack } from "../../services/aiEdit";
 import {
-  activeFrame, blendMode, clipDetail, clipExtras, colorName, draftBoxReasonText, clipLabel, clipPosition, colorFilter, cropClipPath, cssTransform, effectiveTransform, fadeGain,
+  activeFrame, blendMode, clipDetail, clipExtras, colorName, cutPoints, draftBoxReasonText, clipLabel, clipPosition, colorFilter, cropClipPath, cssTransform, effectiveTransform, fadeGain,
   featureName, filmstripCount, filmstripTimes, findSegment, fitBox, formatClock, formatDuration, formatTick, hasScaleKeyframes, IDENTITY_TRANSFORM, keyframeValue, layerBox, layerRect, maskCss, mediaIdFromPath,
-  mediaThumbView, mediaVolume, nextSegmentAfter, pickTickStep, playbackRate, projectDuration, rgba, rulerTicks, secondMark, segmentAt, sourceTimeUs, spokenDuration, textCss,
-  textFontPx, timeAtX, trackLabel, transitionReach, visibleExportNote,
+  mediaThumbView, mediaVolume, nextCut, nextSegmentAfter, pickTickStep, playbackRate, projectDuration, rgba, rulerTicks, secondMark, segmentAt, sourceTimeUs, spokenDuration, textCss,
+  stepFrame, textFontPx, timeAtX, trackLabel, transitionReach, visibleExportNote,
 } from "./aiEditModel";
 import catalogJson from "../../../collector/aiEdit/catalog.json";
 
@@ -62,6 +62,38 @@ describe("工程时长与活动片段", () => {
     expect(activeFrame(p, 0.5 * S).overlays.map((layer) => layer.segment.id)).toEqual(["f"]);
     expect(activeFrame(p, 4.5 * S).visuals.map((layer) => layer.segment.id)).toEqual(["b", "t"]);
     expect(activeFrame(p, 6.2 * S).visuals.map((layer) => layer.segment.id)).toEqual(["s"]);
+  });
+});
+
+describe("播放头快捷键", () => {
+  it("剪切点：所有轨道片段的两头，去重排好，字幕轨不算，差不到 1 毫秒算一个", () => {
+    const value = project([
+      track("v", "video", [media("a", 0, 2 * S), media("b", 2 * S, 3 * S)]),
+      track("t", "text", [text("t1", S, 1_500_000), text("t2", 5 * S + 400, S)]),
+      track("s", "text", [text("s1", 700_000, 300_000)], { kind: "subtitle" }),
+    ]);
+    expect(cutPoints(value)).toEqual([0, S, 2 * S, 2.5 * S, 5 * S, 6 * S + 400]);
+    expect(cutPoints(null)).toEqual([]);
+  });
+
+  it("↑ ↓ 跳到前后最近的剪切点；就在剪切点上（差不到 1 毫秒）时跳过它", () => {
+    const points = [0, S, 2 * S, 5 * S];
+    expect(nextCut(points, 1.5 * S, 1)).toBe(2 * S);
+    expect(nextCut(points, 1.5 * S, -1)).toBe(S);
+    expect(nextCut(points, 2 * S + 500, 1)).toBe(5 * S);
+    expect(nextCut(points, 2 * S - 500, -1)).toBe(S);
+    expect(nextCut(points, 5 * S, 1)).toBeNull();
+    expect(nextCut(points, 0, -1)).toBeNull();
+  });
+
+  it("← → 按帧号走，连按误差不累积", () => {
+    expect(stepFrame(0, 30, 1)).toBe(33_333);
+    let time = 0;
+    for (let index = 0; index < 30; index += 1) time = stepFrame(time, 30, 1);
+    expect(time).toBe(S);
+    expect(stepFrame(S, 30, -10)).toBe(666_667);
+    // 不在帧上的播放头先落到最近的一帧再走
+    expect(stepFrame(1_010_000, 25, 1)).toBe(1_040_000);
   });
 });
 

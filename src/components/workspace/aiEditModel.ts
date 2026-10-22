@@ -2,7 +2,7 @@ import type {
   EditCanvas, EditFit, EditKeyframe, EditMediaSegment, EditProject, EditSegment, EditTextSegment, EditTimeRange, EditTrack, EditTransform,
 } from "../../services/aiEdit";
 
-// AI 剪辑看板的纯计算：时长、某一时刻该画哪些片段、素材摆放、刻度与时间格式。只读看板用，不改工程。
+// AI 剪辑看板的纯计算：时长、某一时刻该画哪些片段、素材摆放、刻度与时间格式。只管怎么画，手动改动的换算在 aiEditBoardEdit.ts。
 // 坐标约定同剪映 / pyJianYingDraft：transform_x/y 以半个画布宽/高为单位，y 向上为正；rotation 顺时针为正。
 
 export const US_PER_SECOND = 1_000_000;
@@ -29,6 +29,32 @@ export function nextSegmentAfter(track: EditTrack, timeUs: number): EditSegment 
     if (segment.timeline.start_us > timeUs && (!next || segment.timeline.start_us < next.timeline.start_us)) next = segment;
   }
   return next;
+}
+
+/**
+ * ↑ / ↓ 跳的剪切点：所有轨道（字幕轨除外，太密）上片段的开头和结尾，去重、从早到晚，差不到 1 毫秒的算一个。
+ * 照 openfilm 的 cutPoints / nextCut（studio/ui/src/lib/timeline-nav.ts，MIT License，Copyright (c) 2026 OpenFilm contributors）。
+ */
+export function cutPoints(project: Pick<EditProject, "tracks"> | null | undefined): number[] {
+  const points = (project?.tracks ?? []).filter((track) => track.kind !== "subtitle")
+    .flatMap((track) => track.segments.flatMap((segment) => [segment.timeline.start_us, end(segment.timeline)]))
+    .sort((a, b) => a - b);
+  const kept: number[] = [];
+  for (const point of points) if (!kept.length || point - kept.at(-1)! >= 1_000) kept.push(point);
+  return kept;
+}
+
+/** 播放头之后（dir 为 1）或之前（-1）最近的剪切点；离播放头不到 1 毫秒的算播放头就在那，跳过；那边没有为 null。 */
+export function nextCut(points: readonly number[], nowUs: number, dir: 1 | -1): number | null {
+  if (dir > 0) return points.find((point) => point > nowUs + 1_000) ?? null;
+  for (let index = points.length - 1; index >= 0; index -= 1) if (points[index]! < nowUs - 1_000) return points[index]!;
+  return null;
+}
+
+/** 播放头按帧走：先换成帧号再加减，按帧号算回微秒，连按多少下误差都不累积。 */
+export function stepFrame(timeUs: number, fps: number, frames: number): number {
+  const rate = fps > 0 ? fps : 30;
+  return Math.round(((Math.round((timeUs * rate) / US_PER_SECOND) + frames) * US_PER_SECOND) / rate);
 }
 
 export interface ActiveLayer { track: EditTrack; trackIndex: number; segment: EditSegment }
@@ -530,7 +556,7 @@ function round(value: number, digits: number): number {
   return Math.round(value * factor) / factor;
 }
 
-// ---------- 片段详情（只读卡片） ----------
+// ---------- 片段详情卡片 ----------
 
 /** 按片段 id 找片段和它所在的轨道；不在这个工程里时为 null。 */
 export function findSegment(project: Pick<EditProject, "tracks"> | null | undefined, id: string | null | undefined): { track: EditTrack; segment: EditSegment } | null {
@@ -695,7 +721,7 @@ function textRows(segment: EditTextSegment): ClipDetailRow[] {
 }
 
 /**
- * 点轨道上的片段时弹出的只读详情：按片段类型列出时间、截取、倍速、音量、摆放、文字样式和挂着的效果。
+ * 点轨道上的片段时弹出的详情：按片段类型列出时间、截取、倍速、音量、摆放、文字样式和挂着的效果。
  * 给用户看的都是口语，不出现字段名；效果名换成剪映里的显示名。
  */
 export function clipDetail(

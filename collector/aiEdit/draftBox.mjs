@@ -982,6 +982,33 @@ export function createDraftBox({
     });
   }
 
+  /**
+   * 草稿的「指纹」：主文件、draft_meta_info.json、主时间线（Timelines 里那份，有才算）的大小和修改时间，加上索引里的修改时间。
+   * 导出后记下来，再导出前对一下：变了就是用户在剪映里打开或改过。草稿不在了照 getDraft 抛 DRAFT_BOX_NOT_FOUND。
+   */
+  async function fingerprint(draftId) {
+    const { draft } = await getDraft(draftId);
+    const timelines = path.join(draft.path, "Timelines");
+    let mainId = draftId;
+    try {
+      const manifest = path.join(timelines, "project.json");
+      if (statSync(manifest).size <= MAX_TIMELINE_MANIFEST_BYTES) {
+        const value = JSON.parse(readFileSync(manifest, "utf8"))?.main_timeline_id;
+        if (typeof value === "string" && DRAFT_UUID.test(value)) mainId = value;
+      }
+    } catch { /* 剪映还没存过，没有 Timelines */ }
+    const files = [profile.mainFile, "draft_meta_info.json", path.join("Timelines", "project.json"), path.join("Timelines", mainId, profile.mainFile)];
+    const parts = files.map((name) => {
+      try {
+        const info = statSync(path.join(draft.path, name));
+        return `${name}:${info.size}:${info.mtimeMs}`;
+      } catch {
+        return `${name}:-`;
+      }
+    });
+    return [...parts, `index:${draft.modified_at ?? "-"}`].join("|");
+  }
+
   return {
     platform: kind,
     profile,
@@ -991,6 +1018,7 @@ export function createDraftBox({
     getDraft,
     createDraft,
     repairDraft,
+    fingerprint,
   };
 }
 

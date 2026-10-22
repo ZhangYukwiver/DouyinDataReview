@@ -161,12 +161,18 @@ export interface AiEditSessionSummary {
 
 export interface AiEditAction { name: string; summary: string; ok: boolean; error?: string }
 
+/** 在画面上框的一块：x/y/width/height 是相对画布的比例（0–1，从左上角量），clip_ids 是框里的片段。 */
+export interface AiEditRegion { time_us: number; x: number; y: number; width: number; height: number; clip_ids: string[] }
+
 export interface AiEditChatItem {
   id: string;
-  role: "user" | "assistant";
+  /** note 是应用记的一行说明（比如退回到某句话之前），不是谁说的话 */
+  role: "user" | "assistant" | "note";
   text: string;
   at: string;
   actions?: AiEditAction[];
+  /** 用户发这句时带的框选；labels 是框里片段的称呼 */
+  region?: AiEditRegion & { labels?: string[] };
 }
 
 export interface AiEditSession extends AiEditSessionSummary {
@@ -177,7 +183,19 @@ export interface AiEditSession extends AiEditSessionSummary {
   messages: AiEditChatItem[];
   /** 正在进行的这一轮：已经吐出来的文字和已经做完的步骤；look 是要页面在浏览器里帮忙拆的视频 */
   streaming: { text: string; actions?: AiEditAction[]; look?: AiEditLookJob } | null;
+  /** 能撤销的上一步（最后一份存档的说法和种类）；没有时为 null */
+  undo?: { label: string; kind: AiEditStepKind } | null;
+  /** 能重做的那一步（刚撤销掉的）；没有时为 null */
+  redo?: { label: string } | null;
+  /** 操作历史：最近的存档，新的在前（最多 50 份）；撤销时带上某一份的 id 就一次撤到那一步之前 */
+  history?: AiEditHistoryStep[];
+  /** 能「退回到这句之前」的用户消息 id */
+  revertible?: string[];
 }
+
+/** 一步存档是什么：AI 剪的一整轮、看板上的手动改动（含换画面比例）、退回到某句话之前 */
+export type AiEditStepKind = "turn" | "edit" | "revert";
+export interface AiEditHistoryStep { id: string; kind: AiEditStepKind; label: string; at: string }
 
 export interface AiEditSessionState { session: AiEditSession; project: EditProject }
 
@@ -259,8 +277,44 @@ export async function deleteAiEditSession(connection: ExploreConnection, id: str
   await request(connection, sessionPath(id), { method: "DELETE" });
 }
 
-export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig): Promise<AiEditSession> {
-  return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify({ text, config }) })).session;
+export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig, region?: AiEditRegion | null): Promise<AiEditSession> {
+  const body = region ? { text, config, region } : { text, config };
+  return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify(body) })).session;
+}
+
+/**
+ * 看板上能手动做的改动，参数和 AI 的同名工具一样（时间按秒）：move_clip { clip_id, start, track_id? }、update_clip、split_clip、
+ * delete_clip、duplicate_clip { clip_id, start, track_id? }、update_track { track_id, mute }、reorder_tracks（全部轨道的完整顺序）。
+ */
+export type AiEditClipEdit = "move_clip" | "update_clip" | "split_clip" | "delete_clip" | "duplicate_clip" | "update_track" | "reorder_tracks";
+export interface AiEditEditCall { name: AiEditClipEdit; arguments: Record<string, unknown> }
+
+/** 看板上手动剪一下（挪、裁、切、删、复制、改文字和位置大小、静音、调轨道层级）；AI 正在剪或别的改动没做完时采集器会拒绝。 */
+export async function editAiEditClip(connection: ExploreConnection, id: string, name: AiEditClipEdit, args: Record<string, unknown>): Promise<AiEditSessionState> {
+  return request(connection, `${sessionPath(id)}/edit`, { method: "POST", body: JSON.stringify({ name, arguments: args }) });
+}
+
+/** 一批最多几条改动：和采集器的 MAX_BATCH_EDITS 一样，超了采集器整批拒（too_many_edits） */
+export const MAX_BATCH_EDITS = 50;
+
+/** 一批改动一起做（1–MAX_BATCH_EDITS 条）：采集器只存一份存档，撤销一次全回来；任何一条没做成整批回滚，说明里写第几步为什么。 */
+export async function editAiEditClips(connection: ExploreConnection, id: string, edits: readonly AiEditEditCall[]): Promise<AiEditSessionState> {
+  return request(connection, `${sessionPath(id)}/edit`, { method: "POST", body: JSON.stringify({ edits }) });
+}
+
+/** 撤销上一步（手动改的、AI 一轮改的、换画面比例、退回都算一步）；带 to（操作历史里某一步的 id）时一次撤到那一步之前。 */
+export async function undoAiEdit(connection: ExploreConnection, id: string, to?: string): Promise<AiEditSessionState> {
+  return request(connection, `${sessionPath(id)}/undo`, { method: "POST", body: JSON.stringify(to ? { to } : {}) });
+}
+
+/** 重做刚撤销掉的那一步；没有能重做的时采集器回 409 nothing_to_redo。 */
+export async function redoAiEdit(connection: ExploreConnection, id: string): Promise<AiEditSessionState> {
+  return request(connection, `${sessionPath(id)}/redo`, { method: "POST", body: "{}" });
+}
+
+/** 把时间线退回到这句话发出之前的样子（退回本身也能撤销）。 */
+export async function revertAiEdit(connection: ExploreConnection, id: string, messageId: string): Promise<AiEditSessionState> {
+  return request(connection, `${sessionPath(id)}/revert`, { method: "POST", body: JSON.stringify({ messageId }) });
 }
 
 /** 看板上换画面比例（AI 正在剪时采集器会拒绝）。 */
@@ -276,9 +330,15 @@ export async function stopAiEditSession(connection: ExploreConnection, id: strin
   return (await request(connection, `${sessionPath(id)}/stop`, { method: "POST", body: "{}" })).session;
 }
 
-export async function exportAiEditSession(connection: ExploreConnection, id: string): Promise<{ session: AiEditSession; result: AiEditExportResult }> {
+/**
+ * 导入剪映：auto 是有草稿就原位更新，但草稿在剪映里被打开或改过时报 draft_changed（不写任何东西）；
+ * new 另存一份新草稿，update 直接覆盖剪映里的改动。
+ */
+export type AiEditExportMode = "auto" | "new" | "update";
+
+export async function exportAiEditSession(connection: ExploreConnection, id: string, mode?: AiEditExportMode): Promise<{ session: AiEditSession; result: AiEditExportResult }> {
   // 第一次要把素材克隆进草稿目录，大文件会久一点
-  const value = await request(connection, `${sessionPath(id)}/export`, { method: "POST", body: "{}", timeoutMs: 180_000 });
+  const value = await request(connection, `${sessionPath(id)}/export`, { method: "POST", body: JSON.stringify(mode ? { mode } : {}), timeoutMs: 180_000 });
   return { session: value.session, result: value.result };
 }
 

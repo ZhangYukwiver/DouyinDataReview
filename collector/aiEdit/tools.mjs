@@ -185,6 +185,30 @@ function clipSummary(segment, library) {
   return clip;
 }
 
+/** 片段的人话称呼（给页面显示、也给模型看）：视频“海边.mp4”、文字“周末去海边”（前 16 个字）、贴纸、特效“闪白”。 */
+export function clipLabel(segment) {
+  const quote = (value, max = 40) => `“${[...String(value ?? "").replace(/\s+/gu, " ").trim()].slice(0, max).join("")}”`;
+  switch (segment?.kind) {
+    case "video":
+    case "image":
+    case "audio":
+      return `${KIND_NAMES[segment.kind]}${quote(segment.material_name ?? String(segment.path ?? "").split(/[\\/]/u).at(-1))}`;
+    case "text": return `文字${quote(segment.text, 16)}`;
+    case "sticker": return "贴纸";
+    case "track_effect": return `特效${quote(segment.effect_type)}`;
+    case "track_filter": return `滤镜${quote(segment.filter_type)}`;
+    default: return "片段";
+  }
+}
+
+/** 轨道的人话称呼，同页面上的 trackLabel：原仓库的默认名是英文类型名（Video、Subtitles），换成中文。 */
+export function trackLabel(track) {
+  const name = String(track?.name ?? "").trim();
+  if (track?.kind === "subtitle" && (!name || name === "Subtitles")) return "字幕";
+  if (!name || name.toLowerCase() === track?.track_type) return TRACK_TYPES[track?.track_type] ?? "轨道";
+  return name;
+}
+
 export function timelineSummary(project, library) {
   return {
     name: project.name,
@@ -237,7 +261,8 @@ export function buildSystemPrompt({ project, media, goal = "" }) {
   const orientation = width === height ? "方形" : width > height ? "横屏" : "竖屏";
   const listed = media.slice(0, 120);
   return [
-    "你是「AI 剪辑」助手：按用户的要求，用工具在这个剪辑工程里编排时间线（加素材、剪切、字幕、特效、转场、动画等），用户最后把它导入剪映草稿箱继续精修或导出。用户在右边只能看、不能手动改，所以所有改动都要通过工具完成。",
+    "你是「AI 剪辑」助手：按用户的要求，用工具在这个剪辑工程里编排时间线（加素材、剪切、字幕、特效、转场、动画等），用户最后把它导入剪映草稿箱继续精修或导出。",
+    "用户在右边的看板上也能自己动手：挪动（也能挪到别的轨道）、裁剪、切开、复制、删除片段，改文字内容，调位置和大小，给轨道静音，调轨道的上下层，还能撤销、重做。用户消息开头可能带着应用附上的说明（标着「应用自动附上，不是用户说的话」）：一是用户在看板上手动改过哪些地方，那些是用户自己的决定，以工程现状为准，别改回去，除非用户这次明说；二是用户在画面上框出的一块，用户说的「这里」「这块」「这个」指的就是框里的片段，只改它们，框外的别动。",
     "",
     `工程「${project.name}」：画布 ${width}×${height}（${orientation}），${fps} 帧/秒。`,
     // 目标写在系统提示里，对话历史太长被裁掉时也还在
@@ -268,6 +293,7 @@ export function buildSystemPrompt({ project, media, goal = "" }) {
     "- 工具返回 ok:false 时，读 message 和 details 改正参数再试（报错里带 _us 的字段是微秒，对应你给的秒数参数）；不要把同样的错误调用重复好几次。",
     "- 用户只是聊天或提问时不用动时间线。要求不清楚时先按最合理的理解做出来，再告诉用户可以怎么调。",
     "- 用户说导入剪映、导出、放进草稿箱时用 export_to_jianying；剪映开着的时候导不进去，要提醒用户先退出剪映。",
+    "- export_to_jianying 返回 draft_changed（剪映里那份草稿在上次导入后被用户打开或改过）时，先问用户：另存一份新草稿，还是覆盖剪映里的改动（覆盖会丢掉用户在剪映里做的修改）。用户明确选了再带上 mode 重新调用（另存填 new，覆盖填 update），不要替用户选。",
     "- 工程名就是导入剪映后的草稿名。第一轮剪完后，如果工程名还是「未命名剪辑」或用户第一句话的开头，用 rename_project 起一个 15 字以内、看得出内容的名字；用户自己起过名就别改。",
     "- 做完后用一两句自然的中文告诉用户改了什么、现在总共多长。不要提字段名、id、英文参数名或工具名，不要贴 JSON，也不要用“已为您”这种客服腔。",
     "",
@@ -298,6 +324,8 @@ const obj = (properties, required = [], description) => ({
 });
 
 const TRACK_ID = str("轨道的 track_id（从时间线里看）");
+// move_clip、duplicate_clip 换轨道时能去哪（规则在 ProjectStore 的 checkTrackFits）
+const FITTING_TRACKS = "视频和图片只能放视频轨道，音频放音频轨道，文字放文字轨道（字幕轨除外），贴纸、特效、滤镜各放各的轨道；字幕轨上的字幕不能挪走或复制";
 const CLIP_ID = str("片段的 clip_id（从时间线里看）");
 const START = num("在时间线上的开始时间（秒）", { minimum: 0 });
 const DURATION = num("在时间线上占多长（秒）", { exclusiveMinimum: 0 });
@@ -1260,11 +1288,24 @@ const TOOLS = [
   },
   {
     name: "move_clip",
-    description: "把片段移到时间线上新的开始时间（时长不变，不能和同轨道其他片段重叠）。",
-    parameters: obj({ clip_id: CLIP_ID, start: START }, ["clip_id", "start"]),
+    description: `把片段移到时间线上新的开始时间（时长不变，不能和目标轨道上的其他片段重叠）。给 track_id 就挪到另一条轨道上：${FITTING_TRACKS}。`,
+    parameters: obj({ clip_id: CLIP_ID, start: START, track_id: str("挪到哪条轨道的 track_id，不给就留在原轨道") }, ["clip_id", "start"]),
     write: true,
     label: () => "移动了片段",
-    run: async (ctx, args) => ctx.store.moveSegment(ctx.projectId, args.clip_id, micros(args.start)),
+    run: async (ctx, args) => ctx.store.moveSegment(ctx.projectId, args.clip_id, micros(args.start), ...(has(args, "track_id") ? [{ trackId: args.track_id }] : [])),
+  },
+  {
+    name: "duplicate_clip",
+    description: `复制一个片段放到 start 开始：关键帧、位置大小、淡入淡出、特效、滤镜、动画、转场、蒙版、截取、倍速、文字样式全都带上，返回新片段的 clip_id。不给 track_id 就放在原轨道，也可以放到另一条轨道：${FITTING_TRACKS}。不能和目标轨道上的片段重叠。`,
+    parameters: obj({ clip_id: CLIP_ID, start: START, track_id: str("放到哪条轨道的 track_id，不给就放在原轨道") }, ["clip_id", "start"]),
+    write: true,
+    label: () => "复制了片段",
+    run: async (ctx, args) => {
+      const out = await ctx.store.duplicateSegment(ctx.projectId, args.clip_id, micros(args.start), has(args, "track_id") ? { trackId: args.track_id } : {});
+      // 原片段排在分屏格子里的话，复制品原样带着格子的缩放和蒙版，换画布时也得一起重排
+      if (ctx.grids?.[args.clip_id]) ctx.grids[out.segment.id] = { ...ctx.grids[args.clip_id], id: out.segment.id };
+      return out;
+    },
   },
   {
     name: "split_clip",
@@ -1272,7 +1313,16 @@ const TOOLS = [
     parameters: obj({ clip_id: CLIP_ID, offset: num("切点：从片段开头算起的秒数，要在片段中间", { exclusiveMinimum: 0 }) }, ["clip_id", "offset"]),
     write: true,
     label: () => "分割了片段",
-    run: async (ctx, args) => ctx.store.splitSegment(ctx.projectId, args.clip_id, micros(args.offset)),
+    run: async (ctx, args) => {
+      const record = ctx.grids?.[args.clip_id];
+      const out = await ctx.store.splitSegment(ctx.projectId, args.clip_id, micros(args.offset));
+      // 切开的两段都是新 id，格子记录转给它们
+      if (record) {
+        for (const segment of out.segments) ctx.grids[segment.id] = { ...record, id: segment.id };
+        delete ctx.grids[args.clip_id];
+      }
+      return out;
+    },
   },
   {
     name: "delete_clip",
@@ -1538,12 +1588,14 @@ const TOOLS = [
   },
   {
     name: "export_to_jianying",
-    description: "把当前时间线导入剪映草稿箱：第一次新建一份草稿，之后更新同一份。剪映必须先退出。",
-    parameters: obj({}),
+    description: "把当前时间线导入剪映草稿箱：第一次新建一份草稿，之后更新同一份。剪映必须先退出。那份草稿在上次导入后被用户在剪映里打开或改过时会返回 draft_changed，先问用户另存还是覆盖，再带 mode 重新调用。",
+    parameters: obj({
+      mode: choice(["auto", "new", "update"], "auto（默认）：草稿在剪映里被改过就先停下；new：另存一份新草稿，旧的不动；update：覆盖旧草稿（会丢掉用户在剪映里的改动），用户明确同意覆盖才用"),
+    }),
     exporting: true,
-    label: () => "导入了剪映草稿箱",
-    run: async (ctx) => {
-      const result = await ctx.exportDraft();
+    label: (args) => (args.mode === "new" ? "另存了一份剪映草稿" : args.mode === "update" ? "覆盖了剪映里的草稿" : "导入了剪映草稿箱"),
+    run: async (ctx, args) => {
+      const result = await ctx.exportDraft(args.mode);
       return { draft_name: result.draftName, created: result.created };
     },
   },
@@ -1597,6 +1649,7 @@ const EDIT_ERROR_TEXT = {
   VALIDATION_ERROR: "参数不对",
   // 工具层按剪映规则提前拦下的
   SUBTITLE_TRACK_LOCKED: "字幕轨只能整组加字幕，单独的文字要另建文字轨道",
+  SUBTITLE_CLIP_LOCKED: "字幕轨上的字幕不能单独挪到别的轨道，也不能复制",
   FONT_INVALID: "剪映里没有这个字体",
   MASK_PARAMS_INVALID: "只有矩形蒙版能设宽度和圆角",
   ANIMATION_EXISTS: "片段已经有同一种动画了，要先去掉",
@@ -1624,12 +1677,13 @@ export function describeToolError(error) {
 }
 
 /** 重叠时把同一轨道上离得最近的几个片段（起止秒数不丢精度）告诉模型，让它能自己挪开。 */
-async function overlapDetails(ctx, args) {
+async function overlapDetails(ctx, args, name) {
   const project = await ctx.store.getProject(ctx.projectId);
   const track = project.tracks.find((entry) => entry.id === args.track_id)
     ?? project.tracks.find((entry) => entry.segments?.some((segment) => segment.id === args.clip_id));
   const self = track?.segments?.find((segment) => segment.id === args.clip_id);
-  const others = (track?.segments ?? []).filter((segment) => segment !== self);
+  // 复制时原片段还在原地，常常正是被压到的那段，不能当成「自己」排除
+  const others = (track?.segments ?? []).filter((segment) => name === "duplicate_clip" || segment !== self);
   if (!others.length) return null;
   const startOf = (segment) => segment.timeline.start_us;
   const anchor = has(args, "start") && typeof micros(args.start) === "number" ? micros(args.start) : self ? startOf(self) : trackEndUs(track);
@@ -1746,8 +1800,11 @@ export function createToolRunner(ctx) {
     } catch (error) {
       const { text, ...info } = describeToolError(error);
       if (info.code === "TIMELINE_OVERLAP") {
-        const nearby = await overlapDetails(ctx, args).catch(() => null);
+        const nearby = await overlapDetails(ctx, args, name).catch(() => null);
         if (nearby) info.details = { ...info.details, ...nearby };
+      }
+      if (info.code === "draft_changed") {
+        info.message = `${info.message}先问用户是另存一份新草稿（mode 填 new），还是覆盖剪映里的改动（mode 填 update，会丢掉用户在剪映里做的修改）；用户明确说了再带上 mode 重新调用，别替用户选。`;
       }
       return { result: { ok: false, ...info }, action: { name, summary: summary(args), ok: false, error: text }, changed: false };
     }
