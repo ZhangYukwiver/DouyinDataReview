@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -822,7 +822,7 @@ function ChatDetailPane({
           onScroll={handleMessageScroll}
           ref={messageListRef}
           // 最后八条依次入场（越靠底越晚），像消息刚刚到达
-          renderItem={({ item, index }) => <ChatMessageBubble i={Math.max(0, index - (visibleMessages.length - 8) + 1)} message={item} onOpenRecord={onOpenRecord} privacy={privacy} row={row} selfId={selfId} />}
+          renderItem={({ item, index }) => <ChatMessageBubble i={Math.max(0, index - (visibleMessages.length - 8) + 1)} message={item} onOpenRecord={onOpenRecord} privacy={privacy} avatarUrl={row.avatarUrl} accent={row.accent} selfId={selfId} />}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
           style={styles.messageList}
@@ -1439,19 +1439,23 @@ function MessageListEmpty({ privacy }: { privacy: boolean }) {
   );
 }
 
-function ChatMessageBubble({
+// react-native-web 的列表单元每次滚动都整列重渲染，一个会话几百个气泡全挂着，不 memo 的话滚一下就重画几百个
+const ChatMessageBubble = memo(function ChatMessageBubble({
   i = 0,
   message,
   onOpenRecord,
   privacy,
-  row,
+  avatarUrl,
+  accent,
   selfId,
 }: {
   i?: number;
   message: ChatMessage;
   onOpenRecord: (url: string) => Promise<void>;
   privacy: boolean;
-  row: ChatConversationRow;
+  // 只要会话的头像和颜色：来一条消息会话行就整个换新，传整行的话 memo 拦不住
+  avatarUrl: string | null;
+  accent: string;
   selfId: string | null;
 }) {
   if (message.type === "system") {
@@ -1465,7 +1469,7 @@ function ChatMessageBubble({
   const framelessSticker = !privacy && message.type === "sticker" && Boolean(message.mediaUrl);
   return (
     <View {...fx({ motion: "rise", i })} style={[styles.messageLine, own && styles.messageLineOwn]}>
-      {!own ? <ChatAvatar avatarUrl={message.senderAvatarUrl ?? row.avatarUrl} accent={row.accent} initials={initialsFor(sender, "friend")} kind="friend" privacy={privacy} size={30} /> : null}
+      {!own ? <ChatAvatar avatarUrl={message.senderAvatarUrl ?? avatarUrl} accent={accent} initials={initialsFor(sender, "friend")} kind="friend" privacy={privacy} size={30} /> : null}
       <View style={[styles.messageColumn, own && styles.messageColumnOwn]}>
         {!own ? <Text style={styles.senderLabel}>{sender}</Text> : null}
         <View {...ws("c-bubble", framelessSticker ? "sticker" : own ? "own" : "in")} style={[styles.bubble, framelessSticker ? styles.bubbleSticker : own ? styles.bubbleOwn : styles.bubbleIncoming]}>
@@ -1476,7 +1480,7 @@ function ChatMessageBubble({
       {own ? <ChatAvatar accent={color.cyan} initials="我" kind="friend" size={30} /> : null}
     </View>
   );
-}
+});
 
 export function MessageContent({ message, onOpenRecord }: { message: ChatMessage; onOpenRecord: (url: string) => Promise<void> }) {
   if (message.type === "comment") {
@@ -1816,22 +1820,19 @@ function formatChatListTime(value: string | null): string {
   if (!Number.isFinite(date.getTime())) return "—";
   const now = new Date();
   const sameDay = date.toDateString() === now.toDateString();
-  return sameDay
-    ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })
-    : date.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+  return sameDay ? LIST_TIME.format(date) : LIST_DAY.format(date);
 }
+
+// toLocaleString 带参数每次都新建一个格式器，一条消息约半毫秒；几百个气泡一起渲染时占掉大半时间，所以只建一次
+const LIST_TIME = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+const LIST_DAY = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit" });
+const MESSAGE_TIME = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 
 function formatMessageTime(value: string | null): string {
   if (!value) return "时间未知";
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "时间未知";
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return MESSAGE_TIME.format(date);
 }
 
 function formatDuration(seconds: number): string {

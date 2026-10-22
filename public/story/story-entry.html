@@ -259,7 +259,8 @@
       let loaded = 0;
       files.forEach((f, i) => {
         const img = new Image();
-        img.onload = () => {
+        // decode() 在后台线程解码；onload 里直接上传的话，两张 2560×1440 要在主线程同步解一百多毫秒，正赶上入场淡入
+        img.decode().then(() => {
           try {
             const tex = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, tex);
             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // image rows are top-down, GL v axis is bottom-up
@@ -269,7 +270,7 @@
             gl.uniform1i(U(names[i]), i);
             if (++loaded === files.length) { canvas.classList.add("ready"); loop(performance.now()); }
           } catch (e) { console.warn("skyfx: texture blocked (open the page over http, not file://)", e); }
-        };
+        }, () => {});
         img.src = (window.SKY_TEX && SKY_TEX[f]) || `story-images/${f}.jpg`; // data URI keeps file:// pages untainted
       });
 
