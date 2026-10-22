@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { sealHistory } from "./chat.mjs";
@@ -7,8 +7,12 @@ import { renameRetrying } from "./rename.mjs";
 
 // AI 剪辑的会话：一个会话对应一个剪辑工程。页面看到的是 messages（对话气泡），
 // 发给模型的原始消息历史另存在 history 里，不发给页面。每个会话一个文件 ai-edit/sessions/<id>.json。
+// 撤销、退回用的工程存档每份一个文件，放在 ai-edit/checkpoints/<会话 id>/ 下；重做用的快照也放在这里，id 是同一种。
 
 const SESSION_ID = /^[0-9a-f]{32}$/u;
+const CHECKPOINT_ID = /^[0-9a-f]{16}$/u;
+// 存档（撤销、退回用）最多留这么多份，再多删最旧的；重做栈也最多这么多
+export const MAX_CHECKPOINTS = 50;
 const INTERRUPTED = { code: "interrupted", message: "上次 AI 还在处理时采集器关掉了，这一轮没做完，可以接着说。" };
 
 export const isSessionId = (value) => typeof value === "string" && SESSION_ID.test(value);
@@ -18,13 +22,32 @@ export function sessionSummary(session) {
   return { id, title, createdAt, updatedAt, status, projectId, draftBox: draftBox ? { ...draftBox } : null };
 }
 
+/**
+ * 退回到第 i 句之前用哪份存档：这句话发出之后（或正好是这一轮开跑前）存的第一份。
+ * 同一下标上的手动改动存档是这句话发出前、那次手动改动之前的样子，不算；
+ * 更早的存档删掉过（i <= checkpointsTrimmedAt）就找不准了。
+ */
+export const revertTarget = (session, i) => (i >= 0 && i > (session.checkpointsTrimmedAt ?? -1)
+  ? (session.checkpoints ?? []).find((item) => item.messageIndex > i || (item.messageIndex === i && item.kind === "turn")) ?? null
+  : null);
+
 export function sessionDetail(session) {
+  const checkpoints = session.checkpoints ?? [];
   return {
     ...sessionSummary(session),
     goal: session.goal,
     revision: session.revision,
     error: session.error ? { ...session.error } : null,
-    messages: session.messages.map((item) => ({ ...item, ...(item.actions ? { actions: item.actions.map((action) => ({ ...action })) } : {}) })),
+    messages: session.messages.map((item) => ({
+      ...item,
+      ...(item.actions ? { actions: item.actions.map((action) => ({ ...action })) } : {}),
+      ...(item.region ? { region: structuredClone(item.region) } : {}),
+    })),
+    undo: checkpoints.length ? { label: checkpoints.at(-1).label, kind: checkpoints.at(-1).kind } : null,
+    redo: session.redo?.length ? { label: session.redo.at(-1).label } : null,
+    // 操作历史：新的在前，点哪一步就撤到那一步之前
+    history: checkpoints.slice(-MAX_CHECKPOINTS).reverse().map(({ id, kind, label, at }) => ({ id, kind, label, at })),
+    revertible: session.messages.flatMap((item, index) => (item.role === "user" && revertTarget(session, index) ? [item.id] : [])),
     streaming: session.streaming ? {
       text: session.streaming.text,
       actions: session.streaming.actions.map((action) => ({ ...action })),
@@ -35,8 +58,9 @@ export function sessionDetail(session) {
 }
 
 export class SessionStore {
-  constructor({ directory, now = () => new Date(), newId = () => randomBytes(16).toString("hex") }) {
+  constructor({ directory, checkpointDirectory = path.join(path.dirname(directory), "checkpoints"), now = () => new Date(), newId = () => randomBytes(16).toString("hex") }) {
     this.directory = directory;
+    this.checkpointDirectory = checkpointDirectory;
     this.now = now;
     this.newId = newId;
     this.sessions = new Map();
@@ -59,6 +83,33 @@ export class SessionStore {
       session.goal = typeof session.goal === "string" ? session.goal : "";
       // arrange_grid 排过的格子（片段 id → 位置），换画布时重排用
       session.grids = session.grids && typeof session.grids === "object" && !Array.isArray(session.grids) ? session.grids : {};
+      // 加撤销、退回和看板手动改之前存的会话没有这几个字段
+      const checkpoints = Array.isArray(session.checkpoints)
+        ? session.checkpoints.filter((item) => typeof item?.id === "string" && CHECKPOINT_ID.test(item.id) && Number.isSafeInteger(item.messageIndex))
+        : [];
+      session.checkpointsTrimmedAt = Number.isSafeInteger(session.checkpointsTrimmedAt) ? session.checkpointsTrimmedAt : -1;
+      // 删了存档文件、还没存会话文件时采集器被强杀，会留下没有文件的条目，丢掉。排在最后的是撤销或一轮收尾时删的，
+      // 丢掉就是把那次删除做完；后面还有存档的是超出上限删的，按删掉过记，免得退回落到更晚的存档上
+      session.checkpoints = [];
+      let pruned = false;
+      for (const item of checkpoints.reverse()) {
+        if (await stat(this.#checkpointFile(session, item.id)).then(() => true, () => false)) {
+          session.checkpoints.unshift(item);
+          continue;
+        }
+        pruned = true;
+        if (session.checkpoints.length) session.checkpointsTrimmedAt = Math.max(session.checkpointsTrimmedAt, item.messageIndex);
+      }
+      // 加重做之前存的会话没有重做栈；文件没了的条目同样丢掉
+      const redo = Array.isArray(session.redo)
+        ? session.redo.filter((item) => typeof item?.id === "string" && CHECKPOINT_ID.test(item.id) && Number.isSafeInteger(item.messageIndex) && typeof item.label === "string")
+        : [];
+      session.redo = [];
+      for (const item of redo) {
+        if (await stat(this.#checkpointFile(session, item.id)).then(() => true, () => false)) session.redo.push(item);
+        else pruned = true;
+      }
+      session.pendingNotes = Array.isArray(session.pendingNotes) ? session.pendingNotes.filter((note) => typeof note === "string") : [];
       session.streaming = null;
       this.sessions.set(id, session);
       // 一轮进行中也会存盘（比如导入剪映后），那时 history 里可能有还没回结果的工具调用；
@@ -67,9 +118,11 @@ export class SessionStore {
       sealHistory(session.history, "采集器关掉了，这个工具没有执行。");
       if (session.status === "running") {
         Object.assign(session, { status: "failed", error: { ...INTERRUPTED } });
+        // 这一轮可能已经改过工程，和一轮收尾一样按改了算，撤掉的不能再重做
+        await this.clearRedo(session);
         this.touch(session);
         await this.save(session);
-      } else if (session.history.length !== length) {
+      } else if (session.history.length !== length || pruned) {
         await this.save(session);
       }
     }
@@ -95,6 +148,10 @@ export class SessionStore {
       draftBox: null,
       goal: "",
       grids: {},
+      checkpoints: [],
+      checkpointsTrimmedAt: -1,
+      redo: [],
+      pendingNotes: [],
       revision: 1,
       error: null,
       messages: [],
@@ -140,8 +197,80 @@ export class SessionStore {
     this.writes.delete(id);
     await rm(path.join(this.directory, `${id}.json`), { force: true });
     await rm(path.join(this.directory, `${id}.json.tmp`), { force: true });
+    await rm(path.join(this.checkpointDirectory, id), { recursive: true, force: true });
     for (const finish of [...(this.waiters.get(id) ?? [])]) finish();
     return true;
+  }
+
+  #checkpointFile(session, checkpointId) {
+    if (!CHECKPOINT_ID.test(checkpointId)) throw new Error("bad checkpoint id");
+    return path.join(this.checkpointDirectory, session.id, `${checkpointId}.json`);
+  }
+
+  /**
+   * 存一份整个工程的样子 snapshot（{ project: { name, canvas, tracks, markers }, grids }），记在 session.checkpoints 最后。
+   * 不存会话文件，调用方改完再 touch。超过上限删最旧的，记下删到了第几句，再往前就退不回去了。
+   */
+  async addCheckpoint(session, { kind, label, snapshot, messageIndex = session.messages.length }) {
+    const entry = { id: randomBytes(8).toString("hex"), kind, messageIndex, label, at: this.now().toISOString() };
+    const file = this.#checkpointFile(session, entry.id);
+    await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    await writeFile(`${file}.tmp`, JSON.stringify(snapshot), { mode: 0o600 });
+    await renameRetrying(`${file}.tmp`, file);
+    session.checkpoints.push(entry);
+    while (session.checkpoints.length > MAX_CHECKPOINTS) {
+      const oldest = session.checkpoints.shift();
+      session.checkpointsTrimmedAt = oldest.messageIndex;
+      await rm(this.#checkpointFile(session, oldest.id), { force: true });
+    }
+    return entry;
+  }
+
+  async readCheckpoint(session, checkpointId) {
+    return JSON.parse(await readFile(this.#checkpointFile(session, checkpointId), "utf8"));
+  }
+
+  async dropCheckpoint(session, checkpointId) {
+    session.checkpoints = session.checkpoints.filter((item) => item.id !== checkpointId);
+    await rm(this.#checkpointFile(session, checkpointId), { force: true });
+  }
+
+  /**
+   * 撤销时把撤掉那一步做完以后的样子 snapshot 推进重做栈，kind、label、messageIndex 是被撤的那份存档的。
+   * 读文件还是用 readCheckpoint。超过上限删最早推进去的（离现在最远的那步）。
+   */
+  async addRedo(session, { kind, label, messageIndex, snapshot }) {
+    const id = randomBytes(8).toString("hex");
+    const file = this.#checkpointFile(session, id);
+    await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    await writeFile(`${file}.tmp`, JSON.stringify(snapshot), { mode: 0o600 });
+    await renameRetrying(`${file}.tmp`, file);
+    return this.#pushRedo(session, { id, kind, label, messageIndex });
+  }
+
+  /** 一次撤好几步时，前面那步做完的样子就是后一步之前存的那份存档：文件不动，条目从存档挪进重做栈，记上前面那步的说法。 */
+  checkpointToRedo(session, checkpointId, { kind, label, messageIndex }) {
+    session.checkpoints = session.checkpoints.filter((item) => item.id !== checkpointId);
+    return this.#pushRedo(session, { id: checkpointId, kind, label, messageIndex });
+  }
+
+  async #pushRedo(session, { id, kind, label, messageIndex }) {
+    const entry = { id, kind, label, messageIndex, at: this.now().toISOString() };
+    session.redo.push(entry);
+    while (session.redo.length > MAX_CHECKPOINTS) await rm(this.#checkpointFile(session, session.redo.shift().id), { force: true });
+    return entry;
+  }
+
+  async dropRedo(session, redoId) {
+    session.redo = session.redo.filter((item) => item.id !== redoId);
+    await rm(this.#checkpointFile(session, redoId), { force: true });
+  }
+
+  /** 手动改了、换了比例、退回了或者 AI 改了工程：撤销掉的就不能再重做了，连文件删。 */
+  async clearRedo(session) {
+    const dropped = session.redo;
+    session.redo = [];
+    for (const item of dropped) await rm(this.#checkpointFile(session, item.id), { force: true });
   }
 
   /** 长轮询：revision 和 afterRevision 不同就立刻返回，否则最多等 timeoutMs；signal 断开时清理。 */
