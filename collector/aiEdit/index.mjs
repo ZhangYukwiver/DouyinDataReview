@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -10,6 +11,7 @@ import { MAX_TOOL_CALLS, parseEditConfig, runConversation, sealHistory, trimHist
 import { parseAttachments, describeAttachments } from "./attachments.mjs";
 import { runCliConversation } from "./cliTurn.mjs";
 import { EditError } from "./errors.mjs";
+import { createFilmStudio } from "./film/studio.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
 import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, revertTarget, sessionDetail } from "./sessions.mjs";
@@ -396,6 +398,7 @@ function titleFrom(text) {
 /**
  * dataDirectory：采集器根数据目录；getCollector()：当前采集器（切换账号时为 null）；busyReason()：采集器正忙时的说明；
  * getExplorer()：探索（参考视频搜抖音用，切换账号时为 null）；localAi：本机的 Codex / Claude Code（collector/localAi.mjs）。
+ * filmBrowser：把网页一帧帧画出来的浏览器（film/browser.mjs，桌面版是 Electron 的隐藏窗口）；getOrigin()：采集器自己的地址。
  * 测试可以注入 store / draftBox / probe / kindOf / fetchImpl。
  */
 export function createAiEdit({
@@ -404,6 +407,8 @@ export function createAiEdit({
   busyReason = () => null,
   getExplorer = () => null,
   localAi = null,
+  filmBrowser = null,
+  getOrigin = () => null,
   draftBox: injectedDraftBox,
   store: injectedStore,
   probe: injectedProbe,
@@ -419,6 +424,8 @@ export function createAiEdit({
   // 参考视频的解析结果，各会话共用（不进解析库）
   const references = new Map();
   const exporting = new Set();
+  // 导出工程、出 MP4、导入工程：会话 id → { controller, promise }
+  const outputs = new Map();
   let closing = false;
   let state = null;
 
@@ -443,7 +450,8 @@ export function createAiEdit({
     await sessions.load();
     // 素材导入完成或失败时叫醒各会话的长轮询，页面跟着刷新素材栏
     library.subscribe(() => { for (const session of sessions.sessions.values()) void sessions.touch(session, { quiet: true }); });
-    return { library, store, draftBox, sessions, looks: createLookDesk() };
+    const film = createFilmStudio({ root, library, provider: filmBrowser, getOrigin });
+    return { library, store, draftBox, sessions, looks: createLookDesk(), film };
   };
   let ready = null;
   const load = () => {
@@ -533,6 +541,38 @@ export function createAiEdit({
     }
   };
 
+  /** 给模型的网页片段工具：按工程画布渲；改透明与否换了新素材时，把时间线上的旧素材换掉。 */
+  const pageTools = (session, signal) => ({
+    read: (pageId) => state.film.pages.read(pageId),
+    write: async (args) => {
+      const { store, library } = state;
+      const project = await store.getProject(session.projectId);
+      const { width, height, fps } = project.canvas;
+      const result = await state.film.pages.write({
+        pageId: args.page_id ?? null, title: args.title, html: args.html, duration: args.duration ?? null,
+        width, height, transparent: args.transparent === true, fps, signal,
+      });
+      const target = library.filePath(library.get(result.item.id));
+      const old = result.replaced ? library.get(result.replaced) : null;
+      const segments = project.tracks.flatMap((track) => track.segments ?? []);
+      if (old) {
+        const oldPath = library.filePath(old);
+        for (const segment of segments.filter((item) => item.path === oldPath)) await store.updateSegment(session.projectId, segment.id, { path: target });
+        if (!(await mediaInUse(old))) await library.remove(old.id).catch(() => undefined);
+      }
+      const used = segments.filter((item) => item.path === target || (old && item.path === library.filePath(old)));
+      const longer = used.filter((item) => item.source && item.source.start_us + item.source.duration_us > result.duration * 1_000_000 + 1_000);
+      return {
+        media_id: result.item.id, page_id: result.pageId, duration: result.duration, size: `${result.item.width}×${result.item.height}`,
+        transparent: Boolean(result.item.source?.transparent),
+        ...(result.problems.length ? { problems: result.problems } : {}),
+        note: used.length
+          ? `时间线上有 ${used.length} 段用着它，已经换成新画面${longer.length ? `；其中 clip_id ${longer.map((item) => item.id).join("、")} 比新时长长，用 update_clip 缩短` : ""}。`
+          : "还没放上时间线：用 add_media_clip 放进视频轨道（叠在视频上就放在更上层的轨道）。",
+      };
+    },
+  });
+
   const runTurn = async (session, config, signal, release = () => undefined, turn = {}) => {
     const { store, library, sessions } = state;
     const streaming = session.streaming;
@@ -562,6 +602,7 @@ export function createAiEdit({
       offerLookFile: (file) => state.looks.offerFile(file),
       exportDraft: (mode) => exportSession(session, { mode }),
       onRename: (name) => { session.title = name; },
+      pages: pageTools(session, signal),
       // arrange_grid 排过的格子记在会话上（跟着会话存盘），换画布时按新画布重排
       grids: session.grids,
     });
@@ -686,6 +727,7 @@ export function createAiEdit({
   const lockEdit = (id) => {
     if (running.has(id)) throw new AiEditError("session_busy", "AI 正在剪，等它做完再改。", 409);
     if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
+    if (outputs.has(id)) throw new AiEditError("session_busy", "正在导出或导入工程，请稍等。", 409);
     if (editing.has(id)) throw new AiEditError("session_busy", "上一个改动还没做完，请稍等。", 409);
     editing.add(id);
     return () => editing.delete(id);
@@ -732,6 +774,68 @@ export function createAiEdit({
     for (const key of Object.keys(session.grids)) delete session.grids[key];
     Object.assign(session.grids, structuredClone(snapshot.grids ?? {}));
     if (typeof restored?.name === "string") session.title = restored.name;
+  };
+
+  /**
+   * 后台活儿：出 MP4（mp4）、导出 film.html 工程包（film）、把导入的工程排上时间线（import）。
+   * 进度和结果挂在 session.output，页面长轮询看到；成品在 renders/ 下，用 film 地址下载。
+   */
+  const runOutput = (session, kind, work) => {
+    const controller = new AbortController();
+    let lastTouch = 0;
+    const progress = (share) => {
+      session.output = { ...session.output, progress: Math.min(1, Math.max(0, share)) };
+      if (Date.now() - lastTouch > 400) { lastTouch = Date.now(); void state.sessions.touch(session, { quiet: true }); }
+    };
+    session.output = { kind, state: "running", progress: 0, startedAt: now().toISOString() };
+    const promise = (async () => {
+      try {
+        const done = await work({ signal: controller.signal, progress });
+        session.output = { kind, state: "done", progress: 1, finishedAt: now().toISOString(), ...done };
+      } catch (error) {
+        const cancelled = controller.signal.aborted;
+        if (!cancelled && !(error instanceof AiEditError)) console.error("AI 剪辑导出出错:", error);
+        session.output = {
+          kind, state: cancelled ? "cancelled" : "failed",
+          ...(cancelled ? {} : { error: error instanceof AiEditError ? error.message : `没做完：${String(error?.message ?? error).slice(0, 200)}` }),
+        };
+      } finally {
+        outputs.delete(session.id);
+        await state.sessions.touch(session, { quiet: true });
+      }
+    })();
+    outputs.set(session.id, { controller, promise });
+    void state.sessions.touch(session, { quiet: true });
+  };
+
+  const startOutput = async (session, kind) => {
+    const { store, film } = state;
+    const id = session.id;
+    if (running.has(id)) throw new AiEditError("session_busy", "AI 还在改时间线，等它做完再导出。", 409);
+    if (exporting.has(id) || editing.has(id)) throw new AiEditError("session_busy", "上一个操作还没做完，请稍等。", 409);
+    if (outputs.has(id)) throw new AiEditError("session_busy", "正在导出，请稍等。", 409);
+    const project = await store.getProject(session.projectId);
+    if (!project.tracks.some((track) => track.segments?.length)) throw new AiEditError("project_empty", "时间线还是空的，先放点素材再导出。", 422);
+    if (kind === "mp4") {
+      runOutput(session, kind, async ({ signal, progress }) => {
+        const result = await film.renderMp4(id, project, { signal, onProgress: progress });
+        const note = [result.dropped, result.silent ? "声音没混进去（这个浏览器编不了 AAC）。" : ""].filter(Boolean).join("");
+        return { file: `renders/${id}/${result.name}`, name: result.name, size: result.size, ...(note ? { note } : {}) };
+      });
+      return;
+    }
+    runOutput(session, kind, async ({ signal }) => {
+      const folder = path.join(root, "renders", `${id}-film`);
+      await rm(folder, { recursive: true, force: true });
+      await mkdir(folder, { recursive: true, mode: 0o700 });
+      const name = `${String(project.name).replace(/[\\/:*?"<>|\u0000-\u001f]/gu, " ").trim().slice(0, 60) || DEFAULT_TITLE}.zip`;
+      const file = path.join(folder, name);
+      const out = createWriteStream(file, { mode: 0o600 });
+      let note;
+      try { note = await film.exportZip(project, out, { signal }); }
+      catch (error) { out.destroy(); await rm(file, { force: true }); throw error; }
+      return { file: `renders/${id}-film/${name}`, name, size: (await stat(file)).size, ...(note ? { note } : {}) };
+    });
   };
 
   const stopRun = async (id, timeoutMs = 5_000) => {
@@ -822,7 +926,7 @@ export function createAiEdit({
       return;
     }
 
-    const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export|goal|canvas|edit|undo|redo|revert))?$/u);
+    const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export|goal|canvas|edit|undo|redo|revert|output))?$/u);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
       if (!isSessionId(id)) throw new AiEditError("session_not_found", "这个剪辑不存在或已经删除了。", 404);
@@ -845,6 +949,9 @@ export function createAiEdit({
       if (!action && method === "DELETE") {
         const session = requireSession(id);
         await stopRun(id);
+        const job = outputs.get(id);
+        job?.controller.abort();
+        await job?.promise;
         await sessions.remove(id);
         try { await store.deleteProject(session.projectId); } catch { /* 工程已经没了 */ }
         sendJson(response, 200, { ok: true });
@@ -866,6 +973,7 @@ export function createAiEdit({
         if (running.has(id)) throw new AiEditError("session_busy", "AI 还在处理上一条，等它做完或先停止。", 409);
         if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
         if (editing.has(id)) throw new AiEditError("session_busy", "看板上的改动还没做完，请稍等。", 409);
+        if (outputs.has(id)) throw new AiEditError("session_busy", "正在导出或导入工程，等它做完再说。", 409);
         await startTurn(session, text, config, { region, refs, attachments });
         sendJson(response, 202, { session: sessionDetail(session) });
         return;
@@ -1077,6 +1185,18 @@ export function createAiEdit({
         }
         return;
       }
+      if (action === "output") {
+        // { kind: "mp4" } 出片、{ kind: "film" } 导出 film.html 工程包、{ kind: "cancel" } 停下正在做的
+        const body = await readJson(request, BODY_BYTES);
+        const session = requireSession(id);
+        if (body.kind === "cancel") outputs.get(id)?.controller.abort();
+        else if (body.kind === "dismiss") { if (!outputs.has(id)) session.output = null; }
+        else if (body.kind === "mp4" || body.kind === "film") await startOutput(session, body.kind);
+        else throw new AiEditError("invalid_request", "导出方式不对，请重试。", 422);
+        await sessions.touch(session, { quiet: true });
+        sendJson(response, 200, { session: sessionDetail(session) });
+        return;
+      }
       if (action === "stop") {
         await readJson(request, BODY_BYTES);
         const session = requireSession(id);
@@ -1107,7 +1227,36 @@ export function createAiEdit({
 
     if (pathname === "/v1/ai-edit/media") {
       if (method !== "GET") { notAllowed(); return; }
-      sendJson(response, 200, { media: library.list(), key: library.key });
+      sendJson(response, 200, { media: library.list(), key: library.key, filmKey: state.film.files.key });
+      return;
+    }
+    // 导入 openfilm 工程（film.html 所在文件夹打的 zip）：解开、建一个新剪辑，在后台把片段排上时间线
+    if (pathname === "/v1/ai-edit/film-import") {
+      if (method !== "POST") { notAllowed(); return; }
+      let received;
+      try { received = await state.film.receiveZip(request); }
+      catch (error) {
+        if (!request.complete) response.setHeader("Connection", "close");
+        throw error;
+      }
+      const name = String(url.searchParams.get("name") ?? "").replace(/\.zip$/iu, "").trim().slice(0, 60) || "导入的工程";
+      let project;
+      try {
+        project = await store.createProject({ name, canvas: { ...received.canvas, fps: DEFAULT_CANVAS.fps } });
+      } catch (error) {
+        await rm(received.folder, { recursive: true, force: true }).catch(() => undefined);
+        if (error instanceof EditError) throw new AiEditError("invalid_canvas", "工程的画面尺寸太大或太小了（要 16 到 7680 像素）。", 422);
+        throw error;
+      }
+      const session = await sessions.create({ title: name, projectId: project.id });
+      runOutput(session, "import", async ({ signal, progress }) => {
+        const { added, skipped } = await state.film.applyPlan(store, project.id, received, {
+          fps: DEFAULT_CANVAS.fps, signal, onStep: (done, total) => progress(total ? done / total : 1),
+        });
+        const notes = Object.entries(skipped).map(([what, count]) => `${what} ${count} 处`);
+        return { added, ...(notes.length ? { note: `${notes.join("、")}没导进来。` } : {}) };
+      });
+      sendJson(response, 201, await sessionState(session));
       return;
     }
     if (pathname === "/v1/ai-edit/media/douyin") {
@@ -1148,14 +1297,17 @@ export function createAiEdit({
       if (!url.pathname.startsWith("/v1/ai-edit/")) return false;
       const fileMatch = url.pathname.match(/^\/v1\/ai-edit\/media\/([^/]+)\/file$/u);
       const lookFileMatch = url.pathname.match(/^\/v1\/ai-edit\/look\/([^/]+)\/file$/u);
-      if (!paired && !((fileMatch || lookFileMatch) && request.method === "GET")) return false;
+      // 网页片段、film.html 和出好的片子：地址里带 key，看板的 iframe 和渲染浏览器不用配对
+      const filmFile = url.pathname.startsWith("/v1/ai-edit/film/");
+      if (!paired && !filmFile && !((fileMatch || lookFileMatch) && request.method === "GET")) return false;
       try {
         try { state ??= await load(); }
         catch (error) {
           console.error("AI 剪辑没能启动:", error);
           throw new AiEditError("ai_edit_unavailable", "AI 剪辑没能启动，请重启应用。", 503);
         }
-        if (fileMatch && request.method === "GET") await handleMediaFile(request, response, fileMatch[1], url);
+        if (filmFile) { if (!(await state.film.files.handle(request, response, url))) sendJson(response, 404, { error: "not_found" }); }
+        else if (fileMatch && request.method === "GET") await handleMediaFile(request, response, fileMatch[1], url);
         else if (lookFileMatch && request.method === "GET") {
           // 和素材文件同一把 key：key 不对和地址失效回一样的结果
           if (state.library.checkKey(url.searchParams.get("key"))) await state.looks.sendFile(request, response, lookFileMatch[1]);
@@ -1174,8 +1326,10 @@ export function createAiEdit({
       state.library.close();
       state.looks.close();
       for (const run of running.values()) run.controller.abort();
+      for (const job of outputs.values()) job.controller.abort();
       state.sessions.wakeAll();
-      await Promise.race([Promise.allSettled([...running.values()].map((run) => run.promise)), delay(3_000)]);
+      await Promise.race([Promise.allSettled([...running.values(), ...outputs.values()].map((run) => run.promise)), delay(3_000)]);
+      await filmBrowser?.close?.().catch(() => undefined);
       await state.sessions.flush();
     },
   };

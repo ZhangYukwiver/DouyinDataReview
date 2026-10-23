@@ -141,9 +141,25 @@ const EDIT_METHODS = [
 ];
 
 describe("AI edit tools", () => {
+  it("hands web pages to the host and reports what came back", async () => {
+    const written = [];
+    const pages = {
+      write: async (args) => { written.push(args); return { media_id: "m".repeat(32), page_id: "a".repeat(16), duration: 3, problems: ["第 1.5 秒的画面重画一次就不一样"] }; },
+      read: async (id) => `<html>${id}</html>`,
+    };
+    const { run } = runnerWith({ pages });
+    const html = "<script>window.film={duration:3,frame(t){}}</script>";
+    const { result, action } = await run("write_page", JSON.stringify({ title: "开场", html, transparent: true }));
+    expect(written).toEqual([{ title: "开场", html, transparent: true }]);
+    expect(result).toMatchObject({ ok: true, media_id: "m".repeat(32), page_id: "a".repeat(16), problems: ["第 1.5 秒的画面重画一次就不一样"] });
+    expect(action).toMatchObject({ ok: true, summary: "写了网页片段「开场」" });
+    expect((await run("read_page", JSON.stringify({ page_id: "b".repeat(16) }))).result).toEqual({ ok: true, html: `<html>${"b".repeat(16)}</html>` });
+    expect((await run("write_page", JSON.stringify({ title: "缺内容" }))).result).toMatchObject({ ok: false, code: "arguments_invalid" });
+  });
+
   it("cover every ProjectStore edit method and convert seconds and media ids", async () => {
     const { run, calls } = runnerWith();
-    const offline = new Set(["search_my_records", "import_douyin_video", "search_douyin", "analyze_reference", "detect_beats"]);
+    const offline = new Set(["search_my_records", "import_douyin_video", "search_douyin", "analyze_reference", "detect_beats", "write_page", "read_page"]);
     expect(TOOL_NAMES.filter((name) => !offline.has(name)).sort()).toEqual(Object.keys(SAMPLE_ARGS).sort());
     for (const [name, args] of Object.entries(SAMPLE_ARGS)) {
       const { result, action } = await run(name, JSON.stringify(args));

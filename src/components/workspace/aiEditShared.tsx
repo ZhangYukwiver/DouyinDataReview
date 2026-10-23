@@ -23,7 +23,7 @@ export const CANVASES: Array<{ label: string; canvas: EditCanvas }> = [
 export const CANVAS_OPTIONS = CANVASES.map(({ label }) => ({ label: label.split(" ")[0]!, value: label }));
 export const canvasPreset = (canvas: EditCanvas) => CANVASES.find((item) => item.canvas.width === canvas.width && item.canvas.height === canvas.height)?.label ?? null;
 
-export const mediaTitle = (item: AiEditMediaItem) => (item.source.type === "douyin" && item.source.title) || item.name.replace(/\.[^.]+$/u, "");
+export const mediaTitle = (item: AiEditMediaItem) => (item.source.type === "page" ? `网页 · ${item.name}` : (item.source.type === "douyin" && item.source.title) || item.name.replace(/\.[^.]+$/u, ""));
 
 export function shortTime(value: string | null | undefined): string {
   const time = value ? Date.parse(value) : Number.NaN;

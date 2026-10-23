@@ -4,7 +4,7 @@ import { Check, ChevronDown, Clock, Film, FolderOpen, ImageIcon, ImagePlus, Libr
 import type { PersonalRecordCollection, PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import {
-  aiConfigReady, aiEditLookUrl, aiEditMediaUrl, aiRuntimeOf, answerAiEditLook, isLocalAiRuntime, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
+  aiConfigReady, aiEditFilmUrl, aiEditLookUrl, aiEditMediaUrl, aiRuntimeOf, importAiEditFilm, startAiEditOutput, answerAiEditLook, isLocalAiRuntime, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
   importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, revertAiEdit, saveAiEditConfig, sendAiEditMessage, sessionRunning,
   setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey, MAX_MESSAGE_ATTACHMENTS, MAX_MESSAGE_REFS,
   type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditExportMode, type AiEditMediaItem,
@@ -91,6 +91,10 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const [state, setState] = useState<AiEditSessionState | null>(null);
   const [media, setMedia] = useState<AiEditMediaItem[]>([]);
   const [mediaKey, setMediaKey] = useState("");
+  // 网页片段、film.html 和做好的文件的地址 key（采集器每次启动换一个）
+  const [filmKey, setFilmKey] = useState("");
+  // 正在上传的 openfilm 工程包：上传进度（0–1）；没在传是 null
+  const [filmUpload, setFilmUpload] = useState<number | null>(null);
   const uploads = useSyncExternalStore(uploadQueue.subscribe, uploadQueue.getSnapshot);
   const [config, setConfig] = useState<AiEditConfig>(loadAiEditConfig);
   const [configOpen, setConfigOpen] = useState(() => !aiConfigReady(loadAiEditConfig()));
@@ -124,6 +128,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const mediaUrl = useCallback((id: string) => (baseUrl && mediaKey ? aiEditMediaUrl(baseUrl, id, mediaKey) : null), [baseUrl, mediaKey]);
+  const filmUrl = useCallback((path: string, download = false) => (baseUrl && filmKey ? aiEditFilmUrl(baseUrl, filmKey, path, download) : null), [baseUrl, filmKey]);
 
   const session = state?.session.id === currentId ? state.session : null;
   const project = state?.session.id === currentId ? state.project : null;
@@ -263,6 +268,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       const value = await listAiEditMedia(conn);
       setMedia(value.media);
       if (value.key) setMediaKey(value.key);
+      if (value.filmKey) setFilmKey(value.filmKey);
     } catch (reason) {
       setError(errorText(reason, "素材库没读到，请稍后重试。"));
     }
@@ -316,6 +322,37 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     } catch (reason) {
       setError(errorText(reason, "没能新建剪辑，请稍后重试。"));
       return null;
+    }
+  };
+
+  /** 导入 openfilm 工程（film.html 所在文件夹打的 zip）：采集器建一个新剪辑，片段在后台排上时间线 */
+  const importFilm = async (file: File) => {
+    if (!conn || filmUpload !== null) return;
+    setMenuOpen(false);
+    setError(null);
+    setFilmUpload(0);
+    try {
+      const created = await importAiEditFilm(conn, file, (ratio) => setFilmUpload(ratio));
+      setState(created);
+      setSessions((list) => [summaryOf(created.session), ...list.filter((item) => item.id !== created.session.id)]);
+      setCurrentId(created.session.id);
+      void loadMedia();
+    } catch (reason) {
+      setError(errorText(reason, "工程没导进来，请稍后重试。"));
+    } finally {
+      setFilmUpload(null);
+    }
+  };
+
+  /** 出 MP4、导出 film.html 工程包、停下、收起结果；进度跟着会话长轮询回来 */
+  const output = async (kind: "mp4" | "film" | "cancel" | "dismiss") => {
+    if (!conn || !currentId) return;
+    const id = currentId;
+    try {
+      const next = await startAiEditOutput(conn, id, kind);
+      setState((current) => (current && current.session.id === id ? { ...current, session: next } : current));
+    } catch (reason) {
+      setError(errorText(reason, kind === "mp4" ? "没能开始出片，请稍后重试。" : "没能开始导出工程，请稍后重试。"));
     }
   };
 
@@ -622,12 +659,17 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       onToggleConfig={() => setConfigOpen((value) => !value)}
     />
   </View>;
+  const importingFilm = session?.output?.kind === "import" && session.output.state === "running";
 
   // 剪辑软件左上角那块：AI 对话一页、素材一页；点素材把它引用到对话里并回到对话
   const side = <View ref={sideRef} {...areaProps("outside", "e-box", "ai-panel", "ai-left")} style={[styles.left, { width: leftWidth }]}>
     {configOpen ? null : <View style={styles.tabs}>
       <Segmented small value={leftTab} onChange={setLeftTab} options={[{ label: "AI 对话", value: "chat" }, { label: media.length ? `素材 ${media.length}` : "素材", value: "media" }]} />
     </View>}
+    {filmUpload !== null || importingFilm ? <View accessibilityLiveRegion="polite" style={styles.noticeBar}>
+      <ActivityIndicator size="small" color={color.textMuted} />
+      <Text style={styles.noticeText}>{filmUpload !== null ? `正在上传工程 ${Math.round(filmUpload * 100)}%` : `正在把工程里的片段排上时间线 ${Math.round((session?.output?.progress ?? 0) * 100)}%（网页要逐帧渲成视频，会慢一点）`}</Text>
+    </View> : null}
     {error ? <View accessibilityRole="alert" style={styles.errorBar}>
       <Text style={styles.errorText}>{error}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="关闭提示" hitSlop={8} onPress={() => setError(null)} style={webPointer}><X size={13} color={color.danger} /></Pressable>
@@ -674,7 +716,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     {dropping ? <View pointerEvents="none" style={styles.dropMask}>
       <Text style={styles.dropText}>{leftTab === "chat" && !configOpen ? "松开就加进这句话：图片会带给 AI 看，别的文件放进素材库并引用" : "松开就放进素材库"}</Text>
     </View> : null}
-    {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)} /> : null}
+    {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)}
+      onImport={filmUpload === null ? (file) => void importFilm(file) : undefined} /> : null}
   </View>;
 
   return <View testID="ai-edit-workspace" style={styles.root}>
@@ -696,6 +739,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       onRefer={refer}
       jump={jump}
       onExport={exportDraft}
+      onOutput={(kind) => void output(kind)}
+      filmUrl={filmUrl}
       onDismissConflict={() => {
         if (currentId) setExportConflicts((all) => { const next = { ...all }; delete next[currentId]; return next; });
       }}
@@ -787,10 +832,13 @@ function GoalBar({ sessionId, goal, onSave }: { sessionId: string | null; goal: 
   </Pressable>;
 }
 
-function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove }: {
+function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove, onImport }: {
   sessions: AiEditSessionSummary[]; currentId: string | null; onPick: (id: string) => void; onCreate: (canvas: EditCanvas) => void; onRemove: (id: string) => void;
+  /** 导入 openfilm 工程包；正在上传时没有 */
+  onImport?: (file: File) => void;
 }) {
   const [confirm, setConfirm] = useState<string | null>(null);
+  const pickRef = useRef<HTMLInputElement | null>(null);
   return <View {...ws("e-box", "ai-float")} style={styles.menu}>
     <ScrollView style={styles.menuList} contentContainerStyle={{ paddingVertical: 4 }}>
       {sessions.length ? sessions.map((item) => {
@@ -813,6 +861,16 @@ function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove }: {
       <Text style={kit.muted}>新建</Text>
       {CANVASES.map((item) => <Pressable key={item.label} {...ws("btn small")} accessibilityRole="button" onPress={() => onCreate(item.canvas)} style={[styles.chip, webPointer]}><Text style={styles.chipText}>{item.label}</Text></Pressable>)}
     </View>
+    {web ? <View style={styles.menuFoot}>
+      <Pressable {...ws("btn small")} accessibilityRole="button" accessibilityLabel="导入 openfilm 工程" disabled={!onImport} onPress={() => pickRef.current?.click()}
+        style={[styles.chip, !onImport && { opacity: 0.45 }, webPointer]}>
+        <FolderOpen size={13} color={color.text} />
+        <Text style={styles.chipText}>导入 openfilm 工程</Text>
+      </Pressable>
+      <Text numberOfLines={2} style={[kit.muted, { flex: 1 }]}>选 film.html 所在文件夹打的 .zip</Text>
+      <input ref={pickRef} type="file" accept=".zip,application/zip" style={{ display: "none" }}
+        onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file && onImport) onImport(file); }} />
+    </View> : null}
     <Text style={[kit.muted, styles.menuNote]}>删除只删这里的对话和时间线，已经放进剪映的草稿不受影响。</Text>
   </View>;
 }
@@ -1310,6 +1368,8 @@ const styles = StyleSheet.create({
   left: { minHeight: 0, overflow: "hidden", borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
   tabs: { flexDirection: "row", paddingHorizontal: 10, paddingTop: 10, paddingBottom: 6 },
   sessionBar: { flexDirection: "row", alignItems: "center", gap: 6 },
+  noticeBar: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8 },
+  noticeText: { flex: 1, color: color.textMuted, fontFamily: font.body, fontSize: 12, lineHeight: 17 },
   sessionPick: { flex: 1, minWidth: 0, minHeight: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, borderRadius: radius.small },
   sessionTitle: { flexShrink: 1, color: color.text, fontFamily: font.body, fontSize: 14, fontWeight: "600" },
   iconButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },

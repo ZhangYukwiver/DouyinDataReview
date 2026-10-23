@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
-import { FolderInput } from "lucide-react-native";
+import { Download, FolderInput, X } from "lucide-react-native";
 import {
   editAiEditClip, editAiEditClips, redoAiEdit, setAiEditCanvas, undoAiEdit,
   type AiEditDraftBoxStatus, type AiEditExportMode, type AiEditMediaItem, type AiEditSession, type EditCanvas, type EditProject, type EditSegment,
@@ -16,6 +16,7 @@ import {
 import { IN_FLIGHT_REASON, lastingReason, redoneText, undoneText } from "./aiEditInspect";
 import { composing, inMenuOrDialog, readBoardKey, typingInto } from "./aiEditKeymap";
 import { ClipCard } from "./AiEditClipCard";
+import { useContextMenu } from "./AiEditMenu";
 import { HistoryControls } from "./AiEditHistory";
 import { PlayerBar, Stage } from "./AiEditStage";
 import { Timeline, timelineHeight } from "./AiEditTimeline";
@@ -61,6 +62,9 @@ export interface BoardProps {
   onExport: (mode?: AiEditExportMode) => boolean;
   /** 草稿被改过时选了取消 */
   onDismissConflict: () => void;
+  /** 出 MP4、导出 openfilm 工程（film.html）、停下、收起结果 */
+  onOutput: (kind: "mp4" | "film" | "cancel" | "dismiss") => void;
+  filmUrl: (path: string, download?: boolean) => string | null;
   /** 顶栏最左边：剪辑切换（页面给），宽度和左边面板对齐 */
   headStart?: React.ReactNode;
   /** 中间一排最左边的面板：AI 对话和素材（页面给） */
@@ -74,7 +78,7 @@ const INSPECTOR = 272;
 const ROOMY = 640;
 
 export function Board(props: BoardProps) {
-  const { session, project, media, mediaUrl, draftBox, exporting, exportNote, exportConflict, running, editable, notEditableReason, region, onDismissConflict, headStart, side, sideWidth = 0 } = props;
+  const { session, project, media, mediaUrl, filmUrl, draftBox, exporting, exportNote, exportConflict, running, editable, notEditableReason, region, onDismissConflict, headStart, side, sideWidth = 0 } = props;
   const duration = projectDuration(project);
   const canvas = project?.canvas ?? DEFAULT_CANVAS;
   const frameUs = US_PER_SECOND / (canvas.fps > 0 ? canvas.fps : 30);
@@ -375,10 +379,10 @@ export function Board(props: BoardProps) {
   const playbackApi = useMemo<BoardPlayback>(() => ({ playing: playback.playing, timeRef: playback.timeRef, toggle: playback.toggle, seek: playback.seek, pause: playback.pause }),
     [playback.playing, playback.timeRef, playback.toggle, playback.seek, playback.pause]);
   const value = useMemo<BoardContextValue>(() => ({
-    session, project, canvas, frameUs, duration, mediaById, mediaUrl, running, editable, notEditableReason, playback: playbackApi, selection, selected, splitHint, callName,
+    session, project, canvas, frameUs, duration, mediaById, mediaUrl, filmUrl, running, editable, notEditableReason, playback: playbackApi, selection, selected, splitHint, callName,
     expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushHeld: flushPending, selectAll, refer, revealSeq, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
     lastPointerArea,
-  }), [session, project, canvas, frameUs, duration, mediaById, mediaUrl, running, editable, notEditableReason, playbackApi, selection, selected, splitHint, callName,
+  }), [session, project, canvas, frameUs, duration, mediaById, mediaUrl, filmUrl, running, editable, notEditableReason, playbackApi, selection, selected, splitHint, callName,
     expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushPending, selectAll, refer, revealSeq, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
     lastPointerArea]);
 
@@ -388,6 +392,17 @@ export function Board(props: BoardProps) {
   // 上一个改动还在路上不置灰：点了先 flush，等它回来再导
   const exportBlocked = !project || !duration ? "时间线还是空的，先让 AI 剪一版" : lastingReason(notEditableReason);
   const conflictBlocked = Boolean(lastingReason(notEditableReason));
+  const output = session?.output ?? null;
+  const outputBlocked = exportBlocked ?? (output?.state === "running" ? "上一个导出还没做完" : null);
+  const outputMenu = useContextMenu();
+  const openOutputMenu = (event: { nativeEvent: unknown }) => {
+    const target = (event.nativeEvent as { target?: Element } | null)?.target;
+    const rect = target?.closest?.("[data-output-menu]")?.getBoundingClientRect();
+    outputMenu.open(rect ? { x: rect.left, y: rect.bottom + 4 } : { x: 0, y: 0 }, [
+      { id: "mp4", label: "导出成 MP4（不经剪映，在本机直接出片）", icon: <Download size={14} color={color.text} />, disabled: outputBlocked, onSelect: () => props.onOutput("mp4") },
+      { id: "film", label: "导出 openfilm 工程（film.html，打成 zip）", icon: <FolderInput size={14} color={color.text} />, disabled: outputBlocked, onSelect: () => props.onOutput("film") },
+    ]);
+  };
   const status = exporting ? { tone: "muted" as const, text: "正在写进剪映草稿箱…" }
     : exportNote ? { tone: exportNote.tone, text: exportNote.text }
       : draftBox?.status === "unavailable" ? { tone: "warn" as const, text: draftBoxReasonText(draftBox.reason) }
@@ -413,6 +428,24 @@ export function Board(props: BoardProps) {
               </View>
             </WebTitle> : null}
             <HistoryControls />
+            {output && output.kind !== "import" ? <OutputChip output={output} filmUrl={filmUrl} onOutput={props.onOutput} /> : null}
+            {web ? <WebTitle title={outputBlocked ?? "不经剪映直接出 MP4，或者导出成 openfilm 工程"}>
+              <div data-output-menu="" style={{ flexShrink: 0 }}>
+                <Pressable
+                  {...ws("btn")}
+                  accessibilityRole="button"
+                  accessibilityLabel="导出"
+                  accessibilityState={{ expanded: outputMenu.isOpen }}
+                  {...pressableDisabled(outputBlocked)}
+                  onPress={(event) => { if (!outputBlocked) openOutputMenu(event); }}
+                  style={[styles.outputButton, outputBlocked ? styles.disabled : webPointer]}
+                >
+                  <Download size={15} color={color.text} />
+                  <Text numberOfLines={1} style={styles.outputText}>导出</Text>
+                </Pressable>
+              </div>
+            </WebTitle> : null}
+            {outputMenu.element}
             <WebTitle title={exportBlocked ?? "放进剪映草稿箱，在剪映里接着精修、导出"}>
               <Pressable
                 {...ws("btn-solid")}
@@ -455,6 +488,40 @@ export function Board(props: BoardProps) {
       </BoardTimeContext.Provider>
     </BoardRegistryContext.Provider>
   </BoardContext.Provider>;
+}
+
+const OUTPUT_NAMES = { mp4: "出片", film: "导出工程", import: "导入工程" } as const;
+
+/** 顶栏上导出的进度和结果：做着显示百分比和停止；做好了给下载链接，没带过去的东西写在悬停提示里 */
+function OutputChip({ output, filmUrl, onOutput }: {
+  output: NonNullable<AiEditSession["output"]>; filmUrl: (path: string, download?: boolean) => string | null; onOutput: (kind: "cancel" | "dismiss") => void;
+}) {
+  const name = OUTPUT_NAMES[output.kind];
+  const close = <Pressable accessibilityRole="button" accessibilityLabel="收起" hitSlop={6} onPress={() => onOutput("dismiss")} style={webPointer}><X size={13} color={color.textMuted} /></Pressable>;
+  if (output.state === "running") {
+    return <View style={styles.outputChip} accessibilityLiveRegion="polite">
+      <ActivityIndicator size="small" color={color.textMuted} />
+      <Text style={styles.outputChipText}>{name}中 {Math.round((output.progress ?? 0) * 100)}%</Text>
+      <Pressable accessibilityRole="button" onPress={() => onOutput("cancel")} style={webPointer}><Text style={styles.outputLink}>停止</Text></Pressable>
+    </View>;
+  }
+  if (output.state === "done" && output.file) {
+    const href = filmUrl(output.file, true);
+    const size = output.size ? `${Math.max(0.1, Math.round(output.size / 1024 / 1024 * 10) / 10)}MB` : "";
+    return <WebTitle title={[`「${output.name}」${size ? `，${size}` : ""}`, output.note].filter(Boolean).join("\n")}>
+      <View style={[styles.outputChip, styles.outputDone]}>
+        <Text numberOfLines={1} style={[styles.outputChipText, { color: color.green }]}>{output.kind === "mp4" ? "片子出好了" : "工程包好了"}{output.note ? "（有没带过去的）" : ""}</Text>
+        {href && web ? <a href={href} download={output.name} style={{ color: color.accent, fontFamily: font.body, fontSize: 12, fontWeight: 600, textDecoration: "none" }}>下载</a> : null}
+        {close}
+      </View>
+    </WebTitle>;
+  }
+  return <WebTitle title={output.error ?? ""}>
+    <View style={styles.outputChip}>
+      <Text numberOfLines={1} style={[styles.outputChipText, output.state === "failed" && { color: color.danger }]}>{output.state === "cancelled" ? `${name}停了` : `${name}没成功：${output.error ?? "原因不明"}`}</Text>
+      {close}
+    </View>
+  </WebTitle>;
 }
 
 /** 没选片段时属性面板里放草稿参数，和剪辑软件一样；剪映草稿的状态也在这儿说全 */
@@ -550,6 +617,12 @@ const styles = StyleSheet.create({
   conflictText: { color: color.text, fontFamily: font.body, fontSize: 12, lineHeight: 18 },
   conflictActions: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
   conflictPrimary: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, height: 30, borderRadius: radius.small, backgroundColor: color.button },
+  outputButton: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0, paddingHorizontal: 11, height: 34, borderRadius: radius.small, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface },
+  outputText: { color: color.text, fontFamily: font.body, fontSize: 12.5, fontWeight: "600" },
+  outputChip: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, maxWidth: 260, height: 28, paddingHorizontal: 9, borderRadius: radius.small, borderWidth: 1, borderColor: color.border, backgroundColor: color.surface },
+  outputDone: { borderColor: color.green },
+  outputChipText: { flexShrink: 1, color: color.text, fontFamily: font.body, fontSize: 12 },
+  outputLink: { color: color.accent, fontFamily: font.body, fontSize: 12, fontWeight: "600" },
   exportButton: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 13, height: 34, borderRadius: radius.small, backgroundColor: color.button },
   exportText: { color: color.buttonText, fontFamily: font.body, fontSize: 12.5, fontWeight: "600" },
   disabled: { opacity: 0.45 },

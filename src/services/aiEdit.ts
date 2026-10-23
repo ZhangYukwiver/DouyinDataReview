@@ -241,6 +241,8 @@ export interface AiEditSession extends AiEditSessionSummary {
   revertible?: string[];
   /** 对话太长，更早的几轮已经没整段带给 AI（只附上了用户当时的原话） */
   trimmed?: boolean;
+  /** 导出 MP4、导出工程、导入工程的进度和结果；采集器重启后没有 */
+  output?: AiEditOutput | null;
 }
 
 /** 一步存档是什么：AI 剪的一整轮、看板上的手动改动（含换画面比例）、退回到某句话之前 */
@@ -267,7 +269,27 @@ export interface AiEditMediaItem {
   hasAudio: boolean;
   size: number | null;
   createdAt: string;
-  source: { type: "douyin" | "local"; url?: string; videoId?: string; title?: string; author?: string; cover?: string };
+  /** page：AI 写的网页片段或导入工程里的网页（openfilm 的页面），page 是它的 HTML 在采集器 pages/ 下的路径 */
+  source: { type: "douyin" | "local" | "page"; url?: string; videoId?: string; title?: string; author?: string; cover?: string; page?: string; pageId?: string; transparent?: boolean; renderedAt?: number };
+}
+
+/** 素材是网页片段时回它的 HTML 路径（采集器 pages/ 下），不是回 null。 */
+export const pageOf = (item: Pick<AiEditMediaItem, "source"> | null | undefined): string | null =>
+  item?.source.type === "page" && typeof item.source.page === "string" ? item.source.page : null;
+
+/** 导出成 MP4（mp4）、导出 film.html 工程包（film）、导入工程排时间线（import）的进度和结果 */
+export interface AiEditOutput {
+  kind: "mp4" | "film" | "import";
+  state: "running" | "done" | "failed" | "cancelled";
+  progress?: number;
+  /** 做好的文件在采集器 renders/ 下的路径，用 aiEditFilmUrl 拼下载地址 */
+  file?: string;
+  name?: string;
+  size?: number;
+  /** 没带过去 / 没导进来的东西 */
+  note?: string;
+  error?: string;
+  added?: number;
 }
 
 export interface AiEditDraftBoxStatus { status: "available" | "unavailable"; reason: string | null; platform: string; jianyingRunning: boolean }
@@ -454,9 +476,19 @@ export async function answerAiEditLook(connection: ExploreConnection, sessionId:
   await request(connection, `${sessionPath(sessionId)}/look/${encodeURIComponent(lookId)}`, { method: "POST", body: JSON.stringify(body), timeoutMs: 60_000 });
 }
 
-export async function listAiEditMedia(connection: ExploreConnection): Promise<{ media: AiEditMediaItem[]; key: string }> {
+export async function listAiEditMedia(connection: ExploreConnection): Promise<{ media: AiEditMediaItem[]; key: string; filmKey: string }> {
   const value = await request(connection, "/v1/ai-edit/media");
-  return { media: Array.isArray(value?.media) ? value.media : [], key: typeof value?.key === "string" ? value.key : "" };
+  return { media: Array.isArray(value?.media) ? value.media : [], key: typeof value?.key === "string" ? value.key : "", filmKey: typeof value?.filmKey === "string" ? value.filmKey : "" };
+}
+
+/** 出 MP4、导出 film.html 工程包；cancel 停下正在做的，dismiss 收起做完的结果。 */
+export async function startAiEditOutput(connection: ExploreConnection, id: string, kind: "mp4" | "film" | "cancel" | "dismiss"): Promise<AiEditSession> {
+  return (await request(connection, `/v1/ai-edit/sessions/${encodeURIComponent(id)}/output`, { method: "POST", body: JSON.stringify({ kind }) })).session;
+}
+
+/** 网页片段、film.html 和做好的文件的地址：key 在路径里，iframe 和下载链接直接用。 */
+export function aiEditFilmUrl(baseUrl: string, filmKey: string, path: string, download = false): string {
+  return `${normalizeCollectorBaseUrl(baseUrl)}/v1/ai-edit/film/${encodeURIComponent(filmKey)}/${path.split("/").map(encodeURIComponent).join("/")}${download ? "?download=1" : ""}`;
 }
 
 export interface DouyinMediaRequest { url: string; title?: string; author?: string; cover?: string; videoId?: string; durationSeconds?: number }
@@ -485,8 +517,17 @@ export function aiEditMediaUrl(baseUrl: string, id: string, key: string): string
  */
 export function uploadAiEditMedia(connection: ExploreConnection, file: File, onProgress: (ratio: number) => void, signal?: AbortSignal): Promise<AiEditMediaItem> {
   if (file.size > UPLOAD_LIMIT) return Promise.reject(new LocalCollectorError("media_too_large", "文件超过 4GB，放不进素材库。"));
-  const path = `/v1/ai-edit/media/upload?name=${encodeURIComponent(file.name)}`;
-  return new Promise<AiEditMediaItem>((resolve, reject) => {
+  return uploadBody(connection, `/v1/ai-edit/media/upload?name=${encodeURIComponent(file.name)}`, file, onProgress, signal, (value) => value?.item);
+}
+
+/** 导入 openfilm 工程：film.html 所在文件夹打的 zip。采集器建一个新剪辑，在后台把片段排上时间线（进度在 session.output）。 */
+export function importAiEditFilm(connection: ExploreConnection, file: File, onProgress: (ratio: number) => void, signal?: AbortSignal): Promise<AiEditSessionState> {
+  if (file.size > UPLOAD_LIMIT) return Promise.reject(new LocalCollectorError("film_too_large", "工程超过 4GB 了。"));
+  return uploadBody(connection, `/v1/ai-edit/film-import?name=${encodeURIComponent(file.name)}`, file, onProgress, signal, (value) => (value?.session && value?.project ? value : null));
+}
+
+function uploadBody<T>(connection: ExploreConnection, path: string, file: File, onProgress: (ratio: number) => void, signal: AbortSignal | undefined, pick: (value: any) => T | null | undefined): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${normalizeCollectorBaseUrl(connection.baseUrl)}${path}`);
     xhr.setRequestHeader("Authorization", `Bearer ${connection.token}`);
@@ -495,14 +536,16 @@ export function uploadAiEditMedia(connection: ExploreConnection, file: File, onP
     xhr.onload = () => {
       let value: any = null;
       try { value = JSON.parse(xhr.responseText); } catch { /* 非 JSON 按失败处理 */ }
-      if (xhr.status >= 200 && xhr.status < 300 && value?.item) { onProgress(1); resolve(value.item); return; }
+      const picked = xhr.status >= 200 && xhr.status < 300 ? pick(value) : null;
+      if (picked) { onProgress(1); resolve(picked); return; }
       if (xhr.status === 401 && value?.error === "not_paired") {
         collectorFetch(connection, path, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" }, signal })
           .then(async (response) => {
             const retried = await response.json().catch(() => null);
-            if (!response.ok || !retried?.item) throw failure(response.status, retried, "文件没传上去，请稍后重试。");
+            const again = response.ok ? pick(retried) : null;
+            if (!again) throw failure(response.status, retried, "文件没传上去，请稍后重试。");
             onProgress(1);
-            resolve(retried.item);
+            resolve(again);
           })
           .catch(reject);
         return;

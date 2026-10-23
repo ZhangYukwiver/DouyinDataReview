@@ -61,6 +61,8 @@ export function sessionDetail(session) {
       // 要页面在浏览器里帮忙拆视频（截图、节拍）时挂在这里，页面做完交回
       ...(session.streaming.look ? { look: { ...session.streaming.look } } : {}),
     } : null,
+    // 导出工程、出 MP4、导入工程的进度和结果（只在内存里，采集器重启就没了，文件还在 renders/ 下）
+    output: session.output ? { ...session.output } : null,
   };
 }
 
@@ -124,6 +126,7 @@ export class SessionStore {
       }
       session.pendingNotes = Array.isArray(session.pendingNotes) ? session.pendingNotes.filter((note) => typeof note === "string") : [];
       session.streaming = null;
+      session.output = null;
       this.sessions.set(id, session);
       // 一轮进行中也会存盘（比如导入剪映后），那时 history 里可能有还没回结果的工具调用；
       // 采集器被强杀后不补齐，下一轮接口会因为调用和结果对不上一直报 400
@@ -171,6 +174,7 @@ export class SessionStore {
       messages: [],
       history: [],
       streaming: null,
+      output: null,
     };
     this.sessions.set(session.id, session);
     await this.save(session);
@@ -189,7 +193,7 @@ export class SessionStore {
   }
 
   save(session) {
-    const { streaming: _streaming, ...stored } = session;
+    const { streaming: _streaming, output: _output, ...stored } = session;
     const data = JSON.stringify(stored);
     const file = path.join(this.directory, `${session.id}.json`);
     // 同一个会话的写入排队，后写的覆盖先写的

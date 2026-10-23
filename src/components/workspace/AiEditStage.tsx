@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
 import { Pause, Play, Quote, RotateCcw, Scissors, SquareDashed, Sticker, Trash2, Type } from "lucide-react-native";
-import type { AiEditMediaItem, EditCanvas, EditMediaSegment, EditSegment, EditTextSegment, EditTrack, EditTransform } from "../../services/aiEdit";
+import { pageOf, type AiEditMediaItem, type EditCanvas, type EditMediaSegment, type EditSegment, type EditTextSegment, type EditTrack, type EditTransform } from "../../services/aiEdit";
 import {
   activeFrame, blendMode, clipLabel, colorFilter, cropClipPath, cssTransform, effectiveTransform, featureName, findSegment, formatClock, hasScaleKeyframes,
   layerBox, layerRect, maskCss, mediaIdFromPath, mediaVolume, nextSegmentAfter, playbackRate, rgba, sourceTimeUs, textCss, US_PER_SECOND,
@@ -95,7 +95,7 @@ export function Stage() {
   const board = useBoard();
   const latest = useRef(board);
   latest.current = board;
-  const { project, canvas, mediaById, mediaUrl, duration, running, editable, notEditableReason, selection, selected, regionMode, region, playback } = board;
+  const { project, canvas, mediaById, mediaUrl, filmUrl, duration, running, editable, notEditableReason, selection, selected, regionMode, region, playback } = board;
   const time = usePlaybackTime();
   const [box, setBox] = useState<Size>({ width: 0, height: 0 });
   const scale = stageScale(box, canvas);
@@ -682,7 +682,7 @@ export function Stage() {
     {scale > 0 ? <div style={{ position: "relative", width: stage.width, height: stage.height }}>
       <div ref={stageRef} aria-label="画面预览" style={{ position: "absolute", inset: 0, overflow: "hidden", backgroundColor: color.black, isolation: "isolate", borderRadius: 2 }}>
         {layers.map(({ layer, active }) => <Layer key={layer.segment.id} layer={layer} active={active} canvas={canvas} stage={stage}
-          time={shownTime} playing={playback.playing} mediaById={mediaById} mediaUrl={mediaUrl} onNatural={bumpSizes}
+          time={shownTime} playing={playback.playing} mediaById={mediaById} mediaUrl={mediaUrl} filmUrl={filmUrl} onNatural={bumpSizes}
           override={overrideOf(layer.segment.id)}
           text={shownText?.id === layer.segment.id ? shownText.value : null}
           editing={editingText === layer.segment.id} onEditDone={finishTextEdit} />)}
@@ -883,15 +883,20 @@ function useNaturalSize(url: string | null, onChange?: () => void): [Size | null
  * 画面里的一个图层；根元素带 data-layer-id（片段 id），框选按它量位置。
  * override 是拖动时的临时 transform，text 是改完字还没回来时的新字，editing 时文字图层变成能直接打字的。
  */
-function Layer({ layer, active, canvas, stage, time, playing, mediaById, mediaUrl, override, text, editing = false, onEditDone, onNatural }: {
+function Layer({ layer, active, canvas, stage, time, playing, mediaById, mediaUrl, filmUrl, override, text, editing = false, onEditDone, onNatural }: {
   layer: { track: EditTrack; trackIndex: number; segment: EditSegment }; active: boolean; canvas: EditCanvas; stage: Size; time: number; playing: boolean;
-  mediaById: ReadonlyMap<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null; override?: EditTransform | null; text?: string | null;
+  mediaById: ReadonlyMap<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null; filmUrl: (path: string) => string | null; override?: EditTransform | null; text?: string | null;
   editing?: boolean; onEditDone?: (id: string, value: string | null) => void; onNatural?: () => void;
 }) {
   const { track } = layer;
   const segment = override && FRAMED_KINDS.has(layer.segment.kind) ? withTransform(layer.segment, override) : layer.segment;
   const item = "path" in segment ? mediaById.get(mediaIdFromPath(segment.path) ?? "") : undefined;
-  const url = item?.status === "ready" ? mediaUrl(item.id) : null;
+  // 网页片段：看板上直接开它的网页、按时间画（底下渲好的视频留给剪映和出片用）
+  const page = segment.kind === "video" && item?.status === "ready" ? pageOf(item) : null;
+  const pageAddress = page ? filmUrl(`pages/${page}`) : null;
+  // 网页改写后重渲的还是同一个素材：地址带上渲染时间，iframe 才会重新加载
+  const pageUrl = pageAddress && item?.source.renderedAt ? `${pageAddress}?v=${item.source.renderedAt}` : pageAddress;
+  const url = item?.status === "ready" && !pageUrl ? mediaUrl(item.id) : null;
   const [natural, reportSize] = useNaturalSize(segment.kind === "audio" ? null : url, onNatural);
   const offset = Math.max(0, time - segment.timeline.start_us);
   if (segment.kind === "text") {
@@ -930,12 +935,38 @@ function Layer({ layer, active, canvas, stage, time, playing, mediaById, mediaUr
   const fill = active && segment.background_filling ? <div style={{ position: "absolute", inset: 0, backgroundColor: segment.background_filling.fill_type === "color" ? rgba(segment.background_filling.color ?? "#000000") : color.black, overflow: "hidden" }}>
     {segment.background_filling.fill_type === "blur" && segment.kind === "image" && url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", filter: `blur(${Math.round(4 + (segment.background_filling.blur ?? 0.0625) * 60)}px)`, transform: "scale(1.1)" }} /> : null}
   </div> : null;
+  if (pageUrl && item?.width && item.height) {
+    return <PageLayer url={pageUrl} layerId={segment.id} active={active} seconds={sourceTimeUs(segment as EditMediaSegment, time) / US_PER_SECOND}
+      page={{ width: item.width, height: item.height }} style={{ ...style, opacity: active ? rect.opacity : 0 }} rect={rect} />;
+  }
   if (!url) return active ? <>{fill}<div data-layer-id={segment.id} style={{ ...style, objectFit: undefined, opacity: rect.opacity, backgroundColor: alpha(color.white, 0.08), border: `1px solid ${alpha(color.white, 0.18)}`, display: "flex", alignItems: "center", justifyContent: "center", color: alpha(color.white, 0.6), fontSize: 11, fontFamily: font.body, textAlign: "center", padding: 6, boxSizing: "border-box" }}>
     {item?.status === "importing" ? "素材还在导入" : clipLabel(segment, item ? mediaTitle(item) : null)}
   </div></> : null;
   if (segment.kind === "image") return active ? <>{fill}<img data-layer-id={segment.id} src={url} alt="" draggable={false} style={style}
     onLoad={(event) => reportSize(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} /></> : null;
   return <>{fill}<MediaElement kind="video" url={url} segment={segment} track={track} time={time} playing={playing} active={active} style={style} onSize={reportSize} layerId={segment.id} /></>;
+}
+
+/**
+ * 网页片段（openfilm 的页面）：iframe 按网页自己的大小排版，再缩到片段在画面上的框里。时间变了就把素材里的秒数发给页面
+ * （采集器在页面里放了桥，按 window.film.frame(t) 画；画着的时候又来新的只画最后一个）。点、拖都落在外层，iframe 不接鼠标。
+ */
+function PageLayer({ url, layerId, active, seconds, page, style, rect }: {
+  url: string; layerId: string; active: boolean; seconds: number; page: Size; style: React.CSSProperties; rect: { width: number; height: number };
+}) {
+  const ref = useRef<HTMLIFrameElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  const origin = useMemo(() => { try { return new URL(url).origin; } catch { return "*"; } }, [url]);
+  useEffect(() => { setLoaded(false); }, [url]);
+  useEffect(() => {
+    if (loaded && active) ref.current?.contentWindow?.postMessage({ film: "frame", t: Math.max(0, seconds) }, origin);
+  }, [loaded, active, seconds, origin]);
+  const { objectFit: _fit, filter: _filter, ...box } = style;
+  return <div data-layer-id={layerId} style={{ ...box, overflow: "hidden" }}>
+    <iframe ref={ref} src={url} title="网页片段" tabIndex={-1} scrolling="no" sandbox="allow-scripts allow-same-origin" onLoad={() => setLoaded(true)}
+      style={{ position: "absolute", left: 0, top: 0, width: page.width, height: page.height, border: 0, background: "transparent", pointerEvents: "none",
+        transformOrigin: "0 0", transform: `scale(${rect.width / page.width},${rect.height / page.height})` }} />
+  </div>;
 }
 
 function MediaElement({ kind, url, segment, track, time, playing, active, style, onSize, layerId }: {

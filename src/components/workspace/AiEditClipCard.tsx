@@ -40,7 +40,7 @@ function ClipBody({ projectNow, iconOnly }: { projectNow: () => EditProject | nu
     const segment = selected?.segment;
     return segment && "path" in segment ? mediaById.get(mediaIdFromPath(segment.path) ?? "") : undefined;
   }, [selected, mediaById]);
-  const info = useMemo(() => (selected ? clipDetail(selected.segment, { mediaName: item ? mediaTitle(item) : null, track: selected.track }) : null), [selected, item]);
+  const info = useMemo(() => (selected ? clipDetail(selected.segment, { mediaName: item ? mediaTitle(item) : null, track: selected.track, page: item?.source.type === "page" ? { transparent: Boolean(item.source.transparent) } : null }) : null), [selected, item]);
   const fields = useMemo(() => {
     if (!web || !selected) return [];
     const { segment, track } = selected;

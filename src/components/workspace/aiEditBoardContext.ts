@@ -69,6 +69,8 @@ export interface BoardContextValue {
   duration: number;
   mediaById: ReadonlyMap<string, AiEditMediaItem>;
   mediaUrl: (mediaId: string) => string | null;
+  /** 采集器上网页片段、film.html 和做好的文件的地址（path 相对 ai-edit 根目录，比如 pages/<id>/index.html） */
+  filmUrl: (path: string, download?: boolean) => string | null;
   /** AI 正在剪 */
   running: boolean;
   /** 能不能在看板上手动改：有工程、AI 没在剪、没在导入、上一个改动已经回来 */
