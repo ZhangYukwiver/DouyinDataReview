@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { EditMediaSegment, EditProject, EditSegment, EditTextSegment, EditTrack } from "../../services/aiEdit";
 import {
-  clipCallName, dragMoveStart, dragRect, draggedTransform, dragTrim, expectedClip, fullTransform, hasMotionKeyframes, intersects, keepSelection, layersInRect, MIN_CLIP_US, pyRound,
+  catalogEdit, catalogTargetName, clipCallName, dragMoveStart, dragRect, draggedTransform, dragTrim, expectedClip, fullTransform, hasMotionKeyframes, intersects, keepSelection, layersInRect, MIN_CLIP_US, pyRound,
   regionBox, regionCaption, regionHint, resizeRatio, selectableIds, settleSelection, snapTime, splitOffset, splitTarget, tapPick, tooManyEditsText, trimArgs, undoKind,
 } from "./aiEditBoardEdit";
 import { IDENTITY_TRANSFORM, timeAtX } from "./aiEditModel";
@@ -274,5 +274,23 @@ describe("框选", () => {
     expect(regionHint(0, [])).toBe("在第 0 秒的画面上框了一块空白位置");
     expect(regionCaption(3.2 * S, ["视频“a”"])).toBe("带了框选：第 3.2 秒画面上的一块，框里有视频“a”");
     expect(regionCaption(3.2 * S, [])).toBe("带了框选：第 3.2 秒画面上的一块空白位置");
+  });
+});
+
+describe("剪映素材套到片段上", () => {
+  it("每种素材只套在放得下的片段上", () => {
+    const clip = video("v1", 0, 2 * S);
+    const title = { id: "t1", kind: "text", text: "标题", timeline: { start_us: 0, duration_us: S } } as EditTextSegment;
+    const sound = { ...video("a1", 0, S), kind: "audio" } as EditMediaSegment;
+    expect(catalogEdit("transition", "叠化", clip)).toEqual({ name: "add_transition", arguments: { clip_id: "v1", transition_type: "叠化" } });
+    expect(catalogEdit("video_intro", "渐显", { ...clip, kind: "image" })).toEqual({ name: "add_animation", arguments: { clip_id: "v1", animation_type: "渐显" } });
+    expect(catalogEdit("font", "A1明朝", title)).toEqual({ name: "update_clip", arguments: { clip_id: "t1", font_family: "A1明朝" } });
+    expect(catalogEdit("text_loop", "心跳", title)?.name).toBe("add_animation");
+    expect(catalogEdit("audio_effect", "_8bit", sound)).toEqual({ name: "add_effect", arguments: { clip_id: "a1", effect_type: "_8bit" } });
+    // 放不了的：文字上加转场、视频上加文字动画、音频上加画面特效
+    expect(catalogEdit("transition", "叠化", title)).toBeNull();
+    expect(catalogEdit("text_intro", "打字机", clip)).toBeNull();
+    expect(catalogEdit("video_effect", "_1998", sound)).toBeNull();
+    expect(catalogTargetName("mask")).toBe("视频或图片片段");
   });
 });

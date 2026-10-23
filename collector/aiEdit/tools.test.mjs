@@ -351,7 +351,7 @@ describe("AI edit tools", () => {
     expect(fonts.total).toBeGreaterThan(20);
     expect(fonts.note).toBeTruthy();
     // 剪辑页左栏：只看免费、一次多列
-    const free = searchCatalog({ kind: "transition", limit: 200, free: true }, 200);
+    const free = searchCatalog({ kind: "transition", limit: 200, free: true }, { maxLimit: 200 });
     expect(free.items.length).toBeGreaterThan(50);
     expect(free.items.some((item) => item.vip)).toBe(false);
     expect(free.total).toBeLessThan(searchCatalog({ kind: "transition" }).total);

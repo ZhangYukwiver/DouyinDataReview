@@ -13,6 +13,8 @@ import { runCliConversation } from "./cliTurn.mjs";
 import { EditError } from "./errors.mjs";
 import { createFilmStudio } from "./film/studio.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
+import { displayName } from "./catalog.mjs";
+import { createCoverIndex } from "./jianyingCovers.mjs";
 import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, revertTarget, sessionDetail } from "./sessions.mjs";
 import {
@@ -42,7 +44,7 @@ const DRAFT_CHANGED_AFTER_MS = 10_000;
 // 看板上能手动做的改动和各自放开的参数（null 是照工具定义）；update_clip 只放开时间、截取、倍速、文字和位置大小，update_track 只放开静音
 const BOARD_EDITS = new Map([
   ["move_clip", null],
-  ["update_clip", new Set(["clip_id", "start", "duration", "source_start", "source_duration", "speed", "text", "transform"])],
+  ["update_clip", new Set(["clip_id", "start", "duration", "source_start", "source_duration", "speed", "text", "transform", "font_family"])],
   ["split_clip", null],
   ["delete_clip", null],
   ["duplicate_clip", null],
@@ -52,7 +54,24 @@ const BOARD_EDITS = new Map([
   ["add_marker", new Set(["time", "label", "color"])],
   ["remove_marker", new Set(["time"])],
   ["add_subtitle_line", new Set(["track_id", "start", "duration", "text"])],
+  // 左栏「剪映素材」：选中一段点一下就套上；属性卡里的效果能去掉
+  ["add_transition", new Set(["clip_id", "transition_type"])],
+  ["add_filter", new Set(["clip_id", "filter_type"])],
+  ["add_effect", new Set(["clip_id", "effect_type"])],
+  ["add_animation", new Set(["clip_id", "animation_type"])],
+  ["add_mask", new Set(["clip_id", "mask_type"])],
+  ["set_mix_mode", new Set(["clip_id", "mode"])],
+  ["clear_clip_feature", new Set(["clip_id", "feature"])],
 ]);
+// 看板上套剪映效果：工具名 → [参数名, 说法]
+const FEATURE_EDITS = {
+  add_transition: ["transition_type", "转场"], add_filter: ["filter_type", "滤镜"], add_effect: ["effect_type", "特效"],
+  add_animation: ["animation_type", "动画"], add_mask: ["mask_type", "蒙版"], set_mix_mode: ["mode", "混合模式"],
+};
+const FEATURE_LABELS = {
+  transition: "转场", effects: "特效", filters: "滤镜", animations: "动画", fade: "淡入淡出", mask: "蒙版", chroma: "抠像",
+  background_filling: "背景填充", mix_mode: "混合模式", crop: "裁剪", border: "描边", background: "文字背景", shadow: "阴影", bubble: "气泡", text_effect: "花字",
+};
 // 一批手动改动（多选、整组挪、主轨磁吸重排）最多几条、请求体最大多少；超过 8 条给模型的说明并成一句
 const MAX_BATCH_EDITS = 200;
 const EDIT_BODY_BYTES = 256 * 1024;
@@ -335,6 +354,17 @@ function describeEdit(name, args, before, after, result) {
   const label = clipLabel(was?.segment);
   const ref = `${label}（clip_id ${args.clip_id}）`;
   if (name === "delete_clip") return { label: `删掉${label}`, note: `删掉了${ref}` };
+  if (Object.hasOwn(FEATURE_EDITS, name)) {
+    const [key, kind] = FEATURE_EDITS[name];
+    const shown = `${kind}「${displayName(args[key])}」`;
+    return name === "set_mix_mode"
+      ? { label: `把${label}设成${shown}`, note: `把${ref}设成了${shown}` }
+      : { label: `给${label}加${shown}`, note: `给${ref}加了${shown}` };
+  }
+  if (name === "clear_clip_feature") {
+    const kind = FEATURE_LABELS[args.feature] ?? "效果";
+    return { label: `去掉${label}的${kind}`, note: `去掉了${ref}的${kind}` };
+  }
   if (name === "split_clip") {
     const at = typeof micros(args.offset) === "number" && was ? `在 ${seconds(was.segment.timeline.start_us + micros(args.offset))} 秒处` : "";
     const parts = result.clip_ids?.length === 2 ? `，现在是 clip_id ${result.clip_ids[0]} 和 clip_id ${result.clip_ids[1]} 两段` : "";
@@ -363,6 +393,7 @@ function describeEdit(name, args, before, after, result) {
   else if (only("start")) short = `挪动${label}`;
   else if (keys.some((key) => ["duration", "source_start", "source_duration"].includes(key))) short = `裁剪${label}`;
   else if (only("speed")) short = `给${label}变速`;
+  else if (only("font_family")) short = `换${label}的字体`;
   const { segment } = now;
   if (only("text")) return { label: short, note: `把${ref}改成了“${leading(segment.text, 40)}”` };
   const parts = [];
@@ -374,6 +405,7 @@ function describeEdit(name, args, before, after, result) {
   // 看板裁剪时会带上原来的倍速，没变就不提
   if (keys.includes("speed") && Number(was?.segment.speed ?? 1) !== Number(segment.speed ?? 1)) parts.push(`倍速改成了 ${Math.round((segment.speed ?? 1) * 1000) / 1000} 倍`);
   if (changed.length) parts.push(`调了${changed.join("、")}`);
+  if (keys.includes("font_family")) parts.push(`字体换成了「${displayName(segment.font_family)}」`);
   return { label: short, note: parts.length ? `改了${ref}：${parts.join("，")}` : `改了${ref}` };
 }
 
@@ -435,6 +467,7 @@ export function createAiEdit({
   probe: injectedProbe,
   kindOf: injectedKindOf,
   fetchImpl = modelFetch,
+  covers = createCoverIndex(),
   now = () => new Date(),
   pollMs = 1_000,
   longPollMs = 8_000,
@@ -932,11 +965,12 @@ export function createAiEdit({
       return;
     }
 
-    // 剪辑页左栏「剪映素材」：和 AI 用 search_catalog 查的是同一份目录
+    // 剪辑页左栏「剪映素材」：和 AI 用 search_catalog 查的是同一份目录，另外带上剪映缓存里的预览图
     if (pathname === "/v1/ai-edit/catalog") {
       if (method !== "GET") { notAllowed(); return; }
       const params = url.searchParams;
-      sendJson(response, 200, searchCatalog({ kind: params.get("kind"), query: params.get("q") ?? "", limit: 200, free: params.get("free") === "1" }, 200));
+      const cover = await covers.lookup().catch(() => null);
+      sendJson(response, 200, searchCatalog({ kind: params.get("kind"), query: params.get("q") ?? "", limit: 200, free: params.get("free") === "1" }, { maxLimit: 200, cover }));
       return;
     }
 

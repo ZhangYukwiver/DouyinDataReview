@@ -1,4 +1,4 @@
-import { MAX_BATCH_EDITS, type EditMediaSegment, type EditProject, type EditSegment, type EditTimeRange, type EditTrack, type EditTransform } from "../../services/aiEdit";
+import { MAX_BATCH_EDITS, type AiEditCatalogKind, type AiEditClipEdit, type EditMediaSegment, type EditProject, type EditSegment, type EditTimeRange, type EditTrack, type EditTransform } from "../../services/aiEdit";
 import { clipLabel, IDENTITY_TRANSFORM, secondMark, US_PER_SECOND } from "./aiEditModel";
 
 // 看板上手动剪的纯计算：轨道上挪动、裁剪换算成时间（带吸附），⌘B 切哪段、新工程进来后选中怎么跟，
@@ -322,6 +322,36 @@ export function clipCallName(segment: EditSegment, mediaName?: string | null): s
   const label = clipLabel(segment, mediaName);
   const short = label.length > 16 ? `${label.slice(0, 16)}…` : label;
   return short ? `${KIND_CALLS[segment.kind]}“${short}”` : KIND_CALLS[segment.kind];
+}
+
+// 左栏「剪映素材」：每种素材用哪个工具、套在哪种片段上
+type CatalogTarget = "visual" | "text" | "audio";
+const CATALOG_EDITS: Record<AiEditCatalogKind, { tool: AiEditClipEdit; arg: string; on: CatalogTarget }> = {
+  transition: { tool: "add_transition", arg: "transition_type", on: "visual" },
+  filter: { tool: "add_filter", arg: "filter_type", on: "visual" },
+  video_effect: { tool: "add_effect", arg: "effect_type", on: "visual" },
+  video_intro: { tool: "add_animation", arg: "animation_type", on: "visual" },
+  video_outro: { tool: "add_animation", arg: "animation_type", on: "visual" },
+  video_group: { tool: "add_animation", arg: "animation_type", on: "visual" },
+  mask: { tool: "add_mask", arg: "mask_type", on: "visual" },
+  mix_mode: { tool: "set_mix_mode", arg: "mode", on: "visual" },
+  text_intro: { tool: "add_animation", arg: "animation_type", on: "text" },
+  text_outro: { tool: "add_animation", arg: "animation_type", on: "text" },
+  text_loop: { tool: "add_animation", arg: "animation_type", on: "text" },
+  font: { tool: "update_clip", arg: "font_family", on: "text" },
+  audio_effect: { tool: "add_effect", arg: "effect_type", on: "audio" },
+};
+const TARGET_NAMES: Record<CatalogTarget, string> = { visual: "视频或图片片段", text: "文字片段", audio: "音频片段" };
+const targetOf = (segment: EditSegment): CatalogTarget | null =>
+  segment.kind === "video" || segment.kind === "image" ? "visual" : segment.kind === "text" ? "text" : segment.kind === "audio" ? "audio" : null;
+
+/** 这种剪映素材该套在哪种片段上（说法，给提示用）。 */
+export const catalogTargetName = (kind: AiEditCatalogKind) => TARGET_NAMES[CATALOG_EDITS[kind].on];
+
+/** 选中一段时点了素材：能套上就给出看板改动（素材名用目录里的成员名），这段放不了这种素材返回 null。 */
+export function catalogEdit(kind: AiEditCatalogKind, name: string, segment: EditSegment): { name: AiEditClipEdit; arguments: Record<string, unknown> } | null {
+  const edit = CATALOG_EDITS[kind];
+  return targetOf(segment) === edit.on ? { name: edit.tool, arguments: { clip_id: segment.id, [edit.arg]: name } } : null;
 }
 
 /** 输入框上方的框选提示。 */

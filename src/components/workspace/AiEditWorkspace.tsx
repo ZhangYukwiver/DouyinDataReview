@@ -12,9 +12,9 @@ import {
 } from "../../services/aiEdit";
 import { searchRecords } from "../../services/recordSearch";
 import { mediaIdFromPath, mediaThumbView, spokenDuration, US_PER_SECOND, visibleExportNote, type ExportNote } from "./aiEditModel";
-import { clipCallName, regionCaption, regionHint } from "./aiEditBoardEdit";
+import { catalogEdit, catalogTargetName, clipCallName, regionCaption, regionHint } from "./aiEditBoardEdit";
 import { IN_FLIGHT_REASON } from "./aiEditInspect";
-import type { BoardJump, EditOutcome, EditPerformer } from "./aiEditBoardContext";
+import { useBoard, type BoardJump, type EditOutcome, type EditPerformer } from "./aiEditBoardContext";
 import {
   adoptDraft, attachmentRequests, attachmentsPending, clearSent, dropMedia, imagePreview, isImageFile, pasteIsRichText, pastedName, patchAttachment, planAttachments, type AttachDraft,
 } from "./aiEditAttach";
@@ -1187,9 +1187,11 @@ function readCatalogFree(): boolean {
   try { return globalThis.localStorage?.getItem(CATALOG_FREE_KEY) === "1"; } catch { return false; }
 }
 
-// 剪映左上角转场、滤镜、特效那几栏：列出 AI 能写进草稿的剪映内置效果，点一个把名字写进对话框。
-// ponytail: 目录里没有预览图，只列名字；要缩略图得从剪映的资源接口按 resource_id 取
+// 剪映左上角转场、滤镜、特效那几栏：列出能写进剪映草稿的内置效果，带剪映缓存里的预览图（在剪映里打开过那一栏才有）。
+// 时间线上选中了一段、这种素材又放得下：点一下直接套上（看板改动，能撤销）；没选或放不了就把名字写进对话框交给 AI
 function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text: string) => void }) {
+  const { selected, runEdit, flushHeld, callName, toast } = useBoard();
+  const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
   const [kind, setKind] = useState<AiEditCatalogKind>("transition");
   const [query, setQuery] = useState("");
   const [free, setFree] = useState(readCatalogFree);
@@ -1206,6 +1208,22 @@ function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text
     return () => { live = false; clearTimeout(timer); };
   }, [conn, kind, query, free]);
   const label = CATALOG_KINDS.find((item) => item.value === kind)?.label ?? "";
+  const target = selected?.segment ?? null;
+  const fits = Boolean(target && catalogEdit(kind, "", target));
+  const hint = !target ? "在时间线上选中一段，点素材就直接加到那段上；没选的时候点了会写进对话框，交给 AI 去加。"
+    : fits ? `点一下就加到${callName(target)}上，加错了可以撤销。`
+      : `${label}只能加在${catalogTargetName(kind)}上，选中的${callName(target)}放不了，点了会写进对话框。`;
+  const pick = async (item: AiEditCatalogItem) => {
+    const name = item.display ?? item.name;
+    const edit = target ? catalogEdit(kind, item.name, target) : null;
+    if (!target || !edit) { onPick(`${label}「${name}」`); return; }
+    await flushHeld();
+    if (await runEdit(edit.name, edit.arguments)) toast(kind === "font" ? `${callName(target)}换上了字体「${name}」` : `给${callName(target)}加上了${label}「${name}」`);
+  };
+  const footer = !found || failed ? null
+    : found.total > found.items.length ? `${label}一共有 ${found.total} 个，这里先列前 ${found.items.length} 个，搜名字能找得更快。`
+      : found.items.length && !found.items.some((item) => item.cover) ? `${label}还没有预览图：在剪映里打开过对应的素材面板，这里才会有图。`
+        : free ? "勾着「只看免费」时，AI 也不会用会员效果。" : null;
   return <View style={styles.shelf}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.catalogKinds}>
       {CATALOG_KINDS.map((item) => {
@@ -1222,21 +1240,24 @@ function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text
         <Text style={[styles.chipText, free && { color: color.accent }]}>只看免费</Text>
       </Pressable>
     </View>
+    <Text style={[kit.muted, styles.shelfEmpty]}>{hint}</Text>
     {failed ? <Text style={[kit.muted, styles.shelfEmpty]}>剪映素材没读到，采集器可能是旧版本，重启应用后再试。</Text>
       : !found ? <ActivityIndicator size="small" color={color.textMuted} style={{ marginTop: 20 }} />
       : found.items.length ? <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.shelfGrid}>
         {found.items.map((item) => {
           const name = item.display ?? item.name;
-          return <Pressable key={item.name} accessibilityRole="button" accessibilityLabel={`把${label}「${name}」写进对话框`} onPress={() => onPick(`${label}「${name}」`)} style={[styles.catalogTile, webPointer]}>
+          const cover = item.cover && !broken.has(item.cover) ? item.cover : null;
+          return <Pressable key={item.name} accessibilityRole="button" accessibilityLabel={target && fits ? `把${label}「${name}」加到${callName(target)}上` : `把${label}「${name}」写进对话框`}
+            onPress={() => void pick(item)} style={[styles.catalogTile, webPointer]}>
+            {/* 剪映的预览图是给深色面板画的（字体是透明底白字），垫一块深色底 */}
+            {cover ? <Image source={{ uri: cover }} resizeMode="contain" onError={() => setBroken((set) => new Set(set).add(cover))} style={styles.catalogCover} /> : null}
             <Text numberOfLines={2} style={styles.catalogName}>{name}</Text>
             {item.vip ? <Text style={styles.vipTag}>会员</Text> : null}
           </Pressable>;
         })}
       </ScrollView>
       : <Text style={[kit.muted, styles.shelfEmpty]}>{query.trim() ? `没找到叫这个的${label}，换个词试试。` : `剪映里没有免费的${label}，关掉「只看免费」能看到会员的。`}</Text>}
-    {found && !failed ? <Text style={[kit.muted, styles.shelfEmpty]}>
-      {found.total > found.items.length ? `${label}一共有 ${found.total} 个，这里先列前 ${found.items.length} 个，搜名字能找得更快。` : free ? "点一个就把名字写进对话框。勾着「只看免费」时，AI 也不会用会员效果。" : "点一个就把名字写进对话框，再跟 AI 说用在哪一段。"}
-    </Text> : null}
+    {footer ? <Text style={[kit.muted, styles.shelfEmpty]}>{footer}</Text> : null}
   </View>;
 }
 
@@ -1504,6 +1525,7 @@ const styles = StyleSheet.create({
   catalogSearch: { minHeight: 30, paddingVertical: 5, fontSize: 12 },
   catalogTile: { width: "47%", minHeight: 44, justifyContent: "center", paddingHorizontal: 8, paddingVertical: 6, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   catalogName: { color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 16 },
+  catalogCover: { width: "100%", height: 54, marginBottom: 4, borderRadius: radius.small, backgroundColor: "#1F1F22" },
   vipTag: { position: "absolute", top: 2, right: 3, color: color.accent, fontFamily: font.body, fontSize: 9, fontWeight: "700" },
   card: { width: "47%", gap: 2, position: "relative" },
   thumb: { width: "100%", aspectRatio: 16 / 10, overflow: "hidden", borderRadius: radius.small, position: "relative" },

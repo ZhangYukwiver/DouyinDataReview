@@ -22,6 +22,15 @@ export function members(enumName) {
   return list;
 }
 
+/** 成员名（如「_1998」）换成剪映里显示的名字（「1998」）；不在目录里的原样返回。 */
+export function displayName(raw) {
+  for (const list of Object.values(load().enums)) {
+    const found = list.find((member) => member.name === raw);
+    if (found) return found.meta.name ?? found.meta.title ?? found.name;
+  }
+  return String(raw ?? "");
+}
+
 /**
  * 对应原仓库 draft.py 的 _enum_member：先按成员名找（如「叠化」「_1980」）。
  * ponytail: 另外接受目录里的显示名（meta.name / meta.title），方便模型直接用看到的中文名；
