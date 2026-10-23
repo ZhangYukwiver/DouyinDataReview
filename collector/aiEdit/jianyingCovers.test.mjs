@@ -45,7 +45,7 @@ describe("Jianying cover index", () => {
   it("has nothing when Jianying never cached a panel", async () => {
     const cover = await createCoverIndex({ root: path.join(tmpdir(), "no-such-jianying") }).lookup();
     expect(cover({ resource_id: "1" })).toBeNull();
-    expect(ressdkRoot({ platform: "darwin", home: "/Users/a" })).toBe("/Users/a/Movies/JianyingPro/User Data/Cache/ressdk_db");
+    expect(ressdkRoot({ platform: "darwin", home: "/Users/a" })).toBe(path.join("/Users/a", "Movies", "JianyingPro", "User Data", "Cache", "ressdk_db"));
     expect(ressdkRoot({ platform: "win32", env: { LOCALAPPDATA: "C:\\L" } })).toBe(path.join("C:\\L", "JianyingPro", "User Data", "Cache", "ressdk_db"));
     expect(ressdkRoot({ platform: "linux" })).toBeNull();
   });
