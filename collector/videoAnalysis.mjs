@@ -25,16 +25,21 @@ export const ANALYSIS_PROMPT = `请从创作者角度拆解我提供的视频，
 9. 结尾与行动：如何收尾、引导观众做什么、关注理由是什么，是否有产品或服务承接。
 10. 创作复用：可复用的结构和手法、依赖的特殊资源、制作难点，以及适合我创作方向的改编方式。
 
+拆解画面时不要只写画面里有什么，还要说明为什么这样做：场景为什么这样选和布置、人物站在哪里怎么走位、对话怎么说、动作和表情怎么安排、镜头为什么这样拍、为什么从上一个画面这样接过来，以及其他你看得出用意的处理；各自是为了交代什么、引导观众看哪里、带出什么情绪，或者给后面做什么铺垫。
+
 请按以下顺序输出：
 ① 用三句话概括选题、观看收益和主要创作机制。
 ② 用“维度｜具体发现｜时间戳或原话证据｜创作启示”的表格展开分析。
-③ 按实际内容段落生成时间轴表：“起止时间｜台词/字幕摘要｜画面与声音｜段落作用｜创作手法”。
+③ 按实际内容段落生成时间轴表：“起止时间｜台词/字幕摘要｜画面与声音｜为什么这样拍｜段落作用｜创作手法”。
 ④ 提炼一个可填空的脚本结构模板，并给出三个适合我方向的改编选题。
 ⑤ 提出下一条视频最值得测试的一个变量，说明假设、修改方式和验证指标；没有数据时标注待验证。
 
 关键判断必须对应具体片段或原话。清楚区分“可观察事实”和“分析假设”：目标受众、传播理由、创作意图属于推测；完播、留存、涨粉和成交只能使用已提供的数据。用具体表现解释“节奏好”“有共鸣”等评价。
 
 如果无法读取视频，请说明当前能读取哪些材料、还缺什么；仅依据实际可见内容分析，不编造画面、台词、时间戳或效果数据。`;
+
+/** 回答写到长度上限时接在末尾的一句（转写字幕认它，知道后面没写完）。 */
+export const TRUNCATED_NOTE = "\n\n> 回答写到了长度上限，后面的内容没写完。";
 
 const MAX_ITEMS = 500;
 const MAX_ANSWER_TOKENS = 16_000;
@@ -209,7 +214,7 @@ export function analysisPrompt(video, direction = "", focus = "") {
     `我的创作方向：${direction || "没有填写，请按这条视频所在的领域给出改编建议"}`,
     "",
     // 不加这句，小模型常常挑着答：随机漏掉整个维度，括号里的小问也只答一两个
-    "格式要求：第②部分的表格固定 10 行，按维度 1 到 10 的顺序各占一行，每行的“具体发现”要逐个回答该维度列出的所有小问（例如第 4 项要分别写段落顺序、信息递进、冲突、悬念、转折、论据、兑现承诺的时间点），看不出来的写“未知”或“视频里没有”，不能省略。②③两张表都用标准 Markdown 表格输出（半角竖线 | 分隔，带表头分隔行）。",
+    "格式要求：第②部分的表格固定 10 行，按维度 1 到 10 的顺序各占一行，每行的“具体发现”要逐个回答该维度列出的所有小问（例如第 4 项要分别写段落顺序、信息递进、冲突、悬念、转折、论据、兑现承诺的时间点），看不出来的写“未知”或“视频里没有”，不能省略。第③部分每一行的“为什么这样拍”都要写，说清这一段里有用意的处理（场景、站位、对话、动作之类，看得出哪个写哪个），不能只重复画面内容。②③两张表都用标准 Markdown 表格输出（半角竖线 | 分隔，带表头分隔行）。",
     ...(focus ? [focus] : []),
   ].join("\n");
 }
@@ -277,8 +282,11 @@ async function localAnalysis({ config, video, parts, signal, localAi }) {
   return markdown;
 }
 
-/** parts：不发整段视频时换成别的内容（AI 剪辑给看不了视频的模型发截图和测出来的数字），提示词照旧接在最后。 */
-async function analysis({ config, video, videoBase64, parts, signal, fetchImpl = modelFetch }) {
+/**
+ * parts：不发整段视频时换成别的内容（AI 剪辑给看不了视频的模型发截图和测出来的数字），提示词照旧接在最后。
+ * prompt：换掉整份拆解提示词（AI 剪辑转写字幕用）。
+ */
+async function analysis({ config, video, videoBase64, parts, prompt, signal, fetchImpl = modelFetch }) {
   const send = (effort) => fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     signal,
@@ -293,7 +301,7 @@ async function analysis({ config, video, videoBase64, parts, signal, fetchImpl =
         role: "user",
         content: [
           ...(parts ?? [{ type: "video_url", video_url: { url: `data:video/mp4;base64,${videoBase64}` } }]),
-          { type: "text", text: analysisPrompt(video, config.direction, config.focus) },
+          { type: "text", text: prompt ?? analysisPrompt(video, config.direction, config.focus) },
         ],
       }],
     }),
@@ -331,7 +339,7 @@ async function analysis({ config, video, videoBase64, parts, signal, fetchImpl =
     }
   }
   if (!text.trim()) throw new AnalysisError("empty_answer", "接口没有返回内容，换个模型或稍后再试。", 502);
-  return finish === "length" ? `${text}\n\n> 回答写到了长度上限，后面的内容没写完。` : text;
+  return finish === "length" ? text + TRUNCATED_NOTE : text;
 }
 
 export class AnalysisLibrary {

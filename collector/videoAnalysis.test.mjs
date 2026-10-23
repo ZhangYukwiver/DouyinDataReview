@@ -131,6 +131,10 @@ describe("analysisPrompt", () => {
     expect(text).not.toContain("播放 0");
     expect(text).toContain("我的创作方向：没有填写");
     expect(text).toContain("固定 10 行");
+    // 不只写画面里有什么，还要说为什么这样拍：时间轴表多一列，每行都要写
+    expect(text).toContain("人物站在哪里怎么走位");
+    expect(text).toContain("｜为什么这样拍｜");
+    expect(text).toContain("“为什么这样拍”都要写");
     expect(text).toContain("标准 Markdown 表格");
   });
 });

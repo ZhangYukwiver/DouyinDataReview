@@ -9,8 +9,10 @@ import { normalizeDouyinVideoUrl } from "../videoDownloader.mjs";
 import { members } from "./catalog.mjs";
 import { requestCompletion } from "./chat.mjs";
 import { EditError, invalid } from "./errors.mjs";
+import { IMAGES_PER_TURN, generateImage, generateVideo } from "./generate.mjs";
 import { AiEditError } from "./library.mjs";
 import { LOOK_UNAVAILABLE, lookMaterials, seesNoImages, seesNoVideo, videoRefused } from "./look.mjs";
+import { MODEL_HINT, mergeCaptions, placeLines, transcribeMedia } from "./transcribe.mjs";
 
 // 给模型的工具（function calling）。工程 id 由会话决定，不让模型填；时间参数对模型一律用秒（可带小数），
 // 这里换成整数微秒；素材用素材库的 media_id，这里换成素材文件的绝对路径。请求体字段保持原仓库的 snake_case，
@@ -53,9 +55,12 @@ import { LOOK_UNAVAILABLE, lookMaterials, seesNoImages, seesNoVideo, videoRefuse
 //   add_subtitles           addSrtSubtitles（也接受逐条字幕，这里拼成 SRT）
 //   add_subtitle_line       addSubtitleLine（往已有字幕组里补一条；还没有字幕就新建一组）
 //   remove_subtitles        removeSubtitleGroup
+//   transcribe_subtitles    addSrtSubtitles（台词由 AI 剪辑的模型听视频转写出来，transcribe.mjs）
 //   export_to_jianying      mediaInfos + 草稿箱 createDraft / repairDraft
 // 宿主内部用、不给模型：createProject（新建会话）、deleteProject（删会话）、listProjects（不需要，会话就是工程列表）。
 // 网页片段（openfilm 的页面，film/pages.mjs）：write_page 写好渲成素材、read_page 读回 HTML。
+// 生成素材（generate.mjs，用户在设置里开启了才发给模型：填了 Key，视频也可以勾选借用已填的方舟 Key）：generate_image 走 OpenAI 兼容的图片接口，
+// generate_video 走火山方舟 Seedance，要用户在页面上点「生成」确认（spend.mjs）才建任务。
 // 另外几个不碰工程的工具：list_media、search_my_records、import_douyin_video、search_catalog，
 // 以及参考视频用的 search_douyin（探索的抖音搜索）和 analyze_reference（用 AI 剪辑自己的模型看视频，提示词借用解析库的）。
 
@@ -240,7 +245,8 @@ function mediaForModel(item) {
     duration: item.kind === "image" ? null : seconds(item.durationUs),
     ...(item.width ? { size: `${item.width}×${item.height}` } : {}),
     ...(item.kind === "video" ? { has_audio: item.hasAudio } : {}),
-    from: item.source?.type === "douyin" ? `抖音${item.source.author ? ` @${item.source.author}` : ""}` : item.source?.type === "page" ? "网页片段" : "本机文件",
+    from: item.source?.type === "douyin" ? `抖音${item.source.author ? ` @${item.source.author}` : ""}` : item.source?.type === "page" ? "网页片段"
+      : item.source?.type === "generated" ? "AI 生成" : "本机文件",
     ...(item.source?.type === "page" && item.source.pageId ? { page_id: item.source.pageId, transparent: Boolean(item.source.transparent) } : {}),
   };
 }
@@ -254,14 +260,16 @@ function mediaLine(item) {
   const audio = item.kind === "video" ? (item.hasAudio ? "有声音" : "无声音") : "";
   const state = item.status === "ready" ? "" : item.status === "importing" ? "（还在导入）" : `（导入失败：${item.error ?? "原因不明"}）`;
   const page = item.source?.type === "page" ? `｜网页片段${item.source.pageId ? ` page_id ${item.source.pageId}` : "（导入的工程）"}${item.source.transparent ? "，透明底" : ""}` : "";
-  return `- ${item.id}｜${kind}｜${item.name}｜${length}｜${size}${audio ? `｜${audio}` : ""}${page}${state}`;
+  const generated = item.source?.type === "generated" ? "｜AI 生成" : "";
+  return `- ${item.id}｜${kind}｜${item.name}｜${length}｜${size}${audio ? `｜${audio}` : ""}${page}${generated}${state}`;
 }
 
 /**
  * 系统提示只放一轮里基本不变的内容（规则、工程名和画布、素材清单）：方舟等接口按前缀缓存，
  * 系统提示一变后面整段历史都得重新算。总时长和当前时间线每做一步都会变，放在 buildContextMessage 里、每次请求附在最后。
+ * generation：{ image, video } 这一轮配没配生成图片、生成视频（配了才有对应的工具和规则）。
  */
-export function buildSystemPrompt({ project, media, goal = "", freeOnly = false }) {
+export function buildSystemPrompt({ project, media, goal = "", freeOnly = false, generation = {} }) {
   const { width, height, fps } = project.canvas;
   const orientation = width === height ? "方形" : width > height ? "横屏" : "竖屏";
   const listed = media.slice(0, 120);
@@ -293,6 +301,7 @@ export function buildSystemPrompt({ project, media, goal = "", freeOnly = false 
     "- 分屏、宫格、拼图（七分屏、左右或上下分屏、九宫格等）：先把片段放上时间线，再用 arrange_grid 一次排好，不要自己算 transform 和蒙版。",
     "- 画布以上面写的为准，用户可能已经在界面上选好了比例，没被要求就别改。用户在对话里要横屏、竖屏、方形、16:9，或者说要发到 B 站、YouTube 这类横屏平台，先用 set_canvas 改好画布再排时间线；当前是竖屏而素材大多横拍时，在回复里提一句可以改成横屏。改了画布，用 arrange_grid 排过的分屏会自动按新画布重排。",
     "- add_subtitles 建的字幕轨（时间线里标着 subtitles: true）整组加、删；已有的字幕可以用 update_clip 逐条改，往组里补一条用 add_subtitle_line。要加标题或单独一句文字就另建一条文字轨道。",
+    "- 视频里有人说话、要配台词字幕时，用 transcribe_subtitles 把这些片段转写成一组字幕，别自己编台词；剪辑定下来再转写，剪掉的部分不会出字幕。",
     "- 每个片段的入场、出场、组合（文字是循环）动画各只能有一个，视频的组合动画不能和入场、出场同时用；音频片段的同类音效只能有一个。要换掉就先用 clear_clip_feature 去掉那一类再加。",
     "- 剪映内置做不出或做不好的画面（标题字卡、动态大字、数字滚动、数据图表、倒计时、进度条、片头片尾、带动画的字幕条），用 write_page 写网页片段，再用 add_media_clip 放上时间线。网页片段的写法（openfilm 页面约定）：",
     "  · 一个完整的 HTML 文件，脚本里定义 window.film = { duration: 秒数, frame(t) { … } }。frame(t) 按 t 把那一刻的画面整个画出来：同一个 t 永远画出同一个画面，不管之前画过什么、按什么顺序画。",
@@ -300,6 +309,9 @@ export function buildSystemPrompt({ project, media, goal = "", freeOnly = false 
     "  · 画面大小就是页面视口（innerWidth × innerHeight，默认等于工程画布），按它排版，字号用 px 按画布算（1080 宽的竖屏标题大约 90–140px）。叠在视频上的 transparent 填 true、html/body 背景透明；不透明的自己把背景画满。",
     "  · 只用系统字体（\"PingFang SC\", \"Microsoft YaHei\", sans-serif），别引网络字体和网上的图片（会加载失败）；脚本库只能从 cdn.jsdelivr.net、cdnjs.cloudflare.com、unpkg.com 引。页面没有声音，配乐和音效另外放音频片段。",
     "  · write_page 返回 problems 时（脚本报错、加载失败、画面重画一次就不一样）要改好再用。改已有的网页片段先 read_page 读出来，改完带上同一个 page_id 再 write_page，时间线上的片段会自动换成新画面。",
+    ...(generation.image ? [`- 素材库里没有、又确实缺的静态画面（背景、插画、示意图、封面底图、贴纸），可以用 generate_image 生成一张图：按张收费，一轮最多 ${IMAGES_PER_TURN} 张，只给真正缺的画面用。说明写清内容、风格、构图和颜色，别写真人名字；比例和画布不一样时放上时间线用 fit cover 铺满或按需缩放。`] : []),
+    ...(generation.video ? ["- 素材库里实在没有、又非要动态画面的镜头，可以用 generate_video 生成一段视频：要花钱（720p 5 秒约 5 元，1080p 和更长的更贵，2.5 系列的长视频一段要几十元；确切价钱看确认卡片），调用后应用会请用户在界面上确认，生成要几分钟。用户不同意或没人确认时别再调，改用图片、网页片段或素材库里现有的素材。时长按镜头需要来，别图省事一律拉满；一般不要声音（剪辑另配音乐）。首帧、尾帧和参考图里不能有真人脸（Seedance 不收）。"] : []),
+    ...(generation.image || generation.video ? ["- 生成过的图片和视频都在素材库里（来源写着 AI 生成），先用 list_media 找，别重复生成；同样的说明再调会直接回之前那一个。"] : []),
     `- 特效、滤镜、转场、动画、蒙版、混合模式、字体只能用剪映内置的名称：先用 search_catalog 查到准确名称再用，不要自己编。${freeOnly
       ? "用户选了只用免费素材：标着 vip 的要剪映会员才能导出，一个都不要用（search_catalog 也只会列出免费的）。"
       : "免费的和标着 vip 的（要剪映会员才能导出）都能用，按效果挑。"}`,
@@ -418,6 +430,111 @@ function srtTime(value) {
   const totalMs = Math.max(0, Math.round(Number(numeric(value)) * 1000));
   const pad = (number, length = 2) => String(number).padStart(length, "0");
   return `${pad(Math.floor(totalMs / 3_600_000))}:${pad(Math.floor(totalMs / 60_000) % 60)}:${pad(Math.floor(totalMs / 1000) % 60)},${pad(totalMs % 1000, 3)}`;
+}
+
+/** 新建一组字幕（新字幕轨，在最上层），整组套上位置和样式。回最新工程。 */
+async function addSubtitleGroup(ctx, srt, style) {
+  const group = randomBytes(16).toString("hex");
+  let project = await ctx.store.addSrtSubtitles(ctx.projectId, srt, { groupId: group });
+  // ProjectStore 建的字幕都在画面正中；整组套上位置和样式，不占模型的工具调用次数
+  const clips = project?.tracks?.find((track) => track.id === group)?.segments ?? [];
+  for (const [index, clip] of clips.entries()) {
+    try {
+      project = await ctx.store.updateSegment(ctx.projectId, clip.id, style);
+    } catch (error) {
+      // 样式不对时第一条就会报错：整组撤掉，不留一组没套上样式的字幕
+      if (index === 0) await ctx.store.removeSubtitleGroup(ctx.projectId, group).catch(() => undefined);
+      throw error;
+    }
+  }
+  return project;
+}
+
+// 片段只是换算时间、不花钱，放宽；真正花钱的是听几个不同素材
+const TRANSCRIBE_CLIPS = 500;
+const TRANSCRIBE_SOURCES = 20;
+// 只跟这一个素材有关的失败（太大、压不了、模型这次没按格式写）：跳过它接着转别的；其余（停止、模型看不了视频、Key 不对）整次失败
+const PER_SOURCE_FAILURES = new Set(["look_failed", "look_unavailable", "look_dropped", "look_slow", "video_too_large", "no_audio", "transcribe_unreadable", "transcribe_failed"]);
+const clock = (value) => `${Math.floor(value / 60)}:${(value % 60).toFixed(1).padStart(4, "0")}`;
+
+/** 素材转写过就用记住的（按素材和模型记，换了模型重听）；没听到人说话、回答被截断的不记，fresh 不用记住的。 */
+async function transcriptFor(ctx, item, fresh = false) {
+  const key = `transcript:${item.id}|${ctx.config?.baseUrl}|${ctx.config?.model}`;
+  const cached = fresh ? null : ctx.references?.get(key);
+  if (cached) return cached;
+  const lines = await transcribeMedia(ctx, item);
+  if (lines.length && lines.cutAt === undefined) remember(ctx, key, lines);
+  else ctx.references?.delete(key);
+  return lines;
+}
+
+/** transcribe_subtitles：几段视频片段的台词转写后换成时间线时间，拼成一组新字幕。没有声音、静音的片段跳过并说明。 */
+async function transcribeClips(ctx, args) {
+  const ids = Array.isArray(args.clip_ids) ? [...new Set(args.clip_ids)] : [];
+  if (!ids.length || ids.length > TRANSCRIBE_CLIPS || ids.some((id) => typeof id !== "string")) {
+    throw new AiEditError("arguments_invalid", `clip_ids 要给 1 到 ${TRANSCRIBE_CLIPS} 个时间线上视频片段的 clip_id。`);
+  }
+  const project = await ctx.store.getProject(ctx.projectId);
+  const where = new Map(project.tracks.flatMap((track) => track.segments.map((segment) => [segment.id, { track, segment }])));
+  const missing = ids.find((id) => !where.has(id));
+  if (missing) throw new AiEditError("clip_not_found", `时间线上没有片段 ${missing}，先用 get_timeline 看一下 clip_id。`, 404);
+  const sources = new Set(ids.map((id) => where.get(id).segment).filter((segment) => segment.kind === "video").map((segment) => ctx.library.idForPath(segment.path)));
+  if (sources.size > TRANSCRIBE_SOURCES) {
+    throw new AiEditError("arguments_invalid", `一次最多转写 ${TRANSCRIBE_SOURCES} 个不同素材里的片段（同一个素材切成多少段都只听一次），分几次转。`);
+  }
+  const captions = [];
+  const skipped = [];
+  const notes = [];
+  const heard = new Map();
+  const failed = new Set();
+  for (const id of ids) {
+    const found = where.get(id);
+    const { track, segment } = found;
+    const label = clipLabel(segment);
+    if (segment.kind !== "video") {
+      skipped.push(`${label}${segment.kind === "audio" ? "是音频，现在只能转写视频里的声音" : "没有声音"}`);
+      continue;
+    }
+    const item = ctx.library.get(ctx.library.idForPath(segment.path));
+    if (!item || item.status !== "ready") { skipped.push(`${label}在素材库里找不到`); continue; }
+    if (!item.hasAudio) { skipped.push(`${label}没有声音`); continue; }
+    if (track.mute || segment.volume === 0) { skipped.push(`${label}静音了`); continue; }
+    if (failed.has(item.id)) continue;
+    if (!heard.has(item.id)) {
+      try {
+        const lines = await transcriptFor(ctx, item, args.fresh === true);
+        heard.set(item.id, lines);
+        if (lines.cutAt !== undefined) notes.push(`“${item.name}”的回答写到了模型的长度上限，只转写到素材第 ${clock(lines.cutAt)}，后面没字幕；把片段剪短或分开再转`);
+        if (lines.unclear) notes.push(`“${item.name}”有 ${lines.unclear} 句听不清，没加字幕`);
+      } catch (error) {
+        if (error instanceof AiEditError && PER_SOURCE_FAILURES.has(error.code)) {
+          failed.add(item.id);
+          skipped.push(`${label}：${error.message.replace(/。$/u, "")}`);
+          continue;
+        }
+        if (error instanceof AiEditError) error.message = `${label}：${error.message}`;
+        throw error;
+      }
+    }
+    captions.push(...placeLines(heard.get(item.id), segment));
+  }
+  const lines = mergeCaptions(captions);
+  const extra = `${notes.length ? `${notes.join("；")}。` : ""}${skipped.length ? `没转写的：${skipped.join("；")}。` : ""}`;
+  if (!lines.length) {
+    const spoken = [...heard.values()].reduce((total, list) => total + list.length, 0);
+    const silent = spoken
+      ? `素材里听出了 ${spoken} 句台词，但都不在这些片段截取的范围里（或者只截到一句的一小半），没加字幕。`
+      : heard.size
+        ? `没听到有人说话，没加字幕。视频里明明有人说话的话，多半是现在配的模型只看画面、听不到声音：${MODEL_HINT}。`
+        : "没有能转写的片段，没加字幕。";
+    return { project, note: `${silent}${extra}`, summary: heard.size ? "没听到这些片段里的台词，没加字幕" : "没有能转写的片段，没加字幕" };
+  }
+  const updated = await addSubtitleGroup(ctx, captionsToSrt(lines), { transform: SUBTITLE_TRANSFORM });
+  const preview = lines.slice(0, 5).map((line) => `${clock(line.start)} ${line.text}`).join("；");
+  return {
+    project: updated,
+    note: `转写了 ${lines.length} 句台词，建成一组新字幕（画面下方）。时间是模型听出来的，可能差零点几秒；前几句：${preview}。${extra}要改字或样式用 update_clip。`,
+  };
 }
 
 function captionsToSrt(captions) {
@@ -1162,6 +1279,47 @@ const TOOLS = [
     run: async (ctx, args) => ({ html: await ctx.pages.read(args.page_id) }),
   },
   {
+    name: "generate_image",
+    description: `用 AI 生成一张图片放进素材库，返回 media_id，再用 add_media_clip 放上时间线。按张收费，一轮最多 ${IMAGES_PER_TURN} 张，只给素材库里实在没有的画面用（背景、插画、示意图、封面底图、贴纸）。`
+      + "给了参考图就照着它们改或参考它们的样子。同样的说明生成过会直接回那一张，不再花钱。",
+    parameters: obj({
+      prompt: str("画面说明：内容、风格、构图、光线、颜色，4000 字以内；别写真人名字"),
+      name: str("素材名，30 字以内；不填就用说明的开头"),
+      ratio: choice(["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"], "画面比例，不填按工程画布挑最接近的"),
+      quality: choice(["low", "medium", "high"], "画质：low 快又便宜，medium（默认），high 细节最多、最慢最贵"),
+      transparent: bool("要透明背景（贴纸、叠在视频上的元素）填 true"),
+      reference_media_ids: { type: "array", items: str("素材库里图片的 media_id"), description: "参考图，最多 4 张：要照着改的图，或者要参考样子的图" },
+    }, ["prompt"]),
+    media: true,
+    label: (args) => `生成了图片${quoted(args.name ?? args.prompt, 16)}`,
+    run: async (ctx, args) => {
+      const { item, ...rest } = await generateImage(ctx, args);
+      return { media: mediaForModel(item), ...rest };
+    },
+  },
+  {
+    name: "generate_video",
+    description: "用 AI（火山方舟 Seedance）生成一段视频放进素材库，返回 media_id，再用 add_media_clip 放上时间线。要花钱（720p 5 秒约 5 元，越长越贵，确切价钱看确认卡片），调用后应用会请用户在界面上确认，用户点了才生成，生成要几分钟。"
+      + "只给素材库里实在没有、又非要动态画面的镜头用。可以给首帧（或首尾帧）让画面从那张图动起来，也可以给几张参考图，两种用法不能同时用；图里不能有真人脸。同样的说明生成过会直接回那一段，不再花钱。",
+    parameters: obj({
+      prompt: str("画面说明：主体、动作、镜头怎么动、风格、光线，2000 字以内；别写真人名字"),
+      name: str("素材名，30 字以内；不填就用说明的开头"),
+      duration: int("时长（秒），默认 5，按镜头需要定，越长越贵；一般模型 4 到 15 秒，2.5 系列 4 到 30 秒", { minimum: 4, maximum: 30 }),
+      ratio: choice(["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"], "画面比例，不填按工程画布挑最接近的；给了首帧时跟着首帧"),
+      resolution: choice(["480p", "720p", "1080p"], "清晰度，默认 720p；fast、mini 模型没有 1080p"),
+      first_frame_media_id: str("首帧：素材库里图片的 media_id，视频从这张图开始动"),
+      last_frame_media_id: str("尾帧：素材库里图片的 media_id，视频停在这张图上，要和首帧一起给"),
+      reference_media_ids: { type: "array", items: str("素材库里图片的 media_id"), description: "参考图，最多 9 张，参考它们的人物、物品或画风；不能和首帧、尾帧同时给" },
+      with_audio: bool("要不要连声音（音效、环境声）一起生成，默认不要：剪辑一般另配音乐"),
+    }, ["prompt"]),
+    media: true,
+    label: (args) => `生成了视频${quoted(args.name ?? args.prompt, 16)}`,
+    run: async (ctx, args) => {
+      const { item, ...rest } = await generateVideo(ctx, args);
+      return { media: mediaForModel(item), ...rest };
+    },
+  },
+  {
     name: "search_catalog",
     description: "按种类和关键词查剪映内置的特效、滤镜、转场、动画、蒙版、混合模式、字体名称。用这些效果前必须先查到准确的 name。",
     parameters: obj({
@@ -1623,22 +1781,22 @@ const TOOLS = [
       const srt = has(args, "captions") ? captionsToSrt(args.captions) : args.srt;
       if (typeof srt !== "string" || !srt.trim()) throw new AiEditError("arguments_invalid", "captions 和 srt 至少给一个。");
       checkFont(args);
-      const group = randomBytes(16).toString("hex");
-      let project = await ctx.store.addSrtSubtitles(ctx.projectId, srt, { groupId: group });
-      // ProjectStore 建的字幕都在画面正中；整组套上位置和样式，不占模型的工具调用次数
-      const style = { transform: has(args, "transform") ? args.transform : SUBTITLE_TRANSFORM, ...pick(args, SUBTITLE_STYLE) };
-      const clips = project?.tracks?.find((track) => track.id === group)?.segments ?? [];
-      for (const [index, clip] of clips.entries()) {
-        try {
-          project = await ctx.store.updateSegment(ctx.projectId, clip.id, style);
-        } catch (error) {
-          // 样式不对时第一条就会报错：整组撤掉，不留一组没套上样式的字幕
-          if (index === 0) await ctx.store.removeSubtitleGroup(ctx.projectId, group).catch(() => undefined);
-          throw error;
-        }
-      }
-      return project;
+      return addSubtitleGroup(ctx, srt, { transform: has(args, "transform") ? args.transform : SUBTITLE_TRANSFORM, ...pick(args, SUBTITLE_STYLE) });
     },
+  },
+  {
+    name: "transcribe_subtitles",
+    description: "把时间线上视频片段里人说的话转写成字幕：AI 剪辑配置的模型听一遍声音，按句写出台词和起止时间，按片段在时间线上的位置和倍速建成一组新字幕（画面下方，和 add_subtitles 一样）。"
+      + "整条片子要配的片段一次传完（同一个素材切成多少段都只听一次），结果是一组字幕；剪辑改过要重新转写同一批片段时，先用 remove_subtitles 删掉之前转写的那组。"
+      + "同一个素材转写过会记住；用户说转写不对、漏了句、明明有人说话却没转出来时 fresh 填 true 重听。"
+      + "模型要能看视频、听得到音轨（比如方舟 doubao-seed-2-1-lite）；时间是模型听出来的，可能差零点几秒。要改字或样式用 update_clip。",
+    parameters: obj({
+      clip_ids: { type: "array", items: str("时间线上视频片段的 clip_id"), description: `要转写的视频片段（get_timeline 里的 clip_id），整条片子的一次传完；最多来自 ${TRANSCRIBE_SOURCES} 个不同素材` },
+      fresh: bool("用户说转写不对、漏了句、要重听时填 true：不用记住的那份，让模型重新听一遍"),
+    }, ["clip_ids"]),
+    write: true,
+    label: (args) => `把${Array.isArray(args.clip_ids) && args.clip_ids.length > 1 ? ` ${args.clip_ids.length} 段视频` : "视频"}里的台词转写成字幕`,
+    run: async (ctx, args) => transcribeClips(ctx, args),
   },
   {
     name: "add_subtitle_line",
@@ -1705,6 +1863,14 @@ const TOOLS = [
 export const TOOL_DEFINITIONS = TOOLS.map(({ name, description, parameters }) => ({ type: "function", function: { name, description, parameters } }));
 const TOOL_BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
 
+// 生成工具要用户在设置里开启（填 Key，视频也可以借用已填的方舟 Key）：没开的那项不发给模型（本机 CLI 的 MCP 工具清单也用这一份）
+const GENERATE_TOOLS = { generate_image: "image", generate_video: "video" };
+
+/** 这一轮发给模型的工具：generation 是 parseGenerateConfig 的结果（没配是 null）。 */
+export function toolsFor(generation) {
+  return TOOL_DEFINITIONS.filter(({ function: { name } }) => !Object.hasOwn(GENERATE_TOOLS, name) || Boolean(generation?.[GENERATE_TOOLS[name]]));
+}
+
 // ---------- 错误 ----------
 
 const EDIT_ERROR_TEXT = {
@@ -1762,9 +1928,9 @@ const EDIT_ERROR_TEXT = {
   IMAGE_TOO_LONG: "图片片段最长 3 小时",
 };
 
-/** 工具出错时：给模型的原样信息（码 + 原文 + details），给页面的中文说明。 */
+/** 工具出错时：给模型的原样信息（码 + 原文 + details），给页面的中文说明（报错带了给人看的那句 userText 就用它）。 */
 export function describeToolError(error) {
-  if (error instanceof AiEditError) return { code: error.code, message: error.message, text: error.message };
+  if (error instanceof AiEditError) return { code: error.code, message: error.message, text: error.userText ?? error.message };
   if (error instanceof EditError) {
     return {
       code: error.code,
@@ -1847,6 +2013,8 @@ function dropNulls(value, keep) {
 /**
  * 工具执行器。ctx：{ store, library, projectId, getCollector, exportDraft, onRename, signal }，
  * 参考视频另外用 getExplorer、config（AI 剪辑的接口配置，看视频也用它）、references（解析结果缓存）、fetchImpl、pollMs。
+ * 生成素材另外用 generation（生成配置）、generated（这一轮的计数，{ images }，各次调用共用同一个对象）、
+ * askSpend（花钱前问用户）、shutdown（采集器关掉时 abort，停止后在后台等的视频跟着放弃）。
  * 返回 { result（回给模型）, action（给页面的动作摘要）, changed（工程或素材有变化） }。
  */
 export function createToolRunner(ctx) {
@@ -1899,7 +2067,9 @@ export function createToolRunner(ctx) {
       } else {
         result = { ok: true, ...output };
       }
-      return { result, action: { name, summary: summary(args), ok: true }, changed: Boolean(tool.write || tool.media || tool.exporting) };
+      // 写工程的工具可以自己给一句步骤说明（转写字幕没加上字幕时照实说），不放进给模型的结果
+      const said = tool.write && typeof output?.summary === "string" ? output.summary : summary(args);
+      return { result, action: { name, summary: said, ok: true }, changed: Boolean(tool.write || tool.media || tool.exporting) };
     } catch (error) {
       const { text, ...info } = describeToolError(error);
       if (info.code === "TIMELINE_OVERLAP") {
@@ -1909,7 +2079,10 @@ export function createToolRunner(ctx) {
       if (info.code === "draft_changed") {
         info.message = `${info.message}先问用户是另存一份新草稿（mode 填 new），还是覆盖剪映里的改动（mode 填 update，会丢掉用户在剪映里做的修改）；用户明确说了再带上 mode 重新调用，别替用户选。`;
       }
-      return { result: { ok: false, ...info }, action: { name, summary: summary(args), ok: false, error: text }, changed: false };
+      // 有给人看的整句（生成视频没同意、没人确认、到上限这类）就整句换掉步骤说明，免得写成「生成了视频…：没生成」；
+      // 用户自己选了不生成的（declined）不算失败
+      const action = error instanceof AiEditError && error.userText ? { name, summary: text, ok: Boolean(error.declined) } : { name, summary: summary(args), ok: false, error: text };
+      return { result: { ok: false, ...info }, action, changed: false };
     }
   };
 }

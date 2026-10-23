@@ -656,6 +656,105 @@ describe("collector AI edit routes", () => {
     }
   }, 20_000);
 
+  it("won't pair or answer paired routes for pages it hosts itself, but still serves them their files", async () => {
+    const { dataDirectory, runtime, call, headers } = await startPaired("ai-edit-same-origin-");
+    const base = runtime.baseUrl;
+    const port = new URL(base).port;
+    // 采集器自己放出去的页面发来的请求：同源时浏览器自动带 same-origin（脚本改不了）；页面换个主机名打回来
+    // （127.0.0.1 ↔ localhost）浏览器算 cross-site，但 Origin 的端口还是采集器的
+    const ownPages = [
+      { "Sec-Fetch-Site": "same-origin" },
+      { "Sec-Fetch-Site": "cross-site", Origin: `http://127.0.0.1:${port}` },
+      { "Sec-Fetch-Site": "cross-site", Origin: `http://localhost:${port}` },
+    ];
+    const pair = (extra) => fetch(`${base}/v1/pair`, { method: "POST", headers: { ...extra, "Content-Type": "application/json" }, body: JSON.stringify({ code: runtime.getPairingCode() }) });
+
+    const pairingCode = runtime.getPairingCode();
+    for (const own of ownPages) {
+      const code = await fetch(`${base}/v1/pairing-code`, { headers: own });
+      expect(code.status).toBe(403);
+      expect(await code.json()).not.toHaveProperty("code");
+      // 页面拿不到配对码，也不能拿猜到的码一直试：拒掉的不占本机的尝试次数，应用随后照常能配对
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const refused = await pair(own);
+        expect(refused.status).toBe(403);
+        expect(await refused.json()).toEqual({ error: "same_origin_not_allowed" });
+      }
+    }
+    expect(runtime.getPairingCode()).toBe(pairingCode);
+    // 局域网地址、[::1] 这些主机名的页面本来就过不了来源检查
+    for (const host of ["192.168.1.5", "[::1]"]) {
+      const lan = { "Sec-Fetch-Site": "cross-site", Origin: `http://${host}:${port}` };
+      expect((await fetch(`${base}/v1/pairing-code`, { headers: lan })).status).toBe(403);
+      expect((await pair(lan)).status).toBe(403);
+    }
+
+    const { session } = await (await fetch(`${base}/v1/ai-edit/sessions`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" })).json();
+    const spendUrl = `${base}/v1/ai-edit/sessions/${session.id}/spend/0123456789abcdef`;
+    const answer = (extra) => fetch(spendUrl, { method: "POST", headers: { ...headers, ...extra, "Content-Type": "application/json" }, body: JSON.stringify({ allow: true }) });
+    // 带着合法 token 也不行：页面万一从别处拿到了 token，同样替用户答不了花钱确认
+    for (const own of ownPages) {
+      for (const response of [await fetch(`${base}/v1/ai-edit/sessions`, { headers: { ...headers, ...own } }), await answer(own), await fetch(`${base}/v1/status`, { headers: { ...headers, ...own } })]) {
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: "same_origin_not_allowed" });
+      }
+    }
+
+    // 应用页面（47651 端口是 same-site，开发服务器的 localhost 是 cross-site）、地址栏直接打开（none）和 Node 客户端（不带头）照旧
+    for (const site of [
+      { "Sec-Fetch-Site": "same-site", Origin: "http://127.0.0.1:47651" },
+      { "Sec-Fetch-Site": "cross-site", Origin: "http://localhost:8081" },
+      { "Sec-Fetch-Site": "cross-site" }, { "Sec-Fetch-Site": "none" }, {},
+    ]) {
+      const shown = await fetch(`${base}/v1/pairing-code`, { headers: site });
+      expect(shown.status).toBe(200);
+      expect(shown.headers.get("access-control-allow-origin")).toBe(site.Origin ?? null);
+      expect(await shown.json()).toEqual({ code: runtime.getPairingCode() });
+      expect((await fetch(`${base}/v1/ai-edit/sessions`, { headers: { ...headers, ...site } })).status).toBe(200);
+      // 能走到确认接口本身（这里没有挂着的确认，答「找不到」）
+      const answered = await answer(site);
+      expect(answered.status).toBe(404);
+      expect(await answered.json()).toMatchObject({ error: "spend_not_found" });
+    }
+    const paired = await pair({ "Sec-Fetch-Site": "same-site", Origin: "http://127.0.0.1:47651" });
+    expect(paired.status).toBe(200);
+    expect((await paired.json()).token).toHaveLength(43);
+
+    // 网页片段和 film 的文件不用配对，同源页面加载自己的东西照常
+    const { filmKey } = (await call("/v1/ai-edit/media")).body;
+    await mkdir(path.join(dataDirectory, "ai-edit", "pages", "p1"), { recursive: true });
+    await writeFile(path.join(dataDirectory, "ai-edit", "pages", "p1", "index.html"), "<html><head></head><body><script>window.film={frame(){}}</script></body></html>");
+    await writeFile(path.join(dataDirectory, "ai-edit", "pages", "p1", "data.json"), "{\"ok\":true}");
+    const film = `${base}/v1/ai-edit/film/${encodeURIComponent(filmKey)}`;
+    const place = `http://127.0.0.1:${port}/v1/ai-edit/film/${filmKey}/`;
+    for (const own of ownPages) {
+      const page = await fetch(`${film}/pages/p1/index.html`, { headers: own });
+      expect(page.status).toBe(200);
+      // 第二条策略：页面只能往这个网页片段的文件夹发请求、嵌页面（按这次请求的地址生成）
+      expect(page.headers.get("content-security-policy")).toContain(`, connect-src ${place} data: blob: `);
+      expect(page.headers.get("content-security-policy").endsWith(`; frame-src ${place}`)).toBe(true);
+      await page.text();
+      const data = await fetch(`${film}/pages/p1/data.json`, { headers: own });
+      // 单独打开也受同样的限制（SVG 文档、worker 脚本靠这个）
+      expect(data.headers.get("content-security-policy")).toBe(page.headers.get("content-security-policy"));
+      expect(await data.json()).toEqual({ ok: true });
+      const timeline = await fetch(`${film}/__film/timeline.mjs`, { headers: own });
+      expect(timeline.status).toBe(200);
+      expect(timeline.headers.get("content-security-policy")).toContain(`, connect-src ${place} `);
+      await timeline.text();
+      // 编码页只许跑自己的脚本、读截图和这个文件夹下的声音
+      const encoder = await fetch(`${film}/__encoder.html`, { headers: own });
+      expect(encoder.status).toBe(200);
+      expect(encoder.headers.get("content-security-policy")).toBe(`default-src 'none'; script-src 'unsafe-inline'; connect-src ${place} data:`);
+      await encoder.text();
+      // 找不到的文件也带策略，嵌进页面也借不到没有策略的窗口
+      const missing = await fetch(`${film}/pages/p1/nope.txt`, { headers: own });
+      expect(missing.status).toBe(404);
+      expect(missing.headers.get("content-security-policy")).toContain(`, connect-src ${place} `);
+      await missing.text();
+    }
+  });
+
   it("keeps working while the account switches, but waits to download from Douyin", async () => {
     let releaseSwitch;
     const initialize = DouyinCollector.prototype.initialize;

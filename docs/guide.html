@@ -38,7 +38,7 @@
       },
       "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-10-22",
+      "dateModified": "2026-10-23",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -101,7 +101,7 @@ html{scroll-padding-top:24px}
 <a href="./">DouyinDataReview 下载与项目介绍</a>
 <h1>抖音数据导出与年度报告使用指南</h1>
 <p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏和好友聊天记录保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
-<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-10-22">2026 年 10 月 22 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
+<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-10-23">2026 年 10 月 23 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
 <nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#coverage">数据范围</a><a href="#privacy">隐私与 AI</a><a href="#sources">源码依据</a></nav>
 
 <h2 id="export">如何导出抖音观看历史和聊天记录？</h2>
@@ -156,13 +156,14 @@ html{scroll-padding-top:24px}
     <tr><th scope="row">本地报告</th><td>不需要发送原始记录到 AI 服务；统计在电脑完成</td><td>记录和汇总保存在当前设备；公开分享报告会暴露其中显示的内容</td></tr>
     <tr><th scope="row">AI 视频解析</th><td>通过接口向 AI 服务发送选中视频、公开作品资料、提示词；模型不支持视频或选用本机 CLI 时，改发本机提取的镜头截图和音乐节拍等输入</td><td>截图模式听不到台词或旁白；解析结果属于模型生成内容</td></tr>
     <tr><th scope="row">AI 剪辑对话</th><td>向所选 AI 服务发送对话、素材清单、当前时间线；检索本地内容库时还发送匹配作品的标题、作者、话题、时长、链接、观看／点赞／收藏日期及来源列表</td><td>普通剪辑不上传素材文件本身；检索摘要会进入对话，后续轮次也可能再次发送</td></tr>
-    <tr><th scope="row">剪辑参考视频</th><td>接口支持视频输入时发送该视频；模型不支持视频或选用本机 CLI 时，发送本机提取的镜头截图、镜头表、音乐节拍等输入</td><td>让 AI 搜抖音同款时，搜索词发往抖音，搜索结果的公开资料发送给所选 AI 服务</td></tr>
+    <tr><th scope="row">剪辑参考视频、转写字幕</th><td>接口支持视频输入时发送该视频（转写字幕只发整段视频，模型看不了视频或选用本机 CLI 时不转写）；模型不支持视频或选用本机 CLI 时，发送本机提取的镜头截图、镜头表、音乐节拍等输入</td><td>让 AI 搜抖音同款时，搜索词发往抖音，搜索结果的公开资料发送给所选 AI 服务</td></tr>
+    <tr><th scope="row">AI 生成图片／视频</th><td>需在 AI 剪辑设置中开启：图片填 OpenAI 兼容图片接口的 Key；视频填视频 Key，或勾选借用 AI 剪辑、解析库已填的方舟 Key。开启后向你配置的图片接口（默认 OpenAI）和视频接口（默认火山方舟 Seedance）发送 AI 写的画面说明和选作参考的素材图片，两者都可以是中转站</td><td>按服务商计费；每次生成视频前需在页面上点「生成」确认，已经开始生成的视频点停止也停不下来，会在后台做完并照常扣费（应用需开着）；视频结果是服务商给的临时链接，应用随即下载进本机素材库</td></tr>
     <tr><th scope="row">保存 AI 设置</th><td>接口模式向所配置接口发送一段 3 秒测试小视频，检查模型是否支持视频输入</td><td>本机 CLI 使用文字和图片，无需视频能力测试；解析与剪辑的配置可以不同</td></tr>
     <tr><th scope="row">本机 CLI</th><td>由本机 Codex / Claude Code 使用你的订阅及网络配置，将文字、图片和工具返回的内容发送到对应 AI 服务</td><td>应用以不保存 CLI 会话的方式调用，不加载用户配置的规则、插件或 MCP；应用内剪辑对话仍保存在本机</td></tr>
   </tbody>
 </table>
 </div>
-<p>抖音 Cookie 和整份个人记录不作为 AI 输入发送。AI 接口 Key 保存在当前设备的浏览器配置中，采集器仅在请求中使用，不将 Key 写入采集器记录文件。AI 剪辑的对话、工程和素材库保存在本机，当前不按抖音账号隔离。登录凭据和个人备份都应由本人保管。</p>
+<p>抖音 Cookie 和整份个人记录不作为 AI 输入发送。AI 接口 Key（含生成图片、视频用的 Key）保存在当前设备的浏览器配置中，采集器仅在请求中使用，不将 Key 写入采集器记录文件。AI 剪辑的对话、工程和素材库（含 AI 生成的图片和视频）保存在本机，当前不按抖音账号隔离。登录凭据和个人备份都应由本人保管。</p>
 
 <h2 id="sources">这些说明依据哪些源码？</h2>
 <p>本指南依据公开仓库的实现整理。文档描述当前行为，接口可用性仍由抖音和你选择的 AI 服务决定；具体版本变更见 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases">Releases</a>。</p>

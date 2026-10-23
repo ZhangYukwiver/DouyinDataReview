@@ -76,6 +76,121 @@ export function saveAiEditConfig(config: AiEditConfig): void {
   try { globalThis.localStorage?.setItem(CONFIG_KEY, JSON.stringify(config)); } catch { /* 存不了就只管这一次 */ }
 }
 
+// ---------- 生成图片和视频（可选，按服务商另外计费） ----------
+
+/** 一项生成服务的接口地址、Key、模型 */
+export interface AiEditGenerateService { baseUrl: string; apiKey: string; model: string }
+/** 生成视频多一个开关 borrow：Key 留空时借不借方舟的 Key（AI 剪辑的，其次解析库的）；用户勾了才借，默认不借 */
+export interface AiEditGenerateVideoService extends AiEditGenerateService { borrow: boolean }
+/** 生成图片走 OpenAI 兼容的图片接口，生成视频走火山方舟 Seedance；哪项填了 Key（视频也可以勾选借 Key），AI 才有哪项工具 */
+export interface AiEditGenerateConfig { image: AiEditGenerateService; video: AiEditGenerateVideoService }
+/** 随消息发给采集器的那份：只带配好了的那项 */
+export interface AiEditGenerationRequest { image?: AiEditGenerateService; video?: AiEditGenerateService }
+
+export const DEFAULT_AI_EDIT_GENERATE_CONFIG: AiEditGenerateConfig = {
+  image: { baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-image-2.5-flare" },
+  video: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "", model: "doubao-seedance-2-0-260128", borrow: false },
+};
+
+const GENERATE_CONFIG_KEY = "dy2.aiEditGenerateConfig";
+
+export function loadAiEditGenerateConfig(): AiEditGenerateConfig {
+  try {
+    const saved = JSON.parse(globalThis.localStorage?.getItem(GENERATE_CONFIG_KEY) ?? "{}") as { image?: Partial<AiEditGenerateService> | null; video?: Partial<AiEditGenerateVideoService> | null } | null;
+    const service = (kind: keyof AiEditGenerateConfig): AiEditGenerateService => {
+      const stored = saved?.[kind];
+      const pick = (key: keyof AiEditGenerateService): string => { const value = stored?.[key]; return typeof value === "string" ? value : DEFAULT_AI_EDIT_GENERATE_CONFIG[kind][key]; };
+      return { baseUrl: pick("baseUrl"), apiKey: pick("apiKey"), model: pick("model") };
+    };
+    // 借 Key 只认存着的 true：没有这一项的老配置读出来是不借
+    return { image: service("image"), video: { ...service("video"), borrow: saved?.video?.borrow === true } };
+  } catch {
+    return DEFAULT_AI_EDIT_GENERATE_CONFIG;
+  }
+}
+
+export function saveAiEditGenerateConfig(config: AiEditGenerateConfig): void {
+  try { globalThis.localStorage?.setItem(GENERATE_CONFIG_KEY, JSON.stringify(config)); } catch { /* 存不了就只管这一次 */ }
+}
+
+/**
+ * 保存前查一遍接口地址：留空，或者是 http:// / https:// 开头的完整地址才行（和采集器的规矩一样）。
+ * 填错了采集器会拒收每一条消息，所以不合格的不让存；没问题回 null。
+ */
+export function generateConfigProblem(config: AiEditGenerateConfig): string | null {
+  if (badGenerateUrl(config.image.baseUrl)) return `生成图片的接口地址要以 https:// 开头，像 ${DEFAULT_AI_EDIT_GENERATE_CONFIG.image.baseUrl} 这样。`;
+  if (badGenerateUrl(config.video.baseUrl)) return `生成视频的接口地址要以 https:// 开头，像 ${DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl} 这样。`;
+  return null;
+}
+
+/** 留空不算错；填了就得是 http:// 或 https:// 开头的完整地址 */
+function badGenerateUrl(value: string): boolean {
+  const url = value.trim();
+  if (!url) return false;
+  try { return !["https:", "http:"].includes(new URL(url).protocol); } catch { return true; }
+}
+
+/**
+ * 没点保存就收起设置时替用户存的那份：接口地址填得不对的那项只把地址退回存着的（存着的也不对就留空、用默认），
+ * Key、模型、借 Key 的勾照存，免得一个地址填错整节改动都丢掉。problem 是给人看的一句说明，地址都合格时为 null。
+ */
+export function keepValidGenerateUrls(draft: AiEditGenerateConfig, stored: AiEditGenerateConfig): { config: AiEditGenerateConfig; problem: string | null } {
+  const dropped: string[] = [];
+  const url = (kind: keyof AiEditGenerateConfig, label: string): string => {
+    if (!badGenerateUrl(draft[kind].baseUrl)) return draft[kind].baseUrl;
+    dropped.push(label);
+    return badGenerateUrl(stored[kind].baseUrl) ? "" : stored[kind].baseUrl;
+  };
+  const config = { image: { ...draft.image, baseUrl: url("image", "生成图片") }, video: { ...draft.video, baseUrl: url("video", "生成视频") } };
+  return { config, problem: dropped.length ? `${dropped.join("和")}的接口地址要以 https:// 开头，刚才填的没存，还用原来的。` : null };
+}
+
+/** 是不是火山方舟的地址（volces.com 下的域名）；不是合法地址的也算不是 */
+export function isArkUrl(value: string): boolean {
+  try {
+    const host = new URL(value.trim()).hostname.toLowerCase();
+    return host === "volces.com" || host.endsWith(".volces.com");
+  } catch {
+    return false;
+  }
+}
+
+/** 能借出方舟 Key 的配置：AI 剪辑的、视频解析的（只用到这三项） */
+type ArkKeyHolder = { runtime?: AiRuntime; baseUrl: unknown; apiKey: unknown };
+
+/**
+ * 生成视频的 Key 留空时借哪一把方舟 Key：先看 AI 剪辑的，再看视频解析的。
+ * 只借走接口、地址是方舟的那把；选了本机 Codex / Claude 时存着的 Key 不拿出来用（和 aiRequestConfig 一样）。
+ */
+export function borrowArkKey(aiConfig: ArkKeyHolder, analysisConfig?: ArkKeyHolder | null): { from: "edit" | "analysis"; apiKey: string } | null {
+  const keyOf = (config: ArkKeyHolder | null | undefined): string => {
+    if (!config || isLocalAiRuntime(config.runtime) || typeof config.apiKey !== "string" || typeof config.baseUrl !== "string") return "";
+    return isArkUrl(config.baseUrl) ? config.apiKey.trim() : "";
+  };
+  const edit = keyOf(aiConfig);
+  if (edit) return { from: "edit", apiKey: edit };
+  const analysis = keyOf(analysisConfig);
+  return analysis ? { from: "analysis", apiKey: analysis } : null;
+}
+
+/**
+ * 随消息发给采集器的生成配置：只带填了 Key 的那项，都没有就是 undefined（请求里不带）。
+ * 地址、模型留空用默认的；视频 Key 留空时，用户勾了借 Key 才借方舟的 Key，而且只在视频地址也是方舟时借，免得把方舟 Key 发给别家。
+ * 没勾就不生成视频：生成要花钱，不能因为别处碰巧填过方舟 Key 就替用户打开。
+ */
+export function generationForRequest(generate: AiEditGenerateConfig, aiConfig: ArkKeyHolder, analysisConfig?: ArkKeyHolder | null): AiEditGenerationRequest | undefined {
+  const service = (kind: keyof AiEditGenerateConfig, apiKey: string): AiEditGenerateService => ({
+    baseUrl: generate[kind].baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG[kind].baseUrl,
+    apiKey,
+    model: generate[kind].model.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG[kind].model,
+  });
+  const imageKey = generate.image.apiKey.trim();
+  const videoUrl = generate.video.baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl;
+  const videoKey = generate.video.apiKey.trim() || (generate.video.borrow === true && isArkUrl(videoUrl) ? borrowArkKey(aiConfig, analysisConfig)?.apiKey ?? "" : "");
+  if (!imageKey && !videoKey) return undefined;
+  return { ...(imageKey ? { image: service("image", imageKey) } : {}), ...(videoKey ? { video: service("video", videoKey) } : {}) };
+}
+
 // ---------- 工程（与 JianYingAPI 的 Project 同形，字段保持 snake_case） ----------
 
 export type EditFit = "contain" | "cover" | "stretch";
@@ -192,6 +307,8 @@ export interface AiEditSessionSummary {
   status: string;
   projectId: string;
   draftBox: AiEditDraftLink | null;
+  /** 这一轮停下来等用户确认要不要花钱生成视频（老采集器没有这一项，当成没在等） */
+  awaitingSpend?: boolean;
 }
 
 export interface AiEditAction { name: string; summary: string; ok: boolean; error?: string }
@@ -229,8 +346,9 @@ export interface AiEditSession extends AiEditSessionSummary {
   revision: number;
   error: { code: string; message: string } | null;
   messages: AiEditChatItem[];
-  /** 正在进行的这一轮：已经吐出来的文字和已经做完的步骤；look 是要页面在浏览器里帮忙拆的视频 */
-  streaming: { text: string; actions?: AiEditAction[]; look?: AiEditLookJob } | null;
+  /** 正在进行的这一轮：已经吐出来的文字和已经做完的步骤；look 是要页面在浏览器里帮忙拆的视频，spend 是等用户点头的花钱生成 */
+  /** generating：正在生成图片、视频时的一句状态 */
+  streaming: { text: string; actions?: AiEditAction[]; look?: AiEditLookJob; spend?: AiEditSpendAsk; generating?: string } | null;
   /** 能撤销的上一步（最后一份存档的说法和种类）；没有时为 null */
   undo?: { label: string; kind: AiEditStepKind } | null;
   /** 能重做的那一步（刚撤销掉的）；没有时为 null */
@@ -257,6 +375,31 @@ export interface AiEditSessionState { session: AiEditSession; project: EditProje
  */
 export interface AiEditLookJob { id: string; kind: "reference" | "beats" | "squeeze"; url: string; name?: string; bytes?: number; claimed?: boolean }
 
+/**
+ * 生成视频要花钱，模型不能自己批准：AI 要生成时这一轮先停下，把要生成的东西挂在这里，
+ * 用户在页面上点「生成」才去调服务商；点「不生成」、停止、到 expiresAt 还没点，都不生成。
+ */
+export interface AiEditSpendAsk {
+  id: string;
+  kind: "video";
+  /** 服务商的说法（「火山方舟 Seedance」） */
+  provider: string;
+  model: string;
+  /** 时长（秒）；0 或 -1 是让模型自己定 */
+  seconds: number;
+  resolution: "480p" | "720p" | "1080p";
+  /** 画面比例（「9:16」，adaptive 是由模型定） */
+  ratio: string;
+  /** 带不带声音 */
+  audio: boolean;
+  /** 提示词的前 200 字 */
+  prompt: string;
+  /** 按官方价估的人民币（元）；认不出的模型是 null */
+  estimate: number | null;
+  /** 毫秒时间戳，过了这一刻还没点就算不生成。按的是采集器的钟（它可能在别的电脑上），页面不拿来比，到点由采集器撤掉这一问 */
+  expiresAt: number;
+}
+
 export interface AiEditMediaItem {
   id: string;
   name: string;
@@ -269,8 +412,14 @@ export interface AiEditMediaItem {
   hasAudio: boolean;
   size: number | null;
   createdAt: string;
-  /** page：AI 写的网页片段或导入工程里的网页（openfilm 的页面），page 是它的 HTML 在采集器 pages/ 下的路径 */
-  source: { type: "douyin" | "local" | "page"; url?: string; videoId?: string; title?: string; author?: string; cover?: string; page?: string; pageId?: string; transparent?: boolean; renderedAt?: number };
+  /**
+   * page：AI 写的网页片段或导入工程里的网页（openfilm 的页面），page 是它的 HTML 在采集器 pages/ 下的路径；
+   * generated：AI 调生成服务做的图片或视频，provider 是哪家、prompt 是提示词前 200 字、key 是采集器认重复用的
+   */
+  source: {
+    type: "douyin" | "local" | "page" | "generated"; url?: string; videoId?: string; title?: string; author?: string; cover?: string; page?: string; pageId?: string; transparent?: boolean; renderedAt?: number;
+    provider?: "openai" | "seedance"; model?: string; prompt?: string; key?: string;
+  };
 }
 
 /** 素材是网页片段时回它的 HTML 路径（采集器 pages/ 下），不是回 null。 */
@@ -304,7 +453,9 @@ export const sessionRunning = (session: Pick<AiEditSession, "status" | "streamin
 const UPLOAD_LIMIT = 4 * 1024 ** 3;
 
 function failure(status: number, value: any, fallback: string): LocalCollectorError {
-  return new LocalCollectorError(value?.error ?? `http_${status}`, value?.message ?? (
+  // 采集器一般回 { error: 代号, message }；也认 { error: { code, message } } 这种写法
+  const nested = value?.error && typeof value.error === "object" ? value.error : null;
+  return new LocalCollectorError((nested ? nested.code : value?.error) ?? `http_${status}`, value?.message ?? nested?.message ?? (
     status === 401 ? "连接已过期，请重新连接采集器。"
       : status === 404 ? "当前采集器还没有 AI 剪辑功能，请重启应用。"
         : fallback));
@@ -359,10 +510,12 @@ export interface AiEditMessageExtras {
   attachments?: readonly AiEditAttachmentRequest[];
   /** 剪辑页勾了「只看免费」：这一轮 AI 不用会员效果 */
   freeOnly?: boolean;
+  /** 生成图片和视频的接口（generationForRequest 算好的）：和 config 平级，本机 CLI 模式下也带得过去；没配就不带 */
+  generation?: AiEditGenerationRequest;
 }
 
 export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig, extras: AiEditMessageExtras = {}): Promise<AiEditSession> {
-  const { region, refs, attachments, freeOnly } = extras;
+  const { region, refs, attachments, freeOnly, generation } = extras;
   // 本机 CLI 只带运行时和模型，存着的 Key 和地址不发
   const body = {
     text, config: aiRequestConfig(config),
@@ -370,6 +523,7 @@ export async function sendAiEditMessage(connection: ExploreConnection, id: strin
     ...(refs?.length ? { refs } : {}),
     ...(attachments?.length ? { attachments } : {}),
     ...(freeOnly ? { freeOnly: true } : {}),
+    ...(generation && (generation.image || generation.video) ? { generation } : {}),
   };
   // 带图时请求体有几百 KB，给它多一点时间
   return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify(body), timeoutMs: attachments?.length ? 60_000 : 20_000 })).session;
@@ -481,6 +635,11 @@ export async function listPendingAiEditLooks(connection: ExploreConnection): Pro
 /** 把页面拆好的结果（或拆不了的原因）交回给采集器。 */
 export async function answerAiEditLook(connection: ExploreConnection, sessionId: string, lookId: string, body: unknown): Promise<void> {
   await request(connection, `${sessionPath(sessionId)}/look/${encodeURIComponent(lookId)}`, { method: "POST", body: JSON.stringify(body), timeoutMs: 60_000 });
+}
+
+/** 用户在卡片上点了「生成」（allow）或「不生成」。这一问已经结束（超时、停止、别的窗口答过）时采集器回 404 spend_not_found。 */
+export async function answerAiEditSpend(connection: ExploreConnection, sessionId: string, askId: string, allow: boolean): Promise<void> {
+  await request(connection, `${sessionPath(sessionId)}/spend/${encodeURIComponent(askId)}`, { method: "POST", body: JSON.stringify({ allow }) });
 }
 
 export type AiEditCatalogKind = "transition" | "filter" | "video_effect" | "video_intro" | "video_outro" | "video_group"

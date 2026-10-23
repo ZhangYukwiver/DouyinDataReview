@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { aiConfigReady, editAiEditClip, editAiEditClips, exportAiEditSession, getAiRuntimes, loadAiEditConfig, redoAiEdit, revertAiEdit, saveAiEditConfig, sendAiEditMessage, setAiEditGoal, undoAiEdit } from "./aiEdit";
+import {
+  DEFAULT_AI_EDIT_GENERATE_CONFIG, aiConfigReady, answerAiEditSpend, borrowArkKey, editAiEditClip, editAiEditClips, exportAiEditSession, generateConfigProblem, generationForRequest, getAiRuntimes, isArkUrl,
+  keepValidGenerateUrls, loadAiEditConfig, loadAiEditGenerateConfig, redoAiEdit, revertAiEdit, saveAiEditConfig, saveAiEditGenerateConfig, sendAiEditMessage, setAiEditGoal, undoAiEdit,
+} from "./aiEdit";
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -189,5 +192,185 @@ describe("local Codex / Claude Code settings", () => {
     status = 404;
     expect(await getAiRuntimes(connection)).toBeNull();
     expect(urls).toEqual(["http://127.0.0.1:4765/v1/ai-edit/runtimes?fresh=1", "http://127.0.0.1:4765/v1/ai-edit/runtimes"]);
+  });
+});
+
+describe("生成图片和视频", () => {
+  const connection = { baseUrl: "http://127.0.0.1:4765", token: "t" };
+  const stubStorage = () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
+    return saved;
+  };
+  const blank = (): typeof DEFAULT_AI_EDIT_GENERATE_CONFIG => ({ image: { ...DEFAULT_AI_EDIT_GENERATE_CONFIG.image }, video: { ...DEFAULT_AI_EDIT_GENERATE_CONFIG.video } });
+  const ark = { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "ark-edit", model: "doubao-seed-2-1-lite-260915" };
+  const analysis = { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "ark-analysis", model: "doubao-seed-2-1-lite-260915" };
+
+  it("配了才随消息带上，没配时请求体和原来一样", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ session: { id: "s" } }, { status: 202 });
+    }));
+    const config = { baseUrl: "https://edit.example.com/v1", apiKey: "edit-key", model: "m" };
+    const generation = { image: { baseUrl: "https://api.openai.com/v1", apiKey: "sk-image", model: "gpt-image-2.5-flare" } };
+    await sendAiEditMessage(connection, "s", "做张封面", config, { generation });
+    await sendAiEditMessage(connection, "s", "剪", config, { generation: undefined });
+    await sendAiEditMessage(connection, "s", "剪", config, { generation: {} });
+    expect(bodies).toEqual([{ text: "做张封面", config, generation }, { text: "剪", config }, { text: "剪", config }]);
+  });
+
+  it("本机 Codex / Claude 模式下照样带得过去，和 config 平级", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ session: { id: "s" } }, { status: 202 });
+    }));
+    const generation = { video: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "ark-video", model: "doubao-seedance-2-0-260128" } };
+    await sendAiEditMessage(connection, "s", "生成一段海浪", { ...ark, runtime: "codex" }, { generation });
+    expect(bodies).toEqual([{ text: "生成一段海浪", config: { runtime: "codex", model: "" }, generation }]);
+  });
+
+  it("只带填了 Key 的那项，地址和模型留空用默认", () => {
+    const generate = blank();
+    expect(generationForRequest(generate, { ...ark, apiKey: "" })).toBeUndefined();
+    generate.image = { baseUrl: " ", apiKey: " sk-image ", model: "" };
+    expect(generationForRequest(generate, { ...ark, apiKey: "" })).toEqual({ image: { baseUrl: "https://api.openai.com/v1", apiKey: "sk-image", model: "gpt-image-2.5-flare" } });
+    generate.video = { baseUrl: "https://ark.cn-beijing.volces.com/api/v3/", apiKey: "ark-video", model: " doubao-seedance-2-5-260628 ", borrow: false };
+    expect(generationForRequest(generate, ark)?.video).toEqual({ baseUrl: "https://ark.cn-beijing.volces.com/api/v3/", apiKey: "ark-video", model: "doubao-seedance-2-5-260628" });
+  });
+
+  it("视频 Key 留空、没勾借 Key：不生成视频，哪怕 AI 剪辑和解析库都填了方舟 Key", () => {
+    const generate = blank();
+    expect(DEFAULT_AI_EDIT_GENERATE_CONFIG.video.borrow).toBe(false);
+    expect(generationForRequest(generate, ark, analysis)).toBeUndefined();
+    expect(generationForRequest(generate, { ...ark, runtime: "codex" }, analysis)).toBeUndefined();
+    // 图片填了 Key 照样带图片，视频还是不带
+    generate.image.apiKey = "sk-image";
+    expect(generationForRequest(generate, ark, analysis)).toEqual({ image: { baseUrl: "https://api.openai.com/v1", apiKey: "sk-image", model: "gpt-image-2.5-flare" } });
+    // 自己填了视频 Key 就不用勾
+    generate.video.apiKey = " own ";
+    expect(generationForRequest(generate, ark, analysis)?.video).toEqual({ baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "own", model: "doubao-seedance-2-0-260128" });
+  });
+
+  it("勾了借 Key、视频 Key 留空：先借 AI 剪辑的方舟 Key，再借解析库的", () => {
+    const generate = blank();
+    generate.video.borrow = true;
+    const video = (apiKey: string) => ({ video: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey, model: "doubao-seedance-2-0-260128" } });
+    expect(generationForRequest(generate, ark, analysis)).toEqual(video("ark-edit"));
+    // AI 剪辑接的不是方舟、或者选了本机 Codex：轮到解析库的
+    expect(generationForRequest(generate, { ...ark, baseUrl: "https://relay.example.com/v1" }, analysis)).toEqual(video("ark-analysis"));
+    expect(generationForRequest(generate, { ...ark, runtime: "codex" }, analysis)).toEqual(video("ark-analysis"));
+    // 解析库也选了本机的、或者 Key 没填：不借，也就不带视频
+    expect(generationForRequest(generate, { ...ark, runtime: "claude" }, { ...analysis, runtime: "codex" })).toBeUndefined();
+    expect(generationForRequest(generate, { ...ark, apiKey: " " }, { ...analysis, apiKey: "" })).toBeUndefined();
+    // 自己填了就用自己的
+    generate.video.apiKey = "own";
+    expect(generationForRequest(generate, ark, analysis)).toEqual(video("own"));
+  });
+
+  it("视频地址不是方舟时不借方舟 Key，免得发给别家", () => {
+    const generate = blank();
+    generate.video.borrow = true;
+    generate.video.baseUrl = "https://relay.example.com/api/v3";
+    expect(generationForRequest(generate, ark, analysis)).toBeUndefined();
+    // 长得像但不是 volces.com 的也不算
+    expect(isArkUrl("https://volces.com.example.com/api/v3")).toBe(false);
+    expect(isArkUrl("https://evilvolces.com/api/v3")).toBe(false);
+    expect(isArkUrl("ark.cn-beijing.volces.com/api/v3")).toBe(false);
+    expect(isArkUrl("https://ARK.cn-beijing.volces.com/api/v3")).toBe(true);
+    expect(borrowArkKey({ ...ark, baseUrl: "https://evilvolces.com/api/v3" }, null)).toBeNull();
+    expect(borrowArkKey(ark, analysis)).toEqual({ from: "edit", apiKey: "ark-edit" });
+    // 解析库存的东西被改坏了也不出错
+    expect(borrowArkKey({ ...ark, apiKey: "" }, { baseUrl: analysis.baseUrl, apiKey: 3 })).toBeNull();
+  });
+
+  it("存在本机，按字段读回来，坏的字段退回默认", () => {
+    const saved = stubStorage();
+    expect(loadAiEditGenerateConfig()).toEqual(DEFAULT_AI_EDIT_GENERATE_CONFIG);
+    const generate = blank();
+    generate.image.apiKey = "sk-image";
+    generate.video.model = "doubao-seedance-2-0-fast-260128";
+    saveAiEditGenerateConfig(generate);
+    expect(JSON.parse(saved.get("dy2.aiEditGenerateConfig") ?? "null")).toEqual(generate);
+    expect(loadAiEditGenerateConfig()).toEqual(generate);
+    saved.set("dy2.aiEditGenerateConfig", JSON.stringify({ image: { apiKey: 5, model: "gpt-image-2" }, video: "x" }));
+    expect(loadAiEditGenerateConfig()).toEqual({ image: { ...DEFAULT_AI_EDIT_GENERATE_CONFIG.image, model: "gpt-image-2" }, video: DEFAULT_AI_EDIT_GENERATE_CONFIG.video });
+    saved.set("dy2.aiEditGenerateConfig", "{坏");
+    expect(loadAiEditGenerateConfig()).toEqual(DEFAULT_AI_EDIT_GENERATE_CONFIG);
+  });
+
+  it("借 Key 的勾存得住；没有这一项的老配置、存坏了的都算没勾", () => {
+    const saved = stubStorage();
+    const generate = blank();
+    generate.video.borrow = true;
+    saveAiEditGenerateConfig(generate);
+    expect(loadAiEditGenerateConfig().video.borrow).toBe(true);
+    // 加这个勾之前存的：Key 和模型照旧读回来，借 Key 是不勾
+    saved.set("dy2.aiEditGenerateConfig", JSON.stringify({ image: { baseUrl: "", apiKey: "", model: "" }, video: { baseUrl: "", apiKey: "", model: "doubao-seedance-2-0-fast-260128" } }));
+    const old = loadAiEditGenerateConfig();
+    expect(old.video).toEqual({ baseUrl: "", apiKey: "", model: "doubao-seedance-2-0-fast-260128", borrow: false });
+    expect(generationForRequest(old, ark, analysis)).toBeUndefined();
+    for (const borrow of ["true", 1, null]) {
+      saved.set("dy2.aiEditGenerateConfig", JSON.stringify({ video: { borrow } }));
+      expect(loadAiEditGenerateConfig().video.borrow).toBe(false);
+    }
+  });
+
+  it("保存前查接口地址：留空或 http(s):// 开头才行", () => {
+    const generate = blank();
+    expect(generateConfigProblem(generate)).toBeNull();
+    generate.image.baseUrl = " ";
+    generate.video.baseUrl = "";
+    expect(generateConfigProblem(generate)).toBeNull();
+    generate.image.baseUrl = " http://127.0.0.1:8000/v1 ";
+    expect(generateConfigProblem(generate)).toBeNull();
+    generate.image.baseUrl = "api.openai.com/v1";
+    expect(generateConfigProblem(generate)).toMatch(/^生成图片的接口地址要以 https:\/\/ 开头/u);
+    generate.image.baseUrl = "";
+    generate.video.baseUrl = "ftp://ark.cn-beijing.volces.com/api/v3";
+    expect(generateConfigProblem(generate)).toMatch(/^生成视频的接口地址要以 https:\/\/ 开头/u);
+  });
+
+  it("收起时替用户存：填错的地址退回原来的，Key、模型、借 Key 照存", () => {
+    const stored = blank();
+    stored.video.baseUrl = "https://ark.cn-beijing.volces.com/api/v3";
+    const draft = blank();
+    draft.image = { baseUrl: "api.openai.com/v1", apiKey: "sk-image", model: "gpt-image-2" };
+    draft.video = { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "ark-video", model: "doubao-seedance-2-0-fast-260128", borrow: true };
+    const kept = keepValidGenerateUrls(draft, stored);
+    expect(kept.config).toEqual({ image: { baseUrl: stored.image.baseUrl, apiKey: "sk-image", model: "gpt-image-2" }, video: draft.video });
+    expect(generateConfigProblem(kept.config)).toBeNull();
+    expect(kept.problem).toBe("生成图片的接口地址要以 https:// 开头，刚才填的没存，还用原来的。");
+    // 两项都填错：两项都退回；原来存的也是坏的（老版本存下的）就留空用默认
+    draft.video.baseUrl = "ark.cn-beijing.volces.com";
+    stored.image.baseUrl = "坏地址";
+    const both = keepValidGenerateUrls(draft, stored);
+    expect([both.config.image.baseUrl, both.config.video.baseUrl]).toEqual(["", "https://ark.cn-beijing.volces.com/api/v3"]);
+    expect(both.config.video).toMatchObject({ apiKey: "ark-video", borrow: true });
+    expect(both.problem).toMatch(/^生成图片和生成视频的接口地址/u);
+    // 都合格：原样不动
+    expect(keepValidGenerateUrls(blank(), stored)).toEqual({ config: blank(), problem: null });
+  });
+
+  it("确认卡片上点的「生成」「不生成」发到这一问上", async () => {
+    const calls: { url: string; method?: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url, method: init.method, body: JSON.parse(String(init.body)) });
+      return Response.json({ answered: true });
+    }));
+    await answerAiEditSpend(connection, "s", "0123456789abcdef", true);
+    await answerAiEditSpend(connection, "s", "0123456789abcdef", false);
+    expect(calls).toEqual([
+      { url: "http://127.0.0.1:4765/v1/ai-edit/sessions/s/spend/0123456789abcdef", method: "POST", body: { allow: true } },
+      { url: "http://127.0.0.1:4765/v1/ai-edit/sessions/s/spend/0123456789abcdef", method: "POST", body: { allow: false } },
+    ]);
+  });
+
+  it("这一问已经结束：带着 spend_not_found 报错（两种错误写法都认）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "spend_not_found", message: "这次确认已经结束了。" }, { status: 404 })));
+    await expect(answerAiEditSpend(connection, "s", "0123456789abcdef", true)).rejects.toMatchObject({ code: "spend_not_found", message: "这次确认已经结束了。" });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { code: "spend_not_found", message: "这次确认已经结束了。" } }, { status: 404 })));
+    await expect(answerAiEditSpend(connection, "s", "0123456789abcdef", true)).rejects.toMatchObject({ code: "spend_not_found", message: "这次确认已经结束了。" });
   });
 });
