@@ -1,15 +1,23 @@
+/** 设置「关于」里的「本版更新」：只写这一版比上一版改了什么 */
+export interface ReleaseNotes {
+  version: string;
+  title: string;
+  notes: string[];
+}
+
 /**
- * 设置「关于」里的「本版更新」：只写这一版比上一版改了什么。
- * 发版时和 .github/release-notes.md 开头那段一起改（版本号、标题、每条改动），测试会核对两边和 package.json 对得上。
+ * 取 .github/release-notes.md 开头那一节：「## vX 标题」加上「- 」开头的每条改动（链接、粗体、代码标记只留文字），
+ * 「验证」和后面的安装说明不要。格式对不上就返回 null，关于页不显示这一块。
  */
-export const RELEASE_NOTES = {
-  version: "1.20.0",
-  title: "AI 剪辑能写动画网页、直接出 MP4，还能和 openfilm 互通",
-  notes: [
-    "AI 剪辑接上了 openfilm 的做法：剪映内置做不出的画面（标题字卡、动态大字、数字滚动、图表、倒计时），AI 可以写成一个网页，按时间一帧帧画出来。看板上直接实时播放，导入剪映时自动渲成视频；透明底的会叠在下面的画面上。",
-    "不经剪映也能出片：顶栏「导出」→「导出成 MP4」，在本机把整条时间线连同声音渲成 MP4，做好点「下载」。",
-    "剪辑可以导出成 openfilm 工程（打成 zip），在 openfilm 里接着改；openfilm 的工程也能从「最近的剪辑」菜单导回来，变成一个新剪辑。剪映的特效、滤镜、转场、动画、关键帧和贴纸在 openfilm 里没有对应的东西，导出时会列出没带过去的部分。",
-    "渲染不用另装浏览器，也不用下载 ffmpeg：桌面版用应用自己的隐藏窗口一帧帧画，编码用系统自带的视频编码能力。",
-    "视频解析：视频超过 45MB 时，先在应用里压成小一些的再发给模型，压完还太大就再压，最多 3 次；不再因为接口收不下而失败。",
-  ],
-};
+export function parseReleaseNotes(markdown: string): ReleaseNotes | null {
+  const [head = "", ...lines] = (markdown.replace(/\r\n/gu, "\n").split("\n\n## ")[0] ?? "").split("\n");
+  const [, version, title] = /^## v(\S+)\s+(.+)$/u.exec(head.trim()) ?? [];
+  if (!version || !title) return null;
+  const notes = lines
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1").replace(/\*\*|`/gu, "").trim());
+  return { version, title: title.trim(), notes };
+}
+
+// 发版只写 .github/release-notes.md：metro.config.js 打包时把原文放进这个变量，开发服务器和生产包都一样
+export const RELEASE_NOTES = parseReleaseNotes(process.env.EXPO_PUBLIC_RELEASE_NOTES ?? "");

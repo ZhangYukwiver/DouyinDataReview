@@ -381,7 +381,7 @@ function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, 
       </View>
     </View>
   );
-  const releaseNotes = (
+  const releaseNotes = RELEASE_NOTES && (
     <View style={styles.row}>
       <View style={styles.copy} testID="settings-release-notes">
         <Text style={styles.rowTitle}>v{RELEASE_NOTES.version} 更新了什么</Text>
