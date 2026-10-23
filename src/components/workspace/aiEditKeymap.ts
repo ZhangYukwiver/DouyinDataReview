@@ -51,6 +51,16 @@ const KEYS = {
   "zoom-in": { label: "放大时间线", keys: ["mod+=", "mod++"] },
   "zoom-out": { label: "缩小时间线", keys: ["mod+-"] },
   "zoom-reset": { label: "时间线回到默认大小", keys: ["mod+0"] },
+  // 时间线工具栏（照 openfilm 的默认键位）
+  "select-mode": { label: "选择工具", keys: ["a", "v"] },
+  "split-mode": { label: "分割工具：点哪切哪", keys: ["b"] },
+  "add-marker": { label: "在播放头处加标记", keys: ["m"], edits: true },
+  "next-marker": { label: "跳到下一个标记", keys: ["shift+m"] },
+  "prev-marker": { label: "跳到上一个标记", keys: ["alt+m"] },
+  "toggle-snap": { label: "吸附", keys: ["n"] },
+  "toggle-magnet": { label: "主轨磁吸", keys: ["p"] },
+  "toggle-linkage": { label: "联动", keys: ["`"] },
+  "toggle-preview-axis": { label: "预览轴", keys: ["s"] },
 } satisfies Record<string, BoardKeySpec>;
 
 export type BoardAction = keyof typeof KEYS;

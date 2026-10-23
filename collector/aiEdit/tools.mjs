@@ -51,6 +51,7 @@ import { LOOK_UNAVAILABLE, lookMaterials, seesNoImages, seesNoVideo, videoRefuse
 //   list_markers            listMarkers
 //   remove_marker           removeMarker
 //   add_subtitles           addSrtSubtitles（也接受逐条字幕，这里拼成 SRT）
+//   add_subtitle_line       addSubtitleLine（往已有字幕组里补一条；还没有字幕就新建一组）
 //   remove_subtitles        removeSubtitleGroup
 //   export_to_jianying      mediaInfos + 草稿箱 createDraft / repairDraft
 // 宿主内部用、不给模型：createProject（新建会话）、deleteProject（删会话）、listProjects（不需要，会话就是工程列表）。
@@ -291,7 +292,7 @@ export function buildSystemPrompt({ project, media, goal = "" }) {
     "- 位置、缩放、旋转、不透明度都写在 transform 对象里，例如 \"transform\": {\"transform_y\": -0.8}。transform_x / transform_y 以画布中心为 0，单位是半个画布宽 / 高，x 向右为正，y 向上为正（字幕一般放在 -0.8 左右，add_subtitles 默认就放在这里）。",
     "- 分屏、宫格、拼图（七分屏、左右或上下分屏、九宫格等）：先把片段放上时间线，再用 arrange_grid 一次排好，不要自己算 transform 和蒙版。",
     "- 画布以上面写的为准，用户可能已经在界面上选好了比例，没被要求就别改。用户在对话里要横屏、竖屏、方形、16:9，或者说要发到 B 站、YouTube 这类横屏平台，先用 set_canvas 改好画布再排时间线；当前是竖屏而素材大多横拍时，在回复里提一句可以改成横屏。改了画布，用 arrange_grid 排过的分屏会自动按新画布重排。",
-    "- add_subtitles 建的字幕轨（时间线里标着 subtitles: true）只能整组加、删；已有的字幕可以用 update_clip 逐条改，但不能往字幕轨上单独加片段，要加标题或单独一句文字就另建一条文字轨道。",
+    "- add_subtitles 建的字幕轨（时间线里标着 subtitles: true）整组加、删；已有的字幕可以用 update_clip 逐条改，往组里补一条用 add_subtitle_line。要加标题或单独一句文字就另建一条文字轨道。",
     "- 每个片段的入场、出场、组合（文字是循环）动画各只能有一个，视频的组合动画不能和入场、出场同时用；音频片段的同类音效只能有一个。要换掉就先用 clear_clip_feature 去掉那一类再加。",
     "- 剪映内置做不出或做不好的画面（标题字卡、动态大字、数字滚动、数据图表、倒计时、进度条、片头片尾、带动画的字幕条），用 write_page 写网页片段，再用 add_media_clip 放上时间线。网页片段的写法（openfilm 页面约定）：",
     "  · 一个完整的 HTML 文件，脚本里定义 window.film = { duration: 秒数, frame(t) { … } }。frame(t) 按 t 把那一刻的画面整个画出来：同一个 t 永远画出同一个画面，不管之前画过什么、按什么顺序画。",
@@ -867,7 +868,7 @@ function catalogMember(enumNames, raw) {
 /** 字幕轨不能单独加片段：ProjectStore 只回「轨道不存在」，模型会以为 id 写错了。 */
 function assertNotSubtitles(project, trackId) {
   if (project.tracks.some((track) => track.id === trackId && track.kind === "subtitle")) {
-    throw invalid("SUBTITLE_TRACK_LOCKED", "这是 add_subtitles 建的字幕轨，只能用 add_subtitles / remove_subtitles 整组加、删，不能往上单独加片段（已有的字幕可以用 update_clip 逐条改）。要加标题或单独一句文字，用 create_track 另建一条文字轨道。");
+    throw invalid("SUBTITLE_TRACK_LOCKED", "这是 add_subtitles 建的字幕轨，不能用 add_text_clip / add_media_clip 往上加片段。往这组字幕里补一句用 add_subtitle_line（track_id 填这条轨道），已有的字幕用 update_clip 逐条改；要加标题或单独一句文字，用 create_track 另建一条文字轨道。");
   }
 }
 
@@ -1617,6 +1618,45 @@ const TOOLS = [
     },
   },
   {
+    name: "add_subtitle_line",
+    description: "往字幕轨里补一条字幕（样式照同组离它最近的那条）。只有一组字幕时 track_id 可以不填；还没有字幕时新建一组，放在画面下方。和同组别的字幕不能重叠。",
+    parameters: obj({
+      track_id: str("字幕轨的 track_id（时间线里标着 subtitles: true 的轨道）"),
+      start: num("开始（秒）", { minimum: 0 }),
+      duration: num("持续多久（秒）", { exclusiveMinimum: 0 }),
+      text: str("字幕文字"),
+    }, ["start", "duration", "text"]),
+    write: true,
+    label: (args) => `加了一条字幕${quoted(args.text, 16)}`,
+    run: async (ctx, args) => {
+      const project = await ctx.store.getProject(ctx.projectId);
+      const groups = project.tracks.filter((track) => track.kind === "subtitle");
+      let trackId = args.track_id;
+      if (trackId === undefined) {
+        if (groups.length > 1) throw new AiEditError("arguments_invalid", "有好几组字幕，用 track_id 说清楚加到哪一组。");
+        trackId = groups[0]?.id;
+      } else if (!groups.some((track) => track.id === trackId)) {
+        throw new AiEditError("arguments_invalid", "track_id 不是字幕轨；普通文字轨上加文字用 add_text_clip。");
+      }
+      if (trackId === undefined) {
+        // 还没有字幕：新建一组，和 add_subtitles 一样放在画面下方（这条路不经过 ProjectStore 的时间校验，先自己查）
+        const start = numeric(args.start);
+        const duration = numeric(args.duration);
+        if (!(Number.isFinite(start) && start >= 0 && Number.isFinite(duration) && duration > 0)) {
+          throw new AiEditError("arguments_invalid", "start 要是不小于 0 的秒数，duration 要大于 0。");
+        }
+        const group = randomBytes(16).toString("hex");
+        const next = await ctx.store.addSrtSubtitles(ctx.projectId, captionsToSrt([{ start, end: start + duration, text: args.text }]), { groupId: group });
+        const clip = next.tracks.find((track) => track.id === group)?.segments?.[0];
+        return clip ? ctx.store.updateSegment(ctx.projectId, clip.id, { transform: SUBTITLE_TRANSFORM }) : next;
+      }
+      const empty = !groups.find((track) => track.id === trackId)?.segments?.length;
+      const next = await ctx.store.addSubtitleLine(ctx.projectId, trackId, { text: args.text, timeline: { start_us: micros(args.start), duration_us: micros(args.duration) } });
+      const added = empty ? next.tracks.find((track) => track.id === trackId)?.segments?.[0] : null;
+      return added ? ctx.store.updateSegment(ctx.projectId, added.id, { transform: SUBTITLE_TRANSFORM }) : next;
+    },
+  },
+  {
     name: "remove_subtitles",
     description: "删除一组用 add_subtitles 加的字幕（给字幕轨道的 track_id）。",
     parameters: obj({ track_id: str("字幕轨道的 track_id") }, ["track_id"]),
@@ -1686,7 +1726,7 @@ const EDIT_ERROR_TEXT = {
   MEDIA_TYPE_UNSUPPORTED: "素材格式不支持",
   VALIDATION_ERROR: "参数不对",
   // 工具层按剪映规则提前拦下的
-  SUBTITLE_TRACK_LOCKED: "字幕轨只能整组加字幕，单独的文字要另建文字轨道",
+  SUBTITLE_TRACK_LOCKED: "字幕轨上不能直接放片段，补字幕用「加一条字幕」，单独的文字要另建文字轨道",
   SUBTITLE_CLIP_LOCKED: "字幕轨上的字幕不能单独挪到别的轨道，也不能复制",
   FONT_INVALID: "剪映里没有这个字体",
   MASK_PARAMS_INVALID: "只有矩形蒙版能设宽度和圆角",

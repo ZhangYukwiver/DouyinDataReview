@@ -449,13 +449,17 @@ export const HISTORY_WIDTH = 268;
 const HISTORY_EDGE = 8;
 
 /** 面板放在按钮下面、右边和按钮对齐，左右夹进窗口；最高到窗口底下留 18px */
-export function historyPanelPosition(anchor: { right: number; bottom: number }, viewport: { width: number; height: number }): { left: number; top: number; maxHeight: number } {
+export function historyPanelPosition(
+  anchor: { right: number; bottom: number; top?: number }, viewport: { width: number; height: number },
+): { left: number; top?: number; bottom?: number; maxHeight: number } {
+  const left = Math.max(HISTORY_EDGE, Math.min(anchor.right - HISTORY_WIDTH, viewport.width - HISTORY_WIDTH - HISTORY_EDGE));
   const top = anchor.bottom + 6;
-  return {
-    left: Math.max(HISTORY_EDGE, Math.min(anchor.right - HISTORY_WIDTH, viewport.width - HISTORY_WIDTH - HISTORY_EDGE)),
-    top,
-    maxHeight: Math.max(120, Math.min(440, viewport.height - top - 18)),
-  };
+  const below = viewport.height - top - 18;
+  // 按钮在下半截（时间线工具栏）、下面放不下时往上开，底边贴着按钮上沿
+  if (anchor.top !== undefined && below < 240 && anchor.top - 6 - 18 > below) {
+    return { left, bottom: viewport.height - anchor.top + 6, maxHeight: Math.max(120, Math.min(440, anchor.top - 6 - 18)) };
+  }
+  return { left, top, maxHeight: Math.max(120, Math.min(440, below)) };
 }
 
 /**

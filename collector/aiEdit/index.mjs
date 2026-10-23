@@ -48,10 +48,15 @@ const BOARD_EDITS = new Map([
   ["duplicate_clip", null],
   ["update_track", new Set(["track_id", "mute"])],
   ["reorder_tracks", null],
+  // 时间线工具栏：加、删、挪、改名标记，在播放头处补一条字幕
+  ["add_marker", new Set(["time", "label", "color"])],
+  ["remove_marker", new Set(["time"])],
+  ["add_subtitle_line", new Set(["track_id", "start", "duration", "text"])],
 ]);
-// 一批手动改动（多选、整组挪）最多几条、请求体最大多少；超过 8 条给模型的说明并成一句
-const MAX_BATCH_EDITS = 50;
-const EDIT_BODY_BYTES = 64 * 1024;
+// 一批手动改动（多选、整组挪、主轨磁吸重排）最多几条、请求体最大多少；超过 8 条给模型的说明并成一句
+const MAX_BATCH_EDITS = 200;
+const EDIT_BODY_BYTES = 256 * 1024;
+const MAX_BATCH_LABEL = 40;
 const MAX_BATCH_NOTES = 8;
 const MAX_PENDING_NOTES = 30;
 const MAX_REGION_CLIPS = 30;
@@ -300,6 +305,21 @@ function movedToEdge(before, after) {
  * before、after 是这一步前后的工程，result 是工具回给模型的结果。
  */
 function describeEdit(name, args, before, after, result) {
+  if (name === "add_marker") {
+    const replaced = (before.markers ?? []).some((marker) => marker.time_us === micros(args.time));
+    return replaced
+      ? { label: `改了标记“${leading(args.label, 12)}”`, note: `把 ${seconds(micros(args.time))} 秒的标记改成了“${leading(args.label, 40)}”` }
+      : { label: `加了标记“${leading(args.label, 12)}”`, note: `在 ${seconds(micros(args.time))} 秒加了标记“${leading(args.label, 40)}”` };
+  }
+  if (name === "remove_marker") {
+    const marker = (before.markers ?? []).find((item) => item.time_us === micros(args.time));
+    return { label: "删了标记", note: `删掉了 ${seconds(micros(args.time))} 秒的标记${marker ? `“${leading(marker.label, 40)}”` : ""}` };
+  }
+  if (name === "add_subtitle_line") {
+    const added = result.clip_id ? locate(after, result.clip_id) : null;
+    const where = added ? `，clip_id ${added.segment.id}，在 ${seconds(added.segment.timeline.start_us)}–${seconds(added.segment.timeline.start_us + added.segment.timeline.duration_us)} 秒` : "";
+    return { label: `加了一条字幕“${leading(args.text, 12)}”`, note: `在字幕里补了一条“${leading(args.text, 40)}”${where}` };
+  }
   if (name === "update_track") {
     const track = after.tracks.find((item) => item.id === args.track_id);
     const named = `“${trackLabel(track)}”`;
@@ -360,9 +380,10 @@ function describeEdit(name, args, before, after, result) {
 /** 一批改动在撤销按钮上的说法：同一种操作说「挪动了 3 段」，混着的说「改了 3 处」。 */
 function batchLabel(steps) {
   if (steps.length === 1) return steps[0].label;
-  const verbs = { move_clip: "挪动了", delete_clip: "删了", duplicate_clip: "复制了", split_clip: "切开了" };
+  const verbs = { move_clip: "挪动了", delete_clip: "删了", duplicate_clip: "复制了", split_clip: "切开了", add_marker: "加了", remove_marker: "删了" };
   const verb = steps.every((step) => step.name === steps[0].name) ? verbs[steps[0].name] : null;
-  return verb ? `${verb} ${steps.length} 段` : `改了 ${steps.length} 处`;
+  const unit = steps[0].name.endsWith("_marker") ? "个标记" : "段";
+  return verb ? `${verb} ${steps.length} ${unit}` : `改了 ${steps.length} 处`;
 }
 
 /** 一批改动给模型的说明：不多就每步一句，多了并成一句、列出涉及的片段。 */
@@ -1057,7 +1078,9 @@ export function createAiEdit({
             else await sessions.save(session);
             throw failure;
           }
-          checkpoint.label = batchLabel(steps);
+          // 看板可以给一批改动起名字（「合拢了主轨」「挪动标记」），撤销按钮和操作历史上就这么写
+          const named = typeof body.label === "string" ? leading(body.label, MAX_BATCH_LABEL) : "";
+          checkpoint.label = named || batchLabel(steps);
           for (const note of batchNotes(steps, checkpoint.label)) addNote(session, note);
           await sessions.clearRedo(session);
           await sessions.touch(session, { persist: true });
