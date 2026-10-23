@@ -7,6 +7,7 @@ import { getDesktopOpenAtLogin, setDesktopOpenAtLogin, type DesktopUpdateState }
 import { APP_STYLES, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type CollectorAccounts } from "../../services/localCollector";
 import { ease, revealFrom, ws } from "./motion";
+import { RELEASE_NOTES } from "./releaseNotes";
 import { appUpdateAction } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
@@ -380,9 +381,24 @@ function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, 
       </View>
     </View>
   );
+  const releaseNotes = RELEASE_NOTES && (
+    <View style={styles.row}>
+      <View style={styles.copy} testID="settings-release-notes">
+        <Text style={styles.rowTitle}>v{RELEASE_NOTES.version} 更新了什么</Text>
+        <Text style={styles.updateTarget}>{RELEASE_NOTES.title}</Text>
+        {RELEASE_NOTES.notes.map((note) => (
+          <View key={note} style={styles.note}>
+            <Text style={styles.detail}>·</Text>
+            <Text selectable style={[styles.detail, styles.noteText]}>{note}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
   if (!appUpdate) {
     return (
       <>
+        {releaseNotes}
         <View style={styles.row}>
           <RowCopy detail="浏览器里打开时没有自动更新。" title="应用更新" />
         </View>
@@ -406,6 +422,7 @@ function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, 
           <Text style={styles.value} testID="settings-version">v{appUpdate.currentVersion}</Text>
         </View>
       ) : null}
+      {releaseNotes}
       <View style={styles.row}>
         <View style={styles.copy}>
           <Text style={styles.rowTitle}>应用更新</Text>
@@ -624,6 +641,9 @@ const styles = StyleSheet.create({
   error: { fontFamily: font.body, color: color.danger, fontSize: 12.5, lineHeight: 19 },
   value: { fontFamily: font.sans, color: color.textSecondary, fontSize: 13, fontVariant: ["tabular-nums"] },
   updateTarget: { fontFamily: font.body, color: color.text, fontSize: 12.5, lineHeight: 19, fontWeight: "500" },
+  // 本版更新的每条改动：圆点挂在左边，折行的字对齐第一行
+  note: { flexDirection: "row", gap: 6 },
+  noteText: { flex: 1 },
   progressRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 },
   progressTrack: { flex: 1, height: 4, overflow: "hidden", borderRadius: radius.pill, backgroundColor: color.surfaceMuted },
   progressFill: { height: 4, backgroundColor: color.cyan },
