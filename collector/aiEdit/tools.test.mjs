@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { EditError, invalid } from "./errors.mjs";
 import { AiEditError, MediaLibrary } from "./library.mjs";
-import { TOOL_DEFINITIONS, TOOL_NAMES, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, micros, probeVideoInput, timelineSummary, trackLabel } from "./tools.mjs";
+import { TOOL_DEFINITIONS, TOOL_NAMES, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, micros, probeVideoInput, searchCatalog, timelineSummary, trackLabel } from "./tools.mjs";
 
 // 按本机格式生成（Windows 上带盘符和反斜杠），和素材库 path.join 出来的路径对得上
 const ROOT = path.resolve("/data/ai-edit/media");
@@ -308,6 +308,12 @@ describe("AI edit tools", () => {
     expect(fonts.items).toHaveLength(20);
     expect(fonts.total).toBeGreaterThan(20);
     expect(fonts.note).toBeTruthy();
+    // 剪辑页左栏：只看免费、一次多列
+    const free = searchCatalog({ kind: "transition", limit: 200, free: true }, 200);
+    expect(free.items.length).toBeGreaterThan(50);
+    expect(free.items.some((item) => item.vip)).toBe(false);
+    expect(free.total).toBeLessThan(searchCatalog({ kind: "transition" }).total);
+    expect(() => searchCatalog({ kind: "constructor" })).toThrow(AiEditError);
   });
 
   it("searches the user's own records by keyword and source", async () => {
@@ -329,6 +335,24 @@ describe("AI edit tools", () => {
     expect((await run("search_my_records", { query: "直播" })).result.total).toBe(0);
     const busy = runnerWith().run;
     expect((await busy("search_my_records", {})).result).toMatchObject({ ok: false, code: "collector_busy" });
+  });
+
+  it("keeps the AI off Jianying VIP effects when the user picked free only", async () => {
+    const free = runnerWith({ freeOnly: true });
+    expect((await free.run("search_catalog", { kind: "transition", query: "叠化" })).result.items.map((item) => item.name)).toEqual(["叠化"]);
+    const refused = await free.run("add_transition", { clip_id: "s1", transition_type: "叠化扭曲" });
+    expect(refused.result).toMatchObject({ ok: false, code: "VIP_NOT_ALLOWED" });
+    expect(refused.action.error).toBe("这个要剪映会员，已选只用免费素材");
+    expect((await free.run("update_clip", { clip_id: "s1", font_family: (await free.run("search_catalog", { kind: "font" })).result.items[0].name })).result.ok).toBe(true);
+    expect(free.calls.some((call) => call.name === "addTransition")).toBe(false);
+    expect((await free.run("add_transition", { clip_id: "s1", transition_type: "叠化" })).result.ok).toBe(true);
+    // 没勾就都能用
+    const all = runnerWith();
+    expect((await all.run("add_transition", { clip_id: "s1", transition_type: "叠化扭曲" })).result.ok).toBe(true);
+    expect((await all.run("search_catalog", { kind: "transition", query: "叠化" })).result.items.some((item) => item.vip)).toBe(true);
+    const prompt = (freeOnly) => buildSystemPrompt({ project: project(), media: [], freeOnly });
+    expect(prompt(true)).toContain("一个都不要用");
+    expect(prompt(false)).toContain("都能用");
   });
 
   it("describes the timeline and media in seconds for the system prompt", () => {

@@ -267,6 +267,19 @@ describe("AI edit sessions", () => {
     expect((await call(`/v1/ai-edit/sessions/${"0".repeat(32)}/goal`, { method: "POST", body: { goal: "x" } })).status).toBe(404);
   }, 20_000);
 
+  it("tells the model to skip Jianying VIP effects only on turns sent with free only", async () => {
+    const requests = [];
+    const fetchImpl = async (_url, init) => { requests.push(JSON.parse(init.body)); return textReply("好"); };
+    const { call, waitIdle } = await start({ fetchImpl });
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "剪", config: CONFIG, freeOnly: true } });
+    await waitIdle(session.id);
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "再剪", config: CONFIG } });
+    await waitIdle(session.id);
+    expect(requests[0].messages[0].content).toContain("用户选了只用免费素材");
+    expect(requests[1].messages[0].content).not.toContain("用户选了只用免费素材");
+  });
+
   it("switches the canvas from the board, but not while the AI is editing", async () => {
     let release;
     const fetchImpl = async () => { await new Promise((resolve) => { release = resolve; }); return textReply("好"); };

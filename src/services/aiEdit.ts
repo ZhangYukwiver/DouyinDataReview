@@ -357,16 +357,19 @@ export interface AiEditMessageExtras {
   region?: AiEditRegion | null;
   refs?: readonly AiEditRefRequest[];
   attachments?: readonly AiEditAttachmentRequest[];
+  /** 剪辑页勾了「只看免费」：这一轮 AI 不用会员效果 */
+  freeOnly?: boolean;
 }
 
 export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig, extras: AiEditMessageExtras = {}): Promise<AiEditSession> {
-  const { region, refs, attachments } = extras;
+  const { region, refs, attachments, freeOnly } = extras;
   // 本机 CLI 只带运行时和模型，存着的 Key 和地址不发
   const body = {
     text, config: aiRequestConfig(config),
     ...(region ? { region } : {}),
     ...(refs?.length ? { refs } : {}),
     ...(attachments?.length ? { attachments } : {}),
+    ...(freeOnly ? { freeOnly: true } : {}),
   };
   // 带图时请求体有几百 KB，给它多一点时间
   return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify(body), timeoutMs: attachments?.length ? 60_000 : 20_000 })).session;
@@ -474,6 +477,16 @@ export async function listPendingAiEditLooks(connection: ExploreConnection): Pro
 /** 把页面拆好的结果（或拆不了的原因）交回给采集器。 */
 export async function answerAiEditLook(connection: ExploreConnection, sessionId: string, lookId: string, body: unknown): Promise<void> {
   await request(connection, `${sessionPath(sessionId)}/look/${encodeURIComponent(lookId)}`, { method: "POST", body: JSON.stringify(body), timeoutMs: 60_000 });
+}
+
+export type AiEditCatalogKind = "transition" | "filter" | "video_effect" | "video_intro" | "video_outro" | "video_group"
+  | "text_intro" | "text_outro" | "text_loop" | "font" | "audio_effect" | "mask" | "mix_mode";
+export interface AiEditCatalogItem { name: string; display?: string; vip?: boolean; default_duration?: number }
+
+/** 剪映内置的转场、滤镜、特效、动画、字体……就是 AI 能写进草稿的那份目录；free 只要不用会员的。 */
+export async function searchAiEditCatalog(connection: ExploreConnection, kind: AiEditCatalogKind, query: string, free: boolean): Promise<{ total: number; items: AiEditCatalogItem[] }> {
+  const value = await request(connection, `/v1/ai-edit/catalog?kind=${kind}&q=${encodeURIComponent(query)}${free ? "&free=1" : ""}`);
+  return { total: Number(value?.total) || 0, items: Array.isArray(value?.items) ? value.items : [] };
 }
 
 export async function listAiEditMedia(connection: ExploreConnection): Promise<{ media: AiEditMediaItem[]; key: string; filmKey: string }> {
