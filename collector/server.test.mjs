@@ -117,7 +117,7 @@ describe("collector accounts", () => {
     const { dataDirectory, call } = await startPaired("accounts-default-", async (directory) => {
       await writeSyntheticRecords(directory);
       for (const name of ["browser-profile/Default", "direct-signer", "backups"]) await mkdir(path.join(directory, name), { recursive: true });
-      for (const name of ["browser-profile/Default/Cookies", "records.json.123.tmp", "direct-history-template.json", "direct-signer/signer.js", "backups/old.json", "launcher-error.txt", "notes.txt"]) {
+      for (const name of ["browser-profile/Default/Cookies", "records.json.123.tmp", "folders.json", "folders.json.123.tmp", "folders.json.broken-1792000000000", "direct-history-template.json", "direct-signer/signer.js", "backups/old.json", "launcher-error.txt", "notes.txt"]) {
         await writeFile(path.join(directory, name), "x");
       }
     });
@@ -299,6 +299,94 @@ describe("collector account switching edge cases", () => {
     const response = await importing;
     expect(response.status).toBe(409);
     expect((await response.json()).error).toBe("collector_busy");
+  });
+});
+
+describe("collector record folders", () => {
+  const emptyList = { folders: [], items: {} };
+  const emptyLists = { lists: { watch_history: emptyList, liked_videos: emptyList, favorite_videos: emptyList } };
+  const sample = { lists: {
+    watch_history: { folders: [{ id: "f1k2m3", name: "学习" }], items: { "7300000000000000001": "f1k2m3", "7300000000000000002": "gone" } },
+    other: { folders: [{ id: "x", name: "不认" }], items: {} },
+  } };
+  const saved = { lists: { ...emptyLists.lists, watch_history: { folders: [{ id: "f1k2m3", name: "学习" }], items: { "7300000000000000001": "f1k2m3" } } } };
+  const postFolders = (runtime, headers, body, query = "") => fetch(`${runtime.baseUrl}/v1/folders${query}`, {
+    method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body),
+  }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+  it("saves folders per account, behind pairing, and leaves them alone when the record cache is cleared", async () => {
+    const { dataDirectory, runtime, call, headers } = await startPaired("folders-routes-", writeSyntheticRecords);
+    expect((await fetch(`${runtime.baseUrl}/v1/folders`)).status).toBe(401);
+    expect((await fetch(`${runtime.baseUrl}/v1/folders`, { method: "POST", body: JSON.stringify(sample) })).status).toBe(401);
+    expect(await call("/v1/folders")).toEqual({ status: 200, body: emptyLists });
+    expect(await exists(path.join(dataDirectory, "folders.json"))).toBe(false);
+
+    expect(await postFolders(runtime, headers, sample, "?account=default")).toEqual({ status: 200, body: { ok: true } });
+    expect(await call("/v1/folders")).toEqual({ status: 200, body: saved });
+    expect(JSON.parse(await readFile(path.join(dataDirectory, "folders.json"), "utf8"))).toMatchObject({ schemaVersion: 1, lists: saved.lists });
+
+    // 坏请求、不是当前账号的请求都不改动
+    expect(await postFolders(runtime, headers, '{"lists":')).toMatchObject({ status: 400, body: { error: "invalid_request", message: "文件夹数据无效。" } });
+    expect(await postFolders(runtime, headers, {})).toMatchObject({ status: 400, body: { error: "invalid_request" } });
+    expect(await postFolders(runtime, headers, { lists: [] })).toMatchObject({ status: 400, body: { error: "invalid_request" } });
+    expect(await postFolders(runtime, headers, emptyLists, "?account=0123456789ab")).toMatchObject({ status: 409, body: { error: "account_changed" } });
+    expect((await call("/v1/folders")).body).toEqual(saved);
+
+    // 清除本地缓存只清记录，文件夹还在
+    expect((await call("/v1/records?account=default", "DELETE")).status).toBe(200);
+    expect((await call("/v1/records")).body.records.liked_videos).toEqual([]);
+    expect((await call("/v1/folders")).body).toEqual(saved);
+    expect(await exists(path.join(dataDirectory, "folders.json"))).toBe(true);
+
+    // 新账号是空的，存到它自己的目录；切回来还是原来的
+    const created = await call("/v1/accounts", "POST");
+    expect(created.status).toBe(201);
+    const newId = created.body.activeId;
+    expect(await call("/v1/folders")).toEqual({ status: 200, body: emptyLists });
+    const other = { lists: { favorite_videos: { folders: [{ id: "g1", name: "收藏夹" }], items: { v9: "g1" } } } };
+    expect((await postFolders(runtime, headers, other, `?account=${newId}`)).status).toBe(200);
+    expect(JSON.parse(await readFile(path.join(dataDirectory, "accounts", newId, "folders.json"), "utf8")).lists.favorite_videos.items).toEqual({ v9: "g1" });
+    expect(JSON.parse(await readFile(path.join(dataDirectory, "folders.json"), "utf8")).lists).toEqual(saved.lists);
+    expect((await call("/v1/accounts/default/activate", "POST")).status).toBe(200);
+    expect((await call("/v1/folders")).body).toEqual(saved);
+
+    // 删掉 default 账号，根目录的 folders.json 跟着删
+    expect((await call(`/v1/accounts/${newId}/activate`, "POST")).status).toBe(200);
+    expect((await call("/v1/accounts/default", "DELETE")).status).toBe(200);
+    expect(await exists(path.join(dataDirectory, "folders.json"))).toBe(false);
+    expect((await call("/v1/folders")).body.lists.favorite_videos.items).toEqual({ v9: "g1" });
+  });
+
+  it("says so when the folder file cannot be read or saved", async () => {
+    // folders.json 是个目录：读和写都会失败，不能当成空的再盖过去
+    const { dataDirectory, runtime, call, headers } = await startPaired("folders-broken-", async (directory) => {
+      await mkdir(path.join(directory, "folders.json"));
+    });
+    expect(await call("/v1/folders")).toMatchObject({ status: 500, body: { error: "folders_read_failed" } });
+    expect(await postFolders(runtime, headers, sample)).toEqual({
+      status: 500, body: { error: "folders_save_failed", message: "文件夹没存上，请稍后再试。" },
+    });
+    expect((await stat(path.join(dataDirectory, "folders.json"))).isDirectory()).toBe(true);
+  });
+
+  it("does not save an upload into the account that was switched to while it uploaded", async () => {
+    const { dataDirectory, runtime, call, headers } = await startPaired("folders-switch-");
+    let upload;
+    const body = new ReadableStream({ start(controller) { upload = controller; } });
+    const saving = fetch(`${runtime.baseUrl}/v1/folders`, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body, duplex: "half",
+    });
+    upload.enqueue(new TextEncoder().encode('{"lists":'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const created = await call("/v1/accounts", "POST");
+    expect(created.status).toBe(201);
+    upload.enqueue(new TextEncoder().encode(JSON.stringify(sample.lists) + "}"));
+    upload.close();
+    const response = await saving;
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toBe("collector_busy");
+    expect(await exists(path.join(dataDirectory, "folders.json"))).toBe(false);
+    expect(await exists(path.join(dataDirectory, "accounts", created.body.activeId, "folders.json"))).toBe(false);
   });
 });
 

@@ -71,6 +71,8 @@ const blocks: string[] = [
   rule(sel("stamp,stamp-sig,stamp-ghost"), `display:flex;align-self:flex-start!important;flex-direction:row;align-items:center;gap:6px;font-family:${MONO}!important;font-weight:700!important;font-size:11px!important;line-height:1!important;letter-spacing:.1em!important;text-transform:uppercase;padding:5px 7px 4px!important;white-space:nowrap;border-width:0!important;min-height:0!important;height:auto!important`),
   rule(sel("stamp"), `background-color:var(--pf)!important;${ink("var(--pb)")};color:var(--pb)!important`),
   rule(sel("stamp-sig"), `background-color:${SIG}!important;${ink(INK)};color:${INK}!important`),
+  // 封面上的文件夹名会很长：戳是 flex，单行省略号不生效，这一个换回块级
+  rule(sel("w-folder"), "display:block!important"),
   rule(sel("stamp-ghost"), `background-color:transparent!important;border:2px solid var(--pf)!important;padding:3px 5px 2px!important;${ink("var(--pf)")};color:var(--pf)!important`),
   rule(sel("stamp-bar"), `${SIG_GROUND};border-width:0!important;border-radius:0!important;margin-left:0!important;margin-right:0!important`),
   rule(sel("stamp-bar", " div[dir]"), `font-weight:700!important`),
