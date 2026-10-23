@@ -6,7 +6,7 @@ import { Check, Download, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon }
 import { getDesktopOpenAtLogin, setDesktopOpenAtLogin, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type CollectorAccounts } from "../../services/localCollector";
-import { ease, ws } from "./motion";
+import { ease, revealFrom, ws } from "./motion";
 import { appUpdateAction } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
@@ -197,8 +197,8 @@ function Appearance({ appStyle, contentWidth, onChangeAppStyle, onChangeStorySty
                 accessibilityState={{ checked: on }}
                 aria-checked={on}
                 key={item.key}
-                onPress={() => { if (!on) onChangeAppStyle(item.key); }}
-                {...spaceKey(() => { if (!on) onChangeAppStyle(item.key); })}
+                onPress={(event) => { if (!on) revealFrom(event, () => onChangeAppStyle(item.key)); }}
+                {...spaceKey((event) => { if (!on) revealFrom(event, () => onChangeAppStyle(item.key)); })}
                 style={(state) => [styles.styleCard, { width: cardWidth }, on ? styles.styleCardOn : hovered(state) && styles.styleCardHover, pointer, ease("border-color", 140)]}
                 testID={`app-style-${item.key}`}
               >
@@ -575,13 +575,14 @@ function role(appStyle: AppStyle, ...names: Array<string | false | null | undefi
 }
 
 /** RN-web 只在 role=button 上把空格当点击；单选和开关按读屏和键盘的习惯也要能用空格切换 */
-function spaceKey(action: () => void): { onKeyDown?: (event: { key?: string; preventDefault?: () => void }) => void } {
+type SpaceEvent = { key?: string; preventDefault?: () => void; currentTarget?: unknown };
+function spaceKey(action: (event: SpaceEvent) => void): { onKeyDown?: (event: SpaceEvent) => void } {
   if (!web) return {};
   return {
     onKeyDown: (event) => {
       if (event.key !== " " && event.key !== "Spacebar") return;
       event.preventDefault?.();
-      action();
+      action(event);
     },
   };
 }

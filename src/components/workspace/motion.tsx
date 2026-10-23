@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { Platform, type ImageStyle, type View, type ViewStyle } from "react-native";
 
 /**
@@ -8,6 +9,8 @@ import { Platform, type ImageStyle, type View, type ViewStyle } from "react-nati
  */
 const web = Platform.OS === "web";
 const EASE = "cubic-bezier(.22,.61,.36,1)";
+// 完成时迸开的一圈八个小点：一个 3px 元素的八份 box-shadow，从半径 4 推到 15 再淡掉
+const burstRing = (r: number) => Array.from({ length: 8 }, (_, k) => `${(Math.cos(k * Math.PI / 4) * r).toFixed(1)}px ${(Math.sin(k * Math.PI / 4) * r).toFixed(1)}px 0 0 var(--ws-accent)`).join(",");
 
 export const motionCss = `
 @keyframes ws-rise{from{opacity:0;transform:translate3d(0,18px,0)}to{opacity:1;transform:none}}
@@ -20,6 +23,9 @@ export const motionCss = `
 [data-motion="pulse"]{animation:ws-pulse 1.7s cubic-bezier(.2,.6,.3,1) infinite}
 [data-motion="slide"]{animation:ws-slide 1.4s cubic-bezier(.4,0,.2,1) infinite}
 [data-motion="pop"]{animation:ws-pop .45s cubic-bezier(.2,.8,.3,1.2) backwards}
+@keyframes ws-burst{from{box-shadow:${burstRing(4)}}55%{opacity:1}to{box-shadow:${burstRing(15)};opacity:0}}
+[data-motion="burst"]{animation:ws-burst .6s cubic-bezier(.2,.7,.3,1) forwards}
+::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
 [data-reveal="wait"][data-reveal]{opacity:0}
 [data-reveal="in"]{animation:ws-rise .8s ${EASE} backwards}
 ${Array.from({ length: 16 }, (_, index) => `[data-i="${index + 1}"]{animation-delay:${(index + 1) * 70}ms}`).join("")}
@@ -40,7 +46,7 @@ ${Array.from({ length: 16 }, (_, index) => `[data-i="${index + 1}"]{animation-de
 @media (prefers-reduced-motion:reduce){[data-motion],[data-reveal]{animation:none!important;opacity:1!important}[data-hover],[data-hover] svg{transition:none!important}}
 `;
 
-type Motion = "rise" | "fade" | "pulse" | "slide" | "pop";
+type Motion = "rise" | "fade" | "pulse" | "slide" | "pop" | "burst";
 type Hover = "lift" | "card" | "raise" | "tint";
 
 function reduced(): boolean {
@@ -149,6 +155,30 @@ export function useCountUp(value: number, duration = 800): number {
     return () => cancelAnimationFrame(frame);
   }, [value, duration, instant]);
   return Math.round(shown);
+}
+
+type PressLike = { nativeEvent?: object; currentTarget?: unknown } | undefined;
+
+/**
+ * 换整体风格这种整页切换：新样子从点下去的位置圆形铺开（View Transitions）。键盘触发没有指针坐标，就从按钮中心铺开；
+ * 不支持或减少动态偏好下直接换。apply 里的 setState 用 flushSync 当场提交，新快照才是换好的样子。
+ */
+export function revealFrom(event: PressLike, apply: () => void): void {
+  const target = event?.currentTarget as Element | undefined;
+  if (!web || typeof document === "undefined" || !("startViewTransition" in document) || reduced() || !target?.getBoundingClientRect) {
+    apply();
+    return;
+  }
+  const box = target.getBoundingClientRect();
+  // RN-web 的点击事件底下是 DOM 的 click，带 clientX/Y；键盘触发的没有（或是 0）
+  const pointer = event?.nativeEvent as { clientX?: number; clientY?: number } | undefined;
+  const x = pointer?.clientX || box.left + box.width / 2;
+  const y = pointer?.clientY || box.top + box.height / 2;
+  const r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  document.startViewTransition(() => flushSync(apply)).ready.then(() => {
+    document.documentElement.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${r}px at ${x}px ${y}px)`] },
+      { duration: 560, easing: EASE, pseudoElement: "::view-transition-new(root)" });
+  }, () => undefined);
 }
 
 /** 折线的近似长度，给 stroke-dash 画线用。 */

@@ -873,7 +873,7 @@ function ConfigPanel({ connection, config, probe, onSave, onRetest, onCancel }: 
         {field("baseUrl", "接口地址", { placeholder: "https://ark.cn-beijing.volces.com/api/v3" })}
       </>}
       <View style={kit.row}>
-        <SmallButton label={saved ? "已保存" : "保存"} disabled={!ready} onPress={save} />
+        <SmallButton label={saved ? "已保存" : "保存"} done={saved} disabled={!ready} onPress={save} />
         {onCancel ? <SmallButton label="收起" onPress={onCancel} /> : null}
       </View>
       {!local && !isLocalAiRuntime(config.runtime) && config.apiKey ? <View style={styles.probeRow}>

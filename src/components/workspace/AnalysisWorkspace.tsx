@@ -232,7 +232,7 @@ function ConfigPanel({ connection, config, probe, onSave, onRetest, onClose }: {
     </>}
     {field("direction", "我的创作方向（选填）", { multiline: true, maxLength: 600, placeholder: "比如：上班族的 10 分钟快手菜，口播加实拍。填了以后改编建议会贴着这个方向写。" })}
     <View style={kit.row}>
-      <SmallButton label={saved ? "已保存" : "保存"} disabled={!aiConfigReady({ ...draft, runtime })} onPress={save} />
+      <SmallButton label={saved ? "已保存" : "保存"} done={saved} disabled={!aiConfigReady({ ...draft, runtime })} onPress={save} />
       {onClose ? <SmallButton label="收起" onPress={onClose} /> : null}
     </View>
     {local ? <Text style={kit.muted}>{`${RUNTIME_LABELS[runtime]} 看不了视频：解析时应用会先把视频拆成镜头截图和音乐节拍再交给它，听不到台词和旁白，这时要开着应用。`}</Text>
@@ -262,7 +262,7 @@ function Detail({ item, onRetry, onRemove, onOpen }: { item: VideoAnalysis; onRe
     {video?.tags?.length ? <Text style={kit.muted}>{video.tags.map((tag) => `#${tag}`).join("  ")}</Text> : null}
     <View style={kit.row}>
       <SmallButton label="打开原视频" onPress={onOpen}><ArrowUpRight size={14} color={color.text} /></SmallButton>
-      {item.markdown ? <SmallButton label={copied ? "已复制" : "复制全文"} onPress={copy}><Copy size={14} color={color.text} /></SmallButton> : null}
+      {item.markdown ? <SmallButton label={copied ? "已复制" : "复制全文"} done={copied} onPress={copy}><Copy size={14} color={color.text} /></SmallButton> : null}
       <SmallButton label="重新解析" disabled={item.status === "running"} onPress={onRetry}><RefreshCw size={14} color={color.text} /></SmallButton>
       <SmallButton label="删除" disabled={item.status === "running"} onPress={onRemove}><Trash2 size={14} color={color.text} /></SmallButton>
     </View>

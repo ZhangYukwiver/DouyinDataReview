@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { Info } from "lucide-react-native";
+import { Check, Info } from "lucide-react-native";
 import { readCreator, type CreatorData, type CreatorQuery } from "../../services/creatorCenter";
 import type { ExploreConnection } from "../../services/explorer";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
-import { ws } from "./motion";
+import { fx, ws } from "./motion";
 
 // 创作者中心各页共用的小零件：读数据的 hook、卡片框、指标块、切换条、空状态。
 
@@ -114,9 +114,11 @@ export function ErrorLine({ text, onRetry }: { text: string; onRetry?: () => voi
   </View>;
 }
 
-export function SmallButton({ label, onPress, disabled = false, children }: { label: string; onPress: () => void; disabled?: boolean; children?: React.ReactNode }) {
+/** done：刚做完（已保存、已复制）时图标换成对勾弹出、迸一圈小点。 */
+export function SmallButton({ label, onPress, disabled = false, done = false, children }: { label: string; onPress: () => void; disabled?: boolean; done?: boolean; children?: React.ReactNode }) {
   return <Pressable {...ws("btn")} accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={[styles.smallButton, disabled && { opacity: 0.45 }]}>
-    {children}<Text style={styles.smallButtonText}>{label}</Text>
+    {done ? <View {...fx({ motion: "pop" })} style={styles.doneMark}><View {...fx({ motion: "burst" })} style={styles.burst} /><Check size={14} color={color.accent} strokeWidth={2.6} /></View> : children}
+    <Text style={styles.smallButtonText}>{label}</Text>
   </Pressable>;
 }
 
@@ -182,6 +184,8 @@ const styles = StyleSheet.create({
   loading: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 30 },
   error: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: radius.small, backgroundColor: color.dangerSoft, flexWrap: "wrap" },
   errorText: { flex: 1, minWidth: 200, color: color.danger, fontFamily: font.body, fontSize: 13, lineHeight: 21 },
+  doneMark: { width: 14, height: 14, alignItems: "center", justifyContent: "center" },
+  burst: { position: "absolute", left: 5.5, top: 5.5, width: 3, height: 3, borderRadius: 1.5 },
   smallButton: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   smallButtonText: { color: color.text, fontFamily: font.body, fontSize: 12, fontWeight: "600" },
   tableHead: { borderBottomWidth: 1, borderBottomColor: color.borderSoft, backgroundColor: color.surfaceRaised },
