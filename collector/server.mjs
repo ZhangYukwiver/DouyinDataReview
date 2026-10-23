@@ -763,11 +763,11 @@ export async function startCollectorServer({
       if (request.method !== "GET") { sendJson(response, 405, { error: "method_not_allowed" }); return; }
       sendJson(response, 200, { looks: analyses.list().filter((item) => item.status === "running" && item.look).map((item) => ({ id: item.id, look: item.look })) });
     } else if (/^\/v1\/analyses\/[0-9a-f-]{36}\/look\/[0-9a-f]{16}$/u.test(url.pathname)) {
-      // 解析库页面交回拆好的截图和节拍（或接手、进度回执）
+      // 解析库页面交回拆好的截图和节拍、压缩好的视频（base64，最大约 45MB 的 mp4），或接手、进度回执
       if (request.method !== "POST") { sendJson(response, 405, { error: "method_not_allowed" }); return; }
       const [, , , id, , jobId] = url.pathname.split("/");
       try {
-        analysisLooks.answer(id, jobId, await readJsonBody(request, 24 * 1024 * 1024));
+        analysisLooks.answer(id, jobId, await readJsonBody(request, 96 * 1024 * 1024));
         sendJson(response, 200, { ok: true });
       } catch (error) {
         const malformed = error instanceof SyntaxError || error?.message === "body_too_large";

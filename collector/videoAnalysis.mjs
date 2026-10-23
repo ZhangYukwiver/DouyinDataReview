@@ -404,32 +404,63 @@ const LOOK_FOCUS = "上面不是原视频，是应用把这条视频拆出来的
 const VIDEO_FOCUS = "如果你其实看不到视频画面（只拿到了文字信息），不要写拆解，只回答一行：NO_VIDEO。";
 const LOOK_NOTE = "> 这个模型看不了视频，下面是按应用拆出的镜头截图、镜头表和音乐节拍写的，听不到台词和旁白。\n\n";
 
+// 整段视频转成 base64 塞进一个请求，接口一般限请求体 64MB（方舟、中转站超了回 413）：文件超过 45MB 先让应用页面重编一份小的再发；
+// 压完还超，或者接口照样回 413，就把目标减半、从原片重压，最多压 3 次
+const WHOLE_BYTES = 45 * 1024 * 1024;
+const MAX_SQUEEZES = 3;
+
+/** 挂给应用页面的活儿记在这一条解析上（不存盘），页面轮询 /v1/analyses/looks 看到就接。 */
+const lookHolder = (entry) => ({
+  id: entry.id,
+  live: () => entry.status === "running",
+  get: () => entry.look ?? null,
+  set: (job) => { if (job) entry.look = job; else delete entry.look; },
+  touch: () => { entry.updatedAt = new Date().toISOString(); },
+});
+
 /** 整段视频发给模型；模型看不了（接口拒收、回答说没看到）就返回 null，改拆截图。 */
-async function watchWhole({ config, video, filePath, fetchImpl }) {
-  let status = 0;
-  const watched = async (...args) => {
-    const response = await fetchImpl(...args);
-    status = response.status;
-    return response;
-  };
-  try {
-    const markdown = await requestAnalysis({ config: { ...config, focus: VIDEO_FOCUS }, video, videoBase64: (await readFile(filePath)).toString("base64"), signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl: watched });
-    return seesNoVideo(markdown) ? null : markdown;
-  } catch (error) {
-    if (error instanceof AnalysisError && error.code === "provider_error" && videoRefused(status, error.message)) return null;
-    throw error;
+async function watchWhole({ config, entry, filePath, looks, fetchImpl, update }) {
+  let bytes = await readFile(filePath);
+  let limit = WHOLE_BYTES;
+  let ask = WHOLE_BYTES;
+  let squeezes = 0;
+  for (;;) {
+    if (bytes.length > limit) {
+      if (squeezes === MAX_SQUEEZES) throw new AnalysisError("video_too_large", `视频压缩了 ${MAX_SQUEEZES} 次还是太大，接口收不下，换一条短一点的视频再试。`, 413);
+      ask = Math.min(ask, limit);
+      await update({ stage: "squeezing" });
+      try {
+        ({ video: bytes } = await looks.ask(lookHolder(entry), { kind: "squeeze", url: looks.offerFile(filePath), name: entry.video?.title, bytes: ask }));
+      } catch (error) {
+        // 浏览器编不了（没有 WebCodecs 之类）：退回拆截图，起码还能解析
+        if (error?.code === "look_failed") return null;
+        throw error;
+      }
+      await update({ stage: "analyzing" });
+      squeezes += 1;
+      ask = Math.floor(ask / 2);
+      continue;
+    }
+    let status = 0;
+    const watched = async (...args) => {
+      const response = await fetchImpl(...args);
+      status = response.status;
+      return response;
+    };
+    try {
+      const markdown = await requestAnalysis({ config: { ...config, focus: VIDEO_FOCUS }, video: entry.video, videoBase64: bytes.toString("base64"), signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl: watched });
+      return seesNoVideo(markdown) ? null : markdown;
+    } catch (error) {
+      if (status === 413 && squeezes < MAX_SQUEEZES) { limit = Math.floor(bytes.length / 2); continue; }
+      if (error instanceof AnalysisError && error.code === "provider_error" && videoRefused(status, error.message)) return null;
+      throw error;
+    }
   }
 }
 
-async function lookAt({ library, entry, config, filePath, looks, localAi, fetchImpl, update }) {
+async function lookAt({ entry, config, filePath, looks, localAi, fetchImpl, update }) {
   await update({ stage: "looking" });
-  const look = await looks.ask({
-    id: entry.id,
-    live: () => entry.status === "running",
-    get: () => entry.look ?? null,
-    set: (job) => { if (job) entry.look = job; else delete entry.look; },
-    touch: () => { entry.updatedAt = new Date().toISOString(); },
-  }, { kind: "reference", url: looks.offerFile(filePath), name: entry.video?.title });
+  const look = await looks.ask(lookHolder(entry), { kind: "reference", url: looks.offerFile(filePath), name: entry.video?.title });
   await update({ stage: "analyzing" });
   const markdown = await requestAnalysis({ config: { ...config, focus: LOOK_FOCUS }, video: entry.video, parts: lookMaterials(look).parts, signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl, localAi });
   if (seesNoImages(markdown)) throw new AnalysisError("images_unsupported", "解析库配置的模型连截图也没看到，换一个能看图片的模型再试。", 502);
@@ -454,9 +485,9 @@ async function runAnalysis({ library, entry, collector, jobId, config, looks, lo
     if (!filePath?.toLowerCase().endsWith(".mp4")) throw new AnalysisError("not_video", "图文作品暂时不能解析，只支持视频。");
     await update({ stage: "analyzing", video: job.video ?? entry.video });
     // 配置时测出看不了视频就直接拆截图；能看或没测过先整段发，模型看不了再拆
-    let markdown = config.videoInput === false || !looks ? null : await watchWhole({ config, video: entry.video, filePath, fetchImpl });
+    let markdown = config.videoInput === false || !looks ? null : await watchWhole({ config, entry, filePath, looks, fetchImpl, update });
     if (markdown === null && !looks) markdown = await requestAnalysis({ config, video: entry.video, videoBase64: (await readFile(filePath)).toString("base64"), signal: AbortSignal.timeout(MODEL_TIMEOUT_MS), fetchImpl, localAi });
-    if (markdown === null) markdown = await lookAt({ library, entry, config, filePath, looks, localAi, fetchImpl, update });
+    if (markdown === null) markdown = await lookAt({ entry, config, filePath, looks, localAi, fetchImpl, update });
     await update({ status: "complete", stage: null, markdown, error: null });
   } catch (error) {
     // 关应用时本机 CLI 被强杀（local_closed）也算采集器关掉

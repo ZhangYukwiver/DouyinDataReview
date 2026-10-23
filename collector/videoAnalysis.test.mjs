@@ -319,6 +319,33 @@ describe("startAnalysis", () => {
     expect(await settle(library, missed.id)).toMatchObject({ status: "failed", error: expect.stringContaining("打开应用，再点「重新解析」") });
   });
 
+  it("has the page squeeze a video too big for one request, and squeezes again by half when the provider still says 413", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "analysis-"));
+    const video = path.join(dir, "v.mp4");
+    await writeFile(video, Buffer.alloc(46 * 1024 * 1024));
+    const library = new AnalysisLibrary(path.join(dir, "analyses.json"));
+    const looks = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS, timeoutMs: 2_000 });
+    const mp4 = (size) => Buffer.concat([Buffer.from([0, 0, 0, 16]), Buffer.from("ftypisom"), Buffer.alloc(size - 12)]);
+    const sent = [];
+    const fetchImpl = async (_url, init) => {
+      const url = JSON.parse(init.body).messages[0].content[0].video_url.url;
+      sent.push(Buffer.from(url.slice(url.indexOf(",") + 1), "base64").length);
+      return sent.length === 1 ? new Response("Exceeded limit on max bytes to request body : 67108864", { status: 413 }) : sse([delta("压缩后拆解", "stop")]);
+    };
+    const asked = [];
+    const entry = startAnalysis({ library, collector: fakeCollector({ file: video }), url: "https://www.douyin.com/video/7562882230080818489", config, looks, fetchImpl, pollMs: 1 });
+    for (const size of [1_000, 400]) {
+      let look = null;
+      for (let i = 0; i < 400 && !((look = library.list()[0].look)?.kind === "squeeze" && !asked.includes(look.id)); i += 1) await delay(5);
+      expect(library.list()[0].stage).toBe("squeezing");
+      asked.push(look.id);
+      looks.answer(entry.id, look.id, { duration: 130, audio: true, video: mp4(size).toString("base64") });
+      expect(look.bytes).toBe(asked.length === 1 ? 45 * 1024 * 1024 : 500);
+    }
+    expect(await settle(library, entry.id)).toMatchObject({ status: "complete", markdown: "压缩后拆解" });
+    expect(sent).toEqual([1_000, 400]);
+  });
+
   it("with a local CLI skips the whole video, has the page cut screenshots and asks the CLI once", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "analysis-"));
     const video = path.join(dir, "v.mp4");

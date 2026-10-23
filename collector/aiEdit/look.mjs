@@ -20,9 +20,9 @@ const FRAME_URL = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/u;
 // 应用页面开着就会接手（不管在哪个页面，见 src/components/workspace/aiEditLook.ts 的 usePendingLooks）；
 // 重试的说法不同：AI 剪辑让 AI 再解析一次，解析库点「重新解析」
 const lookTexts = (retry) => ({
-  unavailable: `要靠应用在浏览器里把视频拆成截图和节拍，可是没有开着的应用页面来接手。打开应用，${retry}。`,
-  dropped: `应用页面拆到一半断了（可能刷新或关掉了）。开着应用，${retry}。`,
-  slow: "拆这个视频太久了，可能视频太长或者电脑太忙。换一条短一点的视频再试。",
+  unavailable: `要靠应用在浏览器里处理这个视频，可是没有开着的应用页面来接手。打开应用，${retry}。`,
+  dropped: `应用页面处理到一半断了（可能刷新或关掉了）。开着应用，${retry}。`,
+  slow: "处理这个视频太久了，可能视频太长或者电脑太忙。换一条短一点的视频再试。",
 });
 const AI_EDIT_TEXTS = lookTexts("再让 AI 解析一次");
 export const LIBRARY_TEXTS = lookTexts("再点「重新解析」");
@@ -41,6 +41,11 @@ export function parseLookResult(body, kind) {
   if (typeof body?.error === "string" && body.error.trim()) return { error: body.error.trim().slice(0, 300) };
   const duration = seconds(body?.duration, 6 * 3600);
   if (!duration) throw new AiEditError("look_invalid", "页面交回的视频信息不完整。", 422);
+  if (kind === "squeeze") {
+    const video = typeof body.video === "string" ? Buffer.from(body.video, "base64") : null;
+    if (video?.toString("latin1", 4, 8) !== "ftyp") throw new AiEditError("look_invalid", "页面交回的压缩视频不是 mp4。", 422);
+    return { duration, video, audio: body.audio === true };
+  }
   const beats = body.beats && typeof body.beats === "object" ? {
     bpm: typeof body.beats.bpm === "number" && body.beats.bpm >= 30 && body.beats.bpm <= 300 ? Math.round(body.beats.bpm * 10) / 10 : null,
     times: times(body.beats.beats, duration),
@@ -127,9 +132,9 @@ export function createLookDesk({ filePath = "/v1/ai-edit/look", texts = AI_EDIT_
 
     /**
      * 把活儿挂到 holder 上，页面轮询看到后在浏览器里做完交回。
-     * kind：reference（镜头、截图、闪白、节拍）或 beats（只要节拍）。
+     * kind：reference（镜头、截图、闪白、节拍）、beats（只要节拍）或 squeeze（重新编一份不超过 bytes 的 mp4）。
      */
-    ask(holder, { kind, url, name }, { signal } = {}) {
+    ask(holder, { kind, url, name, bytes }, { signal } = {}) {
       if (holder.live && !holder.live()) return Promise.reject(new AiEditError("look_unavailable", texts.unavailable, 409));
       const id = randomBytes(8).toString("hex");
       const mine = () => holder.get()?.id === id;
@@ -181,7 +186,7 @@ export function createLookDesk({ filePath = "/v1/ai-edit/look", texts = AI_EDIT_
         jobs.set(id, job);
         if (signal?.aborted) { job.abort(); return; }
         signal?.addEventListener("abort", job.abort, { once: true });
-        holder.set({ id, kind, url, ...(name ? { name: String(name).slice(0, 80) } : {}) });
+        holder.set({ id, kind, url, ...(name ? { name: String(name).slice(0, 80) } : {}), ...(bytes ? { bytes } : {}) });
         holder.touch();
       });
     },
