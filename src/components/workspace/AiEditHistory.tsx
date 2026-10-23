@@ -16,7 +16,8 @@ import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii
 // 操作历史（D10）照 openfilm 的 OperationHistory（studio/ui/src/components/OperationHistory.tsx，MIT License，
 // Copyright (c) 2026 OpenFilm contributors）：挂在撤销旁边，最新的在上，下一下 ⌘Z 会撤的那行挂小标，点一行撤到那一步之前。
 
-export const HistoryControls = memo(function HistoryControls() {
+/** compact：放在时间线工具栏里，和旁边的工具按钮一样是透明的小方块，操作历史面板往上开 */
+export const HistoryControls = memo(function HistoryControls({ compact = false }: { compact?: boolean }) {
   const { session, editable, notEditableReason, undo, redo } = useBoard();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<View>(null);
@@ -32,16 +33,17 @@ export const HistoryControls = memo(function HistoryControls() {
     : undoKind(last) === "turn" ? `撤销：${undoText}（AI 剪的一整轮要点这里撤，${shortcutText("undo")} 不会撤它）`
       : `撤销：${undoText}（${shortcutText("undo")}）`;
   const close = useCallback(() => setOpen(false), []);
-  return <View style={styles.group}>
-    <IconButton label={undoText ? `撤销：${undoText}` : "撤销"} title={undoTitle} blocked={undoBlocked} onPress={() => void undo()}>
-      <Undo2 size={16} color={color.text} />
+  const size = compact ? 15 : 16;
+  return <View style={[styles.group, compact && styles.groupCompact]}>
+    <IconButton compact={compact} label={undoText ? `撤销：${undoText}` : "撤销"} title={undoTitle} blocked={undoBlocked} onPress={() => void undo()}>
+      <Undo2 size={size} color={color.text} />
     </IconButton>
-    <IconButton label={redoText ? `重做：${redoText}` : "重做"} title={redoText ? `重做：${redoText}（${shortcutText("redo")}）` : ""} blocked={redoBlocked} onPress={() => void redo()}>
-      <Redo2 size={16} color={color.text} />
+    <IconButton compact={compact} label={redoText ? `重做：${redoText}` : "重做"} title={redoText ? `重做：${redoText}（${shortcutText("redo")}）` : ""} blocked={redoBlocked} onPress={() => void redo()}>
+      <Redo2 size={size} color={color.text} />
     </IconButton>
     {web ? <View ref={anchorRef} collapsable={false}>
-      <IconButton label="操作历史" title={open ? "收起操作历史" : "操作历史：最近做过的改动，点一行撤到那一步之前"} expanded={open} onPress={() => setOpen((value) => !value)}>
-        <History size={16} color={color.text} />
+      <IconButton compact={compact} label="操作历史" title={open ? "收起操作历史" : "操作历史：最近做过的改动，点一行撤到那一步之前"} expanded={open} onPress={() => setOpen((value) => !value)}>
+        <History size={size} color={color.text} />
       </IconButton>
     </View> : null}
     {open ? <HistoryPanel anchor={anchorRef} onClose={close} /> : null}
@@ -49,8 +51,8 @@ export const HistoryControls = memo(function HistoryControls() {
 });
 
 /** 标题行的小方按钮：不能用时 aria-disabled、悬停写原因（不写 disabled）；鼠标按下不抢焦点 */
-function IconButton({ label, title, blocked = null, expanded, onPress, children }: {
-  label: string; title: string; blocked?: string | null; expanded?: boolean; onPress: () => void; children: React.ReactNode;
+function IconButton({ label, title, blocked = null, expanded, compact = false, onPress, children }: {
+  label: string; title: string; blocked?: string | null; expanded?: boolean; compact?: boolean; onPress: () => void; children: React.ReactNode;
 }) {
   return <WebTitle title={blocked ?? title} keepFocus>
     <Pressable
@@ -60,7 +62,7 @@ function IconButton({ label, title, blocked = null, expanded, onPress, children 
       {...(expanded === undefined ? null : { "aria-expanded": expanded })}
       {...pressableDisabled(blocked)}
       onPress={() => { if (!blocked) onPress(); }}
-      style={[styles.iconButton, blocked ? styles.disabled : webPointer, expanded && styles.iconButtonOn]}
+      style={[styles.iconButton, compact && styles.iconButtonCompact, blocked ? styles.disabled : webPointer, expanded && styles.iconButtonOn]}
     >
       {children}
     </Pressable>
@@ -170,7 +172,7 @@ function HistoryPanel({ anchor, onClose }: { anchor: React.RefObject<View | null
     onBlur={(event) => { if (!ref.current?.contains(event.relatedTarget as Node | null)) inside.current = false; }}
     onContextMenu={(event) => event.preventDefault()}
     style={{
-      position: "fixed", left: pos?.left ?? 0, top: pos?.top ?? 0, width: HISTORY_WIDTH, maxHeight: pos?.maxHeight ?? 440, zIndex: 10_050,
+      position: "fixed", left: pos?.left ?? 0, ...(pos?.bottom !== undefined ? { bottom: pos.bottom } : { top: pos?.top ?? 0 }), width: HISTORY_WIDTH, maxHeight: pos?.maxHeight ?? 440, zIndex: 10_050,
       // 量出位置之前藏着，免得在左上角闪一下
       visibility: pos ? "visible" : "hidden",
       display: "flex", flexDirection: "column", overflow: "hidden", boxSizing: "border-box", outline: "none",
@@ -270,6 +272,8 @@ const panel: Record<string, React.CSSProperties> = {
 
 const styles = StyleSheet.create({
   group: { flexDirection: "row", alignItems: "center", gap: 4 },
+  groupCompact: { gap: 2 },
+  iconButtonCompact: { width: 28, height: 28, borderColor: "transparent", backgroundColor: "transparent" },
   iconButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   iconButtonOn: { borderColor: color.accent, backgroundColor: color.accentSoft },
   disabled: { opacity: 0.45 },

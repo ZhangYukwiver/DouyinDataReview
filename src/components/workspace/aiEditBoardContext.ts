@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, type MutableRefObject } from "react";
+import { createContext, useContext, useEffect, useRef, useSyncExternalStore, type MutableRefObject } from "react";
 import type {
   AiEditClipEdit, AiEditEditCall, AiEditMediaItem, AiEditSession, AiEditSessionState, EditCanvas, EditProject, EditSegment, EditTrack,
 } from "../../services/aiEdit";
@@ -92,15 +92,15 @@ export interface BoardContextValue {
   expectSelect: (target: { trackId: string; atUs: number } | null) => void;
   /** 发一个看板改动。一次只飞一个；不能改、锁被占、失败都会在提示气泡里说，返回 false；成功换上新工程返回 true */
   runEdit: (name: AiEditClipEdit, args: Record<string, unknown>) => Promise<boolean>;
-  /** 一批改动一次发出：采集器整批只存一份存档（一步撤销），任何一条失败整批回滚。空数组直接返回 false */
-  runEdits: (edits: readonly BoardEdit[]) => Promise<boolean>;
+  /** 一批改动一次发出：采集器整批只存一份存档（一步撤销），任何一条失败整批回滚。空数组直接返回 false；label 是撤销按钮上的说法 */
+  runEdits: (edits: readonly BoardEdit[], label?: string) => Promise<boolean>;
   /** 看板底部的小提示，4 秒后消失；同样的话再来会重新弹一次 */
   toast: (text: string, tone?: ToastTone) => void;
   /** 撤销上一步；带 to（操作历史里某一步的 id）时一次撤到那一步之前。成功会弹「已撤销：…」 */
   undo: (to?: string) => Promise<boolean>;
   redo: () => Promise<boolean>;
   /** 切开（⌘B、详情卡按钮、右键菜单共用）：给 clipId 只切那段；不给按 A9 的规则找。切完选中右半段，播放头不动 */
-  split: (clipId?: string) => Promise<boolean>;
+  split: (clipId?: string, atUs?: number) => Promise<boolean>;
   /** 删掉选中的所有片段（多段一批发，一步撤销） */
   removeSelected: () => Promise<boolean>;
   /** 把各区域攒着没发的改动（键盘微调）立刻发出去，等它们都回来再 resolve；自己发改动之前先调（C7） */
@@ -134,6 +134,29 @@ export function useBoard(): BoardContextValue {
 
 /** 播放头（微秒），每帧都变：只在要按它画东西的组件里用 */
 export const usePlaybackTime = () => useContext(BoardTimeContext);
+
+/**
+ * 预览轴：鼠标在时间线上划过时画面要显示的时刻（微秒），没在划是 null。每次挪鼠标都会变，单独一个小仓库，
+ * 只有画面订阅，看板别的部分不跟着重渲染。
+ */
+export interface PreviewTimeStore { get: () => number | null; set: (time: number | null) => void; subscribe: (listener: () => void) => () => void }
+export function createPreviewTimeStore(): PreviewTimeStore {
+  let time: number | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => time,
+    set: (next) => { if (next === time) return; time = next; for (const listener of listeners) listener(); },
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+}
+const NO_PREVIEW: PreviewTimeStore = { get: () => null, set: () => undefined, subscribe: () => () => undefined };
+export const BoardPreviewContext = createContext<PreviewTimeStore>(NO_PREVIEW);
+export const usePreviewStore = () => useContext(BoardPreviewContext);
+/** 画面该显示的预览时刻；没在划时间线、或者正在播放时是 null */
+export function usePreviewTime(): number | null {
+  const store = useContext(BoardPreviewContext);
+  return useSyncExternalStore(store.subscribe, store.get, () => null);
+}
 
 // ---------- 快捷键和 Esc 的登记 ----------
 

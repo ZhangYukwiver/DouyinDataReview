@@ -398,6 +398,7 @@ const StickerSegmentCreate = model([["resource_id", Label, REQUIRED], ["timeline
 const MarkerCreate = model([["time_us", TimeUs, REQUIRED], ["label", Label, REQUIRED], ["color", Color6, "#FFFFFF"]]);
 const SegmentMove = model([["start_us", TimeUs, REQUIRED]]);
 const SegmentSplit = model([["offset_us", DurationUs, REQUIRED]]);
+const SubtitleLineCreate = model([["text", TextBody, REQUIRED], ["timeline", TimeRange, REQUIRED]]);
 const SubtitleEntry = model([["start_us", TimeUs, REQUIRED], ["end_us", laxInt({ gt: 0, le: MAX_TIME_US }), REQUIRED], ["text", TextBody, REQUIRED]], {
   after: (entry) => (entry.end_us <= entry.start_us ? "end_us must be greater than start_us" : null),
 });
@@ -1538,6 +1539,30 @@ export class ProjectStore {
         })),
       };
       return this.#touch(project, { tracks: [...project.tracks, track] });
+    });
+  }
+
+  /**
+   * 往已有的字幕组里加一条（原仓库只能整组加）：样式照离它最近的那条，和同组别的字幕不能重叠。
+   * 组里一条都不剩时用 addSrtSubtitles 的默认样式。
+   */
+  async addSubtitleLine(projectId, trackId, request, { expectRevision } = {}) {
+    const [params, body] = check([RevisionParams, revisionInput(expectRevision)], [SubtitleLineCreate, request]);
+    return this.#serial(projectId, async () => {
+      const project = await this.#expected(projectId, params.expect_revision);
+      const track = project.tracks.find((item) => item.id === trackId && item.kind === "subtitle");
+      if (!track) throw invalid("SUBTITLE_NOT_FOUND", "Subtitle group does not exist");
+      const { start_us: start, duration_us: duration } = body.timeline;
+      const lines = track.segments ?? [];
+      if (lines.some((line) => start < line.timeline.start_us + line.timeline.duration_us && line.timeline.start_us < start + duration)) {
+        throw invalid("TIMELINE_OVERLAP", "Clips overlap on the track");
+      }
+      const distance = (line) => Math.min(Math.abs(line.timeline.start_us - start), Math.abs(line.timeline.start_us + line.timeline.duration_us - start));
+      const nearest = [...lines].sort((a, b) => distance(a) - distance(b))[0];
+      const { id: _id, keyframes: _keyframes, animations: _animations, ...style } = nearest ?? { kind: "text", transform: null, font_size: 8, color: "#FFFFFF", alignment: "center" };
+      const line = { ...structuredClone(style), id: this.#segmentId(), text: body.text, timeline: body.timeline };
+      const segments = [...lines, line].sort((a, b) => a.timeline.start_us - b.timeline.start_us);
+      return this.#saveTracks(project, project.tracks.map((item) => (item.id === track.id ? { ...item, segments } : item)));
     });
   }
 

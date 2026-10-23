@@ -379,7 +379,8 @@ export async function sendAiEditMessage(connection: ExploreConnection, id: strin
  * 看板上能手动做的改动，参数和 AI 的同名工具一样（时间按秒）：move_clip { clip_id, start, track_id? }、update_clip、split_clip、
  * delete_clip、duplicate_clip { clip_id, start, track_id? }、update_track { track_id, mute }、reorder_tracks（全部轨道的完整顺序）。
  */
-export type AiEditClipEdit = "move_clip" | "update_clip" | "split_clip" | "delete_clip" | "duplicate_clip" | "update_track" | "reorder_tracks";
+export type AiEditClipEdit = "move_clip" | "update_clip" | "split_clip" | "delete_clip" | "duplicate_clip" | "update_track" | "reorder_tracks"
+  | "add_marker" | "remove_marker" | "add_subtitle_line";
 export interface AiEditEditCall { name: AiEditClipEdit; arguments: Record<string, unknown> }
 
 /** 看板上手动剪一下（挪、裁、切、删、复制、改文字和位置大小、静音、调轨道层级）；AI 正在剪或别的改动没做完时采集器会拒绝。 */
@@ -388,11 +389,12 @@ export async function editAiEditClip(connection: ExploreConnection, id: string, 
 }
 
 /** 一批最多几条改动：和采集器的 MAX_BATCH_EDITS 一样，超了采集器整批拒（too_many_edits） */
-export const MAX_BATCH_EDITS = 50;
+export const MAX_BATCH_EDITS = 200;
 
 /** 一批改动一起做（1–MAX_BATCH_EDITS 条）：采集器只存一份存档，撤销一次全回来；任何一条没做成整批回滚，说明里写第几步为什么。 */
-export async function editAiEditClips(connection: ExploreConnection, id: string, edits: readonly AiEditEditCall[]): Promise<AiEditSessionState> {
-  return request(connection, `${sessionPath(id)}/edit`, { method: "POST", body: JSON.stringify({ edits }) });
+/** 一批改动；label 是撤销按钮和操作历史上的说法（「合拢了主轨」），不给就由采集器按改动拼 */
+export async function editAiEditClips(connection: ExploreConnection, id: string, edits: readonly AiEditEditCall[], label?: string): Promise<AiEditSessionState> {
+  return request(connection, `${sessionPath(id)}/edit`, { method: "POST", body: JSON.stringify({ edits, ...(label ? { label } : {}) }) });
 }
 
 /** 撤销上一步（手动改的、AI 一轮改的、换画面比例、退回都算一步）；带 to（操作历史里某一步的 id）时一次撤到那一步之前。 */

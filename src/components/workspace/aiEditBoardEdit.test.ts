@@ -138,9 +138,9 @@ describe("切开、选中", () => {
   ];
 
   it("全选以后一批改动超过采集器上限：不发，说清楚是选多了", () => {
-    expect(tooManyEditsText(50)).toBeNull();
+    expect(tooManyEditsText(200)).toBeNull();
     expect(tooManyEditsText(1)).toBeNull();
-    expect(tooManyEditsText(62)).toBe("一次最多能改 50 段，这次有 62 段，少选一些再试");
+    expect(tooManyEditsText(262)).toBe("一次最多能改 200 段，这次有 262 段，少选一些再试");
     expect(tooManyEditsText(4, 3)).toBe("一次最多能改 3 段，这次有 4 段，少选一些再试");
   });
 

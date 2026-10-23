@@ -1,6 +1,9 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { Film, Maximize2, Music2, Scissors, Sparkles, SlidersHorizontal, Sticker, Trash2, Type, Volume2, VolumeX, ZoomIn, ZoomOut } from "lucide-react-native";
+import {
+  BookmarkPlus, Captions, CaptionsOff, ChevronDown, Film, Magnet, MousePointer2, MoveHorizontal, Music2, Paperclip, Plus, Scissors, SeparatorVertical, Sparkles,
+  SlidersHorizontal, SquareSplitHorizontal, Sticker, TextCursor, Trash2, Type, Volume2, VolumeX, ZoomIn, ZoomOut,
+} from "lucide-react-native";
 import type { AiEditMediaItem, EditProject, EditSegment, EditTimeRange, EditTrack } from "../../services/aiEdit";
 import {
   clipExtras, clipLabel, featureName, filmstripCount, filmstripTimes, findSegment, formatClock, mediaIdFromPath, secondMark, spokenDuration, trackLabel, transitionReach,
@@ -8,12 +11,15 @@ import {
 } from "./aiEditModel";
 import { SNAP_PX, splitOffset, trimArgs, type TrimEdge } from "./aiEditBoardEdit";
 import { lastingReason } from "./aiEditInspect";
-import { useBoard, useBoardKeys, useHeldEdit, usePlaybackTime, type BoardEdit } from "./aiEditBoardContext";
+import { useBoard, useBoardKeys, useEscapeLayer, useHeldEdit, usePlaybackTime, usePreviewStore, type BoardEdit } from "./aiEditBoardContext";
+import { HistoryControls } from "./AiEditHistory";
+import { mainTrackOf, rippleEdits, type RippleIntent } from "./aiEditTimelineMagnet";
+import { setTimelinePref, timelinePrefs, useTimelinePrefs, type TimelinePrefs } from "./aiEditTimelinePrefs";
 import { IS_MAC, shortcutText } from "./aiEditKeymap";
 import { useContextMenu, type MenuEntry } from "./AiEditMenu";
 import {
   canvasExtentUs, clipBox, edgeScrollStep, MARQUEE_LIFT_PX, marqueeHits, MOVE_LIFT_PX, moveEdits, moveOrder, moveTip, NUDGE_WRITE_MS, nudgeStep, planDuplicate, planMove, planPaste, planTrim,
-  touchingEdges, TRIM_LIFT_PX, trackOrderWith, trackRows, trimHit, trimTip, trimToPlayhead, visibleTicks, ZOOM_STEP, zoomRange, zoomScroll,
+  snapTargetsOf, snapTo, toFrame, touchingEdges, TRIM_LIFT_PX, trackOrderWith, trackRows, trimHit, trimTip, trimToPlayhead, visibleTicks, ZOOM_STEP, zoomRange, zoomScroll,
   type CopyPlan, type HeldClip, type MoveSpec, type MovePlan, type TrimPlan,
 } from "./aiEditTimelineEdit";
 import { createFrameQueue, openVideoFrames } from "./aiEditFrames";
@@ -126,6 +132,22 @@ export function Timeline({ height }: { height: number }) {
   const gesture = useRef<{ cancel: () => void; edits: boolean } | null>(null);
   const nudge = useRef<Nudge | null>(null);
   const blocked = editable ? null : notEditableReason ?? BUSY;
+  const prefs = useTimelinePrefs();
+  const previewStore = usePreviewStore();
+  // 选择 / 分割工具（照 openfilm 的 ModePicker）：分割工具下点片段就在点的地方切开。不记住，每次进来都是选择
+  const [mode, setMode] = useState<"select" | "split">("select");
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  // 预览轴的竖线、分割工具的刀线：跟着鼠标每次都动，直接改元素样式，不重渲染轨道
+  const hoverRef = useRef<HTMLDivElement | null>(null);
+  const bladeRef = useRef<HTMLDivElement | null>(null);
+  // 打开着卡片的标记（时间），按住拖着的标记从哪拖到哪，鼠标停着的标记（画一条贯穿各轨道的虚线）
+  const [markerCard, setMarkerCard] = useState<number | null>(null);
+  const [markerDrag, setMarkerDrag] = useState<{ from: number; to: number } | null>(null);
+  const [markerHover, setMarkerHover] = useState<number | null>(null);
+  const [toolbarWidth, setToolbarWidth] = useState(0);
+  const subtitleTrack = tracks.find((track) => track.kind === "subtitle") ?? null;
+  const mainTrackId = useMemo(() => mainTrackOf(project)?.id ?? null, [project]);
 
   // ---------- 尺寸、滚动、缩放 ----------
   useEffect(() => {
@@ -320,6 +342,155 @@ export function Timeline({ height }: { height: number }) {
     follow(event, { lift: () => true, autoScroll: true, frame: (moved) => latest.current.playback.seek(usAt(moved.clientX)), end: () => undefined });
   };
 
+  /** 联动时有的片段本该跟着走、但那里有别的片段挡着，留在了原处：说一声 */
+  const stuckNote = (stuck: number) => { if (stuck) latest.current.toast(`有 ${stuck} 段跟着走会压到别的片段，留在了原处`); };
+
+  // ---------- 标记 ----------
+  /**
+   * 按在标记上：点一下跳过去、打开卡片（改名字、颜色、删除）；按住拖是挪（吸到片段边和播放头，不吸别的标记），
+   * 松手发「删旧的、在新地方加」一批，一步撤销。照 openfilm 的 TimelineMarkers。
+   */
+  const pressMarker = (event: PointerEvent, timeUs: number) => {
+    if (!latest.current.project?.markers?.some((one) => one.time_us === timeUs)) return;
+    const pressUs = usAt(event.clientX);
+    let to = timeUs;
+    follow(event, {
+      lift: (dx) => Math.abs(dx) >= MOVE_LIFT_PX,
+      autoScroll: true,
+      edits: true,
+      frame: (moved, stop) => {
+        const now = latest.current;
+        if (!now.editable && now.notEditableReason !== BUSY) { now.toast(now.notEditableReason ?? BUSY); stop(); return; }
+        const raw = timeUs + usAt(moved.clientX) - pressUs;
+        const targets = snapTargetsOf({ tracks: now.project?.tracks ?? [], markers: [] }, { playheadUs: now.playback.timeRef.current });
+        const snapped = timelinePrefs().snap ? snapTo(raw, targets, SNAP_PX / view.current.px) : { value: raw, snapped: null };
+        to = Math.max(0, snapped.snapped === null ? toFrame(raw, now.frameUs) : snapped.value);
+        setMarkerDrag({ from: timeUs, to });
+        document.body.style.cursor = "ew-resize";
+      },
+      end: (released, dragged) => {
+        if (!released || (dragged && to === timeUs)) { setMarkerDrag(null); return; }
+        if (!dragged) { setMarkerDrag(null); latest.current.playback.seek(timeUs); setMarkerCard(timeUs); return; }
+        setMarkerCard(null);
+        void (async () => {
+          try {
+            if (!(await settle())) return;
+            // 等前面的改动（比如卡片里刚改的名字）回来再读，别拿按下时的旧名字覆盖
+            const marker = latest.current.project?.markers?.find((one) => one.time_us === timeUs);
+            if (!marker) return;
+            if (latest.current.project?.markers?.some((one) => one.time_us === to)) { latest.current.toast("那里已经有一个标记了"); return; }
+            await latest.current.runEdits([
+              { name: "remove_marker", arguments: { time: timeUs / US_PER_SECOND } },
+              { name: "add_marker", arguments: { time: to / US_PER_SECOND, label: marker.label, color: marker.color ?? MARKER_COLORS[0]!.value } },
+            ], `挪动标记“${shortLabel(marker.label)}”`);
+          } finally { setMarkerDrag(null); }
+        })();
+      },
+    });
+  };
+  /** M：在播放头处加标记；这一帧已经有了就打开它的卡片（照 openfilm 的 addMarkerHere） */
+  const addMarker = () => {
+    const now = latest.current;
+    if (!(now.duration > 0)) { now.toast("时间线还是空的"); return; }
+    const at = toFrame(now.playback.timeRef.current, now.frameUs);
+    const near = now.project?.markers?.find((one) => Math.abs(one.time_us - at) < now.frameUs / 2);
+    if (near) { setMarkerCard(near.time_us); return; }
+    const label = `标记 ${(now.project?.markers?.length ?? 0) + 1}`;
+    void (async () => {
+      if (!(await settle())) return;
+      if (await latest.current.runEdit("add_marker", { time: at / US_PER_SECOND, label, color: MARKER_COLORS[0]!.value })) setMarkerCard(at);
+    })();
+  };
+  /** 改标记的名字或颜色：同一时间再加一次就是替换；等前面的改动回来再读标记，不拿旧的覆盖 */
+  const saveMarker = (timeUs: number, changes: { label?: string; color?: string }) => {
+    void (async () => {
+      if (!(await settle())) return;
+      const marker = latest.current.project?.markers?.find((one) => one.time_us === timeUs);
+      if (!marker) return;
+      const label = (changes.label ?? marker.label).trim();
+      if (!label || (label === marker.label && (changes.color ?? marker.color) === marker.color)) return;
+      await latest.current.runEdit("add_marker", { time: timeUs / US_PER_SECOND, label, color: changes.color ?? marker.color ?? MARKER_COLORS[0]!.value });
+    })();
+  };
+  const removeMarker = (timeUs: number) => {
+    setMarkerCard(null);
+    void (async () => { if (await settle()) await latest.current.runEdit("remove_marker", { time: timeUs / US_PER_SECOND }); })();
+  };
+  /** ⇧M / ⌥M：跳到下一个、上一个标记 */
+  const jumpMarker = (direction: 1 | -1) => {
+    const now = latest.current;
+    const at = now.playback.timeRef.current;
+    const times = (now.project?.markers ?? []).map((one) => one.time_us).sort((a, b) => a - b);
+    const next = direction > 0 ? times.find((time) => time > at + now.frameUs / 2) : [...times].reverse().find((time) => time < at - now.frameUs / 2);
+    if (next === undefined) { now.toast(times.length ? (direction > 0 ? "后面没有标记了" : "前面没有标记了") : "还没有标记，按 M 在播放头处加一个"); return; }
+    now.playback.seek(next);
+  };
+
+  // ---------- 工具栏的开关 ----------
+  /** 打开主轨磁吸：主轨上的空隙一次合拢（一步撤销）；关掉不动时间线 */
+  const packMain = async () => {
+    const plan = rippleEdits(latest.current.project, { kind: "pack" }, { magnet: true, linkage: timelinePrefs().linkage });
+    if (!plan) return;
+    if ("refused" in plan) { latest.current.toast(plan.refused); return; }
+    if (plan.edits.length && (await settle())) await latest.current.runEdits(plan.edits, plan.label);
+  };
+  const togglePref = (key: keyof TimelinePrefs, fromKey = false) => {
+    const next = !timelinePrefs()[key];
+    setTimelinePref(key, next);
+    // 按快捷键切的看不到按钮，说一声现在是开是关
+    if (fromKey) latest.current.toast(`${PREF_TEXT[key].name} · ${next ? PREF_TEXT[key].on : PREF_TEXT[key].off}`);
+    if (key === "magnet" && next) void packMain();
+  };
+
+  // ---------- 字幕：在播放头处补一条 ----------
+  /** 字幕轨的「+」、没有字幕时刻度尺左边的「+ 字幕」：在播放头处加一条「新字幕」，长 2 秒，碰到下一条就截短 */
+  const addSubtitle = (trackId: string | null) => {
+    const now = latest.current;
+    const at = toFrame(now.playback.timeRef.current, now.frameUs);
+    const lines = trackId ? now.project?.tracks.find((one) => one.id === trackId)?.segments ?? [] : [];
+    if (lines.some((line) => line.timeline.start_us <= at && at < line.timeline.start_us + line.timeline.duration_us)) { now.toast("播放头这里已经有字幕了，挪开一点再加"); return; }
+    const next = Math.min(Number.POSITIVE_INFINITY, ...lines.filter((line) => line.timeline.start_us > at).map((line) => line.timeline.start_us));
+    const length = Math.min(2 * US_PER_SECOND, next - at);
+    if (length < 0.1 * US_PER_SECOND) { now.toast("这里放不下字幕"); return; }
+    void (async () => {
+      if (!(await settle())) return;
+      if (trackId) latest.current.expectSelect({ trackId, atUs: at });
+      await latest.current.runEdit("add_subtitle_line", { ...(trackId ? { track_id: trackId } : {}), start: at / US_PER_SECOND, duration: length / US_PER_SECOND, text: "新字幕" });
+    })();
+  };
+
+  // ---------- 预览轴、刀线：跟着鼠标走 ----------
+  const hideHover = () => {
+    if (hoverRef.current) hoverRef.current.style.display = "none";
+    if (bladeRef.current) bladeRef.current.style.display = "none";
+    previewStore.set(null);
+  };
+  const onHover = (event: React.PointerEvent<HTMLDivElement>) => {
+    const content = contentRef.current?.getBoundingClientRect();
+    const now = latest.current;
+    const idle = !gesture.current && event.buttons === 0 && Boolean(content);
+    const line = hoverRef.current;
+    if (line) {
+      if (timelinePrefs().previewAxis && idle && !now.playback.playing && now.duration > 0 && !(event.target as Element).closest?.("[data-track-head], [data-ruler-head]")) {
+        const at = Math.min(Math.max(0, now.duration - 1), toFrame(usAt(event.clientX), now.frameUs));
+        line.style.display = "block";
+        line.style.left = `${HEAD + at * view.current.px}px`;
+        previewStore.set(at);
+      } else if (line.style.display !== "none") { line.style.display = "none"; previewStore.set(null); }
+    }
+    const blade = bladeRef.current;
+    if (blade && content) {
+      const clip = modeRef.current === "split" && idle ? (event.target as Element).closest?.("[data-clip]") : null;
+      if (clip) {
+        const rect = clip.getBoundingClientRect();
+        Object.assign(blade.style, { display: "block", left: `${event.clientX - content.left}px`, top: `${rect.top - content.top}px`, height: `${rect.height}px` });
+      } else blade.style.display = "none";
+    }
+  };
+  // 关了预览轴、开始播放：画面回到播放头
+  useEffect(() => { if (!prefs.previewAxis || playback.playing) hideHover(); }, [prefs.previewAxis, playback.playing]);
+  useEffect(() => () => previewStore.set(null), [previewStore]);
+
   /** 轨道空白处：拖满 5px 是框选（⇧ / ⌘ 是往已选的上加），单击是挪播放头、取消选中（松手时才挪，框选不会把播放头甩到框的起点） */
   const pressEmpty = (event: PointerEvent) => {
     const additive = event.shiftKey || (IS_MAC ? event.metaKey : event.ctrlKey);
@@ -368,6 +539,13 @@ export function Timeline({ height }: { height: number }) {
     if (!found) return;
     const pick = start.selection;
     const inGroup = pick.ids.includes(id);
+    // 分割工具：在点的地方切开这一段（不吸附，照 openfilm）；⌘ 点、⇧ 点在这个工具下不起作用
+    if (modeRef.current === "split") {
+      pick.set([id], id);
+      if (!start.editable) { start.toast(start.notEditableReason ?? BUSY); return; }
+      void start.split(id, toFrame(usAt(event.clientX), start.frameUs));
+      return;
+    }
     if (IS_MAC ? event.metaKey : event.ctrlKey) { pick.toggle(id); return; }
     const mode: Draft["mode"] = edge === "start" || edge === "end" ? edge : "move";
     const copy = mode === "move" && event.altKey;
@@ -386,6 +564,10 @@ export function Timeline({ height }: { height: number }) {
     }
     const before = start.project;
     const reachUs = SNAP_PX / px;
+    // 工具栏关了吸附：不吸，但压到邻居一点点照样推到贴住；主轨磁吸开着时落到主轨是插进去、拖主轨片段的边是波纹裁剪
+    const toggles = timelinePrefs();
+    const snapUs = toggles.snap ? reachUs : 0;
+    const mainId = mainTrackOf(before)?.id ?? null;
     const pressUs = usAt(event.clientX);
     const pressY = contentY(event.clientY);
     const homeRow = view.current.rows.findIndex((track) => track.id === found.track.id);
@@ -401,13 +583,14 @@ export function Timeline({ height }: { height: number }) {
      * 松手后发：先把各区域攒着的发掉、等看板自己在路上的改动回来（画面攒着的微调、详情卡里改的数），
      * 工程变了 build 就按画出来的落点在新工程上重新算。落点一直画着，回来或失败才撤掉。
      */
-    const submit = (held: Draft, build: (base: EditProject | null) => BoardEdit[]) => {
+    const submit = (held: Draft, build: (base: EditProject | null) => BoardEdit[] | { edits: BoardEdit[]; label: string }) => {
       setDraft(held);
       void (async () => {
         try {
           if (!(await settle())) return;
-          const edits = build(latest.current.project);
-          if (edits.length) await latest.current.runEdits(edits);
+          const built = build(latest.current.project);
+          const { edits, label } = Array.isArray(built) ? { edits: built, label: undefined } : built;
+          if (edits.length) await latest.current.runEdits(edits, label);
         } finally { setDraft((value) => (value === held ? null : value)); }
       })();
     };
@@ -423,7 +606,7 @@ export function Timeline({ height }: { height: number }) {
         if (mode === "move") {
           const row = rowAt(pointer.clientY);
           const inside = row >= 0 && row < view.current.rows.length;
-          moveSpec = { ids: group, lead: id, deltaUs, rowDelta: inside ? row - homeRow : null, copy, playheadUs, reachUs, frameUs: now.frameUs };
+          moveSpec = { ids: group, lead: id, deltaUs, rowDelta: inside ? row - homeRow : null, copy, playheadUs, reachUs, snapUs, insertTrackId: toggles.magnet ? mainId : null, frameUs: now.frameUs };
           moved = planMove(before, moveSpec);
           if (!moved) { stop(); return; }
           const lead = moved.items.find((one) => one.id === id)!;
@@ -434,7 +617,7 @@ export function Timeline({ height }: { height: number }) {
           };
           document.body.style.cursor = moved.refused ? "not-allowed" : copy ? "copy" : "grabbing";
         } else {
-          trimCtx = { playheadUs, reachUs, frameUs: now.frameUs, mediaDurationUs: item?.durationUs ?? null };
+          trimCtx = { playheadUs, reachUs, snapUs, ripple: toggles.magnet && found.track.id === mainId, frameUs: now.frameUs, mediaDurationUs: item?.durationUs ?? null };
           trimmed = planTrim(before, found.segment, mode, deltaUs, trimCtx);
           shown = {
             kind: "drag", mode, copy: false, items: [{ id, fromTrackId: found.track.id, trackId: found.track.id, timeline: trimmed.timeline }], offsetY: 0, target: null, refused: null, snappedUs: trimmed.snappedUs,
@@ -463,6 +646,11 @@ export function Timeline({ height }: { height: number }) {
             const now = base === before ? found : findSegment(base, id);
             const final = base === before ? plan : now ? planMove(base, { ...spec, deltaUs: lead.timeline.start_us - now.segment.timeline.start_us }) : null;
             if (!final || final.refused) { if (final?.refused) latest.current.toast(final.refused); return []; }
+            const items = final.items.map((one) => ({ id: one.id, trackId: one.trackId, start_us: one.timeline.start_us }));
+            const hand_us = pressUs + spec.deltaUs;
+            const ripple = rippleEdits(base, copy ? { kind: "copy", items, hand_us } : { kind: "move", items, hand_us }, timelinePrefs());
+            if (ripple && "refused" in ripple) { latest.current.toast(ripple.refused); return []; }
+            if (ripple) { stuckNote(ripple.stuck); return { edits: ripple.edits, label: ripple.label }; }
             const edits = moveEdits(final, base, copy);
             const landed = final.items.find((one) => one.id === id)!;
             if (copy && edits.length) latest.current.expectSelect({ trackId: landed.trackId, atUs: landed.timeline.start_us });
@@ -480,7 +668,11 @@ export function Timeline({ height }: { height: number }) {
           const final = base === before ? plan : planTrim(base, now.segment, mode, edgeOf(plan.timeline) - edgeOf(now.segment.timeline), ctx);
           const at = now.segment.timeline;
           if (final.timeline.start_us === at.start_us && final.timeline.duration_us === at.duration_us) return [];
-          return [{ name: "update_clip", arguments: trimArgs(now.segment, mode, final) }];
+          const args = trimArgs(now.segment, mode, final);
+          const ripple = rippleEdits(base, { kind: "trim", id, timeline: final.timeline, source: final.source, args }, timelinePrefs());
+          if (ripple && "refused" in ripple) { latest.current.toast(ripple.refused); return []; }
+          if (ripple) { stuckNote(ripple.stuck); return { edits: ripple.edits, label: ripple.label }; }
+          return [{ name: "update_clip", arguments: args }];
         });
       },
     });
@@ -490,7 +682,9 @@ export function Timeline({ height }: { height: number }) {
     // Mac 上 Control+点击是右键：交给 onContextMenu，不当成按下（不然松手时会把选中收成一段、挪播放头）
     if (event.button !== 0 || (IS_MAC && event.ctrlKey)) return;
     const target = event.target as Element | null;
-    if (!target?.closest || target.closest("[data-track-head]")) return;
+    if (!target?.closest || target.closest("[data-track-head]") || target.closest("[data-ruler-head]")) return;
+    const pin = target.closest("[data-marker]");
+    if (pin) { pressMarker(event, Number(pin.getAttribute("data-marker"))); return; }
     if (target.closest("[data-ruler]")) { scrub(event); return; }
     const clip = target.closest("[data-clip]");
     if (clip) { pressClip(event, clip.getAttribute("data-clip") ?? "", target.closest("[data-edge]")?.getAttribute("data-edge")); return; }
@@ -553,6 +747,9 @@ export function Timeline({ height }: { height: number }) {
     if (held && held.ids.join(",") !== now.selection.ids.join(",")) return undefined;
     if (!held) {
       if (!now.editable) { now.toast(now.notEditableReason ?? BUSY); return undefined; }
+      // 主轨磁吸开着：主轨上首尾相接，不能一帧帧挪（照 openfilm），拖动来重排
+      const mainId = timelinePrefs().magnet ? mainTrackOf(now.project)?.id : null;
+      if (mainId && now.selection.ids.some((one) => findSegment(now.project, one)?.track.id === mainId)) { now.toast("主轨磁吸开着，主轨上的片段不能微移，拖动来重排"); return undefined; }
       const clips = now.selection.ids.flatMap((one): HeldClip[] => {
         const found = findSegment(now.project, one);
         return found ? [{ id: one, trackId: found.track.id, timeline: found.segment.timeline }] : [];
@@ -613,6 +810,8 @@ export function Timeline({ height }: { height: number }) {
     setDraft(null);
     setMarquee(null);
     setZoomPx(null);
+    setMarkerCard(null);
+    setMarkerDrag(null);
   }, [projectId]);
 
   // ---------- 命令：复制粘贴（D6）、Q/W（C8）、静音（D8）、层级（D9） ----------
@@ -652,6 +851,22 @@ export function Timeline({ height }: { height: number }) {
         now.toast(refused && "refused" in refused ? refused.refused : ids.length > 1 ? "播放头不在选中的片段中间，裁不了" : "播放头不在这段中间，裁不了");
         return;
       }
+      // 只裁一段时，主轨磁吸、联动照波纹裁剪算（后面的跟上、跟着它的跟着走）
+      if (edits.length === 1) {
+        const args = edits[0]!.arguments;
+        const found = findSegment(now.project, String(args.clip_id));
+        if (found) {
+          const start = args.start === undefined ? found.segment.timeline.start_us : Math.round(Number(args.start) * US_PER_SECOND);
+          const source = args.source_duration === undefined ? null : {
+            start_us: args.source_start === undefined && "source" in found.segment ? found.segment.source.start_us : Math.round(Number(args.source_start) * US_PER_SECOND),
+            duration_us: Math.round(Number(args.source_duration) * US_PER_SECOND),
+          };
+          const intent: RippleIntent = { kind: "trim", id: found.segment.id, timeline: { start_us: start, duration_us: Math.round(Number(args.duration) * US_PER_SECOND) }, source, args };
+          const ripple = rippleEdits(now.project, intent, timelinePrefs());
+          if (ripple && "refused" in ripple) { now.toast(ripple.refused); return; }
+          if (ripple) { if (await now.runEdits(ripple.edits, ripple.label)) stuckNote(ripple.stuck); return; }
+        }
+      }
       // 选了几段、有的被关键帧卡住：能裁的照裁，再说一声
       if (await now.runEdits(edits) && refused && "refused" in refused) now.toast(`有的片段没裁：${refused.refused}`);
     })();
@@ -679,6 +894,17 @@ export function Timeline({ height }: { height: number }) {
     "trim-end": () => trimClips(latest.current.selection.ids, "end"),
     "nudge-back": (event) => nudgeBy(-1, event.shiftKey),
     "nudge-forward": (event) => nudgeBy(1, event.shiftKey),
+  });
+  useBoardKeys({
+    "select-mode": () => setMode("select"),
+    "split-mode": () => setMode("split"),
+    "add-marker": () => addMarker(),
+    "next-marker": () => jumpMarker(1),
+    "prev-marker": () => jumpMarker(-1),
+    "toggle-snap": () => togglePref("snap", true),
+    "toggle-magnet": () => togglePref("magnet", true),
+    "toggle-linkage": () => togglePref("linkage", true),
+    "toggle-preview-axis": () => togglePref("previewAxis", true),
   });
   // 缩放只在最后一次按在轨道区时接，别处的 ⌘= ⌘0 照旧
   useBoardKeys({
@@ -794,31 +1020,74 @@ export function Timeline({ height }: { height: number }) {
   const guideX = draft?.snappedUs !== null && draft?.snappedUs !== undefined ? draft.snappedUs * pxPerUs : null;
 
   const lasting = lastingReason(board.notEditableReason);
-  const tool = (label: string, title: string, blocked: string | null, onClick: () => void, icon: React.ReactNode) => <button
+  const tool = (label: string, title: string, blocked: string | null, onClick: () => void, icon: React.ReactNode, pressed?: boolean) => <button
     type="button"
-    data-ws="btn square"
+    // 按下的开关靠主题的 on 画（墨底白图标），行内底色会被主题盖掉
+    data-ws={pressed ? "btn square on" : "btn square"}
     aria-label={label}
     aria-disabled={blocked ? true : undefined}
+    aria-pressed={pressed}
     title={blocked ?? title}
     // 点完焦点还留在原处，接着按快捷键照样管用
     onMouseDown={(event) => event.preventDefault()}
     onClick={() => { if (!blocked) onClick(); }}
-    style={{ ...toolButton, cursor: blocked ? "default" : "pointer", opacity: blocked ? 0.4 : 1 }}
+    style={{ ...toolButton, cursor: blocked ? "default" : "pointer", opacity: blocked ? 0.4 : 1, ...(pressed ? toolPressed : null) }}
   >{icon}</button>;
+  /** 开关：开着是强调色底；悬停说现在开着会怎样、关着会怎样 */
+  const toggle = (key: Exclude<keyof TimelinePrefs, "captions">, Icon: React.ComponentType<{ size?: number; color?: string }>) => {
+    const on = prefs[key];
+    const text = PREF_TEXT[key];
+    return tool(text.name, `${text.name}（${shortcutText(PREF_KEYS[key])}）\n${on ? text.on : text.off}`, null, () => togglePref(key), <Icon size={15} color={on ? color.buttonText : color.text} />, on);
+  };
+  const markers = project?.markers ?? [];
+  const markerAt = (time: number) => (markerDrag?.from === time ? markerDrag.to : time);
+  const markerGuide = markerDrag ? markerDrag.to : markerHover;
+  const cardMarker = markerCard === null ? null : markers.find((one) => one.time_us === markerCard) ?? null;
+  // 卡片对着的标记没了（拖走、撤销、AI 改了）就关掉，免得以后那一刻又有标记时卡片自己弹回来抢焦点；刚加的标记还没进工程时不算
+  const cardShown = useRef<number | null>(null);
+  useEffect(() => {
+    if (cardMarker) cardShown.current = cardMarker.time_us;
+    else if (markerCard !== null && cardShown.current === markerCard) { cardShown.current = null; setMarkerCard(null); }
+  }, [cardMarker, markerCard]);
+  // 缩放滑条：按对数走（openfilm 的 zoomToSlider），最窄一屏 1 秒、最宽成片的 4 倍；工具栏窄了先藏它
+  const zoomSpan = zoom.max > zoom.min ? Math.log(zoom.max / zoom.min) : 0;
+  const sliderValue = zoomSpan > 0 ? Math.log(pxPerUs / zoom.min) / zoomSpan : 0;
 
   return <View {...areaProps("timeline", "e-box", "ai-panel")} style={[styles.timeline, { height }]}>
-    <div role="toolbar" aria-label="时间线工具" style={toolbar}>
+    {/* 工具栏照 openfilm 的时间线排：选择/分割工具 · 撤销重做历史 · 加标记 · 分割 · 删除 …… 磁吸 吸附 联动 预览轴 · 缩放 · 字幕 */}
+    <div role="toolbar" aria-label="时间线工具" style={toolbar} ref={(node) => { if (node && node.clientWidth !== toolbarWidth) setToolbarWidth(node.clientWidth); }}>
+      <ModePicker mode={mode} onPick={setMode} />
+      <span aria-hidden style={toolSeparator} />
+      <HistoryControls compact />
+      {tool("添加标记", `在播放头处加标记（${shortcutText("add-marker")}）；${shortcutText("next-marker")} / ${shortcutText("prev-marker")} 跳到下一个、上一个。标记只在这里用，不会带进剪映`, duration ? lasting : "时间线还是空的", addMarker, <BookmarkPlus size={15} color={color.text} />)}
       {tool("分割", `在播放头处切开选中的片段，没选就切播放头下面那段（${shortcutText("split")}）`, lasting, () => { void board.split(); }, <Scissors size={15} color={color.text} />)}
       {tool("删除", `删除选中的片段（${shortcutText("remove")}）`, lasting ?? (selection.ids.length ? null : "先点选要删的片段"), () => { void board.removeSelected(); }, <Trash2 size={15} color={color.text} />)}
       <span style={{ flex: 1 }} />
-      {selection.ids.length > 1 ? <span style={{ color: color.textMuted, fontFamily: font.body, fontSize: 11.5, marginRight: 6 }}>选了 {selection.ids.length} 段</span> : null}
+      {selection.ids.length > 1 ? <span style={{ color: color.textMuted, fontFamily: font.body, fontSize: 11.5, marginRight: 6, whiteSpace: "nowrap" }}>选了 {selection.ids.length} 段</span> : null}
+      {toggle("magnet", Magnet)}
+      {toggle("snap", SeparatorVertical)}
+      {toggle("linkage", Paperclip)}
+      {toggle("previewAxis", TextCursor)}
+      <span aria-hidden style={toolSeparator} />
       {tool("缩小时间线", `缩小（${shortcutText("zoom-out")}）`, duration ? null : "时间线还是空的", () => zoomTo(view.current.px / ZOOM_STEP), <ZoomOut size={15} color={color.text} />)}
-      {tool("整条放进视图", `整条放进视图（${shortcutText("zoom-reset")}）`, duration ? null : "时间线还是空的", () => zoomTo(null), <Maximize2 size={14} color={color.text} />)}
+      {toolbarWidth >= 640 ? <input
+        type="range" min={0} max={1} step={0.001} aria-label="缩放" title={`缩放：${Math.round((pxPerUs / zoom.fit) * 80)}%`}
+        value={sliderValue} disabled={!duration || !(zoomSpan > 0)}
+        onMouseDown={(event) => event.stopPropagation()}
+        onChange={(event) => zoomTo(zoom.min * Math.exp(Number(event.currentTarget.value) * zoomSpan))}
+        style={{ width: 78, flexShrink: 0, margin: "0 2px", accentColor: color.accent, cursor: duration ? "pointer" : "default" }}
+      /> : null}
       {tool("放大时间线", `放大（${shortcutText("zoom-in")}）`, duration ? null : "时间线还是空的", () => zoomTo(view.current.px * ZOOM_STEP), <ZoomIn size={15} color={color.text} />)}
+      {tool("适应宽度", `整条放进视图（${shortcutText("zoom-reset")}）`, duration ? null : "时间线还是空的", () => zoomTo(null), <MoveHorizontal size={15} color={color.text} />)}
+      {tool("字幕", subtitleTrack ? (prefs.captions ? "画面上显示字幕（只影响这里的预览，导出照样带字幕）；点一下隐藏" : "画面上隐藏了字幕；点一下显示") : "",
+        subtitleTrack ? null : "还没有字幕，在刻度尺左边点「+ 字幕」加一条", () => setTimelinePref("captions", !prefs.captions),
+        prefs.captions || !subtitleTrack ? <Captions size={16} color={prefs.captions && subtitleTrack ? color.buttonText : color.text} /> : <CaptionsOff size={16} color={color.text} />, Boolean(subtitleTrack) && prefs.captions)}
     </div>
     <div
       ref={scrollRef}
       onPointerDown={(event) => onPointerDown(event.nativeEvent)}
+      onPointerMove={onHover}
+      onPointerLeave={hideHover}
       onContextMenu={onContextMenu}
       onScroll={(event) => setScrollX(event.currentTarget.scrollLeft)}
       style={{ position: "absolute", left: 0, right: 0, bottom: 0, top: TOOLS, overflow: "auto", scrollbarWidth: "thin" }}
@@ -826,24 +1095,45 @@ export function Timeline({ height }: { height: number }) {
       <div ref={contentRef} style={{ position: "relative", display: "flex", flexDirection: "column", width: HEAD + trackPx, minWidth: "100%", minHeight: "100%" }}>
         {/* 刻度尺：上下滚时钉在顶上；左上角那格左右滚时也钉住 */}
         <div style={{ position: "sticky", top: 0, zIndex: 7, display: "flex", flexShrink: 0, height: RULER, boxSizing: "border-box", borderBottom: `1px solid ${color.border}`, ...solid }}>
-          <div style={{ position: "sticky", left: 0, zIndex: 1, width: HEAD, flexShrink: 0, display: "flex", alignItems: "center", paddingLeft: 8, boxSizing: "border-box", borderRight: `1px solid ${color.border}`, ...solid }}>
-            <span title={tracks.length > 1 ? "上面的轨道在画面上盖住下面的" : undefined} style={{ color: color.textMuted, fontFamily: font.body, fontSize: 10 }}>{tracks.length ? `${tracks.length} 条轨道` : ""}</span>
+          <div data-ruler-head style={{ position: "sticky", left: 0, zIndex: 3, width: HEAD, flexShrink: 0, display: "flex", alignItems: "center", gap: 4, paddingLeft: 8, paddingRight: 4, boxSizing: "border-box", borderRight: `1px solid ${color.border}`, ...solid }}>
+            <span title={tracks.length > 1 ? "上面的轨道在画面上盖住下面的" : undefined} style={{ flex: 1, minWidth: 0, color: color.textMuted, fontFamily: font.body, fontSize: 10, whiteSpace: "nowrap" }}>{tracks.length ? `${tracks.length} 条轨道` : ""}</span>
+            {/* 还没有字幕：在这里起一条字幕轨（openfilm 的字幕行表头那个「+」） */}
+            {!subtitleTrack && duration > 0 ? <button
+              type="button" aria-label="在播放头处添加字幕" title={blocked ?? "在播放头处添加字幕：新建一条字幕轨"} aria-disabled={blocked ? true : undefined}
+              onMouseDown={(event) => event.preventDefault()} onClick={() => { if (!blocked) addSubtitle(null); }}
+              style={{ ...miniButton, opacity: blocked ? 0.45 : 1, cursor: blocked ? "default" : "pointer" }}
+            ><Plus size={10} color={color.textSecondary} /><span>字幕</span></button> : null}
           </div>
           <div data-ruler title="点一下或按住拖，挪播放头" style={{ position: "relative", width: trackPx, flexShrink: 0, cursor: "pointer" }}>
             {ticks.map((tick) => <div key={tick.us} style={{ position: "absolute", left: tick.x, top: 0, bottom: 0, display: "flex", alignItems: "center", paddingLeft: 3, borderLeft: `1px solid ${color.borderSoft}`, pointerEvents: "none" }}>
               <span style={{ color: color.textMuted, fontFamily: font.mono, fontSize: 9.5, whiteSpace: "nowrap" }}>{tick.label}</span>
             </div>)}
-            {pxPerUs > 0 ? (project?.markers ?? []).map((marker) => <div key={marker.time_us} title={marker.label} style={{
-              position: "absolute", left: marker.time_us * pxPerUs - 4, bottom: 0, width: 0, height: 0,
-              borderLeft: "4px solid transparent", borderRight: "4px solid transparent", borderTop: `6px solid ${color.accent}`,
-            }} />) : null}
+            {pxPerUs > 0 ? markers.map((marker) => {
+              const at = markerAt(marker.time_us);
+              return <div
+                key={marker.time_us}
+                data-marker={marker.time_us}
+                role="button"
+                aria-label={`标记“${marker.label}”，${secondMark(at)}`}
+                title={`${marker.label} · ${formatClock(at)}\n点一下跳过去、改名字和颜色，按住拖能挪`}
+                onPointerEnter={() => setMarkerHover(marker.time_us)}
+                onPointerLeave={() => setMarkerHover((value) => (value === marker.time_us ? null : value))}
+                style={{ position: "absolute", left: at * pxPerUs - 7, bottom: 0, width: 14, height: 15, zIndex: 2, display: "flex", alignItems: "flex-end", justifyContent: "center", cursor: "ew-resize" }}
+              >
+                <span style={{
+                  width: 10, height: 12, backgroundColor: markerColor(marker.color), clipPath: "polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%)",
+                  boxShadow: markerCard === marker.time_us ? `0 0 0 1.5px ${color.text}` : undefined, opacity: markerDrag?.from === marker.time_us ? 0.85 : 1,
+                }} />
+              </div>;
+            }) : null}
           </div>
         </div>
         <div data-rows style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column" }}>
           {rows.length ? rows.map((track) => {
             const row = places.get(track.id) ?? null;
             return <TrackRow key={track.id} track={track} pxPerUs={pxPerUs} width={trackPx} mediaById={mediaById} mediaUrl={mediaUrl} editable={editable} blocked={blocked}
-              selectedIds={ringed} places={row} target={draft?.target === track.id} lifted={Boolean(row) && draft?.kind === "drag" && draft.mode === "move"} onMute={toggleMute} onPick={pick} />;
+              selectedIds={ringed} places={row} target={draft?.target === track.id} lifted={Boolean(row) && draft?.kind === "drag" && draft.mode === "move"} onMute={toggleMute} onPick={pick}
+              blade={mode === "split"} main={track.id === mainTrackId && prefs.magnet} onAddSubtitle={addSubtitle} />;
           }) : <View style={styles.timelineEmpty}><Text style={kit.muted}>时间线还是空的，AI 加了片段会出现在这里。</Text></View>}
         </div>
         {marquee ? <div style={{
@@ -852,6 +1142,12 @@ export function Timeline({ height }: { height: number }) {
         }} /> : null}
         {/* 吸附参考线、播放头：贯穿刻度尺和所有轨道；滚出视图时不画（不然会盖到左边的轨道头上） */}
         {guideX !== null && inView(guideX) ? <div style={{ ...line, left: HEAD + guideX, width: 1, backgroundColor: color.accent }} /> : null}
+        {markerGuide !== null && pxPerUs > 0 && inView(markerGuide * pxPerUs) ? <div style={{
+          ...line, left: HEAD + markerGuide * pxPerUs, width: 0, borderLeft: `1px dashed ${markerColor(markers.find((one) => one.time_us === (markerDrag?.from ?? markerGuide))?.color)}`, opacity: markerDrag ? 1 : 0.6,
+        }} /> : null}
+        {/* 预览轴（鼠标在时间线上划过时那一刻）和分割工具的刀线：位置直接写样式 */}
+        <div ref={hoverRef} aria-hidden style={{ ...line, display: "none", width: 1, backgroundColor: color.textMuted, zIndex: 7 }} />
+        <div ref={bladeRef} aria-hidden style={{ position: "absolute", display: "none", width: 1, zIndex: 9, pointerEvents: "none", backgroundColor: color.white, boxShadow: `0 0 0 1px ${alpha(color.black, 0.55)}` }} />
         {duration > 0 && pxPerUs > 0 && inView(playheadX) ? <div style={{ ...line, left: HEAD + playheadX - 0.75, width: 1.5, backgroundColor: color.danger }} /> : null}
         {draft?.tip ? <div style={{
           position: "absolute", left: draft.tip.x, top: Math.max(0, draft.tip.y), transform: draft.tip.center ? "translateX(-50%)" : undefined, zIndex: 60, pointerEvents: "none",
@@ -860,6 +1156,15 @@ export function Timeline({ height }: { height: number }) {
         }}>{draft.tip.text}</div> : null}
       </div>
     </div>
+    {cardMarker && pxPerUs > 0 ? <MarkerCard
+      key={cardMarker.time_us}
+      marker={cardMarker}
+      left={Math.max(4, Math.min(HEAD + cardMarker.time_us * pxPerUs - scrollX - 8, viewWidth + HEAD - MARKER_CARD_WIDTH - 4))}
+      blocked={blocked}
+      onSave={(changes) => saveMarker(cardMarker.time_us, changes)}
+      onRemove={() => removeMarker(cardMarker.time_us)}
+      onClose={() => setMarkerCard(null)}
+    /> : null}
     {menu.element}
   </View>;
 }
@@ -870,10 +1175,138 @@ const toolbar: React.CSSProperties = {
   borderBottom: `1px solid ${color.borderSoft}`,
 };
 const toolButton: React.CSSProperties = {
-  display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, padding: 0, borderRadius: radius.small, border: "1px solid transparent", backgroundColor: "transparent",
+  display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, flexShrink: 0, padding: 0, borderRadius: radius.small, border: "1px solid transparent", backgroundColor: "transparent",
+};
+const toolPressed: React.CSSProperties = { backgroundColor: color.accent, borderColor: color.accent };
+const toolSeparator: React.CSSProperties = { width: 1, height: 16, flexShrink: 0, margin: "0 3px", backgroundColor: color.borderSoft };
+const rowButton: React.CSSProperties = {
+  display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, flexShrink: 0, padding: 0, borderRadius: radius.small, border: "1px solid transparent", backgroundColor: "transparent",
+};
+const miniButton: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 2, height: 16, flexShrink: 0, padding: "0 4px", borderRadius: radius.small, border: `1px solid ${color.borderSoft}`, backgroundColor: "transparent",
+  color: color.textSecondary, fontFamily: font.body, fontSize: 9.5, lineHeight: "14px",
 };
 
-const TrackRow = memo(function TrackRow({ track, pxPerUs, width, mediaById, mediaUrl, editable, blocked, selectedIds, places, target, lifted, onMute, onPick }: {
+/** 工具栏开关的名字和开关说明（照 openfilm 的文案） */
+const PREF_TEXT: Record<keyof TimelinePrefs, { name: string; on: string; off: string }> = {
+  snap: { name: "吸附", on: "开：拖动时吸附到片段边缘、播放头和标记", off: "关：松手在哪就放在哪" },
+  magnet: { name: "主轨磁吸", on: "开：主轨（最下面的视频轨）上的片段自动首尾相接，不留空隙", off: "关：主轨上的片段放在哪就在哪" },
+  linkage: { name: "联动", on: "开：字幕、画中画、声音跟着下面的主轨片段一起移动、删除", off: "关：编辑主轨时只动主轨" },
+  previewAxis: { name: "预览轴", on: "开：鼠标在时间线上移动，画面跟着走", off: "关：画面停在播放头处" },
+  captions: { name: "字幕", on: "开：画面上显示字幕", off: "关：画面上隐藏字幕" },
+};
+const PREF_KEYS = { snap: "toggle-snap", magnet: "toggle-magnet", linkage: "toggle-linkage", previewAxis: "toggle-preview-axis" } as const;
+
+/** 标记的六种颜色（照 openfilm），第一种是默认 */
+const MARKER_COLORS = [
+  { name: "蓝色", value: "#4C8DFF" }, { name: "绿色", value: "#3FBF6F" }, { name: "黄色", value: "#F2C94C" },
+  { name: "橙色", value: "#F2994A" }, { name: "红色", value: "#EB5757" }, { name: "紫色", value: "#9B51E0" },
+] as const;
+/** AI 加的标记默认是白色，浅色主题上看不见：白色按强调色画 */
+const markerColor = (value: string | null | undefined) => (!value || /^#f{6}$/iu.test(value) ? color.accent : value);
+const shortLabel = (text: string) => [...text].slice(0, 12).join("");
+const MARKER_CARD_WIDTH = 236;
+
+/** 选择 / 分割工具：主按钮切到另一个，旁边的小箭头打开菜单（照 openfilm 的 ModePicker） */
+function ModePicker({ mode, onPick }: { mode: "select" | "split"; onPick: (mode: "select" | "split") => void }) {
+  const menu = useContextMenu();
+  const other = mode === "split" ? "select" : "split";
+  const names = { select: "选择", split: "分割：点哪切哪" } as const;
+  const Icon = mode === "split" ? SquareSplitHorizontal : MousePointer2;
+  return <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+    <button
+      type="button" data-ws={mode === "split" ? "btn square on" : "btn square"} aria-label={`切到${names[other]}`} title={`现在是${names[mode]}；点一下切到${names[other]}（${shortcutText(other === "split" ? "split-mode" : "select-mode")}）`}
+      onMouseDown={(event) => event.preventDefault()} onClick={() => onPick(other)}
+      style={{ ...toolButton, cursor: "pointer", ...(mode === "split" ? toolPressed : null) }}
+    ><Icon size={15} color={mode === "split" ? color.buttonText : color.text} /></button>
+    <button
+      type="button" aria-label="选择工具" aria-haspopup="menu" aria-expanded={menu.isOpen} title="选择或分割工具"
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        menu.open({ x: rect.left - 28, y: rect.bottom + 4 }, [
+          { id: "select", label: mode === "select" ? "✓ 选择" : "选择", shortcut: "select-mode", onSelect: () => onPick("select") },
+          { id: "split", label: mode === "split" ? "✓ 分割：点哪切哪" : "分割：点哪切哪", shortcut: "split-mode", onSelect: () => onPick("split") },
+        ]);
+      }}
+      style={{ ...toolButton, width: 14, cursor: "pointer" }}
+    ><ChevronDown size={11} color={color.textMuted} /></button>
+    {menu.element}
+  </span>;
+}
+
+/** 标记的卡片：改名字（回车、失焦保存，Esc 放弃）、换颜色、删除；按在外面或 Esc 关掉 */
+function MarkerCard({ marker, left, blocked, onSave, onRemove, onClose }: {
+  marker: { time_us: number; label: string; color?: string }; left: number; blocked: string | null;
+  onSave: (changes: { label?: string; color?: string }) => void; onRemove: () => void; onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [text, setText] = useState(marker.label);
+  // 上次存下的名字（失焦存过一次，回车、按在外面不再重发）；Esc 放弃以后什么都不存
+  const saved = useRef(marker.label);
+  const cancelled = useRef(false);
+  const save = () => {
+    const next = text.trim();
+    if (cancelled.current || !next || next === saved.current) return;
+    saved.current = next;
+    onSave({ label: next });
+  };
+  const cancel = () => { cancelled.current = true; onClose(); };
+  useEscapeLayer(() => { cancel(); return true; }, true);
+  useEffect(() => {
+    const away = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (ref.current?.contains(target) || target?.closest?.("[data-marker]")) return;
+      save();
+      onClose();
+    };
+    window.addEventListener("pointerdown", away, true);
+    return () => window.removeEventListener("pointerdown", away, true);
+  });
+  return <div ref={ref} role="dialog" aria-label={`标记“${marker.label}”`} data-board-area="outside" style={{
+    position: "absolute", left, top: TOOLS + RULER + 4, width: MARKER_CARD_WIDTH, zIndex: 70, boxSizing: "border-box", padding: 10, display: "flex", flexDirection: "column", gap: 8,
+    borderRadius: radius.small, border: `1px solid ${color.border}`, backgroundColor: color.surface, boxShadow: `0 6px 24px ${alpha(color.black, 0.28)}`, fontFamily: font.body,
+  }}>
+    <input
+      autoFocus value={text} maxLength={80} aria-label="标记名称" disabled={Boolean(blocked)}
+      onChange={(event) => setText(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        // 键不往看板走（空格、M 是打字）；Esc 就在这里放弃，看板收不到它
+        event.stopPropagation();
+        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.key === "Escape") { event.preventDefault(); cancel(); } else if (event.key === "Enter") { save(); onClose(); }
+      }}
+      onBlur={save}
+      style={{ height: 26, padding: "0 8px", borderRadius: radius.small, border: `1px solid ${color.border}`, backgroundColor: color.surfaceMuted, color: color.text, fontSize: 12, outline: "none" }}
+    />
+    <div role="radiogroup" aria-label="颜色" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      {MARKER_COLORS.map((one) => {
+        const on = (marker.color ?? "").toUpperCase() === one.value || (!marker.color && one === MARKER_COLORS[0]);
+        return <button
+          key={one.value} type="button" role="radio" aria-checked={on} aria-label={one.name} title={one.name} disabled={Boolean(blocked)}
+          // 不抢输入框的焦点：名字和颜色一起存一次
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            const next = text.trim();
+            if (next && !cancelled.current) saved.current = next;
+            onSave({ label: next || marker.label, color: one.value });
+          }}
+          style={{ width: 18, height: 18, padding: 0, borderRadius: 999, cursor: "pointer", backgroundColor: one.value, border: `2px solid ${on ? color.text : "transparent"}` }}
+        />;
+      })}
+      <span style={{ flex: 1 }} />
+      <span style={{ color: color.textMuted, fontSize: 10.5, fontFamily: font.mono }}>{formatClock(marker.time_us)}</span>
+    </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span style={{ flex: 1, color: color.textMuted, fontSize: 10.5, lineHeight: "15px" }}>标记只在这里用，不会带进剪映</span>
+      <button type="button" disabled={Boolean(blocked)} onClick={onRemove} title={blocked ?? "删除这个标记"} style={{
+        height: 24, padding: "0 8px", borderRadius: radius.small, border: `1px solid ${color.border}`, backgroundColor: "transparent", color: color.danger, fontSize: 11.5, cursor: "pointer",
+      }}>删除标记</button>
+    </div>
+  </div>;
+}
+
+const TrackRow = memo(function TrackRow({ track, pxPerUs, width, mediaById, mediaUrl, editable, blocked, selectedIds, places, target, lifted, onMute, onPick, blade, main, onAddSubtitle }: {
   track: EditTrack; pxPerUs: number; width: number; mediaById: ReadonlyMap<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null; editable: boolean;
   /** 不能改时的原因（静音钮的悬停提示） */
   blocked: string | null;
@@ -886,6 +1319,11 @@ const TrackRow = memo(function TrackRow({ track, pxPerUs, width, mediaById, medi
   lifted: boolean;
   onMute: (trackId: string) => void;
   onPick: (id: string) => void;
+  /** 分割工具：片段上是十字光标，没有裁剪把手 */
+  blade: boolean;
+  /** 主轨磁吸开着、这条是主轨：轨道头上标一下 */
+  main: boolean;
+  onAddSubtitle: (trackId: string) => void;
 }) {
   const Icon = TRACK_ICON[track.track_type] ?? Film;
   const label = trackLabel(track);
@@ -895,12 +1333,22 @@ const TrackRow = memo(function TrackRow({ track, pxPerUs, width, mediaById, medi
   const reaches = useMemo(() => new Map(track.segments.flatMap((segment) => ("transition" in segment && segment.transition ? [[segment.id, transitionReach(track.segments, segment)] as const] : []))), [track.segments]);
   const muteTitle = blocked ?? (track.mute ? "这条轨道静音了，点一下恢复声音" : "点一下把这条轨道静音");
   return <div style={{ position: "relative", zIndex: lifted ? 50 : undefined, display: "flex", flexShrink: 0, height: ROW, boxSizing: "border-box", borderBottom: `1px solid ${color.borderSoft}` }}>
-    <div data-track-head={track.id} title={`${label}：右键可以调整层级${sounds ? "、静音" : ""}`} style={{
+    <div data-track-head={track.id} title={`${label}${main ? " · 主轨（主轨磁吸开着，片段首尾相接）" : ""}：右键可以调整层级${sounds ? "、静音" : ""}`} style={{
       position: "sticky", left: 0, zIndex: 5, width: HEAD, flexShrink: 0, display: "flex", alignItems: "center", gap: 5, paddingLeft: 8, paddingRight: 4, boxSizing: "border-box",
       borderRight: `1px solid ${color.border}`, ...solid,
     }}>
       <Icon size={12} color={color.textMuted} />
       <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: color.textSecondary, fontFamily: font.body, fontSize: 11 }}>{label}</span>
+      {main ? <Magnet size={10} color={color.accent} /> : null}
+      {track.kind === "subtitle" ? <button
+        type="button"
+        aria-label="在播放头处添加字幕"
+        aria-disabled={blocked ? true : undefined}
+        title={blocked ?? "在播放头处添加字幕"}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => { if (!blocked) onAddSubtitle(track.id); }}
+        style={{ ...rowButton, cursor: blocked ? "default" : "pointer", opacity: blocked ? 0.45 : 1 }}
+      ><Plus size={12} color={color.textMuted} /></button> : null}
       {sounds ? <button
         type="button"
         aria-label={track.mute ? `取消“${label}”的静音` : `把“${label}”静音`}
@@ -922,7 +1370,7 @@ const TrackRow = memo(function TrackRow({ track, pxPerUs, width, mediaById, medi
       {pxPerUs > 0 ? track.segments.map((segment) => {
         const place = places?.get(segment.id) ?? null;
         const reach = reaches.get(segment.id) ?? "next";
-        const common = { segment, pxPerUs, mediaById, mediaUrl, reach, selected: selectedIds.has(segment.id), editable, touchStart: touching.has(`${segment.id}:start`), touchEnd: touching.has(`${segment.id}:end`), onPick };
+        const common = { segment, pxPerUs, mediaById, mediaUrl, reach, selected: selectedIds.has(segment.id), editable: editable && !blade, blade, touchStart: touching.has(`${segment.id}:start`), touchEnd: touching.has(`${segment.id}:end`), onPick };
         // ⌥ 拖复制：原片段留在原处，另画一个跟着手走的影子
         return <React.Fragment key={segment.id}>
           <Clip {...common} place={place?.copy ? null : place} />
@@ -952,12 +1400,14 @@ function useFilmstrip(mediaId: string | null, url: string | null, times: number[
 }
 
 // 拖动、框选时轨道行每帧都重画，没变的片段靠 memo 跳过
-const Clip = memo(function Clip({ segment, pxPerUs, mediaById, mediaUrl, reach, selected, editable, touchStart, touchEnd, place, ghost = false, onPick }: {
+const Clip = memo(function Clip({ segment, pxPerUs, mediaById, mediaUrl, reach, selected, editable, blade = false, touchStart, touchEnd, place, ghost = false, onPick }: {
   segment: EditSegment; pxPerUs: number; mediaById: ReadonlyMap<string, AiEditMediaItem>; mediaUrl: (id: string) => string | null;
   /** 转场能不能接到下一段：轨道最后一段或后面隔着空当时不画转场菱形 */
   reach: TransitionReach; selected: boolean;
   /** 能拖动、裁剪 */
   editable: boolean;
+  /** 分割工具：十字光标 */
+  blade?: boolean;
   /** 这一头和同轨邻居首尾相接：把手缩在片段里面 */
   touchStart: boolean; touchEnd: boolean;
   /** 正在拖：按跟手的位置画 */
@@ -991,7 +1441,7 @@ const Clip = memo(function Clip({ segment, pxPerUs, mediaById, mediaUrl, reach, 
   const floating = Boolean(place?.floating);
   const refused = Boolean(place?.refused);
   const hit = trimHit(box.width);
-  const cursor = ghost ? undefined : floating ? (refused ? "not-allowed" : place?.copy ? "copy" : "grabbing") : place && place.mode !== "move" ? "ew-resize" : editable ? "grab" : "pointer";
+  const cursor = ghost ? undefined : blade ? "crosshair" : floating ? (refused ? "not-allowed" : place?.copy ? "copy" : "grabbing") : place && place.mode !== "move" ? "ew-resize" : editable ? "grab" : "pointer";
   return <div
     data-clip={ghost ? undefined : segment.id}
     role={ghost ? undefined : "button"}

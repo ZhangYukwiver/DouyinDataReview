@@ -276,5 +276,8 @@ describe("多选卡片和操作历史", () => {
     expect(historyPanelPosition({ right: 900, bottom: 60 }, { width: 1200, height: 800 })).toEqual({ left: 632, top: 66, maxHeight: 440 });
     expect(historyPanelPosition({ right: 100, bottom: 60 }, { width: 1200, height: 300 })).toEqual({ left: 8, top: 66, maxHeight: 216 });
     expect(historyPanelPosition({ right: 1300, bottom: 60 }, { width: 1200, height: 800 }).left).toBe(924);
+    // 时间线工具栏上的按钮在下半截：往上开，底边贴着按钮
+    expect(historyPanelPosition({ right: 400, top: 600, bottom: 628 }, { width: 1200, height: 800 })).toEqual({ left: 132, bottom: 206, maxHeight: 440 });
+    expect(historyPanelPosition({ right: 400, top: 100, bottom: 128 }, { width: 1200, height: 800 })).toEqual({ left: 132, top: 134, maxHeight: 440 });
   });
 });

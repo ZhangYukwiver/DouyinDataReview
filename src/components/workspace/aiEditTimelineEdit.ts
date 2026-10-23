@@ -144,7 +144,12 @@ export interface MoveSpec {
   /** ⌥ 拖：原片段不动，复制一份放过去 */
   copy?: boolean;
   playheadUs: number | null;
+  /** 压到邻居多近就推到贴住 */
   reachUs: number;
+  /** 吸附多近才吸（工具栏关了吸附就是 0）；不给照 reachUs */
+  snapUs?: number;
+  /** 主轨磁吸开着：落到这条轨道上不查重叠，由 rippleEdits 插进去重排 */
+  insertTrackId?: string | null;
   frameUs: number;
 }
 
@@ -168,8 +173,9 @@ export function planMove(project: Pick<EditProject, "tracks" | "markers"> | null
   const targets = snapTargetsOf(project, { exclude: spec.copy ? [] : moving, playheadUs: spec.playheadUs });
   const leadStart = lead.segment.timeline.start_us;
   const leadEnd = end(lead.segment.timeline);
-  const head = snapTo(leadStart + spec.deltaUs, targets, spec.reachUs);
-  const tail = snapTo(leadEnd + spec.deltaUs, targets, spec.reachUs);
+  const snapUs = spec.snapUs ?? spec.reachUs;
+  const head = snapTo(leadStart + spec.deltaUs, targets, snapUs);
+  const tail = snapTo(leadEnd + spec.deltaUs, targets, snapUs);
   const headGap = head.snapped === null ? Number.POSITIVE_INFINITY : Math.abs(leadStart + spec.deltaUs - head.value);
   const tailGap = tail.snapped === null ? Number.POSITIVE_INFINITY : Math.abs(leadEnd + spec.deltaUs - tail.value);
   let shift = toFrame(leadStart + spec.deltaUs, spec.frameUs) - leadStart;
@@ -190,7 +196,8 @@ export function planMove(project: Pick<EditProject, "tracks" | "markers"> | null
   // 放不下的照样跟着手画在原来那行上
   if (refused) return { items: items.map((item) => ({ ...item, trackId: item.fromTrackId })), snappedUs: null, refused };
 
-  const occupiedOn = (trackId: string) => (tracks.find((track) => track.id === trackId)?.segments ?? [])
+  // 主轨磁吸：落到主轨上的是插进去，不算压到邻居
+  const occupiedOn = (trackId: string) => (trackId === spec.insertTrackId ? [] : tracks.find((track) => track.id === trackId)?.segments ?? [])
     .filter((segment) => spec.copy || !moving.has(segment.id)).map((segment) => segment.timeline);
   if (items.length === 1) {
     const [item] = items as [MoveItem];
@@ -324,14 +331,15 @@ export function trimTo(segment: EditSegment, edge: TrimEdge, wantUs: number, ctx
  */
 export function planTrim(
   project: Pick<EditProject, "tracks" | "markers"> | null | undefined, segment: EditSegment, edge: TrimEdge, deltaUs: number,
-  ctx: { playheadUs: number | null; reachUs: number; frameUs: number; mediaDurationUs?: number | null },
+  ctx: { playheadUs: number | null; reachUs: number; frameUs: number; mediaDurationUs?: number | null; snapUs?: number; ripple?: boolean },
 ): TrimPlan {
   const track = project?.tracks.find((item) => item.segments.some((other) => other.id === segment.id));
-  const siblings = (track?.segments ?? []).filter((other) => other.id !== segment.id);
+  // 波纹裁剪（主轨磁吸）：邻居跟着挪，不当边界
+  const siblings = ctx.ripple ? [] : (track?.segments ?? []).filter((other) => other.id !== segment.id);
   const edgeUs = edge === "start" ? segment.timeline.start_us : end(segment.timeline);
   const targets = snapTargetsOf(project, { exclude: [segment.id], playheadUs: ctx.playheadUs, edgeUs });
   const raw = edgeUs + deltaUs;
-  const snap = snapTo(raw, targets, ctx.reachUs);
+  const snap = snapTo(raw, targets, ctx.snapUs ?? ctx.reachUs);
   const result = trimTo(segment, edge, snap.snapped === null ? toFrame(raw, ctx.frameUs) : snap.value, { siblings, mediaDurationUs: ctx.mediaDurationUs });
   const landed = edge === "start" ? result.timeline.start_us : end(result.timeline);
   const near = (value: number | null) => value !== null && Math.abs(landed - value) < 1;

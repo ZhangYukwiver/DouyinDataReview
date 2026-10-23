@@ -128,6 +128,7 @@ const SAMPLE_ARGS = {
   remove_marker: { time: 2.5 },
   add_subtitles: { captions: [{ start: 0, end: 1.5, text: "第一句" }, { start: 61.25, end: 3725.004, text: "第二句" }] },
   remove_subtitles: { track_id: "t2" },
+  add_subtitle_line: { start: 5, duration: 1.5, text: "补一句" },
   export_to_jianying: {},
 };
 
@@ -139,8 +140,49 @@ const EDIT_METHODS = [
   "clearFeature", "addMask", "addChroma", "addBackgroundFilling", "setMixMode", "addMarker", "listMarkers", "removeMarker",
   "addSrtSubtitles", "removeSubtitleGroup",
 ];
+// addSubtitleLine 要工程里先有字幕轨，单独在「adds one subtitle line」里测
 
 describe("AI edit tools", () => {
+  it("adds one subtitle line to the only group, or starts a group when there is none", async () => {
+    const withGroup = (base) => ({ ...base, tracks: [...base.tracks, { id: "g".repeat(32), kind: "subtitle", track_type: "text", name: "Subtitles", mute: false, segments: [] }] });
+    const calls = [];
+    const store = new Proxy({}, {
+      get(_target, name) {
+        if (name === "then") return undefined;
+        return async (...args) => {
+          calls.push({ name, args });
+          const next = withGroup(project());
+          if (name === "addSubtitleLine") next.tracks.at(-1).segments.push({ id: "line", kind: "text", text: args[2].text, timeline: args[2].timeline });
+          return next;
+        };
+      },
+    });
+    const run = createToolRunner({ store, library: library(), projectId: "p".repeat(32), getCollector: () => null });
+    const { result } = await run("add_subtitle_line", JSON.stringify({ start: 2, duration: 1.25, text: "补一句" }));
+    expect(result).toMatchObject({ ok: true });
+    expect(calls.find((call) => call.name === "addSubtitleLine").args).toEqual(["p".repeat(32), "g".repeat(32), { text: "补一句", timeline: { start_us: 2_000_000, duration_us: 1_250_000 } }]);
+    // 组里原来一条都没有：补上的这条放到画面下方
+    expect(calls.find((call) => call.name === "updateSegment").args).toEqual(["p".repeat(32), "line", { transform: { transform_y: -0.8 } }]);
+    expect((await run("add_subtitle_line", JSON.stringify({ track_id: "t2", start: 0, duration: 1, text: "x" }))).result).toMatchObject({ ok: false, code: "arguments_invalid" });
+
+    // 还没有字幕：新建一组；写成字符串的秒数照样换算，负的开头直接报错
+    const srts = [];
+    const bare = new Proxy({}, {
+      get(_target, name) {
+        if (name === "then") return undefined;
+        return async (...args) => {
+          if (name === "addSrtSubtitles") srts.push(args[1]);
+          return name === "getProject" ? project() : withGroup(project());
+        };
+      },
+    });
+    const fresh = createToolRunner({ store: bare, library: library(), projectId: "p".repeat(32), getCollector: () => null });
+    expect((await fresh("add_subtitle_line", JSON.stringify({ start: "2", duration: "1.5", text: "x" }))).result).toMatchObject({ ok: true });
+    expect(srts[0]).toContain("00:00:02,000 --> 00:00:03,500");
+    expect((await fresh("add_subtitle_line", JSON.stringify({ start: -5, duration: 6, text: "x" }))).result).toMatchObject({ ok: false, code: "arguments_invalid" });
+    expect(srts).toHaveLength(1);
+  });
+
   it("hands web pages to the host and reports what came back", async () => {
     const written = [];
     const pages = {
@@ -782,8 +824,8 @@ describe.runIf(["projectStore.mjs", "media.mjs"].every((name) => existsSync(path
       expect((await store.getProject(project.id)).tracks.filter((track) => track.kind === "subtitle")).toHaveLength(2);
       // 字幕轨上不能单独加文字：告诉模型原因，而不是「轨道不存在」
       const locked = await run("add_text_clip", { track_id: subtitles.track_id, text: "第 5 秒再加一句", start: 5, duration: 1 });
-      expect(locked.result).toMatchObject({ ok: false, code: "SUBTITLE_TRACK_LOCKED", message: expect.stringContaining("另建一条文字轨道") });
-      expect(locked.action.error).toBe("字幕轨只能整组加字幕，单独的文字要另建文字轨道");
+      expect(locked.result).toMatchObject({ ok: false, code: "SUBTITLE_TRACK_LOCKED", message: expect.stringContaining("add_subtitle_line") });
+      expect(locked.action.error).toBe("字幕轨上不能直接放片段，补字幕用「加一条字幕」，单独的文字要另建文字轨道");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

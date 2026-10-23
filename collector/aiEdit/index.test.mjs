@@ -871,6 +871,36 @@ describe("AI edit board edits", () => {
     expect(await checkpointFiles(directory, session.id)).toHaveLength(6);
   }, 20_000);
 
+  it("adds, renames and moves markers and adds a subtitle line from the timeline toolbar, with a named batch", async () => {
+    const context = await startBoard();
+    const { call } = context;
+    const { session } = await boardSession(context);
+    const url = `/v1/ai-edit/sessions/${session.id}/edit`;
+    const edit = (name, args) => call(url, { method: "POST", body: { name, arguments: args } });
+
+    let state = (await edit("add_marker", { time: 0.5, label: "标记 1", color: "#4C8DFF" })).body;
+    expect(state.project.markers).toEqual([{ time_us: 500_000, label: "标记 1", color: "#4C8DFF" }]);
+    expect(state.session.undo).toEqual({ label: "加了标记“标记 1”", kind: "edit" });
+    state = (await edit("add_marker", { time: 0.5, label: "高潮" })).body;
+    expect(state.session.undo.label).toBe("改了标记“高潮”");
+    // 拖动标记：删旧的、加新的，一批算一步，名字由看板给
+    state = (await call(url, { method: "POST", body: { label: "挪动标记“高潮”", edits: [
+      { name: "remove_marker", arguments: { time: 0.5 } }, { name: "add_marker", arguments: { time: 0.8, label: "高潮", color: "#FF5A5A" } },
+    ] } })).body;
+    expect(state.project.markers).toEqual([{ time_us: 800_000, label: "高潮", color: "#FF5A5A" }]);
+    expect(state.session.undo.label).toBe("挪动标记“高潮”");
+
+    // 还没有字幕：在播放头处补一条就新建一组，放在画面下方；再补一条进同一组
+    state = (await edit("add_subtitle_line", { start: 0.2, duration: 0.5, text: "新字幕" })).body;
+    const group = state.project.tracks.find((track) => track.kind === "subtitle");
+    expect(group.segments).toMatchObject([{ text: "新字幕", timeline: { start_us: 200_000, duration_us: 500_000 }, transform: { transform_y: -0.8 } }]);
+    state = (await edit("add_subtitle_line", { track_id: group.id, start: 1, duration: 0.5, text: "第二句" })).body;
+    expect(state.project.tracks.find((track) => track.id === group.id).segments.map((line) => line.text)).toEqual(["新字幕", "第二句"]);
+    expect(state.session.undo.label).toBe("加了一条字幕“第二句”");
+    expect((await edit("add_subtitle_line", { track_id: group.id, start: 1.2, duration: 0.5, text: "叠上了" })).status).toBe(422);
+    expect((await edit("add_marker", { time: 1, label: "x", extra: 1 })).body.error).toBe("edit_not_allowed");
+  });
+
   it("undoes edits and AI turns, reverts to before a message, and keeps nothing for a turn that changed nothing", async () => {
     const requests = [];
     const fetchImpl = async (_url, init) => {
@@ -1341,7 +1371,7 @@ describe("AI edit redo, history and batches on the board", () => {
     expect(await post("edit", { edits: [] })).toMatchObject({ status: 422, body: { error: "edit_not_allowed" } });
     expect(await post("edit", { edits: "x" })).toMatchObject({ status: 422, body: { error: "edit_not_allowed" } });
     expect(await batch([["move_clip", { clip_id: clip, start: 1 }], ["add_effect", { clip_id: clip, effect_type: "x" }]])).toMatchObject({ status: 422, body: { error: "edit_not_allowed" } });
-    expect(await batch(Array.from({ length: 51 }, () => ["move_clip", { clip_id: clip, start: 1 }]))).toEqual({ status: 422, body: { error: "too_many_edits", message: "一次最多改 50 处。" } });
+    expect(await batch(Array.from({ length: 201 }, () => ["move_clip", { clip_id: clip, start: 1 }]))).toEqual({ status: 422, body: { error: "too_many_edits", message: "一次最多改 200 处。" } });
     expect(startOf((await current()).project, clip)).toBe(19_000_000);
 
     // 给模型：一批不多就每步一句，多了并成一句；没做成的那批不提

@@ -10,14 +10,15 @@ import {
 } from "./aiEditModel";
 import { clipCallName, selectableIds, settleSelection, splitOffset, splitTarget, tooManyEditsText, undoKind, type PendingSelect, type Picked } from "./aiEditBoardEdit";
 import {
-  BoardContext, BoardRegistryContext, BoardTimeContext, createBoardRegistry, discardHeld, dispatchBoardKey, dispatchEscape, flushHeld, useRegistryEscape, useRegistryKeys,
+  BoardContext, BoardPreviewContext, BoardRegistryContext, BoardTimeContext, createBoardRegistry, createPreviewTimeStore, discardHeld, dispatchBoardKey, dispatchEscape, flushHeld, useRegistryEscape, useRegistryKeys,
   type BoardArea, type BoardContextValue, type BoardEdit, type BoardJump, type BoardPlayback, type BoardRef, type BoardSelection, type EditCall, type EditPerformer, type PointerArea, type ToastTone,
 } from "./aiEditBoardContext";
 import { IN_FLIGHT_REASON, lastingReason, redoneText, undoneText } from "./aiEditInspect";
 import { composing, inMenuOrDialog, readBoardKey, typingInto } from "./aiEditKeymap";
 import { ClipCard } from "./AiEditClipCard";
+import { rippleEdits } from "./aiEditTimelineMagnet";
+import { timelinePrefs } from "./aiEditTimelinePrefs";
 import { useContextMenu } from "./AiEditMenu";
-import { HistoryControls } from "./AiEditHistory";
 import { PlayerBar, Stage } from "./AiEditStage";
 import { Timeline, timelineHeight } from "./AiEditTimeline";
 import { areaProps, CANVAS_OPTIONS, CANVASES, canvasPreset, mediaTitle, pressableDisabled, shortTime, web, WebTitle, webPointer, type BoardRegion } from "./aiEditShared";
@@ -83,6 +84,8 @@ export function Board(props: BoardProps) {
   const canvas = project?.canvas ?? DEFAULT_CANVAS;
   const frameUs = US_PER_SECOND / (canvas.fps > 0 ? canvas.fps : 30);
   const playback = usePlayback(duration, project?.id ?? null, frameUs);
+  // 预览轴：时间线上划过的时刻，只给画面用
+  const [preview] = useState(createPreviewTimeStore);
   const mediaById = useMemo(() => new Map(media.map((item) => [item.id, item])), [media]);
   const registry = useMemo(createBoardRegistry, []);
   const rootRef = useRef<View>(null);
@@ -156,14 +159,14 @@ export function Board(props: BoardProps) {
   const expectSelect = useCallback((target: { trackId: string; atUs: number } | null) => {
     setWaiting(target ? { ...target, revision: latest.current.project?.revision ?? -1 } : null);
   }, []);
-  const runEdits = useCallback(async (edits: readonly BoardEdit[]): Promise<boolean> => {
+  const runEdits = useCallback(async (edits: readonly BoardEdit[], label?: string): Promise<boolean> => {
     if (!edits.length) return false;
     if (!guard()) { setWaiting(null); return false; }
     // 全选以后删、挪、复制是一段一条：超过采集器一批的上限就别发了，说清楚是选多了
     const tooMany = tooManyEditsText(edits.length);
     if (tooMany) { toast(tooMany); setWaiting(null); return false; }
     const [first] = edits;
-    const ok = await request(edits.length === 1 ? (connection, id) => editAiEditClip(connection, id, first!.name, first!.arguments) : (connection, id) => editAiEditClips(connection, id, edits),
+    const ok = await request(edits.length === 1 && !label ? (connection, id) => editAiEditClip(connection, id, first!.name, first!.arguments) : (connection, id) => editAiEditClips(connection, id, edits, label),
       "这一下没改成，请稍后重试。");
     if (!ok) setWaiting(null);
     return ok;
@@ -191,15 +194,15 @@ export function Board(props: BoardProps) {
     if (ok) toast(redoneText(label));
     return ok;
   }, [guard, request, toast, flushPending]);
-  // 切开（A9）：一次只切一段；切完等新工程进来选中右半段，播放头不动，挪一下接着按 ⌘B
-  const split = useCallback(async (clipId?: string): Promise<boolean> => {
+  // 切开（A9）：一次只切一段；切完等新工程进来选中右半段，播放头不动，挪一下接着按 ⌘B。atUs 是分割工具点下去的地方
+  const split = useCallback(async (clipId?: string, atUs?: number): Promise<boolean> => {
     if (!guard()) return false;
     await flushPending();
     const { project: current, picked: chosen, playback: player } = latest.current;
-    const time = player.timeRef.current;
+    const time = atUs ?? player.timeRef.current;
     const order = chosen.primary ? [chosen.primary, ...chosen.ids.filter((id) => id !== chosen.primary)] : chosen.ids;
     const target = clipId ? splitTarget(current, [clipId], time, { only: true }) : splitTarget(current, order, time);
-    if (!target) { toast(clipId ? "播放头不在这段中间，切不开" : "播放头下面没有能切的片段"); return false; }
+    if (!target) { toast(atUs !== undefined ? "离这段两头太近了，切不开" : clipId ? "播放头不在这段中间，切不开" : "播放头下面没有能切的片段"); return false; }
     expectSelect({ trackId: target.track.id, atUs: target.segment.timeline.start_us + target.offset });
     return runEdit("split_clip", { clip_id: target.segment.id, offset: target.offset / US_PER_SECOND });
   }, [guard, toast, expectSelect, runEdit, flushPending]);
@@ -208,8 +211,12 @@ export function Board(props: BoardProps) {
     const { project: current, picked: chosen } = latest.current;
     const ids = chosen.ids.filter((id) => findSegment(current, id));
     if (!ids.length) return false;
+    // 主轨磁吸、联动：删主轨片段时后面的合拢、跟着它的一起删
+    const ripple = rippleEdits(current, { kind: "delete", ids }, timelinePrefs());
+    if (ripple && "refused" in ripple) { toast(ripple.refused); return false; }
+    if (ripple) return runEdits(ripple.edits, ripple.label);
     return runEdits(ids.map((id) => ({ name: "delete_clip" as const, arguments: { clip_id: id } })));
-  }, [runEdits, flushPending]);
+  }, [runEdits, flushPending, toast]);
   const selectAll = useCallback(() => {
     const { project: current, picked: chosen } = latest.current;
     const ids = selectableIds(current);
@@ -415,6 +422,7 @@ export function Board(props: BoardProps) {
   return <BoardContext.Provider value={value}>
     <BoardRegistryContext.Provider value={registry}>
       <BoardTimeContext.Provider value={playback.time}>
+       <BoardPreviewContext.Provider value={preview}>
         <View ref={rootRef} {...areaProps("board")} style={styles.board} onLayout={(event: LayoutChangeEvent) => setHeight(event.nativeEvent.layout.height)}>
           <View style={styles.boardHead}>
             {headStart}
@@ -427,7 +435,6 @@ export function Board(props: BoardProps) {
                 }} />
               </View>
             </WebTitle> : null}
-            <HistoryControls />
             {output && output.kind !== "import" ? <OutputChip output={output} filmUrl={filmUrl} onOutput={props.onOutput} /> : null}
             {web ? <WebTitle title={outputBlocked ?? "不经剪映直接出 MP4，或者导出成 openfilm 工程"}>
               <div data-output-menu="" style={{ flexShrink: 0 }}>
@@ -485,6 +492,7 @@ export function Board(props: BoardProps) {
           <Timeline height={timelineHeight(project?.tracks.length ?? 0, height)} />
           {toastState && web ? <BoardToast key={toastState.key} text={toastState.text} tone={toastState.tone} /> : null}
         </View>
+       </BoardPreviewContext.Provider>
       </BoardTimeContext.Provider>
     </BoardRegistryContext.Provider>
   </BoardContext.Provider>;

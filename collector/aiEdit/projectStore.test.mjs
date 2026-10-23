@@ -107,8 +107,8 @@ describe("ProjectStore replays JianYingAPI ProjectService", () => {
       }
     }
     const methods = Object.getOwnPropertyNames(ProjectStore.prototype).filter((name) => name !== "constructor");
-    // deleteProject、restoreProject、duplicateSegment 是新增的，原仓库没有，下面单独测
-    expect(methods.filter((name) => !called.has(name))).toEqual(["deleteProject", "restoreProject", "duplicateSegment"]);
+    // deleteProject、restoreProject、duplicateSegment、addSubtitleLine 是新增的，原仓库没有，下面单独测
+    expect(methods.filter((name) => !called.has(name))).toEqual(["deleteProject", "restoreProject", "duplicateSegment", "addSubtitleLine"]);
   });
 
   for (const file of fixtureFiles) {
@@ -126,6 +126,26 @@ describe("ProjectStore replays JianYingAPI ProjectService", () => {
       }
     });
   }
+});
+
+describe("ProjectStore subtitle lines", () => {
+  it("adds one line to a subtitle group in the nearest line's style, refusing overlaps", async () => {
+    const store = deterministicStore(await makeDirectory());
+    const { id } = await store.createProject({ name: "字幕" });
+    let project = await store.addSrtSubtitles(id, "1\n00:00:01,000 --> 00:00:02,000\n你好\n\n2\n00:00:06,000 --> 00:00:07,000\n再见\n", { groupId: "a".repeat(32) });
+    const [first, second] = project.tracks[0].segments;
+    await store.updateSegment(id, first.id, { color: "#FF0000", transform: { transform_y: -0.8 } });
+    project = await store.addSubtitleLine(id, "a".repeat(32), { text: "新字幕", timeline: { start_us: 2_500_000, duration_us: 1_000_000 } });
+    const lines = project.tracks[0].segments;
+    expect(lines.map((line) => line.text)).toEqual(["你好", "新字幕", "再见"]);
+    // 离 2.5 秒最近的是「你好」（结尾 2 秒），照它的颜色和位置
+    expect(lines[1]).toMatchObject({ kind: "text", color: "#FF0000", transform: { transform_y: -0.8 }, timeline: { start_us: 2_500_000, duration_us: 1_000_000 } });
+    expect(lines[1].id).not.toBe(first.id);
+    expect(second.color).toBe("#FFFFFF");
+    await expect(store.addSubtitleLine(id, "a".repeat(32), { text: "叠上", timeline: { start_us: 3_000_000, duration_us: 1_000_000 } })).rejects.toMatchObject({ code: "TIMELINE_OVERLAP" });
+    await expect(store.addSubtitleLine(id, "b".repeat(32), { text: "x", timeline: { start_us: 0, duration_us: 1 } })).rejects.toMatchObject({ code: "SUBTITLE_NOT_FOUND" });
+    await expect(store.addSubtitleLine(id, "a".repeat(32), { text: "", timeline: { start_us: 9_000_000, duration_us: 1 } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
 });
 
 describe("ProjectStore storage", () => {

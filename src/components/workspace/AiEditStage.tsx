@@ -15,7 +15,8 @@ import {
   type FrameCorner, type FrameEdge, type HeldNudge, type Point, type Press, type StageFrame, type StageGesture, type StageGestureKind, type StageGuide, type StageHitLayer,
 } from "./aiEditStageEdit";
 import { lastingReason } from "./aiEditInspect";
-import { useBoard, useBoardKeys, useHeldEdit, usePlaybackTime } from "./aiEditBoardContext";
+import { useBoard, useBoardKeys, useHeldEdit, usePlaybackTime, usePreviewStore, usePreviewTime } from "./aiEditBoardContext";
+import { useTimelinePrefs } from "./aiEditTimelinePrefs";
 import { IS_MAC, typingInto } from "./aiEditKeymap";
 import { snapToFrame } from "./aiEditRefs";
 import { useContextMenu, type MenuEntry, type MenuItem } from "./AiEditMenu";
@@ -87,6 +88,10 @@ function cssColor(token: string, fallback: string): string {
   return value || fallback;
 }
 
+/** 工具栏关了字幕（CC）：画面上不画字幕轨，只影响看板预览 */
+const withCaptions = (frame: ReturnType<typeof activeFrame>, captions: boolean) => (captions ? frame
+  : { ...frame, visuals: frame.visuals.filter((layer) => layer.track.kind !== "subtitle") });
+
 /** 停在结尾时显示最后一帧 */
 const shownTimeOf = (time: number, duration: number) => (duration > 0 ? Math.min(time, duration - 1) : 0);
 
@@ -96,12 +101,18 @@ export function Stage() {
   const latest = useRef(board);
   latest.current = board;
   const { project, canvas, mediaById, mediaUrl, filmUrl, duration, running, editable, notEditableReason, selection, selected, regionMode, region, playback } = board;
-  const time = usePlaybackTime();
+  const playheadTime = usePlaybackTime();
+  // 预览轴：鼠标在时间线上划过时画面停在那一刻（播放头、时钟和声音不动）；播放时、在画面上改字时不跟（改字是从预览的那一刻进来的，进来时播放头先挪过去）
+  const previewStore = usePreviewStore();
+  const previewTime = usePreviewTime();
+  const [editingText, setEditingText] = useState<string | null>(null);
+  const time = previewTime !== null && !playback.playing && !editingText ? previewTime : playheadTime;
+  const { captions } = useTimelinePrefs();
   const [box, setBox] = useState<Size>({ width: 0, height: 0 });
   const scale = stageScale(box, canvas);
   const stage = useMemo(() => ({ width: Math.floor(canvas.width * scale), height: Math.floor(canvas.height * scale) }), [canvas.width, canvas.height, scale]);
   const shownTime = shownTimeOf(time, duration);
-  const frame = useMemo(() => activeFrame(project, shownTime), [project, shownTime]);
+  const frame = useMemo(() => withCaptions(activeFrame(project, shownTime), captions), [project, shownTime, captions]);
   const stageRef = useRef<HTMLDivElement>(null);
   const menu = useContextMenu();
 
@@ -128,7 +139,6 @@ export function Stage() {
   const [guides, setGuides] = useState<StageGuide[]>(NO_GUIDES);
   const [hint, setHint] = useState<{ x: number; y: number; text: string } | null>(null);
   const [hover, setHover] = useState(NO_HOVER);
-  const [editingText, setEditingText] = useState<string | null>(null);
   const editingRef = useRef(editingText);
   editingRef.current = editingText;
   // 素材读到真实尺寸时图层自己重渲染，不经过这里：靠它让框跟着重算
@@ -331,11 +341,13 @@ export function Stage() {
     if (!canTouch()) { refuse(); return true; }
     if (held.current) void flushNudge();
     b.playback.pause();
+    const previewing = previewStore.get();
+    if (previewing !== null) b.playback.seek(previewing);
     if (b.selection.ids.length !== 1 || b.selection.primary !== id) b.selection.set([id], id);
     setHover(NO_HOVER);
     setEditingText(id);
     return true;
-  }, [flushNudge]);
+  }, [flushNudge, previewStore]);
   const finishTextEdit = useCallback((id: string, value: string | null) => {
     setEditingText((current) => (current === id ? null : current));
     if (value === null) return;
@@ -974,6 +986,8 @@ function MediaElement({ kind, url, segment, track, time, playing, active, style,
   onSize?: (width: number, height: number) => void; layerId?: string;
 }) {
   const ref = useRef<HTMLVideoElement & HTMLAudioElement>(null);
+  // 最后想停在哪：seek 还没完时来的新位置（预览轴划得快）不能丢，seek 完了再补一次
+  const want = useRef(0);
   // 每次渲染都校准：偏差超过 0.15 秒（暂停时 0.03 秒）才 seek，倍速、音量、静音跟着片段走
   useEffect(() => {
     const element = ref.current;
@@ -981,11 +995,13 @@ function MediaElement({ kind, url, segment, track, time, playing, active, style,
     if (!active) {
       if (!element.paused) element.pause();
       const start = segment.source.start_us / US_PER_SECOND;
+      want.current = start;
       if (!element.seeking && Math.abs(element.currentTime - start) > 0.15) element.currentTime = start;
       element.muted = true;
       return;
     }
     const target = sourceTimeUs(segment, time) / US_PER_SECOND;
+    want.current = target;
     const rate = playbackRate(segment.speed);
     if (element.playbackRate !== rate) element.playbackRate = rate;
     (element as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = !segment.change_pitch;
@@ -997,9 +1013,13 @@ function MediaElement({ kind, url, segment, track, time, playing, active, style,
     if (!playing && !element.paused) element.pause();
   });
   useEffect(() => () => ref.current?.pause(), []);
+  const onSeeked = (event: React.SyntheticEvent<HTMLMediaElement>) => {
+    const element = event.currentTarget;
+    if (element.paused && !element.seeking && Math.abs(element.currentTime - want.current) > 0.03) element.currentTime = want.current;
+  };
   return kind === "audio"
-    ? <audio ref={ref} src={url} preload="auto" style={style} />
-    : <video ref={ref} data-layer-id={layerId} src={url} preload="auto" playsInline muted style={style}
+    ? <audio ref={ref} src={url} preload="auto" style={style} onSeeked={onSeeked} />
+    : <video ref={ref} data-layer-id={layerId} src={url} preload="auto" playsInline muted style={style} onSeeked={onSeeked}
       onLoadedMetadata={(event) => onSize?.(event.currentTarget.videoWidth, event.currentTarget.videoHeight)}
       onResize={(event) => onSize?.(event.currentTarget.videoWidth, event.currentTarget.videoHeight)} />;
 }
