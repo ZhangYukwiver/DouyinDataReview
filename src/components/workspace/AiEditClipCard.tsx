@@ -1,6 +1,6 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { Scissors, Trash2, X } from "lucide-react-native";
+import { Quote, Scissors, Trash2, X } from "lucide-react-native";
 import type { EditProject, EditSegment } from "../../services/aiEdit";
 import { clipDetail, findSegment, mediaIdFromPath } from "./aiEditModel";
 import { useBoard } from "./aiEditBoardContext";
@@ -13,7 +13,7 @@ import { kit, SmallButton } from "./CreatorKit";
 import { ws } from "./motion";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 
-// 选中片段时画面右边的详情卡：顶上能切开、删除；开始、时长、素材起点、倍速、位置、缩放、旋转、不透明度是能拖、能输的数值框；
+// 选中片段时画面右边的详情卡：顶上能引用到对话、切开、删除；开始、时长、素材起点、倍速、位置、缩放、旋转、不透明度是能拖、能输的数值框；
 // 文字片段能直接改文字。选了好几段时只说选了什么、给删除。
 
 /**
@@ -23,14 +23,19 @@ import { workspaceColors as color, workspaceFonts as font, workspaceRadii as rad
 export const ClipCard = memo(function ClipCard({ width, projectNow }: { width: number; projectNow: () => EditProject | null }) {
   const { selected, selection } = useBoard();
   if (!selected) return null;
+  // 卡片窄（900 宽窗口里弹出来的那种）时顶上的按钮只画图标，说明留在悬停提示里：带字的三个按钮加收起钮要 235 左右，再窄就挤成一团
+  const iconOnly = width < ICON_ONLY_BELOW;
   // key 取片段 id：换了片段就从卡片顶上看起，同一片段被 AI 改了内容时滚动位置不动
   return <View {...ws("e-box", "ai-panel", "sticky")} accessibilityLabel="片段详情" style={[styles.detail, { width }]}>
-    {selection.ids.length > 1 ? <ManyBody count={selection.ids.length} /> : <ClipBody key={selected.segment.id} projectNow={projectNow} />}
+    {selection.ids.length > 1 ? <ManyBody count={selection.ids.length} iconOnly={iconOnly} /> : <ClipBody key={selected.segment.id} projectNow={projectNow} iconOnly={iconOnly} />}
   </View>;
 });
 
-function ClipBody({ projectNow }: { projectNow: () => EditProject | null }) {
-  const { selected, mediaById, canvas, project, notEditableReason, splitHint, split, removeSelected, runEdit, flushHeld, toast, selection } = useBoard();
+/** 卡宽小于这个就只画图标：带字时顶栏要 235 左右，再给「视频片段」留出两三个字 */
+const ICON_ONLY_BELOW = 270;
+
+function ClipBody({ projectNow, iconOnly }: { projectNow: () => EditProject | null; iconOnly: boolean }) {
+  const { selected, mediaById, canvas, project, notEditableReason, splitHint, split, removeSelected, runEdit, flushHeld, toast, selection, refer } = useBoard();
   const item = useMemo(() => {
     const segment = selected?.segment;
     return segment && "path" in segment ? mediaById.get(mediaIdFromPath(segment.path) ?? "") : undefined;
@@ -62,10 +67,13 @@ function ClipBody({ projectNow }: { projectNow: () => EditProject | null }) {
     <View style={styles.detailHead}>
       <View style={[styles.detailDot, { backgroundColor: clipTone(segment) }]} />
       <Text numberOfLines={1} style={styles.detailKind}>{info.kind}片段</Text>
-      <CardAction label="切开" title={splitBlocked ?? `在播放头处切开（${shortcutText("split")}）`} blocked={splitBlocked} onPress={() => void split(segment.id)}>
+      <CardAction label="引用" iconOnly={iconOnly} title="引用到对话，下一句话里说「这段」AI 就知道是哪段" blocked={null} onPress={() => refer([{ kind: "clip", clipId: segment.id }])}>
+        <Quote size={12} color={color.text} />
+      </CardAction>
+      <CardAction label="切开" iconOnly={iconOnly} title={splitBlocked ?? `在播放头处切开（${shortcutText("split")}）`} blocked={splitBlocked} onPress={() => void split(segment.id)}>
         <Scissors size={12} color={color.text} />
       </CardAction>
-      <CardAction label="删除" title={lasting ?? `删除（${shortcutText("remove")}）`} blocked={lasting} danger onPress={() => void removeSelected()}>
+      <CardAction label="删除" iconOnly={iconOnly} title={lasting ?? `删除（${shortcutText("remove")}）`} blocked={lasting} danger onPress={() => void removeSelected()}>
         <Trash2 size={12} color={color.danger} />
       </CardAction>
       <CloseButton onPress={selection.clear} />
@@ -87,15 +95,18 @@ function ClipBody({ projectNow }: { projectNow: () => EditProject | null }) {
 }
 
 /** 选了好几段：说选了什么，给删除 */
-function ManyBody({ count }: { count: number }) {
-  const { project, notEditableReason, removeSelected, selection } = useBoard();
+function ManyBody({ count, iconOnly }: { count: number; iconOnly: boolean }) {
+  const { project, notEditableReason, removeSelected, selection, refer } = useBoard();
   const lasting = lastingReason(notEditableReason);
   const summary = useMemo(() => selectionSummary(selection.ids.map((id) => findSegment(project, id)?.segment).filter((segment): segment is EditSegment => Boolean(segment))),
     [project, selection.ids]);
   return <>
     <View style={styles.detailHead}>
       <Text numberOfLines={1} style={styles.detailKind}>选了 {count} 段</Text>
-      <CardAction label="删除" title={lasting ?? `把这 ${count} 段都删掉（${shortcutText("remove")}）`} blocked={lasting} danger onPress={() => void removeSelected()}>
+      <CardAction label="引用" iconOnly={iconOnly} title={`把这 ${count} 段引用到对话`} blocked={null} onPress={() => refer(selection.ids.map((id) => ({ kind: "clip" as const, clipId: id })))}>
+        <Quote size={12} color={color.text} />
+      </CardAction>
+      <CardAction label="删除" iconOnly={iconOnly} title={lasting ?? `把这 ${count} 段都删掉（${shortcutText("remove")}）`} blocked={lasting} danger onPress={() => void removeSelected()}>
         <Trash2 size={12} color={color.danger} />
       </CardAction>
       <CloseButton onPress={selection.clear} />
@@ -106,14 +117,15 @@ function ManyBody({ count }: { count: number }) {
   </>;
 }
 
-/** 卡片顶上的小按钮：不能用时 aria-disabled、悬停写原因（不写 disabled）；鼠标按下不抢焦点 */
-function CardAction({ label, title, blocked, danger = false, onPress, children }: {
-  label: string; title: string; blocked: string | null; danger?: boolean; onPress: () => void; children: React.ReactNode;
+/** 卡片顶上的小按钮：不能用时 aria-disabled、悬停写原因（不写 disabled）；鼠标按下不抢焦点。iconOnly 时只画图标，叫什么写进悬停提示 */
+function CardAction({ label, title, blocked, danger = false, iconOnly = false, onPress, children }: {
+  label: string; title: string; blocked: string | null; danger?: boolean; iconOnly?: boolean; onPress: () => void; children: React.ReactNode;
 }) {
-  return <WebTitle title={title} keepFocus>
-    <Pressable accessibilityRole="button" accessibilityLabel={blocked ? `${label}：${blocked}` : title} {...pressableDisabled(blocked)} onPress={() => { if (!blocked) onPress(); }}
+  const named = iconOnly && !title.startsWith(label) ? `${label}：${title}` : title;
+  return <WebTitle title={named} keepFocus>
+    <Pressable accessibilityRole="button" accessibilityLabel={blocked ? `${label}：${blocked}` : named} {...pressableDisabled(blocked)} onPress={() => { if (!blocked) onPress(); }}
       style={[styles.detailAction, blocked ? styles.disabled : webPointer]}>
-      {children}<Text style={[styles.detailActionText, danger && { color: color.danger }]}>{label}</Text>
+      {children}{iconOnly ? null : <Text numberOfLines={1} style={[styles.detailActionText, danger && { color: color.danger }]}>{label}</Text>}
     </Pressable>
   </WebTitle>;
 }

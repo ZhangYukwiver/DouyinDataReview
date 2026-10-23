@@ -47,8 +47,9 @@ function providerError(status, body, withTools = true) {
   return Object.assign(new AiEditError("provider_error", providerMessage(status, body, {
     // 不带工具的请求（配置时测能不能看视频）被拒和工具调用无关
     400: withTools ? "接口不接受这次请求（模型可能不支持工具调用）" : "接口不接受这次请求",
+    413: "请求太大，接口收不下（多半是图太多或太大）",
     524: "中转站等了两分钟左右，模型还没开始回答（524），换个反应快的模型或把要求拆小一点再试",
-  }), 502), { transient: transientFailure(status, body) });
+  }), 502), { transient: transientFailure(status, body), httpStatus: status });
 }
 
 async function* sseData(body) {
@@ -160,16 +161,90 @@ export function assistantMessage(text, toolCalls) {
   };
 }
 
-function size(message) {
-  return (typeof message.content === "string" ? message.content.length : 0) + JSON.stringify(message.tool_calls ?? "").length;
+// 用户贴的图不进历史正文（请求时才展开），发出去的每张按这么多字算长度
+const IMAGE_CHARS = 2_000;
+// 最近几条带图的用户消息才把图发过去，更早的只在文字里有名字（每次请求都重发，图多了又慢又贵）
+const IMAGE_MESSAGES = 2;
+
+const hasImages = (entry) => entry.role === "user" && Array.isArray(entry.attachments) && entry.attachments.length > 0;
+
+/** 请求时会把图发出去的那几条消息的下标（最近 IMAGE_MESSAGES 条带图的用户消息）。 */
+function imageIndices(history) {
+  return new Set(history.flatMap((entry, index) => (hasImages(entry) ? [index] : [])).slice(-IMAGE_MESSAGES));
 }
 
-/** 历史太长时从最早的整轮（以用户消息开头）开始丢，工具调用和结果不会被拆开。 */
+function size(message, withImages = false) {
+  return (typeof message.content === "string" ? message.content.length : 0) + JSON.stringify(message.tool_calls ?? "").length
+    + (withImages && Array.isArray(message.attachments) ? message.attachments.length * IMAGE_CHARS : 0);
+}
+
+const COMPACT_ENTRY_CHARS = 300;
+// 告诉模型细节怎么找回；不点名哪个工具，免得它每轮先把时间线再拉一遍。参考解析的缓存只在内存里，重启过就得重新解析
+const OMITTED = "较早的内容，细节已省略；还要用就用同样的参数再调一次（参考解析和节拍一般有缓存、马上返回，应用重启过就要重新解析，很慢，没必要别重调）；时间线和素材以工程现状和系统提示为准";
+const OMITTED_ARGUMENTS = "较早的参数，细节已省略";
+// 这几个工具的结果后面还用得上（链接、素材 id、拆解结论）：压缩和本机 CLI 转述时都留开头这么多字
+export const KEEP_RESULT = { search_douyin: 1_500, search_my_records: 1_500, import_douyin_video: 1_500, analyze_reference: 6_000 };
+
+/** 长的工具结果只留成没成功和报错原因（KEEP_RESULT 里的工具再留开头），长的工具参数只留开头；短的不动（反复压也不会变）。 */
+function compactEntry(entry, name) {
+  if (entry.role === "tool" && typeof entry.content === "string" && entry.content.length > COMPACT_ENTRY_CHARS) {
+    let result = null;
+    try { result = JSON.parse(entry.content); } catch { /* 不是 JSON 就只留省略说明 */ }
+    // 留着开头压过的：不再压一遍
+    if (typeof result?.omitted === "string") return entry;
+    const keep = result?.ok !== false ? KEEP_RESULT[name] : 0;
+    const compacted = {
+      ...entry,
+      content: JSON.stringify({
+        ok: result?.ok !== false,
+        ...(typeof result?.code === "string" ? { code: result.code.slice(0, 60) } : {}),
+        ...(typeof result?.message === "string" ? { message: shorten(result.message, 120) } : {}),
+        ...(keep ? { kept: shorten(entry.content, keep) } : {}),
+        omitted: OMITTED,
+      }),
+    };
+    // 本来就没比要留的长多少：压了反而更长（转义），不动
+    return compacted.content.length < entry.content.length ? compacted : entry;
+  }
+  const long = (call) => typeof call?.function?.arguments === "string" && call.function.arguments.length > COMPACT_ENTRY_CHARS;
+  if (entry.role === "assistant" && entry.tool_calls?.some(long)) {
+    return {
+      ...entry,
+      // 还得是合法 JSON：有的中转站转成别家格式时会解析历史里的参数（截的时候也别把 emoji 劈成半个）
+      tool_calls: entry.tool_calls.map((call) => (long(call) ? { ...call, function: { ...call.function, arguments: JSON.stringify({ omitted: `${OMITTED_ARGUMENTS}：${shorten(call.function.arguments, 80)}` }) } } : call)),
+    };
+  }
+  return entry;
+}
+
+/**
+ * 历史超出预算时就地压缩：从最早的消息起，把长的工具结果和参数换成一句省略说明，用户的话和模型的文字回答原样留着，
+ * 消息结构不变（工具调用和结果照样一一对应）。一次压到预算的一半，之后好一阵不用再压，前缀缓存只在压的那次失效。
+ * 最近一轮不压，这一轮的工具结果模型还要接着用。
+ */
+export function compactHistory(history, maxChars = MAX_HISTORY_CHARS) {
+  const sent = imageIndices(history);
+  let total = history.reduce((sum, entry, index) => sum + size(entry, sent.has(index)), 0);
+  if (total <= maxChars) return;
+  const last = history.findLastIndex((entry) => entry.role === "user");
+  // 工具结果里只有调用 id，工具名从前面的助手消息里查
+  const names = new Map();
+  for (let index = 0; index < last && total > maxChars / 2; index += 1) {
+    for (const call of history[index].tool_calls ?? []) names.set(call.id, call.function?.name);
+    const compacted = compactEntry(history[index], names.get(history[index].tool_call_id));
+    total += size(compacted, sent.has(index)) - size(history[index], sent.has(index));
+    history[index] = compacted;
+  }
+}
+
+/** 压缩后还是太长，就从最早的整轮（以用户消息开头）开始丢，工具调用和结果不会被拆开。 */
 export function trimHistory(history, maxChars = MAX_HISTORY_CHARS) {
+  // 只给真发出去的图记长度；丢的都是更早的轮次，留下来的那段里发图的还是这几条
+  const sent = imageIndices(history);
   let total = 0;
   let start = history.length;
   for (let index = history.length - 1; index >= 0; index -= 1) {
-    total += size(history[index]);
+    total += size(history[index], sent.has(index));
     if (history[index].role === "user") {
       if (total > maxChars && start < history.length) break;
       start = index;
@@ -177,6 +252,124 @@ export function trimHistory(history, maxChars = MAX_HISTORY_CHARS) {
   }
   return start < history.length ? history.slice(start) : history;
 }
+
+const APP_NOTE = "【应用自动附上，不是用户说的话】";
+const SAID = "【用户这次说的话】";
+const RECALL_EACH = 200;
+const RECALL_TOTAL = 3_000;
+
+// 截断时别把 emoji 劈成半个（孤立的代理项放进 JSON 发给接口可能被拒）
+export const shorten = (text, max) => {
+  const value = String(text ?? "").trim();
+  return value.length > max ? `${value.slice(0, max).replace(/[\ud800-\udbff]$/u, "")}…` : value;
+};
+
+/** 用户真正说的话：前面带着应用附上的说明时，只取「【用户这次说的话】」后面那段。 */
+function userWords(content) {
+  const text = typeof content === "string" ? content : "";
+  const at = text.startsWith(APP_NOTE) ? text.indexOf(SAID) : -1;
+  return (at >= 0 ? text.slice(at + SAID.length) : text).trim();
+}
+
+/** 被丢掉的那些用户原话，一条一行：每条截到 200 字、合计不超过 3000 字，放不下时留离现在近的。 */
+export function recallLines(entries) {
+  const lines = [];
+  let total = 0;
+  for (const entry of [...entries].reverse()) {
+    if (entry?.role !== "user") continue;
+    const words = shorten(userWords(entry.content).replace(/\s+/gu, " "), RECALL_EACH);
+    if (!words) continue;
+    if (total + words.length > RECALL_TOTAL) break;
+    total += words.length;
+    lines.unshift(`- ${words}`);
+  }
+  return lines;
+}
+
+/**
+ * 这次请求带上的历史：超预算丢掉了更早的整轮时，把丢掉的用户原话附在留下的第一条用户消息前面
+ * （只进这次请求，不写回历史）。trimmed 说明这次真丢了东西。
+ */
+export function requestHistory(history, maxChars = MAX_HISTORY_CHARS) {
+  const kept = trimHistory(history, maxChars);
+  if (kept.length === history.length) return { entries: history, trimmed: false };
+  const lines = recallLines(history.slice(0, history.length - kept.length));
+  if (!lines.length) return { entries: kept, trimmed: true };
+  const [first, ...rest] = kept;
+  const content = typeof first.content === "string" ? first.content : "";
+  // 原来就带着应用附上的说明就并成一段；原来只是用户的话，标出哪段是这次说的
+  const body = content.startsWith(`${APP_NOTE}\n`) ? content.slice(APP_NOTE.length + 1) : `${SAID}\n${content}`;
+  return { entries: [{ ...first, content: `${APP_NOTE}更早的对话已经省略，用户之前说过：\n${lines.join("\n")}\n${body}` }, ...rest], trimmed: true };
+}
+
+// 接口拒收带图的请求一般回 400/415/422；流里或 200 正文里报错时要说的是图
+const IMAGE_WORDS = /image|图片|图像|multimodal|多模态|vision|视觉|unknown variant|content type/iu;
+// 请求体太大（中转站常见的 nginx 默认只收 1MB）：413，或者流里、200 正文里这么说
+const TOO_LARGE_WORDS = /too large|body size|请求体?(?:太|过)大/iu;
+
+// 模型说自己看不了用户贴的图：要么是「我…看不到…图片」、句首直接说「无法查看图片」，要么指着「你发的图」「这张图」，
+// 要么说自己是纯文本模型。按分句判断，提到时间线、画面这些的分句说的是工程里的东西，不算
+const SEE_NOT = "(?:无法|不能|没法|没办法|没有办法)(?:直接)?(?:查看|看到|看|读取|识别|解析|理解|接收|打开|处理)|看不[到了见清]|读不了|打不开|收不到|没(?:有)?(?:收到|看到)";
+const PICTURE = "(?:图片|图像|截图|照片)";
+// 「看不到图片里有字」「看不到图片了」「图片素材」说的是图里的东西或工程里的图；「我看不到图片中的内容」还是在说自己
+const NOT_INSIDE = "(?![里中上的了]|素材|格式|水印)";
+const NOT_INSIDE_MINE = "(?![里中上]有|了|素材|格式|水印)";
+const YOUR_PICTURE = `(?:你|您)(?:发|上传|附|贴|提供|分享|给)(?:来|过来)?的[^，。\\n]{0,4}(?:${PICTURE}|图)`;
+const CANT_SEE_IMAGES = new RegExp([
+  `我(?:目前|暂时|现在|这边|这里)?还?(?:${SEE_NOT})[^，。\\n]{0,8}${PICTURE}${NOT_INSIDE_MINE}`,
+  `^(?:抱歉|很抱歉|不好意思|对不起)?\\s*(?:目前|暂时|现在)?还?(?:${SEE_NOT})[^，。\\n]{0,8}${PICTURE}${NOT_INSIDE}`,
+  `(?:${SEE_NOT})[^，。\\n]{0,4}(?:${YOUR_PICTURE}|(?:这|那)(?:张|些|几张|两张)(?:${PICTURE}|图))`,
+  `${YOUR_PICTURE}[^，。\\n]{0,6}(?:${SEE_NOT})`,
+  "纯(?:文本|文字)模型|不支持(?:图片|图像|多模态|视觉)(?:输入|理解|识别|内容)|不支持多模态",
+  "\\b(?:I\\s+(?:can(?:no|['’])t|am\\s+(?:unable|not\\s+able)\\s+to)|unable\\s+to|not\\s+able\\s+to)\\s+(?:view|see|process|read|access|open|analy[sz]e)[^.\\n]{0,30}(?:image|picture|photo|screenshot)",
+].join("|"), "iu");
+const PROJECT_WORDS = /时间线|轨道|素材库|画面|画布|剪映|草稿|片段|timeline|track|canvas/iu;
+
+export function saysCantSeeImages(text) {
+  return String(text).slice(0, 300).split(/[，,；;。！？!?\n]/u).some((clause) => !PROJECT_WORDS.test(clause) && CANT_SEE_IMAGES.test(clause.trim()));
+}
+
+// 试过看不了图的模型（接口地址|模型），进程内记着，之后只写文字
+const BLIND_MODELS = new Set();
+// 带图请求太大被拒过的（接口地址|模型）：之后只发用户最新一条消息自己的图，而且总量有上限
+const OVERSIZED = new Set();
+const OVERSIZED_IMAGE_CHARS = 900_000;
+
+const withoutAttachments = ({ attachments: _attachments, ...message }) => message;
+
+function refusedImages(error) {
+  if (error?.code !== "provider_error") return false;
+  return [400, 415, 422].includes(error.httpStatus) || ([0, 200].includes(error.httpStatus) && IMAGE_WORDS.test(error.message));
+}
+
+function tooLarge(error) {
+  if (error?.code !== "provider_error") return false;
+  return error.httpStatus === 413 || ([0, 200].includes(error.httpStatus) && TOO_LARGE_WORDS.test(error.message));
+}
+
+/**
+ * 最近两条带图的用户消息展开成「文字 + 图」；一张图都没读到就回 null（照纯文字发）。
+ * tight：接口嫌大过，只展开最后一条用户消息自己的图，加起来不超过 OVERSIZED_IMAGE_CHARS（放不下的只留名字）。
+ */
+async function withImages(entries, read, tight = false) {
+  const withAny = entries.flatMap((entry, index) => (hasImages(entry) ? [index] : []));
+  const latest = entries.findLastIndex((entry) => entry.role === "user");
+  const picked = tight ? withAny.filter((index) => index === latest) : withAny.slice(-IMAGE_MESSAGES);
+  let count = 0;
+  let chars = 0;
+  const messages = [];
+  for (const [index, entry] of entries.entries()) {
+    const message = withoutAttachments(entry);
+    let urls = picked.includes(index) ? (await Promise.all(entry.attachments.map(read))).filter(Boolean) : [];
+    if (tight) urls = urls.filter((url) => (chars += url.length) <= OVERSIZED_IMAGE_CHARS);
+    count += urls.length;
+    messages.push(urls.length ? { ...message, content: [{ type: "text", text: message.content }, ...urls.map((url) => ({ type: "image_url", image_url: { url, detail: "low" } }))] } : message);
+  }
+  return count ? messages : null;
+}
+
+export const SEE_IMAGES_ACTION = { name: "see_images", summary: "这个模型看不了图片，只告诉了它图片的名字", ok: false };
+const TOO_LARGE_ACTION = { ...SEE_IMAGES_ACTION, summary: "图太大，接口收不下，这次只告诉了它图片的名字" };
 
 /**
  * 补齐历史：最后一条带工具调用的助手消息如果有调用没收到结果（中途停止或出错），补一个“没执行”的结果，
@@ -207,29 +400,94 @@ function complete(call) {
 }
 
 /**
- * 跑一轮对话：history 是这个会话的原始消息（最后一条是用户刚说的话），会被就地追加。
+ * 跑一轮对话：history 是这个会话的原始消息（最后一条是用户刚说的话），会被就地追加（太长时旧消息就地压缩，见 compactHistory）。
  * system() 每次请求前重新生成，放不常变的内容；context() 可选，返回每次附在最后、不进历史的一条消息
  * （工程现状这类每步都变的内容：放在最后，前面的系统提示和历史在一轮里保持不变，接口的前缀缓存才命中得了）。
  * execute(call) 执行一个工具并返回给模型的结果对象。onText(累计文字) 用于流式显示；返回这一轮所有文字拼起来的结果。
+ * 用户消息带着 attachments（贴的图）时，readAttachment(附图) 读出 data URL，最近两条带图的消息把图一起发过去；
+ * 模型看不了图、或者带图的请求太大接口收不下，就去掉图重发，onAction(动作) 记一条进这一轮的动作列表。
+ * onTrimmed() 在历史太长、丢掉了更早的整轮时调用。
  */
-export async function runConversation({ config, history, tools, system, context, execute, signal, fetchImpl = modelFetch, onText = () => undefined, maxToolCalls = MAX_TOOL_CALLS }) {
+export async function runConversation({
+  config, history, tools, system, context, execute, signal, fetchImpl = modelFetch, onText = () => undefined, maxToolCalls = MAX_TOOL_CALLS,
+  readAttachment = async () => null, onAction = () => undefined, onTrimmed = () => undefined,
+}) {
   let calls = 0;
   let limited = false;
   const parts = [];
   const joined = (current = "") => [...parts, current].filter(Boolean).join("\n\n");
+  const model = `${config.baseUrl}|${config.model}`;
+  const images = new Map();
+  const read = (attachment) => {
+    if (!images.has(attachment.id)) images.set(attachment.id, Promise.resolve().then(() => readAttachment(attachment)).catch(() => null));
+    return images.get(attachment.id);
+  };
+  let noticed = false;
+  const notice = (action) => {
+    if (!noticed) onAction({ ...action });
+    noticed = true;
+  };
+  const blind = () => {
+    BLIND_MODELS.add(model);
+    notice(SEE_IMAGES_ACTION);
+  };
+  // 用户这次贴了图：只在这一轮第一次回答时看它是不是说看不了图（之后的回答里说「看不到图片」多半指的是时间线）
+  const fresh = Boolean(history.at(-1)?.attachments?.length);
+  // 这一轮因为图太大去过一次图：剩下的步骤都只写名字，别每步都再撞一次
+  let namesOnly = false;
+  // 早就知道看不了图、用户这次又贴了图：也让用户知道模型只拿到了名字
+  if (BLIND_MODELS.has(model) && fresh) blind();
   for (;;) {
     signal?.throwIfAborted();
     const extra = context ? await context() : "";
-    const messages = [{ role: "system", content: await system() }, ...trimHistory(history), ...(extra ? [{ role: "user", content: extra }] : [])];
+    compactHistory(history);
+    const { entries, trimmed } = requestHistory(history);
+    if (trimmed) onTrimmed();
+    const head = [{ role: "system", content: await system() }];
+    const tail = extra ? [{ role: "user", content: extra }] : [];
+    const plain = () => [...head, ...entries.map(withoutAttachments), ...tail];
+    const rich = BLIND_MODELS.has(model) || namesOnly ? null : await withImages(entries, read, OVERSIZED.has(model));
     let streamed = "";
     let reply;
+    const send = (messages) => requestCompletion({
+      config, messages, tools, signal, fetchImpl,
+      // 用完次数后最后再问一次，只让它用文字收尾
+      toolChoice: limited ? "none" : "auto",
+      onText: (text) => { streamed = text; onText(joined(text)); },
+    });
+    // 去掉图再发一次：带图时说过的话不留
+    const again = () => {
+      streamed = "";
+      onText(joined());
+      return send(plain());
+    };
     try {
-      reply = await requestCompletion({
-        config, messages, tools, signal, fetchImpl,
-        // 用完次数后最后再问一次，只让它用文字收尾
-        toolChoice: limited ? "none" : "auto",
-        onText: (text) => { streamed = text; onText(joined(text)); },
-      });
+      if (!rich) reply = await send(plain());
+      else {
+        let pictured = true;
+        try {
+          reply = await send([...head, ...rich, ...tail]);
+        } catch (error) {
+          pictured = false;
+          if (tooLarge(error)) {
+            // 图太大不是看不了图：这次去掉图重发，之后带图收紧，不记成看不了图
+            reply = await again();
+            OVERSIZED.add(model);
+            namesOnly = true;
+            notice(TOO_LARGE_ACTION);
+          } else if (refusedImages(error)) {
+            // 400 也可能是别的原因：去掉图这次成了，才记下这个模型看不了图
+            reply = await again();
+            blind();
+          } else {
+            throw error;
+          }
+        }
+        if (pictured && fresh && !calls && !parts.length && !reply.toolCalls.length && saysCantSeeImages(reply.text)) {
+          blind();
+          reply = await again();
+        }
+      }
     } catch (error) {
       // 停止时把已经说出来的半句留在历史里，下一轮模型知道自己说到哪了
       if (streamed.trim()) history.push({ role: "assistant", content: streamed });

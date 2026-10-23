@@ -4,6 +4,7 @@ import type {
 } from "../../services/aiEdit";
 import type { ExploreConnection } from "../../services/explorer";
 import { BOARD_KEYS, type BoardAction } from "./aiEditKeymap";
+import type { ComposerRef } from "./aiEditRefs";
 import type { BoardRegion } from "./aiEditShared";
 
 // 看板的内部接口：<Board> 提供 BoardContext，轨道区、画面、详情卡、撤销按钮用 useBoard() 取工程、选中、改动命令；
@@ -16,6 +17,11 @@ export type BoardArea = "timeline" | "stage" | "board";
 /** 最后一次按下的位置：看板外面（左栏、弹窗）是 outside，还没按过是 null */
 export type PointerArea = BoardArea | "outside";
 export type ToastTone = "info" | "error";
+
+/** 看板上能引用到对话里的：一段、某一刻 */
+export type BoardRef = Extract<ComposerRef, { kind: "clip" | "time" }>;
+/** 页面请看板跳过去（点了回复里的片段、时间）：片段是选中它、播放头放到开头；seq 每次加一，同一处再点也会跳 */
+export type BoardJump = ({ clipId: string } | { timeUs: number }) & { seq: number };
 
 /** 一条看板改动，和 AI 的同名工具参数一样（时间按秒） */
 export type BoardEdit = AiEditEditCall;
@@ -75,7 +81,7 @@ export interface BoardContextValue {
   selected: { track: EditTrack; segment: EditSegment } | null;
   /** 选中那段现在切不开的原因（播放头不在它中间）；能切或没选时为 null。只在播放头跨过边界时变 */
   splitHint: string | null;
-  /** 片段的口语称呼：视频“海边”、文字“标题”，给菜单、提示、交给 AI 用 */
+  /** 片段的口语称呼：视频“海边”、文字“标题”，给菜单、提示、引用用 */
   callName: (segment: EditSegment) => string;
   /**
    * 等下一个新工程进来时选中某段：那条轨道上开头离 atUs 不到一帧的片段（切开后选右半段、粘贴后选新的那段用）。
@@ -99,8 +105,10 @@ export interface BoardContextValue {
   flushHeld: () => Promise<void>;
   /** 选中所有轨道上的片段（字幕轨除外） */
   selectAll: () => void;
-  /** 往左栏输入框里插一段文字（「交给 AI」用） */
-  mention: (text: string) => void;
+  /** 引用到对话：加到左栏输入框上方，随下一句话发给 AI */
+  refer: (refs: readonly BoardRef[]) => void;
+  /** 页面让看板跳过去的次数：轨道区跟着把播放头滚进视图 */
+  revealSeq: number;
   /** 画面上的框选（问 AI）开着 */
   regionMode: boolean;
   /** 打开框选：先暂停，然后在画面上按住拖出一个框 */

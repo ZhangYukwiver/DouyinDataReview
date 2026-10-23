@@ -347,6 +347,24 @@ describe("AI edit tools", () => {
     // 以当前画布为准：用户在界面上选的横屏不能被「默认竖屏」改回去
     expect(prompt).toContain("画布以上面写的为准");
     expect(prompt).not.toContain("照竖屏做");
+    // 什么时候先问、长片先写分段、汇报别夸大
+    expect(prompt).toContain("只有猜错就得推倒重来的岔路才先问");
+    expect(prompt).toContain("带上 2 到 3 个选项问一句就收尾");
+    expect(prompt).toContain("list_media、search_my_records 查得到的别问");
+    expect(prompt).toContain("不要问横屏还是竖屏");
+    expect(prompt).toContain("先在回复里用几行写出分段");
+    expect(prompt).toContain("写完在同一条回复里接着调工具");
+    expect(prompt).toContain("没用 detect_beats 测过就排的卡点");
+    expect(prompt).toContain("别说「卡得很准」");
+    // 引用、贴图、被省略的对话和回复里能点的写法
+    expect(prompt).toContain("用户这句话引用了");
+    expect(prompt).toContain("用户这句话附了几张图");
+    expect(prompt).toContain("只拿到了名字就别装作看过");
+    expect(prompt).toContain("开头还会列出用户之前说过的话");
+    expect(prompt).toContain("[[片段:clip_id]]");
+    expect(prompt).toContain("[[时间:3.2]]");
+    expect(prompt).toContain("除了这两种写法，回复里不写任何 id 和字段名");
+    expect(prompt).not.toContain("不要提字段名、id");
     // 每做一步都会变的总时长和时间线不放系统提示（否则接口的前缀缓存一轮里都命中不了），附在最后一条
     expect(prompt).not.toContain("当前总时长 4 秒");
     expect(prompt).not.toContain("\"clip_id\":\"s1\"");

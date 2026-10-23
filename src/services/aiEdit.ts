@@ -199,6 +199,15 @@ export interface AiEditAction { name: string; summary: string; ok: boolean; erro
 /** 在画面上框的一块：x/y/width/height 是相对画布的比例（0–1，从左上角量），clip_ids 是框里的片段。 */
 export interface AiEditRegion { time_us: number; x: number; y: number; width: number; height: number; clip_ids: string[] }
 
+/** 发消息时引用的东西：时间线上的一段、某一刻、素材库里的一个素材（最多 10 个） */
+export type AiEditRefRequest = { kind: "clip"; clip_id: string } | { kind: "time"; time_us: number } | { kind: "media"; media_id: string };
+/** 存在用户消息上的引用；label 是给页面显示的说法（视频“海边”、第 3.2 秒、素材“logo”） */
+export interface AiEditMessageRef { kind: "clip" | "time" | "media"; clip_id?: string; time_us?: number; media_id?: string; label: string }
+/** 对话框里附的图：素材库里的那张，加一份给模型看的小预览（data URL，最多 4 张） */
+export interface AiEditAttachmentRequest { media_id: string; preview: string }
+export const MAX_MESSAGE_REFS = 10;
+export const MAX_MESSAGE_ATTACHMENTS = 4;
+
 export interface AiEditChatItem {
   id: string;
   /** note 是应用记的一行说明（比如退回到某句话之前），不是谁说的话 */
@@ -208,6 +217,10 @@ export interface AiEditChatItem {
   actions?: AiEditAction[];
   /** 用户发这句时带的框选；labels 是框里片段的称呼 */
   region?: AiEditRegion & { labels?: string[] };
+  /** 用户这句引用的片段、时刻、素材 */
+  refs?: AiEditMessageRef[];
+  /** 用户这句附的图（素材库里的） */
+  attachments?: Array<{ media_id: string; name: string }>;
 }
 
 export interface AiEditSession extends AiEditSessionSummary {
@@ -226,6 +239,8 @@ export interface AiEditSession extends AiEditSessionSummary {
   history?: AiEditHistoryStep[];
   /** 能「退回到这句之前」的用户消息 id */
   revertible?: string[];
+  /** 对话太长，更早的几轮已经没整段带给 AI（只附上了用户当时的原话） */
+  trimmed?: boolean;
 }
 
 /** 一步存档是什么：AI 剪的一整轮、看板上的手动改动（含换画面比例）、退回到某句话之前 */
@@ -312,10 +327,24 @@ export async function deleteAiEditSession(connection: ExploreConnection, id: str
   await request(connection, sessionPath(id), { method: "DELETE" });
 }
 
-export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig, region?: AiEditRegion | null): Promise<AiEditSession> {
+/** 一句话随带的东西：画面上框的一块、引用的片段/时刻/素材、附的图；没有的不发 */
+export interface AiEditMessageExtras {
+  region?: AiEditRegion | null;
+  refs?: readonly AiEditRefRequest[];
+  attachments?: readonly AiEditAttachmentRequest[];
+}
+
+export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig, extras: AiEditMessageExtras = {}): Promise<AiEditSession> {
+  const { region, refs, attachments } = extras;
   // 本机 CLI 只带运行时和模型，存着的 Key 和地址不发
-  const body = region ? { text, config: aiRequestConfig(config), region } : { text, config: aiRequestConfig(config) };
-  return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify(body) })).session;
+  const body = {
+    text, config: aiRequestConfig(config),
+    ...(region ? { region } : {}),
+    ...(refs?.length ? { refs } : {}),
+    ...(attachments?.length ? { attachments } : {}),
+  };
+  // 带图时请求体有几百 KB，给它多一点时间
+  return (await request(connection, `${sessionPath(id)}/messages`, { method: "POST", body: JSON.stringify(body), timeoutMs: attachments?.length ? 60_000 : 20_000 })).session;
 }
 
 /**

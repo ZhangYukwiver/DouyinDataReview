@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react-native";
-import { Pause, Play, RotateCcw, Scissors, SquareDashed, Sticker, Trash2, Type } from "lucide-react-native";
+import { Pause, Play, Quote, RotateCcw, Scissors, SquareDashed, Sticker, Trash2, Type } from "lucide-react-native";
 import type { AiEditMediaItem, EditCanvas, EditMediaSegment, EditSegment, EditTextSegment, EditTrack, EditTransform } from "../../services/aiEdit";
 import {
   activeFrame, blendMode, clipLabel, colorFilter, cropClipPath, cssTransform, effectiveTransform, featureName, findSegment, formatClock, hasScaleKeyframes,
@@ -17,8 +17,9 @@ import {
 import { lastingReason } from "./aiEditInspect";
 import { useBoard, useBoardKeys, useHeldEdit, usePlaybackTime } from "./aiEditBoardContext";
 import { IS_MAC, typingInto } from "./aiEditKeymap";
+import { snapToFrame } from "./aiEditRefs";
 import { useContextMenu, type MenuEntry, type MenuItem } from "./AiEditMenu";
-import { areaProps, mediaTitle, web, webPointer } from "./aiEditShared";
+import { areaProps, mediaTitle, web, WebTitle, webPointer } from "./aiEditShared";
 import { kit } from "./CreatorKit";
 import { ws } from "./motion";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -588,6 +589,7 @@ export function Stage() {
     entries.push(
       { id: "reset", label: "重置位置、大小和角度", icon: <RotateCcw size={14} color={color.text} />, disabled: blocked ?? (isDefaultPlacement(baseOf(segment)) ? "位置、大小和角度本来就是原样" : null), onSelect: () => resetTransform(id) },
       { id: "sep-ask", separator: true },
+      { id: "refer", label: "引用到对话", icon: <Quote size={14} color={color.text} />, onSelect: () => b.refer([{ kind: "clip", clipId: id }]) },
       ask,
       { id: "sep-delete", separator: true },
       { id: "delete", label: "删除", danger: true, shortcut: "remove", icon: <Trash2 size={14} color={color.danger} />, disabled: blocked, onSelect: () => { void b.removeSelected(); } },
@@ -780,7 +782,7 @@ function SelectionFrame({ frame, handles, moving, colors, onHandle, onMenu }: {
 
 /** 画面下面那一行：播放、时间、框选开关，右边写此刻生效的滤镜、特效、动画。 */
 export function PlayerBar() {
-  const { project, duration, playback, regionMode, startRegionSelect, stopRegionSelect } = useBoard();
+  const { project, canvas, duration, playback, regionMode, startRegionSelect, stopRegionSelect, refer } = useBoard();
   const time = usePlaybackTime();
   const shownTime = shownTimeOf(time, duration);
   const frame = useMemo(() => activeFrame(project, shownTime), [project, shownTime]);
@@ -795,6 +797,8 @@ export function PlayerBar() {
     return [...new Set(items.filter(Boolean))];
   }, [frame]);
   const toggleRegion = useCallback(() => (regionMode ? stopRegionSelect() : startRegionSelect()), [regionMode, startRegionSelect, stopRegionSelect]);
+  // 播放中读到的播放头不在帧上，落到整帧再引用
+  const referMoment = useCallback(() => refer([{ kind: "time", timeUs: Math.min(duration, snapToFrame(playback.timeRef.current, canvas.fps)) }]), [refer, duration, playback.timeRef, canvas.fps]);
 
   // 照剪辑软件的播放器：时间码在左、播放钮居中、框选在右
   return <View style={styles.controls}>
@@ -808,17 +812,33 @@ export function PlayerBar() {
       <Text numberOfLines={1} style={[kit.muted, { flexShrink: 1, minWidth: 0, textAlign: "right" }]}>
         {regionMode ? "在画面上按住拖出一个框，发消息时 AI 只改框里的东西" : names.length ? `此刻生效：${names.join("、")}` : ""}
       </Text>
-      <Pressable
-        {...ws("btn small", regionMode && "on")}
-        accessibilityRole="button"
-        accessibilityLabel="框选"
-        accessibilityState={{ selected: regionMode, disabled: !duration }}
-        disabled={!duration}
-        onPress={toggleRegion}
-        style={[styles.chip, regionMode && styles.chipOn, !duration && styles.disabled, webPointer]}
-      >
-        <SquareDashed size={13} color={regionMode ? color.accent : color.text} /><Text style={styles.chipText}>框选</Text>
-      </Pressable>
+      {/* 只画图标（版式角色仍用 small：square 会被风格放大到 32–40）：选中片段弹出详情卡时这半边只剩 90 左右，带字的两个按钮会往左压到播放钮上 */}
+      <WebTitle title={regionMode ? "框选（再点一下取消）" : "框选：在画面上框一块，让 AI 只改那里"}>
+        <Pressable
+          {...ws("btn small", regionMode && "on")}
+          accessibilityRole="button"
+          accessibilityLabel="框选"
+          accessibilityState={{ selected: regionMode, disabled: !duration }}
+          disabled={!duration}
+          onPress={toggleRegion}
+          style={[styles.chip, styles.chipSquare, regionMode && styles.chipOn, !duration && styles.disabled, webPointer]}
+        >
+          <SquareDashed size={13} color={regionMode ? color.accent : color.text} />
+        </Pressable>
+      </WebTitle>
+      <WebTitle title="引用这一刻：把播放头这一刻引用到对话">
+        <Pressable
+          {...ws("btn small")}
+          accessibilityRole="button"
+          accessibilityLabel="引用这一刻"
+          accessibilityState={{ disabled: !duration }}
+          disabled={!duration}
+          onPress={referMoment}
+          style={[styles.chip, styles.chipSquare, !duration && styles.disabled, webPointer]}
+        >
+          <Quote size={13} color={color.text} />
+        </Pressable>
+      </WebTitle>
     </View>
   </View>;
 }
@@ -1041,7 +1061,7 @@ const styles = StyleSheet.create({
   playButton: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   clock: { color: color.text, fontFamily: font.mono, fontSize: 12, fontVariant: ["tabular-nums"] },
   chip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
-  chipText: { color: color.text, fontFamily: font.body, fontSize: 11, fontWeight: "600" },
+  chipSquare: { width: 28, height: 26, paddingHorizontal: 0, paddingVertical: 0, justifyContent: "center" },
   chipOn: { borderColor: color.accent, backgroundColor: color.accentSoft },
   disabled: { opacity: 0.45 },
 });

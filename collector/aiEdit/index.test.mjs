@@ -1466,6 +1466,126 @@ describe("AI edit region on the picture", () => {
   }, 20_000);
 });
 
+describe("AI edit references, pasted images and dropped turns", () => {
+  it("checks what the user referenced, keeps the labels on the message and tells the model what each one is", async () => {
+    const requests = [];
+    const fetchImpl = async (_url, init) => { requests.push(JSON.parse(init.body)); return textReply("好"); };
+    const context = await startBoard({ fetchImpl });
+    const { call, waitIdle } = context;
+    const { session, clip, title } = await boardSession(context);
+    const logo = (await uploadFixture(call, "still.png", "logo.png")).body.item;
+    const send = (refs, text = "把这段换成这个素材") => call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text, config: CONFIG, refs } });
+    for (const refs of [
+      "这段", [null], [{ kind: "x" }], [{ kind: "clip" }], [{ kind: "clip", clip_id: 3 }], [{ kind: "time", time_us: -1 }], [{ kind: "time", time_us: 1.5 }],
+      [{ kind: "time", time_us: 2_000_001 }], [{ kind: "media", media_id: 1 }], Array.from({ length: 11 }, () => ({ kind: "clip", clip_id: clip })),
+    ]) {
+      expect(await send(refs)).toEqual({ status: 422, body: { error: "invalid_refs", message: "引用的东西不对，重新选一下。" } });
+    }
+    // 不在工程里的片段、不在素材库里的素材悄悄去掉，重复的只留一个
+    const sent = await send([
+      { kind: "clip", clip_id: clip }, { kind: "clip", clip_id: "早删了" }, { kind: "time", time_us: 500_000 },
+      { kind: "media", media_id: logo.id }, { kind: "media", media_id: "f".repeat(32) }, { kind: "clip", clip_id: clip },
+    ]);
+    expect(sent.status).toBe(202);
+    expect(sent.body.session.messages[0].refs).toEqual([
+      { kind: "clip", clip_id: clip, label: "视频“海边.mp4”" },
+      { kind: "time", time_us: 500_000, label: "第 0.5 秒" },
+      { kind: "media", media_id: logo.id, label: "素材“logo.png”" },
+    ]);
+    await waitIdle(session.id);
+    expect(userContents(requests[0])[0]).toBe([
+      "【应用自动附上，不是用户说的话】",
+      `用户这句话引用了：clip_id ${clip}（视频“海边.mp4”，在时间线 0–1 秒）、时刻 0.5 秒（这一刻正在显示或播放的有：clip_id ${title}（文字“周末去海边”）、clip_id ${clip}（视频“海边.mp4”））、media_id ${logo.id}（素材“logo.png”，图片 1280×720）。用户说的「这段」「这里」「这个素材」指的就是这些；引用的东西在工程现状里找不到了，就以工程现状为准，并跟用户说一声。`,
+      "【用户这次说的话】",
+      "把这段换成这个素材",
+    ].join("\n"));
+    // 片尾之后 1 秒以内也能引用；那一刻什么都没有
+    expect((await send([{ kind: "time", time_us: 2_000_000 }], "这里加个结尾")).status).toBe(202);
+    await waitIdle(session.id);
+    expect(userContents(requests[1]).at(-2)).toContain("时刻 2 秒（这一刻时间线上什么都没有）");
+    // 引用的都找不到了就和没引用一样
+    const none = await send([{ kind: "clip", clip_id: "早删了" }], "好了");
+    expect(none.body.session.messages.at(-1)).not.toHaveProperty("refs");
+    await waitIdle(session.id);
+    expect(userContents(requests[2]).at(-2)).toBe("好了");
+    // 过了一分钟的时刻和页面上一样写成几分几秒；给模型的还是秒数
+    const project = await context.store.getProject(session.projectId);
+    await context.store.addTextSegment(project.id, project.tracks[1].id, { text: "片尾", timeline: { start_us: 70_000_000, duration_us: 10_000_000 } });
+    const late = await send([{ kind: "time", time_us: 75_040_000 }], "这里加个转场");
+    expect(late.body.session.messages.at(-1).refs).toEqual([{ kind: "time", time_us: 75_040_000, label: "第 1 分 15 秒" }]);
+    await waitIdle(session.id);
+    expect(userContents(requests[3]).at(-2)).toContain("时刻 75.04 秒（这一刻正在显示或播放的有：");
+  }, 20_000);
+
+  it("keeps pasted images as files for the model, shows their names on the message and cleans them up with the session", async () => {
+    const requests = [];
+    const fetchImpl = async (_url, init) => { requests.push(JSON.parse(init.body)); return textReply("看到了"); };
+    const { call, waitIdle, directory } = await start({ fetchImpl });
+    const cover = (await uploadFixture(call, "still.jpg", "封面.jpg")).body.item;
+    const video = (await uploadFixture(call, "clip-720p.mp4", "海边.mp4")).body.item;
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    // 预览比原来的消息上限 64KB 大得多也收
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(300 * 1024, 7)]);
+    const preview = `data:image/jpeg;base64,${bytes.toString("base64")}`;
+    const send = (attachments, config = CONFIG) => call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "用这张当封面", config, attachments } });
+    expect(await send(Array.from({ length: 5 }, () => ({ media_id: cover.id, preview })))).toEqual({ status: 422, body: { error: "too_many_attachments", message: "一次最多带 4 张图。" } });
+    for (const attachments of [[{ media_id: video.id, preview }], [{ media_id: cover.id, preview: "data:image/jpeg;base64,AAAA" }], "封面"]) {
+      expect(await send(attachments)).toEqual({ status: 422, body: { error: "invalid_attachment", message: "图片不对，换一张试试。" } });
+    }
+    const folder = path.join(directory, "ai-edit", "attachments", session.id);
+    expect(existsSync(folder)).toBe(false);
+
+    const sent = await send([{ media_id: cover.id, preview }]);
+    expect(sent.status).toBe(202);
+    expect(sent.body.session.messages[0].attachments).toEqual([{ media_id: cover.id, name: "封面.jpg" }]);
+    await waitIdle(session.id);
+    const files = await readdir(folder);
+    expect(files).toEqual([expect.stringMatching(/^[0-9a-f]{16}\.jpg$/u)]);
+    expect((await readFile(path.join(folder, files[0]))).equals(bytes)).toBe(true);
+    const user = requests[0].messages.find((message) => message.role === "user");
+    expect(user).not.toHaveProperty("attachments");
+    expect(user.content[0].text).toContain(`用户这句话附了 1 张图：素材“封面.jpg”（media_id ${cover.id}）`);
+    expect(user.content[1]).toEqual({ type: "image_url", image_url: { url: preview, detail: "low" } });
+    // 页面上的会话里没有图的数据
+    expect(JSON.stringify((await call(`/v1/ai-edit/sessions/${session.id}`)).body)).not.toContain("base64");
+
+    // 换一个看不了图的模型：去掉图重发，这一轮的动作里说一声
+    const blind = { ...CONFIG, model: "index-no-eyes" };
+    const refusing = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push(body);
+      if (body.messages.some((message) => Array.isArray(message.content))) return new Response(JSON.stringify({ error: { message: "image input is not supported" } }), { status: 400 });
+      return textReply("按名字放上去了");
+    };
+    const second = await start({ fetchImpl: refusing });
+    const image = (await uploadFixture(second.call, "still.jpg", "封面.jpg")).body.item;
+    const { session: other } = (await second.call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    await second.call(`/v1/ai-edit/sessions/${other.id}/messages`, { method: "POST", body: { text: "用这张", config: blind, attachments: [{ media_id: image.id, preview }] } });
+    const done = await second.waitIdle(other.id);
+    expect(done.session.messages.at(-1)).toMatchObject({ text: "按名字放上去了", actions: [{ name: "see_images", summary: "这个模型看不了图片，只告诉了它图片的名字", ok: false }] });
+
+    expect((await call(`/v1/ai-edit/sessions/${session.id}`, { method: "DELETE" })).status).toBe(200);
+    expect(existsSync(folder)).toBe(false);
+  }, 20_000);
+
+  it("tells the page once old turns had to be dropped, and reminds the model what the user said in them", async () => {
+    const requests = [];
+    const replies = [textReply("回".repeat(70_000)), textReply("回".repeat(70_000)), textReply("好")];
+    const fetchImpl = async (_url, init) => { requests.push(JSON.parse(init.body)); return replies.shift(); };
+    const { call, waitIdle } = await start({ fetchImpl });
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    expect(session.trimmed).toBe(false);
+    for (const text of ["先剪一版旅行片", "节奏快一点"]) {
+      await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text, config: CONFIG } });
+      expect((await waitIdle(session.id)).session.trimmed).toBe(false);
+    }
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "再加个片尾", config: CONFIG } });
+    const done = await waitIdle(session.id);
+    expect(done.session.trimmed).toBe(true);
+    expect(userContents(requests[2])[0]).toBe("【应用自动附上，不是用户说的话】更早的对话已经省略，用户之前说过：\n- 先剪一版旅行片\n【用户这次说的话】\n节奏快一点");
+  }, 20_000);
+});
+
 // 模块 A/B/C/D 都在时，用真实的工程库、媒体探测和草稿箱把整条链路跑一遍
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REAL_MODULES = ["projectStore.mjs", "media.mjs", "draft.mjs", "draftBox.mjs"].every((name) => existsSync(path.join(HERE, name)));

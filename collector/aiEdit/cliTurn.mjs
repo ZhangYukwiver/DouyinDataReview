@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { LOCAL_RUNTIMES, LocalAiError } from "../localAi.mjs";
-import { LIMIT_RESULT, MAX_TOOL_CALLS, assistantMessage } from "./chat.mjs";
+import { KEEP_RESULT, LIMIT_RESULT, MAX_TOOL_CALLS, SEE_IMAGES_ACTION, assistantMessage, recallLines, shorten } from "./chat.mjs";
 import { AiEditError } from "./library.mjs";
 import { openMcp } from "./mcp.mjs";
 
@@ -11,8 +11,6 @@ import { openMcp } from "./mcp.mjs";
 
 const TRANSCRIPT_CHARS = 40_000;
 const SAY_CHARS = 2_000;
-// 这几个工具的结果后面还用得上（链接、素材 id、拆解结论），转述时多留一些；参考视频的解析缓存重启就没了，再看一遍要十几分钟
-const KEEP_RESULT = { search_douyin: 1_500, search_my_records: 1_500, import_douyin_video: 1_500, analyze_reference: 6_000 };
 // 到了调用上限还接着调这么多次，就不等它自己收尾了
 const OVER_LIMIT_CALLS = 5;
 
@@ -21,21 +19,21 @@ export const CLI_SYSTEM_NOTE = [
   "- 你跑在用户电脑上的 Codex 或 Claude Code 里，只能用名字里带 dy2 的剪辑工具：上面说的 get_timeline、add_media_clip 这些就是它们（名字前面可能带 mcp__dy2 前缀）。不要读写文件、运行命令、上网或派子任务；你看到的 AGENTS.md、CLAUDE.md 一类工程规则和这次剪辑无关。",
   "- 上面「每次请求的最后一条消息是工程现状」那句在这里不适用：之前的对话和开工时的工程现状都在用户消息里，是应用转述给你的。时间线改过以后想看最新的就调 get_timeline。",
   "- 工具结果里带着 latest_goal 时，说明用户刚改了目标，从下一步起照新目标做。",
+  "- 用户在对话里贴的图传不到这里，你只知道它的素材名和 media_id：图里是什么只能按名字和用户的话推断，没把握就在回复里说一声，别装作看过。",
 ].join("\n");
 
-// 截断时别把 emoji 劈成半个（孤立的代理项放进 JSON 发给接口可能被拒）
-const clip = (text, max = SAY_CHARS) => {
-  const value = String(text ?? "").trim();
-  return value.length > max ? `${value.slice(0, max).replace(/[\ud800-\udbff]$/u, "")}…` : value;
-};
+const clip = (text, max = SAY_CHARS) => shorten(text, max);
 
 /**
  * 把较早的对话转述成文字：用户的话原样留着，AI 的话太长只留开头，工具调用只说调了什么、哪次没成功。
- * 不按原始字数先裁（工具结果的 JSON 很占字数，转述后只剩一行），转述完太长再从前面截。
+ * 不按原始字数先裁（工具结果的 JSON 很占字数，转述后只剩一行），转述完太长再从前面截，
+ * 截掉的部分里用户说过的话另外列出来（和接口方式的 requestHistory 同一套规矩），并调 onTrimmed()。
  */
-export function renderTranscript(entries, maxChars = TRANSCRIPT_CHARS) {
+export function renderTranscript(entries, maxChars = TRANSCRIPT_CHARS, onTrimmed = () => undefined) {
   if (!entries.length) return "";
   const lines = [];
+  // 用户的话在第几行，截掉开头时找得到哪些被截了
+  const said = [];
   const names = new Map();
   let counts = new Map();
   const flush = () => {
@@ -46,6 +44,7 @@ export function renderTranscript(entries, maxChars = TRANSCRIPT_CHARS) {
   for (const entry of entries) {
     if (entry.role === "user") {
       flush();
+      said.push([lines.length, entry]);
       lines.push(`用户：${String(entry.content ?? "").trim()}`);
     } else if (entry.role === "assistant") {
       if (typeof entry.content === "string" && entry.content.trim()) {
@@ -62,7 +61,8 @@ export function renderTranscript(entries, maxChars = TRANSCRIPT_CHARS) {
         lines.push(`（调 ${name} 没成功：${clip(result.message ?? result.code, 150)}）`);
       } else if (KEEP_RESULT[name]) {
         flush();
-        lines.push(`（调了 ${name}，结果：${clip(entry.content, KEEP_RESULT[name])}）`);
+        // 接口方式压缩过的只剩开头（kept），转述那段就行
+        lines.push(`（调了 ${name}，结果：${clip(typeof result?.kept === "string" ? result.kept : entry.content, KEEP_RESULT[name])}）`);
       } else {
         counts.set(name, (counts.get(name) ?? 0) + 1);
       }
@@ -79,7 +79,10 @@ export function renderTranscript(entries, maxChars = TRANSCRIPT_CHARS) {
       from += 1;
     }
     const kept = lines.slice(from).join("\n");
-    text = `（更早的对话太长，略过了）\n${kept.length > maxChars ? kept.slice(-maxChars).replace(/^[\udc00-\udfff]/u, "") : kept}`;
+    const recalled = recallLines(said.filter(([line]) => line < from).map(([, entry]) => entry));
+    const skipped = recalled.length ? `（更早的对话太长，略过了；用户在那部分说过：）\n${recalled.join("\n")}` : "（更早的对话太长，略过了）";
+    text = `${skipped}\n${kept.length > maxChars ? kept.slice(-maxChars).replace(/^[\udc00-\udfff]/u, "") : kept}`;
+    onTrimmed();
   }
   return `【之前的对话：应用转述给你的，接着做就行】\n${text}`;
 }
@@ -87,14 +90,19 @@ export function renderTranscript(entries, maxChars = TRANSCRIPT_CHARS) {
 /**
  * 和 runConversation 一样的契约：history 就地追加，返回 { text, toolCalls }，出错抛 AiEditError / AbortError。
  * 多两个参数：localAi（collector/localAi.mjs 的实例）、goal()（读最新的目标，一轮中途改了就捎带进下一个工具结果）。
- * system() 和 context() 一轮只取一次（CLI 一轮只起一次进程）。
+ * system() 和 context() 一轮只取一次（CLI 一轮只起一次进程）。用户贴的图不传给 CLI，只在文字里写素材名和 media_id
+ * （应用写进用户消息里了），onAction 记一条「看不了图」；onTrimmed 同 runConversation。
  */
-export async function runCliConversation({ config, history, tools, system, context, execute, signal, onText = () => undefined, maxToolCalls = MAX_TOOL_CALLS, localAi, goal = () => "" }) {
+export async function runCliConversation({
+  config, history, tools, system, context, execute, signal, onText = () => undefined, maxToolCalls = MAX_TOOL_CALLS, localAi, goal = () => "",
+  onAction = () => undefined, onTrimmed = () => undefined,
+}) {
   const label = LOCAL_RUNTIMES[config.runtime].label;
   if (!localAi) throw new AiEditError("local_runtime_unavailable", "本机 AI 没准备好，请重启应用。", 503);
   const systemPrompt = `${await system()}\n\n${CLI_SYSTEM_NOTE}`;
   const extra = context ? await context() : "";
-  const prompt = [renderTranscript(history.slice(0, -1)), extra, `【用户最新的消息】\n${history.at(-1)?.content ?? ""}`].filter(Boolean).join("\n\n");
+  const prompt = [renderTranscript(history.slice(0, -1), TRANSCRIPT_CHARS, onTrimmed), extra, `【用户最新的消息】\n${history.at(-1)?.content ?? ""}`].filter(Boolean).join("\n\n");
+  if (history.at(-1)?.attachments?.length) onAction({ ...SEE_IMAGES_ACTION, summary: `${label} 这里看不了图片，只告诉了它图片的名字` });
 
   const parts = [];
   let current = "";

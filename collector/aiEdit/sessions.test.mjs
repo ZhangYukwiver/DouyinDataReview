@@ -341,3 +341,44 @@ describe("SessionStore", () => {
     expect(sessions.get("../../etc")).toBeNull();
   });
 });
+
+describe("SessionStore: trimmed history and pasted images", () => {
+  it("remembers that old turns were dropped, and gives sessions saved before that a false", async () => {
+    const { sessions, directory } = await store();
+    const session = await sessions.create({ title: "x", projectId: "p" });
+    expect(sessionDetail(session).trimmed).toBe(false);
+    session.trimmed = true;
+    await sessions.touch(session, { persist: true });
+    const old = await sessions.create({ title: "旧的", projectId: "q" });
+    const { trimmed: _trimmed, ...stored } = old;
+    await writeFile(path.join(directory, `${old.id}.json`), JSON.stringify(stored));
+    const reloaded = new SessionStore({ directory });
+    await reloaded.load();
+    expect(sessionDetail(reloaded.get(session.id)).trimmed).toBe(true);
+    expect(reloaded.get(old.id).trimmed).toBe(false);
+    expect(sessionDetail(reloaded.get(old.id)).trimmed).toBe(false);
+  });
+
+  it("keeps pasted images as files beside the sessions, reads them back for the model and removes them with the session", async () => {
+    const { sessions, directory } = await store();
+    const session = await sessions.create({ title: "x", projectId: "p" });
+    const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+    const id = await sessions.saveAttachment(session, { mime: "image/jpeg", bytes });
+    expect(id).toMatch(/^[0-9a-f]{16}$/u);
+    const folder = path.join(path.dirname(directory), "attachments", session.id);
+    expect(await readdir(folder)).toEqual([`${id}.jpg`]);
+    if (process.platform !== "win32") expect((await stat(path.join(folder, `${id}.jpg`))).mode & 0o777).toBe(0o600);
+    expect(await sessions.readAttachment(session, { id, mime: "image/jpeg" })).toBe(`data:image/jpeg;base64,${bytes.toString("base64")}`);
+    // 记录不对、文件没了都回 null，不往外抛
+    expect(await sessions.readAttachment(session, { id: "../../etc/passwd", mime: "image/jpeg" })).toBeNull();
+    expect(await sessions.readAttachment(session, { id, mime: "text/html" })).toBeNull();
+    expect(await sessions.readAttachment(session, { id: "0".repeat(16), mime: "image/jpeg" })).toBeNull();
+    await expect(sessions.saveAttachment(session, { mime: "image/gif", bytes })).rejects.toThrow();
+    // 消息上的引用和附图原样给页面
+    session.messages.push({ id: "u1", role: "user", text: "用这张", at: "2026-10-19T08:00:00.000Z", refs: [{ kind: "time", time_us: 0, label: "第 0 秒" }], attachments: [{ media_id: "a".repeat(32), name: "封面.jpg" }] });
+    expect(sessionDetail(session).messages[0]).toMatchObject({ refs: [{ kind: "time", time_us: 0, label: "第 0 秒" }], attachments: [{ media_id: "a".repeat(32), name: "封面.jpg" }] });
+    expect(sessionDetail(session).messages[0].refs).not.toBe(session.messages[0].refs);
+    expect(await sessions.remove(session.id)).toBe(true);
+    expect(existsSync(folder)).toBe(false);
+  });
+});
