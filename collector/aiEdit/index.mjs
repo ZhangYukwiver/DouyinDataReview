@@ -16,7 +16,7 @@ import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
 import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, revertTarget, sessionDetail } from "./sessions.mjs";
 import {
-  TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, describeToolError, micros, probeVideoInput, projectDurationUs, rearrangeGrids, seconds, trackLabel,
+  TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, describeToolError, micros, probeVideoInput, projectDurationUs, rearrangeGrids, searchCatalog, seconds, trackLabel,
 } from "./tools.mjs";
 
 // AI 剪辑在采集器里的入口：会话、工程、素材库、对话循环和导入剪映草稿箱的 HTTP 接口。
@@ -590,7 +590,7 @@ export function createAiEdit({
     };
     const runTool = createToolRunner({
       store, library, projectId: session.projectId, getCollector, signal,
-      getExplorer, config, references, fetchImpl, pollMs, localAi,
+      getExplorer, config, references, fetchImpl, pollMs, localAi, freeOnly: turn.freeOnly,
       // 活儿挂在这一轮上（streaming 不存盘），页面长轮询看到后接手
       askLook: (request) => state.looks.ask({
         id: session.id,
@@ -625,7 +625,7 @@ export function createAiEdit({
         onTrimmed: () => { session.trimmed = true; },
         // 系统提示只放不常变的；工程现状每步都变，附在每次请求的最后，不打断接口的前缀缓存
         // 目标每次请求都读最新的：一轮做到一半改了，下一步就照新的来
-        system: async () => buildSystemPrompt({ project: await store.getProject(session.projectId), media: library.list(), goal: session.goal }),
+        system: async () => buildSystemPrompt({ project: await store.getProject(session.projectId), media: library.list(), goal: session.goal, freeOnly: turn.freeOnly }),
         context: async () => buildContextMessage({ project: await store.getProject(session.projectId), library }),
         execute: async (call) => {
           const { result: output, action } = await runTool(call.name, call.arguments);
@@ -669,7 +669,7 @@ export function createAiEdit({
   };
 
   /** region、refs、attachments 是 parseRegion、parseRefs、parseAttachments 校验过的。 */
-  const startTurn = async (session, text, config, { region = null, refs = [], attachments = [] } = {}) => {
+  const startTurn = async (session, text, config, { region = null, refs = [], attachments = [], freeOnly = false } = {}) => {
     const { store, sessions } = state;
     const controller = new AbortController();
     const run = { controller, promise: null };
@@ -683,7 +683,8 @@ export function createAiEdit({
       running.delete(session.id);
       throw error;
     }
-    const turn = {};
+    // freeOnly：剪辑页勾了「只看免费」，这一轮不许用会员效果
+    const turn = { freeOnly };
     try {
       // 每轮开跑前存一份，可以撤销这一轮或者退回到这句话之前
       const { checkpoint, revision } = await saveCheckpoint(session, "turn", `AI 处理“${leading(text, 12)}”之前`);
@@ -910,6 +911,14 @@ export function createAiEdit({
       return;
     }
 
+    // 剪辑页左栏「剪映素材」：和 AI 用 search_catalog 查的是同一份目录
+    if (pathname === "/v1/ai-edit/catalog") {
+      if (method !== "GET") { notAllowed(); return; }
+      const params = url.searchParams;
+      sendJson(response, 200, searchCatalog({ kind: params.get("kind"), query: params.get("q") ?? "", limit: 200, free: params.get("free") === "1" }, 200));
+      return;
+    }
+
     if (pathname === "/v1/ai-edit/probe-video") {
       if (method !== "POST") { notAllowed(); return; }
       const body = await readJson(request, BODY_BYTES);
@@ -974,7 +983,7 @@ export function createAiEdit({
         if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
         if (editing.has(id)) throw new AiEditError("session_busy", "看板上的改动还没做完，请稍等。", 409);
         if (outputs.has(id)) throw new AiEditError("session_busy", "正在导出或导入工程，等它做完再说。", 409);
-        await startTurn(session, text, config, { region, refs, attachments });
+        await startTurn(session, text, config, { region, refs, attachments, freeOnly: body.freeOnly === true });
         sendJson(response, 202, { session: sessionDetail(session) });
         return;
       }

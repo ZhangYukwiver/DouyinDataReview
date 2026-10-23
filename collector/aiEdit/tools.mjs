@@ -260,7 +260,7 @@ function mediaLine(item) {
  * 系统提示只放一轮里基本不变的内容（规则、工程名和画布、素材清单）：方舟等接口按前缀缓存，
  * 系统提示一变后面整段历史都得重新算。总时长和当前时间线每做一步都会变，放在 buildContextMessage 里、每次请求附在最后。
  */
-export function buildSystemPrompt({ project, media, goal = "" }) {
+export function buildSystemPrompt({ project, media, goal = "", freeOnly = false }) {
   const { width, height, fps } = project.canvas;
   const orientation = width === height ? "方形" : width > height ? "横屏" : "竖屏";
   const listed = media.slice(0, 120);
@@ -299,7 +299,9 @@ export function buildSystemPrompt({ project, media, goal = "" }) {
     "  · 画面大小就是页面视口（innerWidth × innerHeight，默认等于工程画布），按它排版，字号用 px 按画布算（1080 宽的竖屏标题大约 90–140px）。叠在视频上的 transparent 填 true、html/body 背景透明；不透明的自己把背景画满。",
     "  · 只用系统字体（\"PingFang SC\", \"Microsoft YaHei\", sans-serif），别引网络字体和网上的图片（会加载失败）；脚本库只能从 cdn.jsdelivr.net、cdnjs.cloudflare.com、unpkg.com 引。页面没有声音，配乐和音效另外放音频片段。",
     "  · write_page 返回 problems 时（脚本报错、加载失败、画面重画一次就不一样）要改好再用。改已有的网页片段先 read_page 读出来，改完带上同一个 page_id 再 write_page，时间线上的片段会自动换成新画面。",
-    "- 特效、滤镜、转场、动画、蒙版、混合模式、字体只能用剪映内置的名称：先用 search_catalog 查到准确名称再用，不要自己编。尽量挑不需要会员的（vip 为 false）。",
+    `- 特效、滤镜、转场、动画、蒙版、混合模式、字体只能用剪映内置的名称：先用 search_catalog 查到准确名称再用，不要自己编。${freeOnly
+      ? "用户选了只用免费素材：标着 vip 的要剪映会员才能导出，一个都不要用（search_catalog 也只会列出免费的）。"
+      : "免费的和标着 vip 的（要剪映会员才能导出）都能用，按效果挑。"}`,
     "- 工具返回 ok:false 时，读 message 和 details 改正参数再试（报错里带 _us 的字段是微秒，对应你给的秒数参数）；不要把同样的错误调用重复好几次。",
     "- 用户只是聊天或提问时不用动时间线。要求不清楚时先按最合理的理解做出来，再告诉用户可以怎么调。只有猜错就得推倒重来的岔路才先问，比如复刻是逐个镜头照着仿还是只学节奏、素材明显分成几类却不知道要用哪类：这时先别动时间线，带上 2 到 3 个选项问一句就收尾。list_media、search_my_records 查得到的别问；画布以界面上选的为准，不要问横屏还是竖屏。",
     "- 三段以上的片子或者复刻：先在回复里用几行写出分段（每段多长、放什么、怎么切过去），写完在同一条回复里接着调工具，别停下来等用户确认（只回文字、不调工具，这一轮就结束了）。做完对照分段和目标检查一遍还差什么。",
@@ -429,14 +431,15 @@ function captionsToSrt(captions) {
   }).join("\n\n");
 }
 
-function searchCatalog({ kind, query = "", limit = 20 }) {
-  const config = CATALOG_KINDS[kind];
+// 模型查一次最多 50 条；剪辑页左栏「剪映素材」翻得多，传更大的上限
+export function searchCatalog({ kind, query = "", limit = 20, free = false }, maxLimit = 50) {
+  const config = Object.hasOwn(CATALOG_KINDS, kind) ? CATALOG_KINDS[kind] : null;
   if (!config) throw new AiEditError("arguments_invalid", `kind 只能是 ${Object.keys(CATALOG_KINDS).join("、")}。`);
   const key = (value) => String(value ?? "").replace(/[\s_]+/gu, "").toLowerCase();
   const wanted = key(query);
-  const found = config.enums.flatMap((enumName) => members(enumName)).filter((member) => !wanted
-    || key(member.name).includes(wanted) || key(member.meta.name ?? member.meta.title).includes(wanted));
-  const size = Math.min(50, Math.max(1, Number.isInteger(limit) ? limit : 20));
+  const found = config.enums.flatMap((enumName) => members(enumName)).filter((member) => (!free || !member.meta.is_vip) && (!wanted
+    || key(member.name).includes(wanted) || key(member.meta.name ?? member.meta.title).includes(wanted)));
+  const size = Math.min(maxLimit, Math.max(1, Number.isInteger(limit) ? limit : 20));
   return {
     kind: config.label,
     total: found.length,
@@ -871,6 +874,25 @@ function assertNotSubtitles(project, trackId) {
   }
 }
 
+// 片段上能用会员效果的参数（蒙版、混合模式没有会员的）
+const VIP_ARGUMENTS = {
+  transition_type: ["TransitionType"],
+  filter_type: ["FilterType"],
+  effect_type: [...VIDEO_EFFECT_ENUMS, ...AUDIO_EFFECT_ENUMS],
+  animation_type: [...VIDEO_ANIMATION_ENUMS, ...TEXT_ANIMATION_ENUMS],
+  font_family: ["FontType"],
+};
+
+/** 用户在剪辑页勾了「只看免费」：会员效果剪映导出时会拦，AI 一个都不能用。 */
+function checkFree(ctx, args) {
+  if (!ctx.freeOnly) return;
+  for (const [key, enums] of Object.entries(VIP_ARGUMENTS)) {
+    if (catalogMember(enums, args[key])?.member.meta.is_vip) {
+      throw invalid("VIP_NOT_ALLOWED", `「${String(args[key]).slice(0, 40)}」要剪映会员才能导出，用户选了只用免费素材，用 search_catalog 换一个免费的。`);
+    }
+  }
+}
+
 function checkFont(args) {
   if (typeof args.font_family === "string" && !catalogMember(["FontType"], args.font_family)) {
     throw invalid("FONT_INVALID", `剪映里没有「${args.font_family.slice(0, 40)}」这个字体，先用 search_catalog 查 font 找到准确的 name，或者不填用默认字体。`);
@@ -1146,7 +1168,7 @@ const TOOLS = [
       limit: int("最多返回几条，默认 20，最多 50", { minimum: 1, maximum: 50 }),
     }, ["kind"]),
     label: (args) => `查了剪映的${CATALOG_KINDS[args.kind]?.label ?? "效果"}${quoted(args.query)}`,
-    run: async (_ctx, args) => searchCatalog(args),
+    run: async (ctx, args) => searchCatalog({ ...args, free: Boolean(ctx.freeOnly) }),
   },
   {
     name: "get_clip",
@@ -1689,6 +1711,7 @@ const EDIT_ERROR_TEXT = {
   SUBTITLE_TRACK_LOCKED: "字幕轨只能整组加字幕，单独的文字要另建文字轨道",
   SUBTITLE_CLIP_LOCKED: "字幕轨上的字幕不能单独挪到别的轨道，也不能复制",
   FONT_INVALID: "剪映里没有这个字体",
+  VIP_NOT_ALLOWED: "这个要剪映会员，已选只用免费素材",
   MASK_PARAMS_INVALID: "只有矩形蒙版能设宽度和圆角",
   ANIMATION_EXISTS: "片段已经有同一种动画了，要先去掉",
   ANIMATION_CONFLICT: "组合动画不能和入场、出场动画一起用",
@@ -1815,6 +1838,7 @@ export function createToolRunner(ctx) {
       return { result: { ok: false, code: "arguments_invalid", message: `缺少参数：${missing.join("、")}。` }, action: { name, summary: summary(args), ok: false, error: "缺少参数" }, changed: false };
     }
     try {
+      checkFree(ctx, args);
       const before = tool.write ? idsOf(await ctx.store.getProject(ctx.projectId)) : null;
       const output = await tool.run({ ...ctx }, args);
       let result;

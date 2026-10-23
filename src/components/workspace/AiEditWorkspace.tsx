@@ -6,8 +6,8 @@ import type { ExploreConnection } from "../../services/explorer";
 import {
   aiConfigReady, aiEditFilmUrl, aiEditLookUrl, aiEditMediaUrl, aiRuntimeOf, importAiEditFilm, startAiEditOutput, answerAiEditLook, isLocalAiRuntime, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
   importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, revertAiEdit, saveAiEditConfig, sendAiEditMessage, sessionRunning,
-  setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey, MAX_MESSAGE_ATTACHMENTS, MAX_MESSAGE_REFS,
-  type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditExportMode, type AiEditMediaItem,
+  searchAiEditCatalog, setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey, MAX_MESSAGE_ATTACHMENTS, MAX_MESSAGE_REFS,
+  type AiEditAction, type AiEditCatalogItem, type AiEditCatalogKind, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditExportMode, type AiEditMediaItem,
   type AiEditSession, type AiEditSessionState, type AiEditSessionSummary, type EditCanvas, type EditSegment,
 } from "../../services/aiEdit";
 import { searchRecords } from "../../services/recordSearch";
@@ -82,8 +82,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const conn = useMemo(() => (baseUrl && token ? { baseUrl, token } : null), [baseUrl, token]);
   const { width } = useWindowDimensions();
   const leftWidth = width >= 1280 ? 340 : 300;
-  // 左边面板两页：和 AI 说话、看素材（剪辑软件左上角的素材区）
-  const [leftTab, setLeftTab] = useState<"chat" | "media">("chat");
+  // 左边面板三页：和 AI 说话、看素材（剪辑软件左上角的素材区）、看剪映内置的转场滤镜特效
+  const [leftTab, setLeftTab] = useState<"chat" | "media" | "jianying">("chat");
 
   const [sessions, setSessions] = useState<AiEditSessionSummary[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
@@ -398,6 +398,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
         // 片尾之后的时刻不发（小条上写着），发了后端会整条拒收
         refs: sendableRefs(refs, target.project).map(refRequest),
         attachments: attachmentRequests(files),
+        freeOnly: readCatalogFree(),
       });
       setInput("");
       if (framed) setRegionDraft((current) => (current?.sessionId === target.id ? null : current));
@@ -664,7 +665,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   // 剪辑软件左上角那块：AI 对话一页、素材一页；点素材把它引用到对话里并回到对话
   const side = <View ref={sideRef} {...areaProps("outside", "e-box", "ai-panel", "ai-left")} style={[styles.left, { width: leftWidth }]}>
     {configOpen ? null : <View style={styles.tabs}>
-      <Segmented small value={leftTab} onChange={setLeftTab} options={[{ label: "AI 对话", value: "chat" }, { label: media.length ? `素材 ${media.length}` : "素材", value: "media" }]} />
+      <Segmented small value={leftTab} onChange={setLeftTab} options={[{ label: "AI 对话", value: "chat" }, { label: media.length ? `素材 ${media.length}` : "素材", value: "media" }, { label: "剪映素材", value: "jianying" }]} />
     </View>}
     {filmUpload !== null || importingFilm ? <View accessibilityLiveRegion="polite" style={styles.noticeBar}>
       <ActivityIndicator size="small" color={color.textMuted} />
@@ -689,6 +690,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
           }}
           onCancel={aiConfigReady(config) ? () => setConfigOpen(false) : undefined}
         /></View>
+      : leftTab === "jianying"
+        ? <CatalogShelf conn={conn} onPick={(text) => { setInput((value) => value.trim() ? `${value.trimEnd()} ${text}` : `用${text}`); setLeftTab("chat"); }} />
       : leftTab === "media"
         ? <MediaShelf
             media={media}
@@ -1170,6 +1173,73 @@ function AttachChip({ file, onRemove }: { file: AttachDraft; onRemove: () => voi
   </View>;
 }
 
+const CATALOG_KINDS: Array<{ label: string; value: AiEditCatalogKind }> = [
+  { label: "转场", value: "transition" }, { label: "滤镜", value: "filter" }, { label: "特效", value: "video_effect" },
+  { label: "入场动画", value: "video_intro" }, { label: "出场动画", value: "video_outro" }, { label: "组合动画", value: "video_group" },
+  { label: "文字入场", value: "text_intro" }, { label: "文字出场", value: "text_outro" }, { label: "文字循环", value: "text_loop" },
+  { label: "字体", value: "font" }, { label: "音效", value: "audio_effect" }, { label: "蒙版", value: "mask" }, { label: "混合模式", value: "mix_mode" },
+];
+
+// 剪映的会员状态只在它自己的加密缓存和进程里，读不到，让用户自己勾「只看免费」并记住。
+// 勾了，发消息时带上，AI 也不用会员效果；没勾（默认）全都能用
+const CATALOG_FREE_KEY = "dy2.aiEditCatalogFree";
+function readCatalogFree(): boolean {
+  try { return globalThis.localStorage?.getItem(CATALOG_FREE_KEY) === "1"; } catch { return false; }
+}
+
+// 剪映左上角转场、滤镜、特效那几栏：列出 AI 能写进草稿的剪映内置效果，点一个把名字写进对话框。
+// ponytail: 目录里没有预览图，只列名字；要缩略图得从剪映的资源接口按 resource_id 取
+function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text: string) => void }) {
+  const [kind, setKind] = useState<AiEditCatalogKind>("transition");
+  const [query, setQuery] = useState("");
+  const [free, setFree] = useState(readCatalogFree);
+  const toggleFree = () => {
+    setFree(!free);
+    try { globalThis.localStorage?.setItem(CATALOG_FREE_KEY, free ? "0" : "1"); } catch { /* 记不住就只管这一次 */ }
+  };
+  const [found, setFound] = useState<{ total: number; items: AiEditCatalogItem[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const timer = setTimeout(() => searchAiEditCatalog(conn, kind, query.trim(), free)
+      .then((value) => { if (live) { setFound(value); setFailed(false); } }, () => { if (live) setFailed(true); }), query ? 250 : 0);
+    return () => { live = false; clearTimeout(timer); };
+  }, [conn, kind, query, free]);
+  const label = CATALOG_KINDS.find((item) => item.value === kind)?.label ?? "";
+  return <View style={styles.shelf}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.catalogKinds}>
+      {CATALOG_KINDS.map((item) => {
+        const on = item.value === kind;
+        return <Pressable key={item.value} accessibilityRole="tab" accessibilityState={{ selected: on }} onPress={() => setKind(item.value)} style={[styles.chip, on && styles.chipOn, webPointer]}>
+          <Text style={[styles.chipText, on && { color: color.accent }]}>{item.label}</Text>
+        </Pressable>;
+      })}
+    </ScrollView>
+    <View style={styles.shelfHead}>
+      <TextInput value={query} onChangeText={setQuery} placeholder={`搜${label}的名字`} placeholderTextColor={color.textMuted} style={[styles.input, styles.catalogSearch]} />
+      <Pressable accessibilityRole="checkbox" aria-checked={free} onPress={toggleFree} style={[styles.chip, free && styles.chipOn, webPointer]}>
+        {free ? <Check size={12} color={color.accent} /> : null}
+        <Text style={[styles.chipText, free && { color: color.accent }]}>只看免费</Text>
+      </Pressable>
+    </View>
+    {failed ? <Text style={[kit.muted, styles.shelfEmpty]}>剪映素材没读到，采集器可能是旧版本，重启应用后再试。</Text>
+      : !found ? <ActivityIndicator size="small" color={color.textMuted} style={{ marginTop: 20 }} />
+      : found.items.length ? <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.shelfGrid}>
+        {found.items.map((item) => {
+          const name = item.display ?? item.name;
+          return <Pressable key={item.name} accessibilityRole="button" accessibilityLabel={`把${label}「${name}」写进对话框`} onPress={() => onPick(`${label}「${name}」`)} style={[styles.catalogTile, webPointer]}>
+            <Text numberOfLines={2} style={styles.catalogName}>{name}</Text>
+            {item.vip ? <Text style={styles.vipTag}>会员</Text> : null}
+          </Pressable>;
+        })}
+      </ScrollView>
+      : <Text style={[kit.muted, styles.shelfEmpty]}>{query.trim() ? `没找到叫这个的${label}，换个词试试。` : `剪映里没有免费的${label}，关掉「只看免费」能看到会员的。`}</Text>}
+    {found && !failed ? <Text style={[kit.muted, styles.shelfEmpty]}>
+      {found.total > found.items.length ? `${label}一共有 ${found.total} 个，这里先列前 ${found.items.length} 个，搜名字能找得更快。` : free ? "点一个就把名字写进对话框。勾着「只看免费」时，AI 也不会用会员效果。" : "点一个就把名字写进对话框，再跟 AI 说用在哪一段。"}
+    </Text> : null}
+  </View>;
+}
+
 /** 用户气泡上方附的图：素材删了读不出来就画个图标 */
 function SentImage({ url, name }: { url: string | null; name: string }) {
   const [failed, setFailed] = useState(false);
@@ -1429,6 +1499,12 @@ const styles = StyleSheet.create({
   shelfEmpty: { paddingHorizontal: 12, paddingVertical: 6 },
   chip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   chipText: { color: color.text, fontFamily: font.body, fontSize: 11, fontWeight: "600" },
+  chipOn: { borderColor: color.accent, backgroundColor: color.accentSoft },
+  catalogKinds: { flexDirection: "row", gap: 5, paddingHorizontal: 12 },
+  catalogSearch: { minHeight: 30, paddingVertical: 5, fontSize: 12 },
+  catalogTile: { width: "47%", minHeight: 44, justifyContent: "center", paddingHorizontal: 8, paddingVertical: 6, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
+  catalogName: { color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 16 },
+  vipTag: { position: "absolute", top: 2, right: 3, color: color.accent, fontFamily: font.body, fontSize: 9, fontWeight: "700" },
   card: { width: "47%", gap: 2, position: "relative" },
   thumb: { width: "100%", aspectRatio: 16 / 10, overflow: "hidden", borderRadius: radius.small, position: "relative" },
   thumbEmpty: { alignItems: "center", justifyContent: "center", backgroundColor: color.surfaceMuted },
