@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { browserDirectories, connectExternalBrowser } from "../collector/browserConnection.mjs";
 import { startCollectorServer } from "../collector/server.mjs";
+import { electronFilmProvider } from "./filmWindow.mjs";
 import { createAppUpdateController } from "./appUpdater.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
 import { startStaticServer } from "./staticServer.mjs";
@@ -297,6 +298,8 @@ async function startDesktopRuntime() {
     // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
     browserSources: [{ id: "app", label: "应用内登录", inApp: true }, ...browserDirectories()],
     browserConnector: (source, options) => (source.inApp ? connectInApp(source, options) : connectExternalBrowser(source)),
+    // AI 剪辑的网页片段、本机出片用应用自己的隐藏窗口画
+    filmBrowser: electronFilmProvider({ BrowserWindow }),
   });
   try {
     const rootDirectory = path.join(projectDirectory, "dist");

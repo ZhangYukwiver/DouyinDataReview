@@ -981,7 +981,8 @@ const Clip = memo(function Clip({ segment, pxPerUs, mediaById, mediaUrl, reach, 
   const title = [label, `${formatClock(segment.timeline.start_us)} 起，${spokenDuration(segment.timeline.duration_us)}`, ...extras, hint].join("\n");
   // 画面：视频取几帧缩略图，图片平铺；取不到就留现在的纯色块
   const pictureUrl = web && item?.status === "ready" && (segment.kind === "video" || segment.kind === "image") ? mediaUrl(item.id) : null;
-  const count = segment.kind === "video" && pictureUrl ? filmstripCount(settled.width) : 0;
+  // 带透明的网页片段底下是 PNG 编码的 MOV，浏览器解不了，不取缩略图
+  const count = segment.kind === "video" && pictureUrl && !(item?.source.type === "page" && item.source.transparent) ? filmstripCount(settled.width) : 0;
   const source = segment.kind === "video" ? segment.source : null;
   const times = useMemo(() => (source ? filmstripTimes(source, count) : []), [source, count]);
   const frames = useFilmstrip(count ? item?.id ?? null : null, count ? pictureUrl : null, times);

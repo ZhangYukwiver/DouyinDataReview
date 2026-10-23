@@ -54,6 +54,7 @@ import { LOOK_UNAVAILABLE, lookMaterials, seesNoImages, seesNoVideo, videoRefuse
 //   remove_subtitles        removeSubtitleGroup
 //   export_to_jianying      mediaInfos + 草稿箱 createDraft / repairDraft
 // 宿主内部用、不给模型：createProject（新建会话）、deleteProject（删会话）、listProjects（不需要，会话就是工程列表）。
+// 网页片段（openfilm 的页面，film/pages.mjs）：write_page 写好渲成素材、read_page 读回 HTML。
 // 另外几个不碰工程的工具：list_media、search_my_records、import_douyin_video、search_catalog，
 // 以及参考视频用的 search_douyin（探索的抖音搜索）和 analyze_reference（用 AI 剪辑自己的模型看视频，提示词借用解析库的）。
 
@@ -238,7 +239,8 @@ function mediaForModel(item) {
     duration: item.kind === "image" ? null : seconds(item.durationUs),
     ...(item.width ? { size: `${item.width}×${item.height}` } : {}),
     ...(item.kind === "video" ? { has_audio: item.hasAudio } : {}),
-    from: item.source?.type === "douyin" ? `抖音${item.source.author ? ` @${item.source.author}` : ""}` : "本机文件",
+    from: item.source?.type === "douyin" ? `抖音${item.source.author ? ` @${item.source.author}` : ""}` : item.source?.type === "page" ? "网页片段" : "本机文件",
+    ...(item.source?.type === "page" && item.source.pageId ? { page_id: item.source.pageId, transparent: Boolean(item.source.transparent) } : {}),
   };
 }
 
@@ -250,7 +252,8 @@ function mediaLine(item) {
   const size = item.width ? `${item.width}×${item.height}` : "尺寸未知";
   const audio = item.kind === "video" ? (item.hasAudio ? "有声音" : "无声音") : "";
   const state = item.status === "ready" ? "" : item.status === "importing" ? "（还在导入）" : `（导入失败：${item.error ?? "原因不明"}）`;
-  return `- ${item.id}｜${kind}｜${item.name}｜${length}｜${size}${audio ? `｜${audio}` : ""}${state}`;
+  const page = item.source?.type === "page" ? `｜网页片段${item.source.pageId ? ` page_id ${item.source.pageId}` : "（导入的工程）"}${item.source.transparent ? "，透明底" : ""}` : "";
+  return `- ${item.id}｜${kind}｜${item.name}｜${length}｜${size}${audio ? `｜${audio}` : ""}${page}${state}`;
 }
 
 /**
@@ -290,6 +293,12 @@ export function buildSystemPrompt({ project, media, goal = "" }) {
     "- 画布以上面写的为准，用户可能已经在界面上选好了比例，没被要求就别改。用户在对话里要横屏、竖屏、方形、16:9，或者说要发到 B 站、YouTube 这类横屏平台，先用 set_canvas 改好画布再排时间线；当前是竖屏而素材大多横拍时，在回复里提一句可以改成横屏。改了画布，用 arrange_grid 排过的分屏会自动按新画布重排。",
     "- add_subtitles 建的字幕轨（时间线里标着 subtitles: true）只能整组加、删；已有的字幕可以用 update_clip 逐条改，但不能往字幕轨上单独加片段，要加标题或单独一句文字就另建一条文字轨道。",
     "- 每个片段的入场、出场、组合（文字是循环）动画各只能有一个，视频的组合动画不能和入场、出场同时用；音频片段的同类音效只能有一个。要换掉就先用 clear_clip_feature 去掉那一类再加。",
+    "- 剪映内置做不出或做不好的画面（标题字卡、动态大字、数字滚动、数据图表、倒计时、进度条、片头片尾、带动画的字幕条），用 write_page 写网页片段，再用 add_media_clip 放上时间线。网页片段的写法（openfilm 页面约定）：",
+    "  · 一个完整的 HTML 文件，脚本里定义 window.film = { duration: 秒数, frame(t) { … } }。frame(t) 按 t 把那一刻的画面整个画出来：同一个 t 永远画出同一个画面，不管之前画过什么、按什么顺序画。",
+    "  · 动画全按 t 算（自己写缓动，比如 const p = Math.min(1, t / 0.6); const e = 1 - (1 - p) ** 3）。不要 setInterval、setTimeout、自己跑 requestAnimationFrame 循环、Date.now、累加的变量；用 GSAP 就建暂停的 timeline、所有补间用 fromTo，在 frame 里 tl.seek(t)；CSS 动画会被应用停在 t 那一刻。",
+    "  · 画面大小就是页面视口（innerWidth × innerHeight，默认等于工程画布），按它排版，字号用 px 按画布算（1080 宽的竖屏标题大约 90–140px）。叠在视频上的 transparent 填 true、html/body 背景透明；不透明的自己把背景画满。",
+    "  · 只用系统字体（\"PingFang SC\", \"Microsoft YaHei\", sans-serif），别引网络字体和网上的图片（会加载失败）；脚本库只能从 cdn.jsdelivr.net、cdnjs.cloudflare.com、unpkg.com 引。页面没有声音，配乐和音效另外放音频片段。",
+    "  · write_page 返回 problems 时（脚本报错、加载失败、画面重画一次就不一样）要改好再用。改已有的网页片段先 read_page 读出来，改完带上同一个 page_id 再 write_page，时间线上的片段会自动换成新画面。",
     "- 特效、滤镜、转场、动画、蒙版、混合模式、字体只能用剪映内置的名称：先用 search_catalog 查到准确名称再用，不要自己编。尽量挑不需要会员的（vip 为 false）。",
     "- 工具返回 ok:false 时，读 message 和 details 改正参数再试（报错里带 _us 的字段是微秒，对应你给的秒数参数）；不要把同样的错误调用重复好几次。",
     "- 用户只是聊天或提问时不用动时间线。要求不清楚时先按最合理的理解做出来，再告诉用户可以怎么调。只有猜错就得推倒重来的岔路才先问，比如复刻是逐个镜头照着仿还是只学节奏、素材明显分成几类却不知道要用哪类：这时先别动时间线，带上 2 到 3 个选项问一句就收尾。list_media、search_my_records 查得到的别问；画布以界面上选的为准，不要问横屏还是竖屏。",
@@ -1104,6 +1113,29 @@ const TOOLS = [
     parameters: obj({ media_id: str("素材库里音频或视频的 media_id") }, ["media_id"]),
     label: (args, ctx) => `测了配乐节拍${quoted(ctx.library.get(args.media_id)?.name ?? "", 16)}`,
     run: async (ctx, args) => detectBeats(ctx, args),
+  },
+  {
+    name: "write_page",
+    description: "写一个网页片段（openfilm 的页面）：用 HTML/CSS/JS 画标题字卡、动态大字、数据图表、倒计时、进度条、片头片尾这类剪映内置做不出或做不好的画面，"
+      + "应用把它渲成视频放进素材库，返回 media_id，再用 add_media_clip 放进视频轨道（要叠在视频上就放在更上层的轨道）。"
+      + "改已有的网页片段时带上 page_id 再调一次，时间线上用到它的片段自动换成新画面。页面写法见系统提示里的「网页片段」。",
+    parameters: obj({
+      page_id: str("改已有的网页片段时填它的 page_id（list_media 和素材库里能看到）；新建不填"),
+      title: str("片段名字，素材库里显示，15 字以内"),
+      html: str("完整的 HTML 文件内容：必须定义 window.film = { duration, frame(t) { … } }，frame(t) 只按 t 画出那一刻的完整画面"),
+      duration: num("时长（秒，最长 60），不填就用页面里写的 window.film.duration", { exclusiveMinimum: 0, maximum: 60 }),
+      transparent: bool("要叠在视频上面（字卡、贴片、字幕条）填 true，页面背景要透明；自己画满整个画面的填 false（默认）"),
+    }, ["title", "html"]),
+    media: true,
+    label: (args) => `${args.page_id ? "改了" : "写了"}网页片段${quoted(args.title, 16)}`,
+    run: async (ctx, args) => ctx.pages.write(args),
+  },
+  {
+    name: "read_page",
+    description: "读一个网页片段现在的 HTML，改之前先读出来在它的基础上改。",
+    parameters: obj({ page_id: str("网页片段的 page_id") }, ["page_id"]),
+    label: () => "看了网页片段的代码",
+    run: async (ctx, args) => ({ html: await ctx.pages.read(args.page_id) }),
   },
   {
     name: "search_catalog",

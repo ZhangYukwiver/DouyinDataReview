@@ -276,6 +276,43 @@ export class MediaLibrary {
     return publicItem(item);
   }
 
+  /**
+   * 应用自己生成的文件（渲好的网页片段）：素材库目录里的临时文件挪成素材文件。id 给了就是重新生成同一个素材，原地换掉文件
+   * （工程里存的路径不变，时间线上用到它的片段跟着换）。
+   */
+  async adopt(temp, { id = null, name, extension, source }) {
+    const existing = id ? this.get(id) : null;
+    if (!existing) this.assertRoom();
+    const item = existing ?? this.newItem({ name, kind: "video", file: "", source });
+    item.file = `${item.id}${extension}`;
+    await renameRetrying(temp, this.filePath(item));
+    Object.assign(item, { name, source, ...(await this.describe(item)), status: "ready", error: null });
+    await this.put(item);
+    return publicItem(item);
+  }
+
+  /** 本机文件夹里的文件（导入的工程）：复制进素材库。同一个文件导入两遍就是两个素材。 */
+  async importFile(filePath, name = path.basename(filePath)) {
+    const extension = path.extname(filePath).toLowerCase();
+    try { this.kindOf(`media${extension}`); }
+    catch { throw new AiEditError("media_type_unsupported", `“${cleanName(name)}”这种文件格式不能当素材。`, 422); }
+    this.assertRoom();
+    const item = this.newItem({ name: cleanName(name) || `素材${extension}`, kind: this.kindOf(`media${extension}`), file: "", source: { type: "local" } });
+    item.file = `${item.id}${extension}`;
+    const partial = `${this.filePath(item)}.part`;
+    try {
+      await copyFile(filePath, partial, constants.COPYFILE_FICLONE);
+      await renameRetrying(partial, this.filePath(item));
+      Object.assign(item, await this.describe(item), { status: "ready" });
+    } catch (error) {
+      await rm(partial, { force: true }).catch(() => undefined);
+      await rm(this.filePath(item), { force: true }).catch(() => undefined);
+      throw error instanceof AiEditError ? error : new AiEditError("media_unreadable", `“${item.name}”复制不进素材库。`, 422);
+    }
+    await this.put(item);
+    return publicItem(item);
+  }
+
   /** 从内容库导入一条抖音视频：采集器下载完后复制进素材库。同一条链接导入过就直接用那条。 */
   async importDouyin(input) {
     let url;

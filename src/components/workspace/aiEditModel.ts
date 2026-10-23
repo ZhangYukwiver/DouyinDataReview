@@ -726,10 +726,15 @@ function textRows(segment: EditTextSegment): ClipDetailRow[] {
  */
 export function clipDetail(
   segment: EditSegment,
-  options: { mediaName?: string | null; track?: Pick<EditTrack, "name" | "track_type" | "kind" | "mute"> & { segments?: readonly EditSegment[] } } = {},
+  options: {
+    mediaName?: string | null; track?: Pick<EditTrack, "name" | "track_type" | "kind" | "mute"> & { segments?: readonly EditSegment[] };
+    /** 素材是网页片段（openfilm 的页面）：透明底的叠在下面的轨道上 */
+    page?: { transparent: boolean } | null;
+  } = {},
 ): ClipDetail {
   const { track } = options;
   const rows: ClipDetailRow[] = [];
+  if (options.page) rows.push({ label: "网页片段", value: options.page.transparent ? "透明底，叠在下面的画面上；看板上实时画，导入剪映用渲好的视频" : "整屏画面；看板上实时画，导入剪映用渲好的视频" });
   if (track) rows.push({ label: "所在轨道", value: trackLabel(track) });
   rows.push({ label: "时间线上", value: `${secondMark(segment.timeline.start_us)}到${secondMark(end(segment.timeline))}` });
   rows.push({ label: "时长", value: spokenDuration(segment.timeline.duration_us) });

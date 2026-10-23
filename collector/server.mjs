@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { createAiEdit } from "./aiEdit/index.mjs";
+import { chromeProvider } from "./aiEdit/film/browser.mjs";
 import { createLocalAi } from "./localAi.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
@@ -224,6 +225,8 @@ export async function startCollectorServer({
   signerDirectory,
   browserSources = browserDirectories(),
   browserConnector = connectExternalBrowser,
+  // 网页片段逐帧渲染用的浏览器：桌面版传 Electron 的隐藏窗口，单独跑时用本机 Chrome / Edge
+  filmBrowser = chromeProvider(),
 } = {}) {
   const options = { lan, port, origins };
   await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
@@ -267,7 +270,10 @@ export async function startCollectorServer({
     getCollector: () => (switching ? null : collector),
     busyReason: () => (explorer.busy ? "请等待当前探索操作完成后继续。" : null),
     getExplorer: () => (switching ? null : explorer),
+    filmBrowser,
+    getOrigin: () => origin,
   });
+  let origin = null;
   // 账号操作（切换、新建、删除）一次只做一个；切换期间旧采集器在关、新的还没接上
   let accountWork = null;
   let switching = false;
@@ -974,6 +980,7 @@ export async function startCollectorServer({
     await shutdown();
     throw new Error("采集服务未能分配 TCP 端口。");
   }
+  origin = `http://127.0.0.1:${address.port}`;
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     dataDirectory,
