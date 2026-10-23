@@ -249,8 +249,11 @@ export interface AiEditHistoryStep { id: string; kind: AiEditStepKind; label: st
 
 export interface AiEditSessionState { session: AiEditSession; project: EditProject }
 
-/** 采集器没有解码器，参考视频的镜头截图、闪白和配乐节拍由页面在浏览器里拆好交回。url 是采集器上的路径，访问时带素材 key。 */
-export interface AiEditLookJob { id: string; kind: "reference" | "beats"; url: string; name?: string; claimed?: boolean }
+/**
+ * 采集器没有解码器，参考视频的镜头截图、闪白和配乐节拍由页面在浏览器里拆好交回；解析库的视频太大发不出去时也由页面压一份小的（squeeze，压到 bytes 以内）。
+ * url 是采集器上的路径，访问时带素材 key。
+ */
+export interface AiEditLookJob { id: string; kind: "reference" | "beats" | "squeeze"; url: string; name?: string; bytes?: number; claimed?: boolean }
 
 export interface AiEditMediaItem {
   id: string;

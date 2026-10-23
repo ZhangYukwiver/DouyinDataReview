@@ -38,7 +38,7 @@ export interface VideoAnalysis {
   id: string;
   sourceUrl: string;
   status: "running" | "complete" | "failed";
-  stage: "downloading" | "analyzing" | "looking" | null;
+  stage: "downloading" | "analyzing" | "looking" | "squeezing" | null;
   /** 模型看不了视频时，采集器请这个页面在浏览器里拆视频（截图、节拍） */
   look?: AiEditLookJob;
   video: AnalysisVideo | null;

@@ -20,6 +20,7 @@ type Props = { connection: ExploreConnection | null; onOpenRecord: (url: string)
 
 const stageText = (item: VideoAnalysis) => item.status === "failed" ? "没解析成功"
   : item.status === "complete" ? "已解析" : item.stage === "looking" ? "正在把视频拆成截图和节拍…"
+    : item.stage === "squeezing" ? "视频太大，接口收不下，正在压缩一份小的…"
     : item.stage === "analyzing" ? "AI 正在看视频…" : "正在下载视频…";
 
 // 测模型能不能看视频：整个页面共用，切走再回来不重复测（「地址|模型|Key」）
@@ -266,7 +267,7 @@ function Detail({ item, onRetry, onRemove, onOpen }: { item: VideoAnalysis; onRe
       <SmallButton label="重新解析" disabled={item.status === "running"} onPress={onRetry}><RefreshCw size={14} color={color.text} /></SmallButton>
       <SmallButton label="删除" disabled={item.status === "running"} onPress={onRemove}><Trash2 size={14} color={color.text} /></SmallButton>
     </View>
-    {item.status === "running" ? <View style={kit.row}><ActivityIndicator color={color.cyan} /><Text style={kit.body}>{stageText(item)}{item.stage === "looking" ? "这一步要开着应用（切到别的页面没关系），拆完再交给 AI。" : "一条一般要几分钟，视频越长越久，可以先去看别的。"}</Text></View> : null}
+    {item.status === "running" ? <View style={kit.row}><ActivityIndicator color={color.cyan} /><Text style={kit.body}>{stageText(item)}{item.stage === "looking" ? "这一步要开着应用（切到别的页面没关系），拆完再交给 AI。" : item.stage === "squeezing" ? "这一步要开着应用（切到别的页面没关系），压完再交给 AI。" : "一条一般要几分钟，视频越长越久，可以先去看别的。"}</Text></View> : null}
     {item.error ? <ErrorLine text={item.markdown ? `${item.error}下面是上一次的结果。` : item.error} /> : null}
     {item.markdown ? <Markdown text={item.markdown} /> : null}
   </View>;
