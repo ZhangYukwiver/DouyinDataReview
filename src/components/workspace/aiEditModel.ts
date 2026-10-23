@@ -568,7 +568,13 @@ export function findSegment(project: Pick<EditProject, "tracks"> | null | undefi
   return null;
 }
 
-export interface ClipDetailRow { label: string; value: string; /** 颜色小方块（文字颜色、描边、纯色背景这类），rgba() 写法 */ swatch?: string }
+export interface ClipDetailRow {
+  label: string; value: string;
+  /** 颜色小方块（文字颜色、描边、纯色背景这类），rgba() 写法 */
+  swatch?: string;
+  /** 挂着的效果：clear_clip_feature 的 feature，详情卡上给一个「去掉」 */
+  feature?: string;
+}
 export interface ClipDetail { kind: string; title: string; rows: ClipDetailRow[] }
 
 const KIND_NAMES: Record<EditSegment["kind"], string> = {
@@ -628,6 +634,7 @@ function featureRows(segment: EditSegment, reach: TransitionReach): ClipDetailRo
     const name = `「${featureName(type)}」`;
     rows.push({
       label: "转场",
+      feature: "transition",
       value: reach === "last" ? `设了${name}，但这是这条轨道的最后一段，后面没有片段，转场不会出现`
         : reach === "gap" ? `设了${name}，但和下一段之间隔着空当，转场可能不会出现`
           : `和下一段之间用${name}，${duration ? spokenDuration(duration) : "时长按剪映默认"}`,
@@ -638,32 +645,32 @@ function featureRows(segment: EditSegment, reach: TransitionReach): ClipDetailRo
       segment.fade.in_duration_us ? `开头淡入 ${spokenDuration(segment.fade.in_duration_us)}` : "",
       segment.fade.out_duration_us ? `结尾淡出 ${spokenDuration(segment.fade.out_duration_us)}` : "",
     ].filter(Boolean);
-    if (parts.length) rows.push({ label: "淡入淡出", value: parts.join("，") });
+    if (parts.length) rows.push({ label: "淡入淡出", value: parts.join("，"), feature: "fade" });
   }
-  if ("effects" in segment && segment.effects?.length) rows.push({ label: "特效", value: featureList(segment.effects.map((item) => ({ name: featureName(item.effect_type) }))) });
+  if ("effects" in segment && segment.effects?.length) rows.push({ label: "特效", value: featureList(segment.effects.map((item) => ({ name: featureName(item.effect_type) }))), feature: "effects" });
   if ("filters" in segment && segment.filters?.length) {
-    rows.push({ label: "滤镜", value: featureList(segment.filters.map((item) => ({ name: featureName(item.filter_type), extra: `强度 ${Math.round(item.intensity ?? 100)}%` }))) });
+    rows.push({ label: "滤镜", value: featureList(segment.filters.map((item) => ({ name: featureName(item.filter_type), extra: `强度 ${Math.round(item.intensity ?? 100)}%` }))), feature: "filters" });
   }
   if ("animations" in segment && segment.animations?.length) {
-    rows.push({ label: "动画", value: featureList(segment.animations.map((item) => ({ name: featureName(item.animation_type), extra: item.duration_us ? spokenDuration(item.duration_us) : null }))) });
+    rows.push({ label: "动画", value: featureList(segment.animations.map((item) => ({ name: featureName(item.animation_type), extra: item.duration_us ? spokenDuration(item.duration_us) : null }))), feature: "animations" });
   }
   if ("mask" in segment && segment.mask) {
     const mask = segment.mask as MaskSpec;
     const feather = Math.round(mask.feather ?? 0);
-    rows.push({ label: "蒙版", value: [featureName(mask.mask_type), feather > 0 ? `羽化 ${feather}%` : "", mask.invert ? "反转" : ""].filter(Boolean).join("，") });
+    rows.push({ label: "蒙版", value: [featureName(mask.mask_type), feather > 0 ? `羽化 ${feather}%` : "", mask.invert ? "反转" : ""].filter(Boolean).join("，"), feature: "mask" });
   }
   if ("chroma" in segment && segment.chroma) {
     const intensity = typeof segment.chroma.intensity === "number" ? Math.round(segment.chroma.intensity) : 20;
-    rows.push({ label: "抠像", value: `抠掉接近${colorName(segment.chroma.color)}的部分，强度 ${intensity}%`, swatch: rgba(segment.chroma.color) });
+    rows.push({ label: "抠像", value: `抠掉接近${colorName(segment.chroma.color)}的部分，强度 ${intensity}%`, swatch: rgba(segment.chroma.color), feature: "chroma" });
   }
   if ("background_filling" in segment && segment.background_filling) {
     const fill = segment.background_filling;
     if (fill.fill_type === "blur") {
       const blur = fill.blur ?? 0.0625;
-      rows.push({ label: "背景填充", value: `模糊背景，${blur <= 0.07 ? "轻度" : blur <= 0.4 ? "中度" : blur <= 0.8 ? "较重" : "最重"}模糊` });
-    } else rows.push({ label: "背景填充", value: `纯色背景，${colorName(fill.color ?? "#000000")}`, swatch: rgba(fill.color ?? "#000000") });
+      rows.push({ label: "背景填充", value: `模糊背景，${blur <= 0.07 ? "轻度" : blur <= 0.4 ? "中度" : blur <= 0.8 ? "较重" : "最重"}模糊`, feature: "background_filling" });
+    } else rows.push({ label: "背景填充", value: `纯色背景，${colorName(fill.color ?? "#000000")}`, swatch: rgba(fill.color ?? "#000000"), feature: "background_filling" });
   }
-  if ("mix_mode" in segment && segment.mix_mode) rows.push({ label: "混合模式", value: featureName(segment.mix_mode.mode) });
+  if ("mix_mode" in segment && segment.mix_mode) rows.push({ label: "混合模式", value: featureName(segment.mix_mode.mode), feature: "mix_mode" });
   return rows;
 }
 

@@ -380,7 +380,9 @@ export async function sendAiEditMessage(connection: ExploreConnection, id: strin
  * delete_clip、duplicate_clip { clip_id, start, track_id? }、update_track { track_id, mute }、reorder_tracks（全部轨道的完整顺序）。
  */
 export type AiEditClipEdit = "move_clip" | "update_clip" | "split_clip" | "delete_clip" | "duplicate_clip" | "update_track" | "reorder_tracks"
-  | "add_marker" | "remove_marker" | "add_subtitle_line";
+  | "add_marker" | "remove_marker" | "add_subtitle_line"
+  // 左栏「剪映素材」点了直接套上、属性卡里去掉
+  | "add_transition" | "add_filter" | "add_effect" | "add_animation" | "add_mask" | "set_mix_mode" | "clear_clip_feature";
 export interface AiEditEditCall { name: AiEditClipEdit; arguments: Record<string, unknown> }
 
 /** 看板上手动剪一下（挪、裁、切、删、复制、改文字和位置大小、静音、调轨道层级）；AI 正在剪或别的改动没做完时采集器会拒绝。 */
@@ -483,7 +485,8 @@ export async function answerAiEditLook(connection: ExploreConnection, sessionId:
 
 export type AiEditCatalogKind = "transition" | "filter" | "video_effect" | "video_intro" | "video_outro" | "video_group"
   | "text_intro" | "text_outro" | "text_loop" | "font" | "audio_effect" | "mask" | "mix_mode";
-export interface AiEditCatalogItem { name: string; display?: string; vip?: boolean; default_duration?: number }
+/** cover：剪映缓存里的预览图（在剪映里打开过那一栏素材才有） */
+export interface AiEditCatalogItem { name: string; display?: string; vip?: boolean; default_duration?: number; cover?: string }
 
 /** 剪映内置的转场、滤镜、特效、动画、字体……就是 AI 能写进草稿的那份目录；free 只要不用会员的。 */
 export async function searchAiEditCatalog(connection: ExploreConnection, kind: AiEditCatalogKind, query: string, free: boolean): Promise<{ total: number; items: AiEditCatalogItem[] }> {

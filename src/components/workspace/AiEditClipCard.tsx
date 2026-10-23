@@ -63,6 +63,10 @@ function ClipBody({ projectNow, iconOnly }: { projectNow: () => EditProject | nu
     await flushHeld();
     return runEdit("update_clip", { clip_id: segment.id, text });
   };
+  const clearFeature = async (feature: string) => {
+    await flushHeld();
+    return runEdit("clear_clip_feature", { clip_id: segment.id, feature });
+  };
   return <>
     <View style={styles.detailHead}>
       <View style={[styles.detailDot, { backgroundColor: clipTone(segment) }]} />
@@ -88,6 +92,11 @@ function ClipBody({ projectNow, iconOnly }: { projectNow: () => EditProject | nu
         <View style={styles.detailValueBox}>
           {row.swatch ? <View style={[styles.swatch, { backgroundColor: row.swatch }]} /> : null}
           <Text selectable style={styles.detailValue}>{row.value}</Text>
+          {row.feature && !lasting ? <WebTitle title={`去掉${row.label}`}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`去掉${row.label}`} hitSlop={6} onPress={() => void clearFeature(row.feature!)} style={[styles.rowRemove, webPointer]}>
+              <X size={11} color={color.textMuted} />
+            </Pressable>
+          </WebTitle> : null}
         </View>
       </View>)}
     </ScrollView>
@@ -474,6 +483,7 @@ const styles = StyleSheet.create({
   detailLabel: { width: 52, flexShrink: 0, color: color.textMuted, fontFamily: font.body, fontSize: 11, lineHeight: 17 },
   detailValueBox: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 6 },
   detailValue: { flex: 1, minWidth: 0, color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 17 },
+  rowRemove: { width: 17, height: 17, alignItems: "center", justifyContent: "center" },
   swatch: { width: 11, height: 11, marginTop: 3, borderRadius: 2, borderWidth: 1, borderColor: color.border },
   disabled: { opacity: 0.45 },
 });

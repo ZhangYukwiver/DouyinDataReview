@@ -825,7 +825,7 @@ describe("AI edit board edits", () => {
     expect(retitled.body.session.undo).toEqual({ label: "改文字“周末去海边”", kind: "edit" });
 
     // 只放开看板上的几种改动、update_clip 也只放开几项
-    for (const [name, args] of [["update_clip", { clip_id: clip, volume: 0.5 }], ["add_effect", { clip_id: clip, effect_type: "x" }], ["export_to_jianying", {}], ["move_clip", "x"]]) {
+    for (const [name, args] of [["update_clip", { clip_id: clip, volume: 0.5 }], ["add_fade", { clip_id: clip, fade_in: 1 }], ["add_transition", { clip_id: clip, transition_type: "叠化", duration: 2 }], ["export_to_jianying", {}], ["move_clip", "x"]]) {
       expect(await edit(name, args)).toEqual({ status: 422, body: { error: "edit_not_allowed", message: "这个改动不能在看板上做。" } });
     }
     const split = await edit("split_clip", { clip_id: clip, offset: 0.4 });
@@ -870,6 +870,32 @@ describe("AI edit board edits", () => {
     expect(userContents(requests[1]).at(-2)).toBe("再看看");
     expect(await checkpointFiles(directory, session.id)).toHaveLength(6);
   }, 20_000);
+
+  it("applies Jianying effects picked from the catalog to a clip and takes them off again", async () => {
+    const context = await startBoard();
+    const { call } = context;
+    const { session, clip, title } = await boardSession(context);
+    const edit = (name, args) => call(`/v1/ai-edit/sessions/${session.id}/edit`, { method: "POST", body: { name, arguments: args } });
+    const segmentOf = (response, id) => response.body.project.tracks.flatMap((track) => track.segments).find((segment) => segment.id === id);
+
+    const transition = await edit("add_transition", { clip_id: clip, transition_type: "叠化" });
+    expect(segmentOf(transition, clip).transition).toMatchObject({ transition_type: "叠化" });
+    expect(transition.body.session.undo).toEqual({ label: "给视频“海边.mp4”加转场「叠化」", kind: "edit" });
+    // 名字用剪映里显示的说法；看板上不管「只看免费」，会员的也能套
+    expect((await edit("add_effect", { clip_id: clip, effect_type: "_1998" })).body.session.undo.label).toBe("给视频“海边.mp4”加特效「1998」");
+    expect((await edit("add_filter", { clip_id: clip, filter_type: "冷白" })).status).toBe(200);
+    expect((await edit("add_transition", { clip_id: clip, transition_type: "叠化扭曲" })).status).toBe(200);
+    const font = await edit("update_clip", { clip_id: title, font_family: "A1明朝" });
+    expect(segmentOf(font, title).font_family).toBe("A1明朝");
+    expect(font.body.session.undo.label).toBe("换文字“周末去海边”的字体");
+    // 剪映的规则照旧拦：文字片段不能加画面特效
+    expect((await edit("add_effect", { clip_id: title, effect_type: "_1998" })).status).toBe(422);
+
+    const cleared = await edit("clear_clip_feature", { clip_id: clip, feature: "transition" });
+    expect(segmentOf(cleared, clip).transition ?? null).toBeNull();
+    expect(cleared.body.session.undo.label).toBe("去掉视频“海边.mp4”的转场");
+    expect(segmentOf(cleared, clip).effects).toHaveLength(1);
+  });
 
   it("adds, renames and moves markers and adds a subtitle line from the timeline toolbar, with a named batch", async () => {
     const context = await startBoard();
@@ -1370,7 +1396,7 @@ describe("AI edit redo, history and batches on the board", () => {
     // 请求不对的整批不做
     expect(await post("edit", { edits: [] })).toMatchObject({ status: 422, body: { error: "edit_not_allowed" } });
     expect(await post("edit", { edits: "x" })).toMatchObject({ status: 422, body: { error: "edit_not_allowed" } });
-    expect(await batch([["move_clip", { clip_id: clip, start: 1 }], ["add_effect", { clip_id: clip, effect_type: "x" }]])).toMatchObject({ status: 422, body: { error: "edit_not_allowed" } });
+    expect(await batch([["move_clip", { clip_id: clip, start: 1 }], ["add_fade", { clip_id: clip, fade_in: 1 }]])).toMatchObject({ status: 422, body: { error: "edit_not_allowed" } });
     expect(await batch(Array.from({ length: 201 }, () => ["move_clip", { clip_id: clip, start: 1 }]))).toEqual({ status: 422, body: { error: "too_many_edits", message: "一次最多改 200 处。" } });
     expect(startOf((await current()).project, clip)).toBe(19_000_000);
 

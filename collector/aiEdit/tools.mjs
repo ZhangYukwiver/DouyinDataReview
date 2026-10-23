@@ -432,8 +432,8 @@ function captionsToSrt(captions) {
   }).join("\n\n");
 }
 
-// 模型查一次最多 50 条；剪辑页左栏「剪映素材」翻得多，传更大的上限
-export function searchCatalog({ kind, query = "", limit = 20, free = false }, maxLimit = 50) {
+// 模型查一次最多 50 条；剪辑页左栏「剪映素材」翻得多，传更大的上限，再带上 cover（按资源 id 找剪映缓存里的预览图）
+export function searchCatalog({ kind, query = "", limit = 20, free = false }, { maxLimit = 50, cover = null } = {}) {
   const config = Object.hasOwn(CATALOG_KINDS, kind) ? CATALOG_KINDS[kind] : null;
   if (!config) throw new AiEditError("arguments_invalid", `kind 只能是 ${Object.keys(CATALOG_KINDS).join("、")}。`);
   const key = (value) => String(value ?? "").replace(/[\s_]+/gu, "").toLowerCase();
@@ -453,6 +453,7 @@ export function searchCatalog({ kind, query = "", limit = 20, free = false }, ma
         ...(member.meta.params?.length ? { params: member.meta.params.map((param) => param.name) } : {}),
         ...(member.meta.default_duration ? { default_duration: seconds(member.meta.default_duration) } : {}),
         ...(member.meta.duration ? { default_duration: seconds(member.meta.duration) } : {}),
+        ...(cover?.(member.meta) ? { cover: cover(member.meta) } : {}),
       };
     }),
     ...(found.length > size ? { note: "结果太多，只列了前面一部分，换个更具体的关键词再查。" } : {}),
