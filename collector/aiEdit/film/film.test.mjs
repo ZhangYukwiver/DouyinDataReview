@@ -114,6 +114,22 @@ describe("film", () => {
       expect((await fetch(`${origin}/v1/ai-edit/film/wrong/pages/p1/index.html`)).status).toBe(404);
       expect((await fetch(`${files.urlFor(origin, "pages")}/..%2Fsecret.json`)).status).toBe(404);
       expect(await (await fetch(files.urlFor(origin, "renders/x/__film/timeline.mjs"))).text()).toBe(await readFile(new URL("./vendor/timeline.mjs", import.meta.url), "utf8"));
+
+      // 第二条策略按这次请求的地址生成、只到这个 key：看板按 localhost 开的页面照样能读自己文件夹里的文件
+      const policyFor = (host, file = "pages/p1/index.html") => new Promise((done, fail) => {
+        http.get({ host: "127.0.0.1", port: server.address().port, path: new URL(files.urlFor(origin, file)).pathname, headers: { host } }, (response) => {
+          response.resume();
+          done(response.headers["content-security-policy"]);
+        }).on("error", fail);
+      });
+      const folder = `/v1/ai-edit/film/${files.key}/`;
+      const local = await policyFor(`localhost:${server.address().port}`);
+      expect(local).toContain(`, connect-src http://localhost:${server.address().port}${folder} data: blob: `);
+      expect(local).not.toContain("127.0.0.1");
+      // Host 不像个地址就把本机的写法都列上
+      expect(await policyFor("evil.example;img-src *")).toContain(`, connect-src http://127.0.0.1:*${folder} http://localhost:*${folder} data: blob: `);
+      // 编码页：只跑自己的脚本，只读截图和这个文件夹下的声音
+      expect(await policyFor(`127.0.0.1:${server.address().port}`, "__encoder.html")).toBe(`default-src 'none'; script-src 'unsafe-inline'; connect-src http://127.0.0.1:${server.address().port}${folder} data:`);
     } finally {
       server.close();
     }

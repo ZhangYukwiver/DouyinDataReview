@@ -38,7 +38,11 @@ describe("SessionStore", () => {
     first.streaming = { text: "半句", actions: [] };
     await sessions.touch(first, { persist: true });
     expect(sessions.list().map((item) => item.id)).toEqual([first.id, second.id]);
-    expect(sessions.list()[0]).toEqual({ id: first.id, title: "第一个", createdAt: first.createdAt, updatedAt: first.updatedAt, status: "idle", projectId: "p1", draftBox: null });
+    expect(sessions.list()[0]).toEqual({ id: first.id, title: "第一个", createdAt: first.createdAt, updatedAt: first.updatedAt, status: "idle", projectId: "p1", draftBox: null, awaitingSpend: false });
+    // 这一轮挂着花钱确认：会话菜单要标出来
+    first.streaming.spend = { id: "a".repeat(16), kind: "video" };
+    expect(sessions.list()[0].awaitingSpend).toBe(true);
+    delete first.streaming.spend;
 
     const saved = JSON.parse(await readFile(path.join(directory, `${first.id}.json`), "utf8"));
     expect(saved.history).toEqual([{ role: "user", content: "hi" }]);

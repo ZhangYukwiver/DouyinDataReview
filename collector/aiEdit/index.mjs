@@ -12,13 +12,15 @@ import { parseAttachments, describeAttachments } from "./attachments.mjs";
 import { runCliConversation } from "./cliTurn.mjs";
 import { EditError } from "./errors.mjs";
 import { createFilmStudio } from "./film/studio.mjs";
+import { backgroundNote, parseGenerateConfig } from "./generate.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
 import { displayName } from "./catalog.mjs";
 import { createCoverIndex } from "./jianyingCovers.mjs";
 import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, revertTarget, sessionDetail } from "./sessions.mjs";
+import { createSpendDesk } from "./spend.mjs";
 import {
-  TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, describeToolError, micros, probeVideoInput, projectDurationUs, rearrangeGrids, searchCatalog, seconds, trackLabel,
+  buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, describeToolError, micros, probeVideoInput, projectDurationUs, rearrangeGrids, searchCatalog, seconds, toolsFor, trackLabel,
 } from "./tools.mjs";
 
 // AI 剪辑在采集器里的入口：会话、工程、素材库、对话循环和导入剪映草稿箱的 HTTP 接口。
@@ -30,8 +32,8 @@ const DEFAULT_CANVAS = { width: 1080, height: 1920, fps: 30 };
 // 消息里最多带 4 张图的预览（每张 400KB 以内，base64 以后约 540KB）
 const MESSAGE_BODY_BYTES = 2_560 * 1024;
 const BODY_BYTES = 16 * 1024;
-// 页面交回的参考视频截图：最多 40 张小 JPEG
-const LOOK_BODY_BYTES = 24 * 1024 * 1024;
+// 页面交回的参考视频截图（最多 40 张小 JPEG），或者压好的视频（转写字幕时，base64 后约 60MB；和解析库那条路由一样放到 96MB）
+const LOOK_BODY_BYTES = 96 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 20_000;
 const MAX_GOAL_CHARS = 2_000;
 const pickCanvas = (body) => Object.fromEntries(["width", "height", "fps"].filter((key) => body?.[key] !== undefined).map((key) => [key, body[key]]));
@@ -481,6 +483,8 @@ export function createAiEdit({
   // 导出工程、出 MP4、导入工程：会话 id → { controller, promise }
   const outputs = new Map();
   let closing = false;
+  // 采集器关掉时放弃后台的活儿（停止后接着等的生成视频）
+  const shutdown = new AbortController();
   let state = null;
 
   const init = async () => {
@@ -505,7 +509,7 @@ export function createAiEdit({
     // 素材导入完成或失败时叫醒各会话的长轮询，页面跟着刷新素材栏
     library.subscribe(() => { for (const session of sessions.sessions.values()) void sessions.touch(session, { quiet: true }); });
     const film = createFilmStudio({ root, library, provider: filmBrowser, getOrigin });
-    return { library, store, draftBox, sessions, looks: createLookDesk(), film };
+    return { library, store, draftBox, sessions, looks: createLookDesk(), spends: createSpendDesk(), film };
   };
   let ready = null;
   const load = () => {
@@ -642,6 +646,9 @@ export function createAiEdit({
       // 流式文字大约 150ms 叫醒一次页面
       timer ??= setTimeout(flush, Math.max(0, STREAM_THROTTLE_MS - (Date.now() - flushedAt)));
     };
+    // 这一轮发了几次生图请求、问过几段视频；没等到做完就转到后台的视频（点了停止或前台等到点，
+    // { name, taskId?, phase }，这一轮结尾按阶段告诉用户，见 generate.mjs 的 backgroundNote）
+    const generated = { images: 0, videos: 0, background: [] };
     const runTool = createToolRunner({
       store, library, projectId: session.projectId, getCollector, signal,
       getExplorer, config, references, fetchImpl, pollMs, localAi, freeOnly: turn.freeOnly,
@@ -654,6 +661,29 @@ export function createAiEdit({
         touch: () => void sessions.touch(session, { quiet: true }),
       }, request, { signal }),
       offerLookFile: (file) => state.looks.offerFile(file),
+      // 生成视频前问用户要不要花钱：同样挂在这一轮上，页面画确认卡片，用户点了交回来
+      askSpend: (spec) => state.spends.ask({
+        id: session.id,
+        live: () => Boolean(session.streaming),
+        get: () => session.streaming?.spend ?? null,
+        set: (spend) => {
+          if (!session.streaming) return;
+          if (spend) session.streaming.spend = spend;
+          else delete session.streaming.spend;
+        },
+        touch: () => void sessions.touch(session, { quiet: true }),
+      }, spec, { signal }),
+      // 正在生成图片、视频时挂一句状态（页面把「AI 正在想…」换成它），null 摘掉
+      onGenerating: (text) => {
+        if (!session.streaming) return;
+        if (text) session.streaming.generating = text;
+        else delete session.streaming.generating;
+        void sessions.touch(session, { quiet: true });
+      },
+      // 生成配置（Key 只在内存里）和这一轮生成了几张图（执行器每次浅拷贝 ctx，计数放在共用的对象里）
+      generation: turn.generation ?? null,
+      generated,
+      shutdown: shutdown.signal,
       exportDraft: (mode) => exportSession(session, { mode }),
       onRename: (name) => { session.title = name; },
       pages: pageTools(session, signal),
@@ -668,7 +698,8 @@ export function createAiEdit({
       // 本机 CLI 自己跑工具循环，工具经 MCP 回调同一个 execute（cliTurn.mjs）
       const converse = isLocalRuntime(config.runtime) ? runCliConversation : runConversation;
       const result = await converse({
-        config, history: session.history, tools: TOOL_DEFINITIONS, signal, fetchImpl, onText, maxToolCalls: MAX_TOOL_CALLS,
+        // 生成工具只在配了 Key 时才给（本机 CLI 的 MCP 工具清单也走这里）
+        config, history: session.history, tools: toolsFor(turn.generation), signal, fetchImpl, onText, maxToolCalls: MAX_TOOL_CALLS,
         localAi, goal: () => session.goal,
         // 贴的图存在会话的附图目录里；模型看不了图、历史太长被裁这类事记进这一轮
         readAttachment: (attachment) => sessions.readAttachment(session, attachment),
@@ -679,7 +710,10 @@ export function createAiEdit({
         onTrimmed: () => { session.trimmed = true; },
         // 系统提示只放不常变的；工程现状每步都变，附在每次请求的最后，不打断接口的前缀缓存
         // 目标每次请求都读最新的：一轮做到一半改了，下一步就照新的来
-        system: async () => buildSystemPrompt({ project: await store.getProject(session.projectId), media: library.list(), goal: session.goal, freeOnly: turn.freeOnly }),
+        system: async () => buildSystemPrompt({
+          project: await store.getProject(session.projectId), media: library.list(), goal: session.goal, freeOnly: turn.freeOnly,
+          generation: { image: Boolean(turn.generation?.image), video: Boolean(turn.generation?.video) },
+        }),
         context: async () => buildContextMessage({ project: await store.getProject(session.projectId), library }),
         execute: async (call) => {
           const { result: output, action } = await runTool(call.name, call.arguments);
@@ -705,7 +739,12 @@ export function createAiEdit({
       clearTimeout(timer);
     }
     const actions = streaming.actions;
-    if (stopped) text = text ? `${text}\n\n（已停止）` : "（已停止）";
+    // 转到后台的视频做完、下完会自己进素材库：不管是点了停止还是前台等到点，都在回复末尾按阶段说清楚扣不扣费（关掉应用就收不进来了）
+    const later = backgroundNote(generated.background, { stopped });
+    if (stopped || later) {
+      const note = stopped ? `（已停止）${later}` : later;
+      text = text ? `${text}\n\n${note}` : note;
+    }
     if (text || actions.length) {
       session.messages.push({ id: randomBytes(8).toString("hex"), role: "assistant", text, at: now().toISOString(), ...(actions.length ? { actions } : {}) });
     }
@@ -722,8 +761,8 @@ export function createAiEdit({
     await sessions.touch(session, { persist: true });
   };
 
-  /** region、refs、attachments 是 parseRegion、parseRefs、parseAttachments 校验过的。 */
-  const startTurn = async (session, text, config, { region = null, refs = [], attachments = [], freeOnly = false } = {}) => {
+  /** region、refs、attachments、generation 是 parseRegion、parseRefs、parseAttachments、parseGenerateConfig 校验过的。 */
+  const startTurn = async (session, text, config, { region = null, refs = [], attachments = [], freeOnly = false, generation = null } = {}) => {
     const { store, sessions } = state;
     const controller = new AbortController();
     const run = { controller, promise: null };
@@ -737,8 +776,8 @@ export function createAiEdit({
       running.delete(session.id);
       throw error;
     }
-    // freeOnly：剪辑页勾了「只看免费」，这一轮不许用会员效果
-    const turn = { freeOnly };
+    // freeOnly：剪辑页勾了「只看免费」，这一轮不许用会员效果；generation：生成图片、视频的配置（没配是 null）
+    const turn = { freeOnly, generation };
     try {
       // 每轮开跑前存一份，可以撤销这一轮或者退回到这句话之前
       const { checkpoint, revision } = await saveCheckpoint(session, "turn", `AI 处理“${leading(text, 12)}”之前`);
@@ -990,6 +1029,16 @@ export function createAiEdit({
       return;
     }
 
+    // 用户在确认卡片上点了「生成」或「不生成」
+    const spendMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)\/spend\/([0-9a-f]{16})$/u);
+    if (spendMatch) {
+      if (method !== "POST") { notAllowed(); return; }
+      const body = await readJson(request, BODY_BYTES);
+      if (typeof body.allow !== "boolean") throw new AiEditError("invalid_request", "请求无效，请重试。");
+      sendJson(response, 200, { answered: state.spends.answer(spendMatch[1], spendMatch[2], body.allow) });
+      return;
+    }
+
     const sessionMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)(?:\/(messages|stop|export|goal|canvas|edit|undo|redo|revert|output))?$/u);
     if (sessionMatch) {
       const [, id, action] = sessionMatch;
@@ -1029,6 +1078,8 @@ export function createAiEdit({
         if (!text) throw new AiEditError("invalid_request", "先输入想怎么剪。");
         if (text.length > MAX_MESSAGE_CHARS) throw new AiEditError("message_too_long", "这条消息太长了，分几次说。");
         const config = parseEditConfig(body.config);
+        // 生成图片、视频的配置和 config 平级：本机 Codex / Claude 模式下 config 只带运行时和模型
+        const generation = parseGenerateConfig(body.generation);
         const given = (value) => value !== undefined && value !== null;
         const project = given(body.region) || given(body.refs) ? await store.getProject(session.projectId) : null;
         const region = given(body.region) ? parseRegion(body.region, project) : null;
@@ -1038,7 +1089,7 @@ export function createAiEdit({
         if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
         if (editing.has(id)) throw new AiEditError("session_busy", "看板上的改动还没做完，请稍等。", 409);
         if (outputs.has(id)) throw new AiEditError("session_busy", "正在导出或导入工程，等它做完再说。", 409);
-        await startTurn(session, text, config, { region, refs, attachments, freeOnly: body.freeOnly === true });
+        await startTurn(session, text, config, { region, refs, attachments, freeOnly: body.freeOnly === true, generation });
         sendJson(response, 202, { session: sessionDetail(session) });
         return;
       }
@@ -1391,6 +1442,8 @@ export function createAiEdit({
       if (!state) return;
       state.library.close();
       state.looks.close();
+      state.spends.close();
+      shutdown.abort();
       for (const run of running.values()) run.controller.abort();
       for (const job of outputs.values()) job.controller.abort();
       state.sessions.wakeAll();

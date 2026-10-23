@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { EditError, invalid } from "./errors.mjs";
 import { AiEditError, MediaLibrary } from "./library.mjs";
-import { TOOL_DEFINITIONS, TOOL_NAMES, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, micros, probeVideoInput, searchCatalog, timelineSummary, trackLabel } from "./tools.mjs";
+import { TOOL_DEFINITIONS, TOOL_NAMES, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, describeToolError, micros, probeVideoInput, searchCatalog, timelineSummary, toolsFor, trackLabel } from "./tools.mjs";
 
 // 按本机格式生成（Windows 上带盘符和反斜杠），和素材库 path.join 出来的路径对得上
 const ROOT = path.resolve("/data/ai-edit/media");
@@ -201,7 +201,7 @@ describe("AI edit tools", () => {
 
   it("cover every ProjectStore edit method and convert seconds and media ids", async () => {
     const { run, calls } = runnerWith();
-    const offline = new Set(["search_my_records", "import_douyin_video", "search_douyin", "analyze_reference", "detect_beats", "write_page", "read_page"]);
+    const offline = new Set(["search_my_records", "import_douyin_video", "search_douyin", "analyze_reference", "detect_beats", "write_page", "read_page", "generate_image", "generate_video", "transcribe_subtitles"]);
     expect(TOOL_NAMES.filter((name) => !offline.has(name)).sort()).toEqual(Object.keys(SAMPLE_ARGS).sort());
     for (const [name, args] of Object.entries(SAMPLE_ARGS)) {
       const { result, action } = await run(name, JSON.stringify(args));
@@ -462,6 +462,42 @@ describe("AI edit tools", () => {
     expect(context).toContain("当前总时长 4 秒");
     expect(context).toContain("\"clip_id\":\"s1\"");
     expect(context).toContain("不是用户说的话");
+  });
+
+  it("only offers and explains the generate tools that have a key configured", async () => {
+    const names = (generation) => toolsFor(generation).map((tool) => tool.function.name);
+    expect(names(null)).not.toContain("generate_image");
+    expect(names(null)).not.toContain("generate_video");
+    expect(names(null)).toHaveLength(TOOL_DEFINITIONS.length - 2);
+    expect(names({ image: { apiKey: "k" } })).toContain("generate_image");
+    expect(names({ image: { apiKey: "k" } })).not.toContain("generate_video");
+    expect(names({ image: { apiKey: "k" }, video: { apiKey: "k" } })).toEqual(TOOL_DEFINITIONS.map((tool) => tool.function.name));
+    // 数组参数写全 items，执行器才不会把元素当成不认识的参数
+    for (const name of ["generate_image", "generate_video"]) {
+      const { parameters } = TOOL_DEFINITIONS.find((tool) => tool.function.name === name).function;
+      expect(parameters.properties.reference_media_ids).toMatchObject({ type: "array", items: { type: "string" } });
+    }
+
+    const prompt = (generation) => buildSystemPrompt({ project: project(), media: [], generation });
+    expect(prompt(undefined)).not.toContain("generate_");
+    expect(prompt({ image: true, video: false })).toContain("generate_image 生成一张图：按张收费，一轮最多 6 张");
+    expect(prompt({ image: true, video: false })).not.toContain("generate_video");
+    expect(prompt({ image: false, video: true })).toContain("请用户在界面上确认");
+    expect(prompt({ image: false, video: true })).toContain("不能有真人脸");
+    expect(prompt({ image: true, video: true })).toContain("用 list_media 找，别重复生成");
+
+    // 素材来源写成「AI 生成」
+    const media = library();
+    media.items.push({ id: "e".repeat(32), name: "海边日落", kind: "image", status: "ready", error: null, durationUs: null, width: 1536, height: 864, hasAudio: false, size: 1, createdAt: "2026-10-23T00:00:00.000Z", file: `${"e".repeat(32)}.png`, source: { type: "generated", provider: "openai", model: "gpt-image-2.5-flare", prompt: "海边日落", key: "f".repeat(64) } });
+    const { run } = runnerWith({});
+    const listed = (await createToolRunner({ library: media })("list_media", "{}")).result.media.find((item) => item.media_id === "e".repeat(32));
+    expect(listed).toMatchObject({ from: "AI 生成", size: "1536×864" });
+    expect(buildSystemPrompt({ project: project(), media: media.list() })).toContain(`- ${"e".repeat(32)}｜图片｜海边日落｜时长自定｜1536×864｜AI 生成`);
+    // 没配 Key 时就算模型硬调也不会发请求
+    expect((await run("generate_image", { prompt: "海边" })).result).toMatchObject({ ok: false, code: "generate_unavailable" });
+    expect((await run("generate_video", { prompt: "海边" })).result).toMatchObject({ ok: false, code: "generate_unavailable" });
+    // 工具参数里没有任何「已确认」之类的字段，模型批准不了自己
+    expect((await run("generate_video", { prompt: "海边", confirmed: true })).result).toMatchObject({ ok: false, code: "arguments_invalid" });
   });
 
   it("only uses plain JSON-schema tool definitions", () => {
@@ -1240,5 +1276,15 @@ describe("reference videos", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("describeToolError", () => {
+  it("shows people the plain sentence an error carries, and keeps the model's message as it is", () => {
+    const plain = new AiEditError("media_not_found", "素材库里没有这个素材。", 404);
+    expect(describeToolError(plain)).toEqual({ code: "media_not_found", message: "素材库里没有这个素材。", text: "素材库里没有这个素材。" });
+    const spoken = Object.assign(new AiEditError("spend_denied", "用户没同意生成，一分钱没花。用户没再提就别再调了。", 409), { userText: "你选了不生成视频“海浪”", declined: true });
+    expect(describeToolError(spoken)).toEqual({ code: "spend_denied", message: "用户没同意生成，一分钱没花。用户没再提就别再调了。", text: "你选了不生成视频“海浪”" });
+    expect(() => describeToolError(Object.assign(new Error("stopped"), { name: "AbortError" }))).toThrow("stopped");
   });
 });

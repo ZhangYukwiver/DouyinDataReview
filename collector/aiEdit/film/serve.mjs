@@ -5,7 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
 import { ENCODER_PAGE } from "./encoder.mjs";
-import { BRIDGE, HOST_FLAG, PAGE_CSP, filmStart, holdPages, injectFirst } from "./host.mjs";
+import { BRIDGE, HOST_FLAG, encoderCsp, filmPlace, filmStart, holdPages, injectFirst, pageCsp } from "./host.mjs";
 import { DEFAULT_STAGE, FILM_FILE, readFilmFile } from "./vendor/film-doc.mjs";
 
 // 网页片段和 film.html 的地址：/v1/ai-edit/film/<key>/<区>/<文件>。key 写在路径里，页面里的相对地址（图片、字体、
@@ -28,7 +28,6 @@ export function createFilmFiles({ root }) {
   const key = randomBytes(18).toString("base64url");
   const base = `/v1/ai-edit/film/${key}/`;
   let realRoot = null;
-  const notFound = (response) => { response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("not found"); };
   const keyMatches = (given) => {
     const expected = Buffer.from(key);
     const actual = Buffer.from(given);
@@ -44,14 +43,18 @@ export function createFilmFiles({ root }) {
     async handle(request, response, url) {
       const match = /^\/v1\/ai-edit\/film\/([^/]+)\/(.*)$/u.exec(url.pathname);
       if (!match) return false;
-      if (request.method !== "GET" && request.method !== "HEAD") { response.writeHead(405).end(); return true; }
-      if (!keyMatches(match[1])) { notFound(response); return true; }
+      // 这个地址下的每个回应都带策略（出错的也带）：图片、字体当子资源用时浏览器不看它，但单独打开的 SVG 文档、worker 脚本、
+      // 嵌进页面的出错页都按它执行，页面借不到没有策略的同源窗口去打采集器别的接口
+      const place = filmPlace(request.headers.host, key);
+      const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": pageCsp(place) };
+      const notFound = () => { response.writeHead(404, { ...headers, "Content-Type": "text/plain; charset=utf-8" }).end("not found"); };
+      if (request.method !== "GET" && request.method !== "HEAD") { response.writeHead(405, headers).end(); return true; }
+      if (!keyMatches(match[1])) { notFound(); return true; }
       let rel;
-      try { rel = decodeURIComponent(match[2]); } catch { notFound(response); return true; }
-      if (rel.includes("\\") || rel.includes("\0")) { notFound(response); return true; }
-      const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
+      try { rel = decodeURIComponent(match[2]); } catch { notFound(); return true; }
+      if (rel.includes("\\") || rel.includes("\0")) { notFound(); return true; }
       if (rel === "__encoder.html") {
-        response.writeHead(200, { ...headers, "Content-Type": "text/html; charset=utf-8" }).end(ENCODER_PAGE);
+        response.writeHead(200, { ...headers, "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": encoderCsp(place) }).end(ENCODER_PAGE);
         return true;
       }
       // openfilm 的播放器：放在任何 film.html 旁边（film.html 按相对地址引用 __film/timeline.mjs）
@@ -62,23 +65,23 @@ export function createFilmFiles({ root }) {
         } else if (vendor[1] === "frame-duration" || vendor[1] === "media-facts") {
           // 这两个 openfilm 靠 ffprobe 答，我们没有：答「不知道」，timeline 自己按浏览器读到的算
           response.writeHead(200, { ...headers, "Content-Type": "application/json" }).end(vendor[1] === "frame-duration" ? JSON.stringify({ seconds: null }) : "null");
-        } else notFound(response);
+        } else notFound();
         return true;
       }
-      if (!AREAS.has(rel.split("/")[0])) { notFound(response); return true; }
+      if (!AREAS.has(rel.split("/")[0])) { notFound(); return true; }
       realRoot ??= await realpath(root);
       const asked = path.normalize(path.join(realRoot, rel));
       let file;
-      try { file = await realpath(asked); } catch { notFound(response); return true; }
+      try { file = await realpath(asked); } catch { notFound(); return true; }
       // 链接出去的不跟（导入的工程可能带着指向别处的链接）
-      if (!within(path.join(realRoot, rel.split("/")[0]), file)) { notFound(response); return true; }
+      if (!within(path.join(realRoot, rel.split("/")[0]), file)) { notFound(); return true; }
       let info;
-      try { info = await stat(file); } catch { notFound(response); return true; }
-      if (info.isDirectory()) { notFound(response); return true; }
+      try { info = await stat(file); } catch { notFound(); return true; }
+      if (info.isDirectory()) { notFound(); return true; }
       const type = TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
       if (type.startsWith("text/html")) {
         const html = await readFile(file, "utf8");
-        const page = { ...headers, "Content-Type": type, "Content-Security-Policy": PAGE_CSP };
+        const page = { ...headers, "Content-Type": type };
         if (url.searchParams.get("film-host") === "0") { response.writeHead(200, page).end(html); return true; }
         const film = path.basename(file) === FILM_FILE;
         const start = film ? `<script>${HOST_FLAG}</script>${filmStart(readFilmFile(html).doc?.stage ?? DEFAULT_STAGE)}` : `<script>${HOST_FLAG}${BRIDGE}</script>`;

@@ -72,7 +72,20 @@ export const BRIDGE = `(()=>{if(window.parent===window)return;let busy=false,nex
 
 // AI 写的网页只许从自己的文件夹（同源）和几个常用 CDN 拿脚本、样式、字体；不能往外发请求，免得把素材带出去
 const CDNS = "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com https://esm.sh";
-export const PAGE_CSP = [
+
+/**
+ * 网页片段自己的文件夹：这次请求的 Host 加上这个 film key 的路径（看板按应用里填的采集服务地址开，可能是 localhost 或局域网地址，
+ * 渲染浏览器总是 127.0.0.1）。Host 带了不该有的字符就把本机的写法都列上；[::1] 不列：Chrome 的策略不认 IPv6 地址
+ * （报「invalid source」后忽略），采集器也只在 IPv4 上监听。
+ */
+export function filmPlace(host, key) {
+  const folder = `/v1/ai-edit/film/${key}/`;
+  if (typeof host === "string" && /^[A-Za-z0-9.\-:[\]]+$/u.test(host)) return `http://${host}${folder}`;
+  return ["http://127.0.0.1:*", "http://localhost:*"].map((origin) => origin + folder).join(" ");
+}
+
+/** 网页片段、film.html 和 film 地址下其他文件（SVG 文档、worker 脚本）的策略；place 是 filmPlace 给的地址。 */
+export const pageCsp = (place) => [
   "default-src 'self' data: blob:",
   `script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: ${CDNS}`,
   `style-src 'self' 'unsafe-inline' ${CDNS} https://fonts.googleapis.com`,
@@ -82,4 +95,11 @@ export const PAGE_CSP = [
   `connect-src 'self' data: blob: ${CDNS}`,
   "worker-src 'self' blob:",
   "frame-src 'self'",
-].join("; ");
+].join("; ")
+  // 逗号后面是第二条策略，浏览器两条都执行、取交集：请求和内嵌的页面只许是这个 film key 下的文件，页面脚本碰不到 /v1/ 下的
+  // 其他接口，也嵌不进采集器别的（没有策略的）地址。这只是第二道防线，真正挡住的是采集器不认自己放出去的页面发来的配对和
+  // 接口请求（server.mjs 的 fromOwnPage）。
+  + `, connect-src ${place} data: blob: ${CDNS}; frame-src ${place}`;
+
+/** 编码页只跑自己的内联脚本，读截图（data:）和这个 film key 下的声音文件。 */
+export const encoderCsp = (place) => `default-src 'none'; script-src 'unsafe-inline'; connect-src ${place} data:`;

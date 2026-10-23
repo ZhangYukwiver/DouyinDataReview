@@ -226,7 +226,7 @@ export function createLookDesk({ filePath = "/v1/ai-edit/look", texts = AI_EDIT_
 }
 
 // ---------- 模型到底看没看到：AI 剪辑看参考视频、解析库都用 ----------
-const CANT_SEE_VIDEO = /(无法|不能|没法|没有办法|不支持)(直接)?(读取|查看|观看|看到|播放|处理|解析|理解|访问|打开|接收)[^。\n]{0,8}视频|看不[到了见][^。\n]{0,4}视频|(can(?:no|')t|unable to|not able to)\s+(view|watch|see|process|access|open|analy[sz]e)[^.\n]{0,30}video/iu;
+export const CANT_SEE_VIDEO = /(无法|不能|没法|没有办法|不支持)(直接)?(读取|查看|观看|看到|播放|处理|解析|理解|访问|打开|接收)[^。\n]{0,8}视频|看不[到了见][^。\n]{0,4}视频|(can(?:no|')t|unable to|not able to)\s+(view|watch|see|process|access|open|analy[sz]e)[^.\n]{0,30}video/iu;
 const VIDEO_WORDS = /video|视频|multimodal|多模态|unknown variant|content type/iu;
 // 提示词让模型看不到时只回一行标记；不听话的模型（远端实测过）会照样写一份全是「未知」的拆解，
 // 开头交代「没有视频文件、只有页面文字信息」，第②部分十个维度大半写「未知」，这时也算没看到

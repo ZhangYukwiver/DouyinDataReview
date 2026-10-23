@@ -22,7 +22,11 @@ export const isSessionId = (value) => typeof value === "string" && SESSION_ID.te
 
 export function sessionSummary(session) {
   const { id, title, createdAt, updatedAt, status, projectId, draftBox } = session;
-  return { id, title, createdAt, updatedAt, status, projectId, draftBox: draftBox ? { ...draftBox } : null };
+  return {
+    id, title, createdAt, updatedAt, status, projectId, draftBox: draftBox ? { ...draftBox } : null,
+    // 这一轮挂着「要不要花钱生成视频」在等用户点：会话菜单里标出来，切到别的剪辑时也看得到
+    awaitingSpend: Boolean(session.streaming?.spend),
+  };
 }
 
 /**
@@ -60,6 +64,10 @@ export function sessionDetail(session) {
       actions: session.streaming.actions.map((action) => ({ ...action })),
       // 要页面在浏览器里帮忙拆视频（截图、节拍）时挂在这里，页面做完交回
       ...(session.streaming.look ? { look: { ...session.streaming.look } } : {}),
+      // 生成视频前等用户确认要不要花钱时挂在这里，页面画确认卡片
+      ...(session.streaming.spend ? { spend: { ...session.streaming.spend } } : {}),
+      // 正在生成图片、视频时的一句状态
+      ...(session.streaming.generating ? { generating: session.streaming.generating } : {}),
     } : null,
     // 导出工程、出 MP4、导入工程的进度和结果（只在内存里，采集器重启就没了，文件还在 renders/ 下）
     output: session.output ? { ...session.output } : null,

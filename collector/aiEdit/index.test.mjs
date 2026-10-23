@@ -1802,3 +1802,169 @@ describe("AI edit through a local CLI", () => {
     expect(done.session).toMatchObject({ status: "failed", error: { code: "local_expired", message: expect.stringContaining("claude auth login") } });
   }, 30_000);
 });
+
+describe("AI edit generated media", () => {
+  const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+  const toolNames = (body) => body.tools.map((tool) => tool.function.name);
+
+  it("only offers the generate tools whose key came with the message, and never stores the key", async () => {
+    const requests = [];
+    const fetchImpl = async (_url, init) => { requests.push(JSON.parse(init.body)); return textReply("好"); };
+    const { call, waitIdle, directory } = await start({ fetchImpl });
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    const send = async (extra) => {
+      const sent = await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "做个开场", config: CONFIG, ...extra } });
+      expect(sent.status).toBe(202);
+      await waitIdle(session.id);
+      return requests.at(-1);
+    };
+    let body = await send({});
+    expect(toolNames(body)).not.toContain("generate_image");
+    expect(toolNames(body)).not.toContain("generate_video");
+    expect(body.messages[0].content).not.toContain("generate_");
+    body = await send({ generation: { image: { apiKey: "sk-gen-image-secret" }, video: { apiKey: "" } } });
+    expect(toolNames(body)).toContain("generate_image");
+    expect(toolNames(body)).not.toContain("generate_video");
+    expect(body.messages[0].content).toContain("generate_image 生成一张图");
+    expect(body.messages[0].content).not.toContain("generate_video");
+    body = await send({ generation: { image: { apiKey: "sk-gen-image-secret" }, video: { apiKey: "ark-gen-video-secret" } } });
+    expect(toolNames(body)).toEqual(expect.arrayContaining(["generate_image", "generate_video"]));
+    expect(body.messages[0].content).toContain("请用户在界面上确认");
+    // 地址填错：这句话不发出去，告诉用户哪里错了
+    const bad = await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "再来", config: CONFIG, generation: { image: { apiKey: "k", baseUrl: "ftp://x" } } } });
+    expect(bad).toMatchObject({ status: 400, body: { error: "invalid_config", message: "生成图片的接口地址要以 https:// 开头。" } });
+    // Key 只在内存里：会话文件里没有
+    const sessionsDirectory = path.join(directory, "ai-edit", "sessions");
+    for (const name of await readdir(sessionsDirectory)) {
+      const saved = await readFile(path.join(sessionsDirectory, name), "utf8").catch(() => "");
+      expect(saved).not.toContain("sk-gen-image-secret");
+      expect(saved).not.toContain("ark-gen-video-secret");
+    }
+  }, 20_000);
+
+  it("hangs a spend question on the turn and only creates the video task after the user agrees", async () => {
+    const chats = [];
+    const ark = [];
+    const video = await readFile(path.join(FIXTURES, "clip-720p.mp4"));
+    const replies = [
+      toolReply([{ name: "generate_video", args: { prompt: "海浪拍打礁石" } }]), textReply("那就不生成了"),
+      toolReply([{ name: "generate_video", args: { prompt: "海浪拍打礁石" } }]), textReply("生成好了"),
+    ];
+    const fetchImpl = async (url, init = {}) => {
+      const target = String(url);
+      if (target.endsWith("/chat/completions")) {
+        chats.push(JSON.parse(init.body));
+        return replies.shift();
+      }
+      ark.push({ method: init.method ?? "GET", url: target, authorization: init.headers?.Authorization ?? null });
+      if (target.endsWith("/contents/generations/tasks")) return json({ id: "cgt-9" });
+      if (target.endsWith("/contents/generations/tasks/cgt-9")) return json({ status: "succeeded", content: { video_url: "https://tos.example.com/v.mp4" }, usage: { completion_tokens: 108_900 } });
+      if (target === "https://tos.example.com/v.mp4") return new Response(video);
+      throw new Error(`没想到会请求 ${target}`);
+    };
+    const { call, base, until, waitIdle } = await start({ fetchImpl });
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    const generation = { video: { apiKey: "ark-gen-video-secret" } };
+    const pending = () => until(async () => (await call(`/v1/ai-edit/sessions/${session.id}`)).body.session.streaming?.spend, Boolean, "spend question");
+    const answer = (askId, body, sessionId = session.id) => call(`/v1/ai-edit/sessions/${sessionId}/spend/${askId}`, { method: "POST", body });
+
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "补一个海浪的空镜", config: CONFIG, generation } });
+    const spend = await pending();
+    expect(spend).toEqual({
+      id: expect.stringMatching(/^[0-9a-f]{16}$/u), kind: "video", provider: "火山方舟 Seedance", model: "doubao-seedance-2-0-260128",
+      seconds: 5, resolution: "720p", ratio: "9:16", audio: false, prompt: "海浪拍打礁石", estimate: 4.97, expiresAt: expect.any(Number),
+    });
+    expect(spend.expiresAt).toBeGreaterThan(Date.now() + 14 * 60_000);
+    // 会话列表里标出在等确认（切到别的剪辑时菜单里看得到）
+    const listed = async () => (await call("/v1/ai-edit/sessions")).body.sessions.find((item) => item.id === session.id);
+    expect(await listed()).toMatchObject({ status: "running", awaitingSpend: true });
+    expect((await call(`/v1/ai-edit/sessions/${session.id}/spend/${spend.id}`)).status).toBe(405);
+    expect(await answer(spend.id, { allow: "yes" })).toMatchObject({ status: 400, body: { error: "invalid_request" } });
+    expect(await answer(spend.id, {})).toMatchObject({ status: 400 });
+    expect(await answer("0".repeat(16), { allow: true })).toMatchObject({ status: 404, body: { error: "spend_not_found" } });
+    expect(await answer(spend.id, { allow: true }, "f".repeat(32))).toMatchObject({ status: 404, body: { error: "spend_not_found" } });
+    expect((await fetch(`${base}/v1/ai-edit/sessions/${session.id}/spend/${spend.id}`, { method: "POST", body: JSON.stringify({ allow: true }) })).status).toBe(401);
+    expect(ark).toEqual([]);
+    expect(await answer(spend.id, { allow: false })).toEqual({ status: 200, body: { answered: true } });
+    let done = await waitIdle(session.id);
+    expect(done.session).toMatchObject({ status: "idle", streaming: null });
+    expect(lastToolResult(chats[1])).toMatchObject({ ok: false, code: "spend_denied" });
+    // 用户自己选了不生成：对话里是一句人话、不画成失败
+    expect(done.session.messages.at(-1).actions).toEqual([{ name: "generate_video", summary: "你选了不生成视频“海浪拍打礁石”", ok: true }]);
+    expect(await listed()).toMatchObject({ status: "idle", awaitingSpend: false });
+    expect(ark).toEqual([]);
+    // 答过了：再答找不到
+    expect(await answer(spend.id, { allow: true })).toMatchObject({ status: 404, body: { error: "spend_not_found" } });
+
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "还是生成吧", config: CONFIG, generation } });
+    const again = await pending();
+    expect(again.id).not.toBe(spend.id);
+    expect(await answer(again.id, { allow: true })).toEqual({ status: 200, body: { answered: true } });
+    done = await waitIdle(session.id);
+    expect(done.session.messages.at(-1)).toMatchObject({ role: "assistant", text: "生成好了", actions: [expect.objectContaining({ name: "generate_video", ok: true })] });
+    const result = lastToolResult(chats[3]);
+    expect(result).toMatchObject({ ok: true, tokens: 108_900, media: { kind: "video", status: "ready", from: "AI 生成" } });
+    expect(ark.map(({ method, url }) => `${method} ${url.replace(/^https:\/\/[^/]+/u, "")}`)).toEqual([
+      "POST /api/v3/contents/generations/tasks", "GET /api/v3/contents/generations/tasks/cgt-9", "GET /v.mp4",
+    ]);
+    expect(ark.map((item) => item.authorization)).toEqual(["Bearer ark-gen-video-secret", "Bearer ark-gen-video-secret", null]);
+    const { media } = (await call("/v1/ai-edit/media")).body;
+    expect(media.find((item) => item.id === result.media.media_id)).toMatchObject({ kind: "video", source: { type: "generated", provider: "seedance", prompt: "海浪拍打礁石" } });
+  }, 20_000);
+
+  it("tells the user at the end of the turn which videos went on in the background, whether it waited too long or was stopped", async () => {
+    const chats = [];
+    const ark = [];
+    const video = await readFile(path.join(FIXTURES, "clip-720p.mp4"));
+    const replies = [
+      toolReply([{ name: "generate_video", args: { prompt: "慢慢涨潮的海边" } }]), textReply("先做别的"),
+      toolReply([{ name: "generate_video", args: { prompt: "退潮的海边" } }]),
+    ];
+    const done = { "cgt-1": false, "cgt-2": false };
+    let created = 0;
+    const fetchImpl = async (url, init = {}) => {
+      const target = String(url);
+      if (target.endsWith("/chat/completions")) {
+        chats.push(JSON.parse(init.body));
+        return replies.shift();
+      }
+      ark.push(`${init.method ?? "GET"} ${target.replace(/^https:\/\/[^/]+/u, "")}`);
+      if (target.endsWith("/contents/generations/tasks")) return json({ id: `cgt-${++created}` });
+      const task = target.match(/\/tasks\/(cgt-\d)$/u)?.[1];
+      if (task) return json(done[task] ? { status: "succeeded", content: { video_url: `https://tos.example.com/${task}.mp4` } } : { status: "running" });
+      if (target.startsWith("https://tos.example.com/")) return new Response(video);
+      throw new Error(`没想到会请求 ${target}`);
+    };
+    // pollMs 1：前台等 1.2 秒就转后台（正式环境 20 分钟）
+    const { call, until, waitIdle } = await start({ fetchImpl, pollMs: 1 });
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    const generation = { video: { apiKey: "ark-gen-video-secret" } };
+    const agree = async () => {
+      const spend = await until(async () => (await call(`/v1/ai-edit/sessions/${session.id}`)).body.session.streaming?.spend, Boolean, "spend question");
+      expect(await call(`/v1/ai-edit/sessions/${session.id}/spend/${spend.id}`, { method: "POST", body: { allow: true } })).toMatchObject({ status: 200 });
+    };
+    const videos = async () => (await call("/v1/ai-edit/media")).body.media.filter((item) => item.source?.type === "generated" && item.status === "ready");
+    const later = "要开着应用等它做完；关掉的话，到火山方舟控制台的视频生成任务里按任务号下载。";
+
+    // 前台等到点：模型拿到「还在生成，别再生成」，回复末尾告诉用户还在做、照常扣费
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "补一个涨潮的空镜", config: CONFIG, generation } });
+    await agree();
+    let idle = await waitIdle(session.id);
+    expect(lastToolResult(chats[1])).toMatchObject({ ok: false, code: "generate_background", message: expect.stringContaining("别再生成一次") });
+    expect(idle.session).toMatchObject({ status: "idle", error: null });
+    expect(idle.session.messages.at(-1).text).toBe(`先做别的\n\n视频“慢慢涨潮的海边”（方舟任务号 cgt-1）还在方舟上生成，做完会自动放进素材库，照常扣费。${later}`);
+    done["cgt-1"] = true;
+    expect(await until(videos, (list) => list.length === 1, "first video")).toEqual([expect.objectContaining({ name: "慢慢涨潮的海边" })]);
+
+    // 点停止：开头照样是「（已停止）」
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "再补一个退潮的", config: CONFIG, generation } });
+    await agree();
+    await until(async () => ark, (list) => list.includes("GET /api/v3/contents/generations/tasks/cgt-2"), "second task polled");
+    const stopped = await call(`/v1/ai-edit/sessions/${session.id}/stop`, { method: "POST", body: {} });
+    expect(stopped.body.session.messages.at(-1).text).toBe(`（已停止）视频“退潮的海边”（方舟任务号 cgt-2）还在方舟上生成，停不下来，做完会自动放进素材库，照常扣费。${later}`);
+    done["cgt-2"] = true;
+    expect(await until(videos, (list) => list.length === 2, "second video")).toEqual(expect.arrayContaining([expect.objectContaining({ name: "退潮的海边" })]));
+    expect(ark.filter((entry) => entry.startsWith("POST"))).toHaveLength(2);
+    expect(ark.filter((entry) => entry.startsWith("DELETE"))).toEqual([]);
+  }, 20_000);
+});

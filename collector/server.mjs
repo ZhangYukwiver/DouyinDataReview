@@ -139,6 +139,24 @@ function isAllowedOrigin(origin, explicitOrigins) {
   return explicitOrigins.includes(origin);
 }
 
+// 采集器自己放出去的网页（AI 写的网页片段、导入的 openfilm 工程、编码页）：页面脚本是 AI 或别人写的，不许它们取配对码、
+// 配对、调要配对的接口，不然能自己拿到 token 替用户点「生成」花钱。同源请求浏览器带 Sec-Fetch-Site: same-origin；
+// 页面换个主机名打回来（127.0.0.1 ↔ localhost / [::1] / 局域网地址）时浏览器算 cross-site，但 Origin 的端口还是采集器
+// 自己的，也一样当成自己的页面。应用页面在 47651 端口或开发服务器上，和采集器同在 127.0.0.1 监听，端口永远不会撞上；
+// MCP 桥和测试这类 Node 客户端两个头都不带，不受影响。
+function fromOwnPage(request, ownPort) {
+  if (request.headers["sec-fetch-site"] === "same-origin") return true;
+  const origin = request.headers.origin;
+  if (typeof origin !== "string" || !ownPort) return false;
+  try {
+    const { protocol, port } = new URL(origin);
+    if (protocol !== "http:" && protocol !== "https:") return false;
+    return Number(port || (protocol === "https:" ? 443 : 80)) === ownPort;
+  } catch {
+    return false;
+  }
+}
+
 function applyHeaders(response, origin) {
   response.setHeader("Cache-Control", "no-store");
   response.setHeader("X-Content-Type-Options", "nosniff");
@@ -412,6 +430,7 @@ export async function startCollectorServer({
     }
 
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    const ownPage = fromOwnPage(request, server.address()?.port);
     if (request.method === "GET" && url.pathname === "/v1/health") {
       sendJson(response, 200, { ok: true, version: 1 });
       return;
@@ -419,7 +438,7 @@ export async function startCollectorServer({
 
     if (request.method === "GET" && url.pathname === "/v1/pairing-code") {
       const remoteAddress = request.socket.remoteAddress ?? "unknown";
-      if (!isLoopbackAddress(remoteAddress)) {
+      if (!isLoopbackAddress(remoteAddress) || ownPage) {
         sendJson(response, 403, { error: "pairing_code_local_only" });
         return;
       }
@@ -428,6 +447,11 @@ export async function startCollectorServer({
     }
 
     if (request.method === "POST" && url.pathname === "/v1/pair") {
+      // 放在限次之前：页面乱试配对码也不占本机（和应用同一个地址）的尝试次数
+      if (ownPage) {
+        sendJson(response, 403, { error: "same_origin_not_allowed" });
+        return;
+      }
       const remoteAddress = request.socket.remoteAddress ?? "unknown";
       if (!pairing.allowAttempt(remoteAddress)) {
         sendJson(response, 429, { error: "too_many_attempts" });
@@ -465,6 +489,11 @@ export async function startCollectorServer({
       return;
     }
 
+    // 上面不用配对的文件地址照常给网页片段用；往下要配对的接口，采集器自己放出去的页面就算拿到了 token 也不认
+    if (ownPage) {
+      sendJson(response, 403, { error: "same_origin_not_allowed" });
+      return;
+    }
     if (!pairing.authorize(request.headers.authorization)) {
       sendJson(response, 401, { error: "not_paired" });
       return;
