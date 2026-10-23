@@ -51,7 +51,7 @@ import { MAX_SPARK_BATCH, sparkRenewJob, type SparkPayload, type SparkRenewRun, 
 import type { PersonalRecordCollection, PersonalVideoRecord } from "../../domain/personalRecords";
 import { type CollectorStatus, LocalCollectorError, isChatReceiving } from "../../services/localCollector";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
-import { fx, ws } from "./motion";
+import { ease, fx, useCountUp, ws } from "./motion";
 import { CHAT_EMOJI } from "../../domain/chatEmoji";
 import { renderEmojiText } from "./emojiText";
 import { SparkCardPreview } from "./SparkCardPreview";
@@ -1206,6 +1206,9 @@ function SparkRenewPanel({ blocked, draft, onClear, onPick, onPickUnrenewed, onS
     : kind === "emoji" ? (emoji ? { kind: "text", text: emoji } : null)
       : video ? { kind: "video", record: video } : null;
   const count = picked.size;
+  // 勾一下，「已选」和发送按钮上的数一起滚过去
+  const pickedShown = useCountUp(count, 360);
+  const sendShown = useCountUp(Math.min(count, MAX_SPARK_BATCH), 360);
   const report = renewReport(progress, running);
   const capped = count > MAX_SPARK_BATCH;
   const reason = blocked ?? (!count ? "先在上面勾选要发给谁" : capped ? `一次最多发 ${MAX_SPARK_BATCH} 个` : !payload ? kind === "video" && link.trim() ? "这个链接认不出来，粘贴 douyin.com/video/ 开头的链接或作品 ID" : "先选好要发的内容" : null);
@@ -1214,7 +1217,7 @@ function SparkRenewPanel({ blocked, draft, onClear, onPick, onPickUnrenewed, onS
     <View {...ws("c-sparklist")} style={styles.renewPanel} testID="chat-spark-renew">
       <View style={styles.renewLine}>
         <Text style={styles.renewLabel}>发给谁</Text>
-        <Text style={styles.renewCount}>已选 {count} 个</Text>
+        <Text style={styles.renewCount}>已选 {pickedShown} 个</Text>
         <View style={styles.renewChips}>
           {([onPickUnrenewed ? ["今天没续的火花", onPickUnrenewed] : null, ["全选", () => onPick(shown.map((row) => row.id))], ["清空", onClear]].filter(Boolean) as Array<[string, () => void]>).map(([label, action]) => (
             <Pressable accessibilityRole="button" disabled={running} key={label} onPress={action} {...ws("btn small")} style={({ pressed }) => [styles.receptionButton, pressed && styles.pressed, running && styles.composerDisabled, webPointer]}>
@@ -1235,7 +1238,7 @@ function SparkRenewPanel({ blocked, draft, onClear, onPick, onPickUnrenewed, onS
           return (
             <Pressable accessibilityLabel={`${privacy ? (row.kind === "group" ? "群聊" : "好友") : row.name}，${note}`} accessibilityRole="checkbox" aria-checked={checked} disabled={running} key={row.id} onPress={() => onToggle(row.id)}
               style={({ pressed }) => [styles.renewTarget, index > 0 && styles.sparkRowDivided, pressed && styles.pressed, webPointer]}>
-              <View style={[styles.renewCheck, checked && styles.renewCheckOn]}>{checked ? <Check color={color.canvas} size={12} strokeWidth={3} /> : null}</View>
+              <View style={[styles.renewCheck, checked && styles.renewCheckOn, ease("background-color,border-color", 160)]}>{checked ? <View {...fx({ motion: "pop" })}><Check color={color.canvas} size={12} strokeWidth={3} /></View> : null}</View>
               <ChatAvatar accent={row.accent} avatarUrl={row.avatarUrl} initials={row.initials} kind={row.kind} privacy={privacy} size={28} />
               <View style={styles.sparkCopy}>
                 <Text numberOfLines={1} style={styles.renewTargetName}>{privacy ? (row.kind === "group" ? "群聊" : "好友") : row.name}</Text>
@@ -1305,7 +1308,7 @@ function SparkRenewPanel({ blocked, draft, onClear, onPick, onPickUnrenewed, onS
           <Pressable accessibilityRole="button" aria-disabled={Boolean(reason)} disabled={Boolean(reason)} onPress={() => payload && onStart(payload, { kind, text, emoji })}
             {...ws("btn-solid", !reason && "on")} style={({ pressed }) => [styles.renewStart, reason && styles.composerDisabled, pressed && styles.pressed, webPointer]} testID="chat-spark-renew-start">
             <Flame color={color.canvas} fill={color.canvas} size={13} strokeWidth={2} />
-            <Text style={styles.renewStartText}>发给 {Math.min(count, MAX_SPARK_BATCH)} 个对象</Text>
+            <Text style={styles.renewStartText}>发给 {sendShown} 个对象</Text>
           </Pressable>
         )}
       </View>

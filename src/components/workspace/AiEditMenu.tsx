@@ -53,14 +53,24 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
   const [active, setActive] = useState(-1);
   const usable = useMemo(() => items.filter((entry): entry is MenuItem => isItem(entry) && !entry.disabled), [items]);
 
-  // 量完再定位，在浏览器画出来之前定好，不会在错的位置闪一下；焦点拉进来，方向键管菜单不管下面的看板
+  // 打开前焦点在哪，关掉后还回哪（键盘打开的菜单，关了不能把焦点丢回页面开头）；那个元素已经不在了就算了
+  useLayoutEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    return () => { if (before?.isConnected && before !== document.body) before.focus({ preventScroll: true }); };
+  }, []);
+
+  // 量完再定位，在浏览器画出来之前定好，不会在错的位置闪一下
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
     const { width, height } = node.getBoundingClientRect();
     setPos(menuPosition({ x, y }, { width, height }, { width: window.innerWidth, height: window.innerHeight }));
-    node.focus({ preventScroll: true });
   }, [x, y, items]);
+  // 焦点拉进来，方向键管菜单不管下面的看板。要等量好位置、不再 visibility:hidden 才拿得到焦点，藏着的时候 focus() 什么也不做
+  const shown = pos !== null;
+  useLayoutEffect(() => {
+    if (shown) ref.current?.focus({ preventScroll: true });
+  }, [shown]);
 
   useEffect(() => {
     const close = (event: Event) => {
@@ -123,7 +133,8 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
       overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "4px 0", outline: "none",
       // 量出大小之前藏着：第一帧画在没调过的位置上会看到它闪出屏幕
       visibility: pos ? "visible" : "hidden",
-      backgroundColor: color.surface, border: `1px solid ${color.border}`, borderRadius: radius.medium, fontFamily: font.body,
+      // 年志的 surface 是半透明玻璃，浮在卡片上会透出底下的大字：垫一层不透明的墨色；其他风格的 surface 本来就不透明，看不出差别
+      background: `linear-gradient(${color.surface}, ${color.surface}) ${color.black}`, border: `1px solid ${color.border}`, borderRadius: radius.medium, fontFamily: font.body,
     }}
   >
     {items.map((entry) => {

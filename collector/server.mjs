@@ -23,6 +23,7 @@ import { DirectHistoryError } from "./directHistory.mjs";
 import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
+import { RecordFolderStore } from "./recordFolders.mjs";
 import { LIBRARY_TEXTS, createLookDesk } from "./aiEdit/look.mjs";
 import { AnalysisError, AnalysisLibrary, parseAnalysisConfig, startAnalysis } from "./videoAnalysis.mjs";
 import { VideoDownloadError, fetchMediaStream } from "./videoDownloader.mjs";
@@ -245,6 +246,13 @@ export async function startCollectorServer({
   };
   let collector = await openCollector(accounts.active());
   let explorer = new ExplorerBridge(collector);
+  // 文件夹按账号目录各存一份；同一目录始终用同一个 store，写入才在一条队列里排
+  const folderStores = new Map();
+  const foldersOf = (target) => {
+    let store = folderStores.get(target.dataDirectory);
+    if (!store) folderStores.set(target.dataDirectory, store = new RecordFolderStore(target.dataDirectory));
+    return store;
+  };
   // 解析库不分账号，放在根数据目录
   const analyses = new AnalysisLibrary(path.join(dataDirectory, "analyses.json"));
   await analyses.load();
@@ -459,8 +467,8 @@ export async function startCollectorServer({
     // AI 剪辑不分账号，切换账号期间也照常用
     if (await aiEdit.handle(request, response, url, { paired: true })) return;
 
-    // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录照常能读，接收中的聊天页要一直拉
-    const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (url.pathname === "/v1/records" && !accountWork));
+    // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录和文件夹照常能读，接收中的聊天页要一直拉
+    const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (["/v1/records", "/v1/folders"].includes(url.pathname) && !accountWork));
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
     const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
     if (!readable && !loginWait && rejectWhileSwitching(response)) return;
@@ -633,6 +641,8 @@ export async function startCollectorServer({
         } else {
           try {
             await runAccountWork(() => accounts.remove(account.id));
+            // 目录已经删了，缓存里的文件夹也别留着
+            folderStores.delete(accounts.directory(account));
             sendJson(response, 200, accounts.list());
           } catch (error) {
             sendJson(response, error?.status ?? 500, {
@@ -827,6 +837,38 @@ export async function startCollectorServer({
       } else waitForStatus(response, Number(requestedRevision));
     } else if (request.method === "GET" && url.pathname === "/v1/records") {
       sendJson(response, 200, url.searchParams.get("part") === "chat" ? collector.getChatSnapshot() : collector.getSnapshot());
+    } else if (request.method === "GET" && url.pathname === "/v1/folders") {
+      try {
+        sendJson(response, 200, await foldersOf(collector).read());
+      } catch {
+        sendJson(response, 500, { error: "folders_read_failed", message: "文件夹没读出来，请稍后再试。" });
+      }
+    } else if (request.method === "POST" && url.pathname === "/v1/folders") {
+      const target = collector;
+      let body;
+      try {
+        body = await readJsonBody(request, 8 * 1024 * 1024);
+      } catch {
+        body = null;
+      }
+      // 请求体里得有 lists：缺了它清洗出来就是三栏全空，一个坏请求会把文件夹全抹掉
+      if (!body?.lists || typeof body.lists !== "object" || Array.isArray(body.lists)) {
+        sendJson(response, 400, { error: "invalid_request", message: "文件夹数据无效。" });
+        return;
+      }
+      // 上传期间换了账号就不存，免得存进另一个账号
+      if (rejectWhileSwitching(response) || rejectStaleAccount(response, url)) return;
+      if (collector !== target) {
+        sendJson(response, 409, { error: "collector_busy", message: "账号已切换，请重新操作。" });
+        return;
+      }
+      try {
+        // 不回传整份文档：上万条归档时两头各多一次序列化，界面也用不上
+        await foldersOf(target).write(body);
+        sendJson(response, 200, { ok: true });
+      } catch {
+        sendJson(response, 500, { error: "folders_save_failed", message: "文件夹没存上，请稍后再试。" });
+      }
     } else if (request.method === "POST" && url.pathname === "/v1/sync") {
       const started = collector.startSync();
       sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });

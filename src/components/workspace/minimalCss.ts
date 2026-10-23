@@ -84,6 +84,8 @@ const blocks: string[] = [
   rule(`${M} [data-hover="tint"]:hover`, `background-color:${RAIL}!important`),
   rule(`${M} [data-motion="rise"],${M} [data-reveal="in"],${M} [data-motion="pop"]`, "animation-name:ws-fade!important;animation-duration:.24s!important;animation-timing-function:ease-out!important"),
   rule(`${M} [data-motion="pulse"]`, "animation:none!important"),
+  // 极简不放完成时迸开的小点，只留对勾淡入
+  rule(`${M} [data-motion="burst"]`, "animation:none!important"),
 
   // ---------- 外壳：没有外框，侧栏 + 主区平铺，发丝线分开 ----------
   rule(`${M} [data-testid="content-workspace"]`, `padding:0!important;background-color:${WHITE}!important`),

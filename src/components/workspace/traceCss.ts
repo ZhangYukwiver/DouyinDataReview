@@ -101,6 +101,8 @@ const blocks: string[] = [
   rule(sel("stamp,stamp-sig,stamp-ghost"), `${mono(9.5)};display:flex;flex-direction:row;align-items:center;gap:12px;align-self:flex-start!important;background-color:transparent!important;border-width:0!important;padding:0!important;min-height:0!important;height:auto!important;white-space:nowrap`),
   rule(sel("stamp"), `color:${MIST}!important;opacity:.85`),
   rule(sel("stamp-sig"), `color:${AMBER}!important`),
+  // 封面上的文件夹名会很长：戳是 flex，单行省略号不生效，这一个换回块级
+  rule(sel("w-folder"), "display:block!important"),
   rule(sel("stamp-ghost"), "color:rgba(222,226,222,.62)!important"),
   // 眉题一律带 40px 细线；徽标、话题、封面角标这类小戳不带
   rule(sel("stamp,stamp-sig", "::before"), LINE),

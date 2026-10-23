@@ -1,9 +1,10 @@
-import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Image,
   ImageBackground,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -25,6 +26,10 @@ import {
   Download,
   Eye,
   EyeOff,
+  Folder,
+  FolderInput,
+  FolderMinus,
+  FolderPlus,
   Heart,
   History,
   LayoutGrid,
@@ -34,6 +39,7 @@ import {
   Music2,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Play,
   Radio,
   RefreshCw,
@@ -43,6 +49,7 @@ import {
   Settings2,
   Sparkles,
   Star,
+  Trash2,
 } from "lucide-react-native";
 
 import type {
@@ -70,6 +77,26 @@ import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
 import { Segmented } from "./CreatorKit";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { earliestRecordDate, searchRecords } from "../../services/recordSearch";
+import {
+  ALL_FOLDERS,
+  FOLDERS_MAX,
+  UNFILED,
+  addFolder,
+  countByFolder,
+  filterByFolder,
+  folderKey,
+  folderNameProblem,
+  moveToFolder,
+  newFolderId,
+  readRecordFolders,
+  removeFolder,
+  renameFolder,
+  saveRecordFolders,
+  type RecordFolder,
+  type RecordFolderList,
+  type RecordFolders,
+} from "../../services/recordFolders";
+import { useContextMenu, type MenuEntry } from "./AiEditMenu";
 import { ReportDashboard } from "./ReportDashboard";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -261,6 +288,7 @@ export function ContentWorkspace({
     records.watch_history.filter((record) => record.mediaType !== "live"),
     records.watch_history.filter((record) => record.mediaType === "live"),
   ], [records.watch_history]);
+  const folders = useRecordFolders(commentsConnection, status?.account?.id);
   const counts: Record<WorkspaceViewKey, number> = {
     explore: 0,
     creator: 0,
@@ -479,6 +507,10 @@ export function ContentWorkspace({
           <RecordsGallery
             activeType={activeView === "live" ? "watch_history" : activeView}
             live={activeView === "live"}
+            folders={activeView === "live" || Platform.OS !== "web" ? null : folders.lists?.[activeView] ?? null}
+            folderError={folders.error}
+            onChangeFolders={activeView === "live" ? undefined : (update) => folders.change(activeView, update)}
+            onRetryFolders={folders.retry}
             label={currentNav.label}
             downloadStates={downloadStates}
             mobile={mobile}
@@ -627,9 +659,270 @@ function NavButton({
   );
 }
 
+/**
+ * 文件夹跟着采集器的当前账号走：改动先在界面上生效，再按先后顺序整份存回采集器。
+ * 存不上就退回上一次存好的样子并说明，排在后面的改动也一起作废，免得界面上看着放好了、其实没存。
+ */
+function useRecordFolders(connection: ExploreConnection | null | undefined, accountId: string | undefined) {
+  const owner = connection ? `${connection.baseUrl}|${accountId ?? ""}` : null;
+  const [state, setState] = useState<{ owner: string; lists: RecordFolders } | null>(null);
+  // 读不到和存不上分开记：重读失败不能把「刚才没存上」盖掉
+  const [error, setError] = useState<{ kind: "read" | "save"; message: string } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const lists = state && state.owner === owner ? state.lists : null;
+  const latest = useRef({ connection, accountId, owner, lists });
+  latest.current = { connection, accountId, owner, lists };
+  // 采集器那边确认过的最后一份：读到的、存成功的
+  const confirmed = useRef<{ owner: string; lists: RecordFolders } | null>(null);
+  const saving = useRef(Promise.resolve());
+  // 每改一次加一：排队的保存发现后面还有更新的就不发，整份文档里已经带着它了
+  const sequence = useRef(0);
+  // 存失败一次加一：失败之前排上的保存都作废
+  const generation = useRef(0);
+  useEffect(() => { setError(null); }, [owner]);
+  useEffect(() => {
+    const current = latest.current.connection;
+    if (!owner || !current) return;
+    let alive = true;
+    readRecordFolders(current)
+      .then((value) => {
+        if (!alive) return;
+        confirmed.current = value ? { owner, lists: value } : null;
+        setState(confirmed.current);
+        setError((shown) => (shown?.kind === "read" ? null : shown));
+      })
+      .catch((cause) => {
+        if (alive) setError((shown) => (shown?.kind === "save" ? shown : { kind: "read", message: cause instanceof Error ? cause.message : "文件夹没读到，请稍后再试。" }));
+      });
+    return () => { alive = false; };
+  }, [owner, attempt]);
+  const change = useCallback((type: PersonalRecordType, update: (list: RecordFolderList) => RecordFolderList) => {
+    const { connection: target, accountId: account, owner: who, lists: current } = latest.current;
+    if (!target || !who || !current) return;
+    const next = { ...current, [type]: update(current[type]) };
+    // 连着点两下时第二下要在第一下的结果上改，不等重渲染
+    latest.current.lists = next;
+    setState({ owner: who, lists: next });
+    setError(null);
+    const seq = ++sequence.current;
+    const gen = generation.current;
+    saving.current = saving.current.then(async () => {
+      if (gen !== generation.current || seq !== sequence.current) return;
+      try {
+        await saveRecordFolders(target, account, next);
+        if (latest.current.owner === who) confirmed.current = { owner: who, lists: next };
+      } catch (cause) {
+        if (latest.current.owner !== who) return;
+        generation.current += 1;
+        const reason = cause instanceof Error ? cause.message : "文件夹没存上。";
+        setError({ kind: "save", message: `${reason}刚才的改动已经撤回。` });
+        const back = confirmed.current?.owner === who ? confirmed.current : null;
+        latest.current.lists = back?.lists ?? null;
+        setState(back);
+        // ponytail: 撤回后马上再读一遍对齐采集器；失败后几毫秒内又改的那一下可能被这次重读盖掉，概率很小先不管
+        setAttempt((value) => value + 1);
+      }
+    });
+  }, []);
+  const retry = useCallback(() => setAttempt((value) => value + 1), []);
+  return { lists, error: error?.message ?? null, change, retry };
+}
+
+type FolderDialogState =
+  | { mode: "create"; move?: PersonalVideoRecord[] }
+  | { mode: "rename"; folder: RecordFolder }
+  | { mode: "delete"; folder: RecordFolder; count: number };
+
+type MenuPoint = { x: number; y: number };
+
+// 按钮点开的菜单从按钮下沿长出来；拿不到按钮位置（键盘回车）就用鼠标位置
+function pointBelow(event: unknown): MenuPoint {
+  const target = (event as { currentTarget?: { getBoundingClientRect?: () => { left: number; bottom: number } } } | null)?.currentTarget;
+  const rect = target?.getBoundingClientRect?.();
+  if (rect) return { x: rect.left, y: rect.bottom + 6 };
+  const native = (event as { nativeEvent?: { clientX?: number; clientY?: number } } | null)?.nativeEvent;
+  return { x: native?.clientX ?? 0, y: native?.clientY ?? 0 };
+}
+
+// RN 的类型里没有右键；网页上 View/Pressable 会把 onContextMenu 原样交给 DOM
+function contextMenuProps(open: ((at: MenuPoint) => void) | undefined): object {
+  if (Platform.OS !== "web" || !open) return {};
+  return { onContextMenu: (event: { preventDefault: () => void; clientX: number; clientY: number }) => { event.preventDefault(); open({ x: event.clientX, y: event.clientY }); } };
+}
+
+function FolderChip({ label, count, on, onPress, onMenu }: { label: string; count: number; on: boolean; onPress: () => void; onMenu?: (at: MenuPoint) => void }) {
+  return (
+    <Pressable
+      accessibilityLabel={`${label}，${count} 条`}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: on }}
+      aria-selected={on}
+      {...fx({ hover: "tint", ws: on ? "c-filter on" : "c-filter" })}
+      {...contextMenuProps(onMenu)}
+      onPress={onPress}
+      style={({ pressed }) => [styles.folderChip, on && styles.folderChipOn, pressed && styles.buttonPressed, webPointer]}
+    >
+      <Text numberOfLines={1} style={[styles.folderChipText, on && styles.folderChipTextOn]}>{label}</Text>
+      <Text {...ws("mono")} style={[styles.folderChipCount, on && styles.folderChipTextOn]}>{count.toLocaleString("zh-CN")}</Text>
+    </Pressable>
+  );
+}
+
+function FolderBar({
+  list,
+  counts,
+  total,
+  active,
+  privacy,
+  error,
+  nameOf,
+  onSelect,
+  onCreate,
+  onRename,
+  onDelete,
+  onChipMenu,
+}: {
+  list: RecordFolderList;
+  counts: Map<string, number>;
+  total: number;
+  active: string;
+  privacy: boolean;
+  error: string | null | undefined;
+  nameOf: (folder: RecordFolder) => string;
+  onSelect: (filter: string) => void;
+  onCreate: () => void;
+  onRename: (folder: RecordFolder) => void;
+  onDelete: (folder: RecordFolder) => void;
+  onChipMenu: (folder: RecordFolder, at: MenuPoint) => void;
+}) {
+  const current = list.folders.find((folder) => folder.id === active) ?? null;
+  return (
+    <View style={styles.folderBar} testID="record-folders">
+      <View {...ws("c-filters")} style={styles.folderRow}>
+        {/* 只有芯片算页签，「新建」「重命名」「删除」是按钮，放在页签组外面 */}
+        <View accessibilityRole="tablist" style={styles.folderTabs}>
+          <FolderChip count={total} label="全部" on={active === ALL_FOLDERS} onPress={() => onSelect(ALL_FOLDERS)} />
+          {list.folders.length ? <FolderChip count={counts.get(UNFILED) ?? 0} label="未分区" on={active === UNFILED} onPress={() => onSelect(UNFILED)} /> : null}
+          {list.folders.map((folder) => (
+            <FolderChip
+              count={counts.get(folder.id) ?? 0}
+              key={folder.id}
+              label={nameOf(folder)}
+              on={active === folder.id}
+              onMenu={privacy ? undefined : (at) => onChipMenu(folder, at)}
+              onPress={() => onSelect(folder.id)}
+            />
+          ))}
+        </View>
+        {!privacy ? (
+          <Pressable
+            {...ws("btn small")}
+            accessibilityLabel="新建文件夹"
+            accessibilityRole="button"
+            disabled={list.folders.length >= FOLDERS_MAX}
+            onPress={onCreate}
+            style={({ pressed }) => [styles.folderAction, list.folders.length >= FOLDERS_MAX && styles.buttonDisabled, pressed && styles.buttonPressed, webPointer]}
+          >
+            <FolderPlus color={color.textSecondary} size={14} />
+            <Text style={styles.folderActionText}>新建文件夹</Text>
+          </Pressable>
+        ) : null}
+        {current && !privacy ? (
+          <View style={styles.folderManage}>
+            <Pressable {...ws("btn small")} accessibilityLabel={`重命名「${current.name}」`} accessibilityRole="button" onPress={() => onRename(current)}
+              style={({ pressed }) => [styles.folderAction, pressed && styles.buttonPressed, webPointer]}>
+              <Pencil color={color.textSecondary} size={13} />
+              <Text style={styles.folderActionText}>重命名</Text>
+            </Pressable>
+            <Pressable {...ws("btn small")} accessibilityLabel={`删除「${current.name}」`} accessibilityRole="button" onPress={() => onDelete(current)}
+              style={({ pressed }) => [styles.folderAction, pressed && styles.buttonPressed, webPointer]}>
+              <Trash2 color={color.textSecondary} size={13} />
+              <Text style={styles.folderActionText}>删除</Text>
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+      {error ? <Text accessibilityRole="alert" style={styles.folderError}>{error}</Text> : null}
+    </View>
+  );
+}
+
+function FolderDialog({
+  state,
+  list,
+  onCancel,
+  onCreate,
+  onRename,
+  onDelete,
+}: {
+  state: FolderDialogState;
+  list: RecordFolderList;
+  onCancel: () => void;
+  onCreate: (name: string, move?: PersonalVideoRecord[]) => void;
+  onRename: (folder: RecordFolder, name: string) => void;
+  onDelete: (folder: RecordFolder) => void;
+}) {
+  const [name, setName] = useState(state.mode === "rename" ? state.folder.name : "");
+  const [tried, setTried] = useState(false);
+  const problem = state.mode === "delete" ? null : folderNameProblem(list, name, state.mode === "rename" ? state.folder.id : undefined);
+  // 空着的时候先不催，点了「新建」或者打了字再说哪里不行
+  const shownProblem = problem && (tried || name.trim()) ? problem : null;
+  const submit = () => {
+    if (state.mode === "delete") { onDelete(state.folder); return; }
+    setTried(true);
+    if (problem) return;
+    if (state.mode === "rename") onRename(state.folder, name);
+    else onCreate(name, state.move);
+  };
+  const title = state.mode === "delete"
+    ? `删除「${state.folder.name}」`
+    : state.mode === "rename"
+      ? "重命名文件夹"
+      : state.move?.length === 1 ? "新建文件夹，把这条放进去"
+      : state.move ? `新建文件夹，放进选中的 ${state.move.length} 条` : "新建文件夹";
+  return (
+    <Modal animationType="fade" onRequestClose={onCancel} transparent visible>
+      <View style={styles.dialogBackdrop}>
+        <View {...ws("w-dialog")} accessibilityViewIsModal style={styles.dialog} testID="folder-dialog">
+          <Text accessibilityRole="header" style={styles.dialogTitle}>{title}</Text>
+          {state.mode === "delete" ? (
+            <Text style={styles.dialogText}>{state.count ? `里面的 ${state.count} 条会回到未分区，视频记录本身不会删掉。` : "这个文件夹还是空的，删掉不影响任何记录。"}</Text>
+          ) : (
+            <TextInput
+              {...ws("c-input")}
+              accessibilityLabel="文件夹名字"
+              autoFocus
+              maxLength={40}
+              onChangeText={setName}
+              onSubmitEditing={submit}
+              placeholder="比如：学做菜、健身、以后再看"
+              placeholderTextColor={color.textMuted}
+              style={styles.dialogInput}
+              value={name}
+            />
+          )}
+          {shownProblem ? <Text accessibilityRole="alert" style={styles.dialogError}>{shownProblem}</Text> : null}
+          <View style={styles.dialogActions}>
+            <Pressable {...ws("btn")} accessibilityRole="button" onPress={onCancel} style={({ pressed }) => [styles.batchButton, pressed && styles.buttonPressed, webPointer]}>
+              <Text style={styles.batchButtonText}>取消</Text>
+            </Pressable>
+            <Pressable {...ws("btn-solid")} accessibilityRole="button" onPress={submit} style={({ pressed }) => [styles.batchButton, styles.batchPrimary, pressed && styles.buttonPressed, webPointer]}>
+              <Text style={styles.batchPrimaryText}>{state.mode === "delete" ? "删除文件夹" : state.mode === "rename" ? "保存" : "新建"}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function RecordsGallery({
   activeType,
   live = false,
+  folders,
+  folderError,
+  onChangeFolders,
+  onRetryFolders,
   label,
   downloadStates,
   mobile,
@@ -649,6 +942,11 @@ function RecordsGallery({
   activeType: PersonalRecordType;
   /** 直播一栏：卡片进直播间，页头能粘贴直播间链接 */
   live?: boolean;
+  /** 这一栏的文件夹；没连采集器（或采集器太旧）时为 null，不显示文件夹 */
+  folders?: RecordFolderList | null;
+  folderError?: string | null;
+  onChangeFolders?: (update: (list: RecordFolderList) => RecordFolderList) => void;
+  onRetryFolders?: () => void;
   label: string;
   downloadStates: Record<string, RecordDownloadState>;
   mobile: boolean;
@@ -671,18 +969,93 @@ function RecordsGallery({
   const openLive = Platform.OS === "web" && !privacy
     ? (record: PersonalVideoRecord) => record.url && setLiveTarget({ room: record.url, title: record.title, anchor: record.author, cover: record.coverUrl })
     : undefined;
-  const [selecting, setSelecting] = useState(false);
+  // 多选有两种：批量下载（按作品去重、每批 50 个）和整理进文件夹（按记录选、不限条数）
+  const [selectMode, setSelectMode] = useState<"download" | "folder" | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRecords, setBatchRecords] = useState<PersonalVideoRecord[] | null>(null);
   const [query, setQuery] = useState("");
+  const [activeFolder, setActiveFolder] = useState(ALL_FOLDERS);
+  // 在文件夹（或未分区）里移走的视频，换筛选之前先留在原处
+  const [keptKeys, setKeptKeys] = useState<ReadonlySet<string>>(new Set());
+  const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
+  const menu = useContextMenu();
   useEffect(() => {
     onBatchDownloadActiveChange?.(batchRecords !== null);
     return () => onBatchDownloadActiveChange?.(false);
   }, [batchRecords, onBatchDownloadActiveChange]);
-  useEffect(() => { setSelecting(false); setSelected(new Set()); }, [label, privacy]);
-  // 换了搜索词就重新选，免得之前选的、现在看不见的那些悄悄留在下载列表里
-  useEffect(() => { setSelected(new Set()); }, [query]);
+  useEffect(() => { setSelectMode(null); setSelected(new Set()); setFolderDialog(null); }, [label, privacy]);
+  useEffect(() => { setActiveFolder(ALL_FOLDERS); }, [label]);
+  // 换了搜索词、换了文件夹就重新选，免得之前选的、现在看不见的那些悄悄留在下载列表里
+  useEffect(() => { setSelected(new Set()); }, [query, activeFolder]);
+  useEffect(() => { setKeptKeys(new Set()); }, [label, activeFolder]);
   useEffect(() => { setPlayingRecord(null); setLiveTarget(null); setQuery(""); }, [label, privacy]);
+  const list = Platform.OS === "web" && folders && onChangeFolders ? folders : null;
+  // 文件夹读不到了（换账号、采集器出错），整理模式就没法用了，退出来，免得剩个没有出口的工具条
+  useEffect(() => { if (!list && selectMode === "folder") setSelectMode(null); }, [list, selectMode]);
+  const folderById = useMemo(() => new Map((list?.folders ?? []).map((folder) => [folder.id, folder])), [list]);
+  // 当前文件夹删掉了、换账号读到的是另一份，就回到「全部」
+  const folderFilter = !list
+    ? ALL_FOLDERS
+    : activeFolder === UNFILED ? (list.folders.length ? UNFILED : ALL_FOLDERS)
+      : folderById.has(activeFolder) ? activeFolder : ALL_FOLDERS;
+  // 回到「全部」要记下来，不然之后再建文件夹，视图会自己跳回原来那个筛选；文件夹还没读到时不动
+  useEffect(() => { if (list && folderFilter !== activeFolder) setActiveFolder(folderFilter); }, [list, folderFilter, activeFolder]);
+  const currentFolder = folderById.get(folderFilter) ?? null;
+  // 隐私模式下文件夹名也是内容，按顺序叫「文件夹 1、2…」
+  const nameOf = (folder: RecordFolder) => privacy ? `文件夹 ${list!.folders.indexOf(folder) + 1}` : folder.name;
+  const folderRecords = useMemo(() => (list ? filterByFolder(records, list, folderFilter, keptKeys) : records), [records, list, folderFilter, keptKeys]);
+  const folderCounts = useMemo(() => (list ? countByFolder(records, list) : null), [records, list]);
+  const changeFolders = (update: (current: RecordFolderList) => RecordFolderList) => onChangeFolders?.(update);
+  const keepInView = (targets: PersonalVideoRecord[]) => {
+    if (folderFilter !== ALL_FOLDERS) setKeptKeys((current) => new Set([...current, ...targets.map(folderKey)]));
+  };
+  const moveRecords = (targets: PersonalVideoRecord[], folderId: string | null) => {
+    keepInView(targets);
+    changeFolders((current) => moveToFolder(current, targets, folderId));
+  };
+  const openFolderMenu = (targets: PersonalVideoRecord[], at: MenuPoint, done?: () => void) => {
+    if (!list || targets.length === 0) return;
+    const filedIn = (record: PersonalVideoRecord) => {
+      const id = list.items[folderKey(record)];
+      return id && folderById.has(id) ? id : null;
+    };
+    const allIn = (id: string | null) => targets.every((record) => filedIn(record) === id);
+    const entries: MenuEntry[] = list.folders.map((folder) => ({
+      id: folder.id,
+      label: folder.name,
+      icon: <Folder color={color.textSecondary} size={14} />,
+      disabled: allIn(folder.id) ? "已经在这个文件夹里" : null,
+      onSelect: () => { moveRecords(targets, folder.id); done?.(); },
+    }));
+    if (list.folders.length) {
+      entries.push(
+        { id: "remove", label: "移出文件夹", icon: <FolderMinus color={color.textSecondary} size={14} />, disabled: allIn(null) ? "还没放进文件夹" : null, onSelect: () => { moveRecords(targets, null); done?.(); } },
+        { id: "separator", separator: true },
+      );
+    }
+    entries.push({
+      id: "create",
+      label: "新建文件夹并放进去…",
+      icon: <FolderPlus color={color.textSecondary} size={14} />,
+      disabled: list.folders.length >= FOLDERS_MAX ? `最多建 ${FOLDERS_MAX} 个文件夹` : null,
+      onSelect: () => setFolderDialog({ mode: "create", move: targets }),
+    });
+    menu.open(at, entries);
+  };
+  const openChipMenu = (folder: RecordFolder, at: MenuPoint) => menu.open(at, [
+    { id: "rename", label: "重命名", icon: <Pencil color={color.textSecondary} size={14} />, onSelect: () => setFolderDialog({ mode: "rename", folder }) },
+    { id: "delete", label: "删除文件夹", danger: true, icon: <Trash2 color={color.danger} size={14} />, onSelect: () => setFolderDialog({ mode: "delete", folder, count: folderCounts?.get(folder.id) ?? 0 }) },
+  ]);
+  const createFolder = (name: string, move?: PersonalVideoRecord[]) => {
+    const id = newFolderId();
+    if (move) keepInView(move);
+    changeFolders((current) => {
+      const added = addFolder(current, name, id);
+      return move ? moveToFolder(added, move, id) : added;
+    });
+    if (move && selectMode === "folder") setSelected(new Set());
+    setFolderDialog(null);
+  };
   const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
   // 最后一行不满时 flex:1 会把卡片拉宽，限成一列宽（12 是 gridRow 的 gap）
   const cellStyle = useMemo(() => Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null, [columns]);
@@ -710,16 +1083,17 @@ function RecordsGallery({
     : undefined, [rowFrame]);
   // 卡片是 memo 的：读取、接收聊天时状态每变一次整页都要重渲染，几百张卡片跟着重画一遍要一两百毫秒。
   // 外面传进来的回调每次都是新函数，这里换成引用不变、调用时取最新那份的版本
-  const latest = useRef({ onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive });
-  latest.current = { onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive };
+  const latest = useRef({ onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive, openFolderMenu });
+  latest.current = { onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive, openFolderMenu };
   const handlers = useMemo(() => ({
     download: (record: PersonalVideoRecord) => latest.current.onDownloadRecord!(record),
     analyze: (record: PersonalVideoRecord) => latest.current.onAnalyzeRecord!(record),
     open: (url: string) => latest.current.onOpenRecord(url),
     live: (record: PersonalVideoRecord) => { latest.current.openLive?.(record); },
+    folder: (record: PersonalVideoRecord, at: MenuPoint) => latest.current.openFolderMenu([record], at),
   }), []);
-  // 播放器的上一条/下一条和批量下载都跟着搜索结果走
-  const shownRecords = useMemo(() => searchRecords(records, query), [records, query]);
+  // 播放器的上一条/下一条和批量下载都跟着当前文件夹和搜索结果走
+  const shownRecords = useMemo(() => searchRecords(folderRecords, query), [folderRecords, query]);
   const searching = query.trim().length > 0;
   // 喜欢和收藏的时间是上次播放的时间，不是点赞收藏的时间，拿来说「最早一条」会误导
   const earliest = useMemo(() => activeType === "watch_history" ? earliestRecordDate(records) : null, [activeType, records]);
@@ -727,8 +1101,30 @@ function RecordsGallery({
   // 按钮按全部记录决定显不显示：跟着搜索结果来回出现会让搜索框左右跳，多选时还会找不到「退出多选」
   const hasDownloadable = useMemo(() => uniqueDownloadVideos(records).length > 0, [records]);
   const chosen = candidates.filter((record) => selected.has(videoDownloadKey(record)!));
-  const selectionFor = (record: PersonalVideoRecord) => {
-    if (!selecting) return undefined;
+  const chosenRecords = selectMode === "folder" ? shownRecords.filter((record) => selected.has(record.id)) : [];
+  // 整理不限条数，常开着连勾几十条：同一条、勾选状态没变就给同一个对象，卡片的 memo 才拦得住，勾一下只重画那一张
+  const folderSelections = useRef(new Map<string, RecordSelection>());
+  useEffect(() => { folderSelections.current.clear(); }, [selectMode]);
+  const selectionFor = (record: PersonalVideoRecord): RecordSelection | undefined => {
+    if (!selectMode) return undefined;
+    if (selectMode === "folder") {
+      const checked = selected.has(record.id);
+      const cacheKey = `${checked ? "1" : "0"}${record.id}`;
+      let selection = folderSelections.current.get(cacheKey);
+      if (!selection) {
+        selection = {
+          checked,
+          disabled: false,
+          toggle: () => setSelected((current) => {
+            const next = new Set(current);
+            if (!next.delete(record.id)) next.add(record.id);
+            return next;
+          }),
+        };
+        folderSelections.current.set(cacheKey, selection);
+      }
+      return selection;
+    }
     const key = videoDownloadKey(record);
     return {
       checked: Boolean(key && selected.has(key)),
@@ -747,7 +1143,22 @@ function RecordsGallery({
 
   return (
     <>
-    {selecting ? <View {...ws("w-batch")} style={styles.batchToolbar}>
+    {selectMode === "folder" ? <View {...ws("w-batch")} style={styles.batchToolbar}>
+      <Text style={styles.batchMeta}>已选 {chosenRecords.length} 条</Text>
+      <View style={styles.batchActions}>
+        <Pressable {...ws("btn")} accessibilityRole="button" onPress={() => setSelected(new Set(shownRecords.map((record) => record.id)))} style={styles.batchButton}>
+          <Text style={styles.batchButtonText}>全选这 {shownRecords.length} 条</Text>
+        </Pressable>
+        <Pressable {...ws("btn")} accessibilityRole="button" onPress={() => setSelected(new Set())} style={styles.batchButton}><Text style={styles.batchButtonText}>清空选择</Text></Pressable>
+        <Pressable {...ws("btn-solid")} accessibilityRole="button" accessibilityState={{ disabled: chosenRecords.length === 0 }} disabled={chosenRecords.length === 0}
+          onPress={(event) => openFolderMenu(chosenRecords, pointBelow(event), () => setSelected(new Set()))}
+          style={[styles.batchButton, styles.batchPrimary, chosenRecords.length === 0 && styles.buttonDisabled]}>
+          <FolderInput size={14} color={color.buttonText} /><Text style={styles.batchPrimaryText}>移到文件夹（{chosenRecords.length}）</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.batchHint}>勾选要整理的视频，再点「移到文件夹」{activeType === "watch_history" ? "；同一个视频看过几次，会一起移过去" : ""}。</Text>
+    </View> : null}
+    {selectMode === "download" ? <View {...ws("w-batch")} style={styles.batchToolbar}>
       <Text style={styles.batchMeta}>已选 {chosen.length} / {candidates.length} 个可下载视频</Text>
       <View style={styles.batchActions}>
         <Pressable {...ws("btn")} accessibilityRole="button" onPress={() => setSelected(new Set(candidates.slice(0, MAX_BATCH_VIDEOS).map((record) => videoDownloadKey(record)!)))} style={styles.batchButton}>
@@ -777,7 +1188,9 @@ function RecordsGallery({
           <View style={styles.galleryHeaderCopy}>
             <Text {...ws("w-gtitle")} style={styles.galleryTitle}>{label}</Text>
             <Text {...ws("mono")} style={styles.galleryMeta}>{searching
-              ? `在 ${records.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
+              ? `在 ${folderRecords.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
+              : currentFolder ? `「${nameOf(currentFolder)}」里放了 ${folderCounts?.get(currentFolder.id) ?? 0} 条，全部一共 ${records.length} 条`
+              : folderFilter === UNFILED ? `还有 ${folderCounts?.get(UNFILED) ?? 0} 条没放进文件夹`
               : `${sourceLabel} · ${status?.message ?? `${records.length} 条本地记录`}`}</Text>
           </View>
           {records.length > 0 && !privacy ? (
@@ -788,9 +1201,13 @@ function RecordsGallery({
             </View>
           ) : null}
           {live && Platform.OS === "web" && !privacy ? <LiveRoomEntry onEnter={setLiveTarget} /> : null}
-          {Platform.OS === "web" && !privacy && (selecting || hasDownloadable) ? <Pressable {...ws("btn")} accessibilityRole="button"
-            onPress={() => { setSelecting(!selecting); setSelected(new Set()); }} style={styles.batchButton}>
-            <Download size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{selecting ? "退出多选" : "批量下载"}</Text>
+          {selectMode === "folder" || (list && !privacy && records.length > 0) ? <Pressable {...ws("btn")} accessibilityRole="button"
+            onPress={() => { setSelectMode(selectMode === "folder" ? null : "folder"); setSelected(new Set()); }} style={styles.batchButton}>
+            <FolderInput size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{selectMode === "folder" ? "退出整理" : "整理"}</Text>
+          </Pressable> : null}
+          {Platform.OS === "web" && !privacy && (selectMode === "download" || hasDownloadable) ? <Pressable {...ws("btn")} accessibilityRole="button"
+            onPress={() => { setSelectMode(selectMode === "download" ? null : "download"); setSelected(new Set()); }} style={styles.batchButton}>
+            <Download size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{selectMode === "download" ? "退出多选" : "批量下载"}</Text>
           </Pressable> : null}
           <View {...ws("w-switch")} accessibilityRole="tablist" style={styles.layoutSwitch}>
             <Pressable
@@ -816,6 +1233,33 @@ function RecordsGallery({
           </View>
         </View>
         {live && Platform.OS === "web" && !privacy && commentsConnection ? <FollowingLiveRow connection={commentsConnection} onEnter={setLiveTarget} /> : null}
+        {list && folderCounts && records.length > 0 ? (
+          <FolderBar
+            active={folderFilter}
+            counts={folderCounts}
+            error={folderError}
+            list={list}
+            nameOf={nameOf}
+            onChipMenu={openChipMenu}
+            onCreate={() => setFolderDialog({ mode: "create" })}
+            onDelete={(folder) => setFolderDialog({ mode: "delete", folder, count: folderCounts.get(folder.id) ?? 0 })}
+            onRename={(folder) => setFolderDialog({ mode: "rename", folder })}
+            onSelect={setActiveFolder}
+            privacy={privacy}
+            total={records.length}
+          />
+        ) : !list && folderError && onChangeFolders && Platform.OS === "web" && records.length > 0 ? (
+          // 文件夹第一次就没读到：说一声，给个重读，不然文件夹整个不见了也不知道为什么
+          <View style={[styles.folderBar, styles.folderRetry]}>
+            <Text accessibilityRole="alert" style={styles.folderRetryText}>{folderError}</Text>
+            {onRetryFolders ? (
+              <Pressable {...ws("btn small")} accessibilityRole="button" onPress={onRetryFolders} style={({ pressed }) => [styles.folderAction, pressed && styles.buttonPressed, webPointer]}>
+                <RefreshCw color={color.textSecondary} size={13} />
+                <Text style={styles.folderActionText}>重新读取文件夹</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         </>
       )}
       ListEmptyComponent={searching ? (
@@ -823,6 +1267,7 @@ function RecordsGallery({
           <View {...ws("w-emptyicon")} style={styles.emptyIcon}><Search color={color.cyan} size={24} /></View>
           <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>没找到「{query.trim()}」</Text>
           <Text style={styles.emptyDetail}>
+            {currentFolder ? `现在只在「${nameOf(currentFolder)}」里找。` : folderFilter === UNFILED ? "现在只在没放进文件夹的记录里找。" : ""}
             换个词或少输几个词试试。只能搜到读进本机的记录{earliest ? `，最早一条是 ${formatLongDate(earliest)}` : ""}。
           </Text>
           <Pressable
@@ -832,6 +1277,26 @@ function RecordsGallery({
             style={({ pressed }) => [styles.emptyButton, pressed && styles.buttonPressed, webPointer]}
           >
             <Text style={styles.emptyButtonText}>清空搜索</Text>
+          </Pressable>
+        </View>
+      ) : folderFilter !== ALL_FOLDERS && records.length > 0 ? (
+        <View {...fx({ motion: "rise" })} style={styles.emptyState} testID="record-folder-empty">
+          <View {...ws("w-emptyicon")} style={styles.emptyIcon}><Folder color={color.cyan} size={24} /></View>
+          <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>{currentFolder ? `「${nameOf(currentFolder)}」还是空的` : "都放进文件夹了"}</Text>
+          <Text style={styles.emptyDetail}>
+            {!currentFolder
+              ? "每条记录都有自己的文件夹了。"
+              : privacy ? "关掉隐私模式以后，才能往文件夹里放视频。"
+              : layout === "grid" ? "回到「全部」，把鼠标移到视频上点右上角的文件夹按钮，或者右键视频，就能放进来；点「整理」可以一次勾好几条。"
+              : "回到「全部」，右键视频就能放进来；点「整理」可以一次勾好几条。"}
+          </Text>
+          <Pressable
+            {...ws("btn-solid")}
+            accessibilityRole="button"
+            onPress={() => setActiveFolder(ALL_FOLDERS)}
+            style={({ pressed }) => [styles.emptyButton, pressed && styles.buttonPressed, webPointer]}
+          >
+            <Text style={styles.emptyButtonText}>看全部</Text>
           </Pressable>
         </View>
       ) : (
@@ -851,20 +1316,31 @@ function RecordsGallery({
         </View>
       )}
       numColumns={layout === "grid" ? columns : 1}
-      renderItem={({ item }) => layout === "grid"
-        ? <RecordTile
-            cellStyle={cellStyle}
-            selection={selectionFor(item)}
-            downloadState={downloadStates[item.id] ?? "idle"}
-            onDownloadRecord={item.mediaType === "live" || !onDownloadRecord ? undefined : handlers.download}
-            onAnalyzeRecord={item.mediaType === "live" || !onAnalyzeRecord ? undefined : handlers.analyze}
-            onPlayRecord={item.mediaType === "live" ? openLive && handlers.live : onLoadVideo ? setPlayingRecord : undefined}
-            onOpenRecord={handlers.open}
-            privacy={privacy}
-            record={item}
-            type={activeType}
-          />
-        : <RecordRow selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} />}
+      renderItem={({ item }) => {
+        const filedIn = list && !privacy ? folderById.get(list.items[folderKey(item)] ?? "")?.name : undefined;
+        // 「全部」里标出放在哪个文件夹；文件夹（或未分区）里只给刚移走、还留在原处的那几条标出新去处
+        const folderName = folderFilter === ALL_FOLDERS || !list || privacy ? filedIn
+          : keptKeys.has(folderKey(item)) && (list.items[folderKey(item)] ?? UNFILED) !== folderFilter ? filedIn ?? "未分区"
+          : undefined;
+        const onFolderMenu = list && !privacy ? handlers.folder : undefined;
+        return layout === "grid"
+          ? <RecordTile
+              cellStyle={cellStyle}
+              selection={selectionFor(item)}
+              downloadState={downloadStates[item.id] ?? "idle"}
+              filedIn={filedIn}
+              folderName={folderName}
+              onDownloadRecord={item.mediaType === "live" || !onDownloadRecord ? undefined : handlers.download}
+              onAnalyzeRecord={item.mediaType === "live" || !onAnalyzeRecord ? undefined : handlers.analyze}
+              onFolderMenu={onFolderMenu}
+              onPlayRecord={item.mediaType === "live" ? openLive && handlers.live : onLoadVideo ? setPlayingRecord : undefined}
+              onOpenRecord={handlers.open}
+              privacy={privacy}
+              record={item}
+              type={activeType}
+            />
+          : <RecordRow folderName={folderName} onFolderMenu={onFolderMenu} selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} />;
+      }}
       // 上万条记录靠滚轮翻太慢，留一条常驻、能拖的滚动条（样式见 motionCss 的 data-scrollbar）
       {...{ dataSet: { scrollbar: "" } }}
     />
@@ -875,6 +1351,17 @@ function RecordsGallery({
       <LiveRoomPlayer target={liveTarget} connection={commentsConnection ?? null} onClose={() => setLiveTarget(null)} onOpenRecord={onOpenRecord} onOpenSettings={onOpenSettings} />
     ) : null}
     {batchRecords && commentsConnection ? <BatchVideoDownloadDialog records={batchRecords} connection={commentsConnection} privacy={privacy} onClose={() => setBatchRecords(null)} /> : null}
+    {folderDialog && list ? (
+      <FolderDialog
+        list={list}
+        onCancel={() => setFolderDialog(null)}
+        onCreate={createFolder}
+        onDelete={(folder) => { changeFolders((current) => removeFolder(current, folder.id)); setFolderDialog(null); }}
+        onRename={(folder, name) => { changeFolders((current) => renameFolder(current, folder.id, name)); setFolderDialog(null); }}
+        state={folderDialog}
+      />
+    ) : null}
+    {menu.element}
     </>
   );
 }
@@ -962,8 +1449,11 @@ const RecordTile = memo(function RecordTile({
   cellStyle,
   selection,
   downloadState,
+  filedIn,
+  folderName,
   onDownloadRecord,
   onAnalyzeRecord,
+  onFolderMenu,
   onPlayRecord,
   record,
   type,
@@ -973,8 +1463,14 @@ const RecordTile = memo(function RecordTile({
   cellStyle?: object | null;
   selection?: RecordSelection;
   downloadState: RecordDownloadState;
+  /** 实际放在哪个文件夹，给文件夹按钮的读屏说明用 */
+  filedIn?: string;
+  /** 封面左上角标出的文件夹名 */
+  folderName?: string;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
   onAnalyzeRecord?: (record: PersonalVideoRecord) => void;
+  /** 打开「放进文件夹」菜单：悬停时右上角的按钮、右键都走这里 */
+  onFolderMenu?: (record: PersonalVideoRecord, at: MenuPoint) => void;
   onPlayRecord?: (record: PersonalVideoRecord) => void;
   record: PersonalVideoRecord;
   type: PersonalRecordType;
@@ -1008,7 +1504,8 @@ const RecordTile = memo(function RecordTile({
     } | undefined;
     const relatedTarget = eventLike?.nativeEvent?.relatedTarget ?? eventLike?.relatedTarget;
     const relatedElement = relatedTarget as { closest?: (selector: string) => unknown } | null;
-    if (relatedElement?.closest?.('[data-testid="record-tile-action"]')) return;
+    // 焦点进了文件夹菜单也不收起操作层：菜单关上时焦点要回到这颗按钮
+    if (relatedElement?.closest?.('[data-testid="record-tile-action"],[role="menu"]')) return;
     if (focusCheckTimer.current) clearTimeout(focusCheckTimer.current);
     focusCheckTimer.current = setTimeout(() => {
       focusCheckTimer.current = null;
@@ -1033,6 +1530,7 @@ const RecordTile = memo(function RecordTile({
             onMouseLeave: () => setHovered(false),
           } as Record<string, unknown>)
         : {})}
+      {...contextMenuProps(onFolderMenu && !selection ? (at) => onFolderMenu(record, at) : undefined)}
       style={[styles.tile, cellStyle]}
     >
       <Pressable
@@ -1063,7 +1561,10 @@ const RecordTile = memo(function RecordTile({
             </View>
           )}
           <View style={styles.tileTopMeta}>
-            <View {...ws("w-type")} style={[styles.typeBadge, { backgroundColor: accent }]} />
+            <View style={[styles.tileTopLeft, selection && styles.tileTopLeftSelecting]}>
+              <View {...ws("w-type")} style={[styles.typeBadge, { backgroundColor: accent }]} />
+              {folderName ? <Text {...ws("stamp w-folder")} numberOfLines={1} style={[styles.durationBadge, styles.folderBadge]}>{folderName}</Text> : null}
+            </View>
             {record.durationSeconds ? <Text {...ws("stamp")} style={styles.durationBadge}>{formatDuration(record.durationSeconds)}</Text> : null}
           </View>
           <View {...ws("w-tilebar")} style={styles.tileBottomMeta}>
@@ -1096,6 +1597,20 @@ const RecordTile = memo(function RecordTile({
               style={({ pressed }) => [styles.tilePlayButton, pressed && styles.tileActionPressed, webPointer]}
             >
               <Play color={color.white} fill={color.white} size={28} style={{ marginLeft: 3 }} />
+            </Pressable>
+          ) : null}
+          {onFolderMenu ? (
+            <Pressable
+              testID="record-tile-action"
+              accessibilityLabel={filedIn ? `换文件夹，现在在「${filedIn}」` : "放进文件夹"}
+              accessibilityRole="button"
+              onFocus={markFocused}
+              onBlur={checkFocusBoundary}
+              onPress={(event) => onFolderMenu(record, pointBelow(event))}
+              {...ws("btn-sig w-tileaction")}
+              style={({ pressed }) => [styles.tileAction, styles.tileFolderButton, pressed && styles.tileActionPressed, webPointer]}
+            >
+              <FolderInput color={color.white} size={15} strokeWidth={2.2} />
             </Pressable>
           ) : null}
           <View style={styles.tileActionsRow}>
@@ -1146,7 +1661,15 @@ const RecordTile = memo(function RecordTile({
   );
 });
 
-const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, selection }: { record: PersonalVideoRecord; type: PersonalRecordType; privacy: boolean; onOpenRecord: (url: string) => Promise<void>; selection?: RecordSelection }) {
+const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, selection, folderName, onFolderMenu }: {
+  record: PersonalVideoRecord;
+  type: PersonalRecordType;
+  privacy: boolean;
+  onOpenRecord: (url: string) => Promise<void>;
+  selection?: RecordSelection;
+  folderName?: string;
+  onFolderMenu?: (record: PersonalVideoRecord, at: MenuPoint) => void;
+}) {
   const [imageFailed, setImageFailed] = useState(false);
   const accent = type === "liked_videos" ? color.accent : type === "favorite_videos" ? color.amber : color.cyan;
   const imageAvailable = Boolean(record.coverUrl && !privacy && !imageFailed);
@@ -1159,6 +1682,7 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
       disabled={selection ? selection.disabled : !record.url}
       onPress={() => selection ? selection.toggle() : record.url && void onOpenRecord(record.url)}
       {...fx({ hover: "tint", ws: "w-row" })}
+      {...contextMenuProps(onFolderMenu && !selection ? (at) => onFolderMenu(record, at) : undefined)}
       style={({ pressed }) => [styles.recordRow, pressed && styles.recordRowPressed, record.url && webPointer]}
     >
       {selection ? <SelectionMark selection={selection} /> : null}
@@ -1174,6 +1698,7 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
           <Text {...ws("mono")} style={styles.rowMetaText}>{formatShortDate(record.occurredAt)}</Text>
           {record.durationSeconds ? <Text {...ws("mono")} style={styles.rowMetaText}>{formatDuration(record.durationSeconds)}</Text> : null}
           {record.topics?.[0] ? <Text {...ws("stamp-sig")} style={[styles.rowTopic, { color: accent }]}>#{privacy ? "话题" : record.topics[0]}</Text> : null}
+          {folderName ? <View style={styles.rowFolder}><Folder color={color.textMuted} size={11} /><Text numberOfLines={1} style={styles.rowMetaText}>{folderName}</Text></View> : null}
         </View>
       </View>
       {record.url && !selection ? <ArrowUpRight color={color.textMuted} size={19} /> : null}
@@ -1670,6 +2195,34 @@ const styles = StyleSheet.create({
   tileActionText: { color: color.white, fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   tileActionPressed: { backgroundColor: "rgba(239,223,204,0.18)" },
   tileActionDisabled: { opacity: 0.72 },
+  tileTopLeft: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, marginRight: 6 },
+  // 多选时左上角是勾选框，文件夹名让到它右边
+  tileTopLeftSelecting: { marginLeft: 30 },
+  folderBadge: { flexShrink: 1, maxWidth: 110 },
+  tileFolderButton: { position: "absolute", top: 10, right: 10, width: 34, height: 34, minHeight: 34, paddingHorizontal: 0 },
+  rowFolder: { flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 160 },
+  // 文件夹芯片照聊天页的筛选芯片写（c-filters / c-filter），另外三种风格的样式都已经覆盖到
+  folderBar: { marginBottom: 16 },
+  folderRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  folderTabs: { flexShrink: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  folderRetry: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10 },
+  folderRetryText: { color: color.danger, fontSize: 12, lineHeight: 18 },
+  folderChip: { height: 30, maxWidth: 220, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, borderRadius: radius.small },
+  folderChipOn: { backgroundColor: color.cyanSoft },
+  folderChipText: { flexShrink: 1, color: color.textMuted, fontSize: 12, fontWeight: "800" },
+  folderChipTextOn: { color: color.cyan },
+  folderChipCount: { color: color.textMuted, fontSize: 10, fontVariant: ["tabular-nums"] },
+  folderAction: { height: 30, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
+  folderActionText: { color: color.textSecondary, fontSize: 12 },
+  folderManage: { flexDirection: "row", gap: 6, marginLeft: "auto" },
+  folderError: { color: color.danger, fontSize: 12, lineHeight: 18, marginTop: 8 },
+  dialogBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 16, backgroundColor: color.scrim },
+  dialog: { width: "100%", maxWidth: 420, gap: 14, padding: 20, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
+  dialogTitle: { color: color.text, fontSize: 18, fontWeight: "600" },
+  dialogText: { color: color.textSecondary, fontSize: 13, lineHeight: 21 },
+  dialogInput: { height: 40, color: color.text, fontSize: 13, paddingHorizontal: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surfaceMuted },
+  dialogError: { color: color.danger, fontSize: 12, lineHeight: 18, marginTop: -6 },
+  dialogActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8 },
   recordRow: { minHeight: 112, flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
   recordRowPressed: { backgroundColor: color.surface },
   rowThumb: { width: 72, height: 92, flexShrink: 0, alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: radius.small },
