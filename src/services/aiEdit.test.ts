@@ -27,8 +27,23 @@ describe("sendAiEditMessage", () => {
     }));
     const config = { baseUrl: "https://edit.example.com/v1", apiKey: "edit-key", model: "m" };
     const region = { time_us: 3_200_000, x: 0.1, y: 0.05, width: 0.3, height: 0.25, clip_ids: ["c1"] };
-    await sendAiEditMessage({ baseUrl: "http://127.0.0.1:4765", token: "t" }, "s", "这里换个颜色", config, region);
+    await sendAiEditMessage({ baseUrl: "http://127.0.0.1:4765", token: "t" }, "s", "这里换个颜色", config, { region });
     expect(bodies).toEqual([{ text: "这里换个颜色", config, region }]);
+  });
+
+  it("带上引用和附图，空的不发", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ session: { id: "s" } }, { status: 202 });
+    }));
+    const config = { baseUrl: "https://edit.example.com/v1", apiKey: "edit-key", model: "m" };
+    const connection = { baseUrl: "http://127.0.0.1:4765", token: "t" };
+    const refs = [{ kind: "clip" as const, clip_id: "c1" }, { kind: "time" as const, time_us: 3_200_000 }, { kind: "media" as const, media_id: "m1" }];
+    const attachments = [{ media_id: "m2", preview: "data:image/jpeg;base64,AAAA" }];
+    await sendAiEditMessage(connection, "s", "这段换成这张图", config, { refs, attachments });
+    await sendAiEditMessage(connection, "s", "剪", config, { region: null, refs: [], attachments: [] });
+    expect(bodies).toEqual([{ text: "这段换成这张图", config, refs, attachments }, { text: "剪", config }]);
   });
 });
 

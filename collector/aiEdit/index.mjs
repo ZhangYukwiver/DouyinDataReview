@@ -7,13 +7,14 @@ import { modelFetch } from "../systemProxy.mjs";
 import { VideoDownloadError } from "../videoDownloader.mjs";
 import { isLocalRuntime } from "../localAi.mjs";
 import { MAX_TOOL_CALLS, parseEditConfig, runConversation, sealHistory, trimHistory } from "./chat.mjs";
+import { parseAttachments, describeAttachments } from "./attachments.mjs";
 import { runCliConversation } from "./cliTurn.mjs";
 import { EditError } from "./errors.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
 import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, revertTarget, sessionDetail } from "./sessions.mjs";
 import {
-  TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, describeToolError, micros, probeVideoInput, rearrangeGrids, seconds, trackLabel,
+  TOOL_DEFINITIONS, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, describeToolError, micros, probeVideoInput, projectDurationUs, rearrangeGrids, seconds, trackLabel,
 } from "./tools.mjs";
 
 // AI 剪辑在采集器里的入口：会话、工程、素材库、对话循环和导入剪映草稿箱的 HTTP 接口。
@@ -22,7 +23,8 @@ import {
 
 const DEFAULT_TITLE = "未命名剪辑";
 const DEFAULT_CANVAS = { width: 1080, height: 1920, fps: 30 };
-const MESSAGE_BODY_BYTES = 64 * 1024;
+// 消息里最多带 4 张图的预览（每张 400KB 以内，base64 以后约 540KB）
+const MESSAGE_BODY_BYTES = 2_560 * 1024;
 const BODY_BYTES = 16 * 1024;
 // 页面交回的参考视频截图：最多 40 张小 JPEG
 const LOOK_BODY_BYTES = 24 * 1024 * 1024;
@@ -51,6 +53,9 @@ const EDIT_BODY_BYTES = 64 * 1024;
 const MAX_BATCH_NOTES = 8;
 const MAX_PENDING_NOTES = 30;
 const MAX_REGION_CLIPS = 30;
+const MAX_REFS = 10;
+// 引用的时刻在画面上的片段最多列这么多
+const MAX_MOMENT_CLIPS = 12;
 const MEDIA_KINDS = new Set(["video", "image", "audio"]);
 
 function sendJson(response, status, payload, headers = {}) {
@@ -143,13 +148,85 @@ function describeRegion({ time_us: time, x, y, width, height, clip_ids: ids, lab
   return `${where}框里有：${inside}。用户这次说的「这里」「这块」「这个」指的就是框里这些，只改它们，框外的别动，除非用户明说。`;
 }
 
-/** 进模型历史的这条用户消息：前面附上用户在看板上手动改过的地方和框选；都没有就是原话。 */
-function userContent(text, notes, region) {
-  if (!notes.length && !region) return text;
+const KIND_NAMES = { video: "视频", image: "图片", audio: "音频" };
+
+/** 素材的样子：图片 400×400、视频 1080×1920，12 秒、音频，30 秒；没就绪的带上状态。 */
+function mediaDetail(item) {
+  const size = item.width ? ` ${item.width}×${item.height}` : "";
+  const length = item.kind !== "image" && item.durationUs ? `，${seconds(item.durationUs)} 秒` : "";
+  const state = item.status === "importing" ? "，还在导入" : item.status === "failed" ? "，导入失败了" : "";
+  return `${KIND_NAMES[item.kind] ?? "素材"}${item.kind === "audio" ? "" : size}${length}${state}`;
+}
+
+/** 时刻给页面看的写法，和页面上的一样：「第 1.5 秒」「第 1 分 15 秒」。 */
+function secondMark(timeUs) {
+  const total = Math.round(Math.max(0, timeUs) / 100_000) / 10;
+  if (total < 60) return `第 ${total} 秒`;
+  const minutes = Math.floor(total / 60);
+  return `第 ${minutes} 分 ${Math.round((total - minutes * 60) * 10) / 10} 秒`;
+}
+
+/** 某一刻时间线上正在显示或播放的片段，上层的在前。 */
+function clipsAt(project, timeUs) {
+  return [...project.tracks].reverse().flatMap((track) => (track.segments ?? []).filter((segment) => {
+    const { start_us: start, duration_us: duration } = segment.timeline;
+    return start <= timeUs && timeUs < start + duration;
+  }));
+}
+
+/**
+ * 用户引用到对话里的片段、时刻和素材：片段只留工程里还在的，素材只留素材库里有的，时刻不能超过片尾 1 秒。
+ * 回 [{ kind, clip_id | time_us | media_id, label, detail }]：label 给页面显示，detail 是给模型看的说明。
+ */
+function parseRefs(raw, project, library) {
+  if (raw === undefined || raw === null) return [];
+  const bad = () => new AiEditError("invalid_refs", "引用的东西不对，重新选一下。", 422);
+  if (!Array.isArray(raw) || raw.length > MAX_REFS) throw bad();
+  const segments = new Map(project.tracks.flatMap((track) => (track.segments ?? []).map((segment) => [segment.id, segment])));
+  const end = projectDurationUs(project) + 1_000_000;
+  const refs = new Map();
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw bad();
+    if (item.kind === "clip") {
+      if (typeof item.clip_id !== "string") throw bad();
+      const segment = segments.get(item.clip_id);
+      if (!segment) continue;
+      const { start_us: start, duration_us: duration } = segment.timeline;
+      const label = clipLabel(segment);
+      refs.set(`clip:${segment.id}`, { kind: "clip", clip_id: segment.id, label, detail: `clip_id ${segment.id}（${label}，在时间线 ${seconds(start)}–${seconds(start + duration)} 秒）` });
+    } else if (item.kind === "time") {
+      const time = item.time_us;
+      if (!Number.isSafeInteger(time) || time < 0 || time > end) throw bad();
+      const showing = clipsAt(project, time);
+      const listed = showing.slice(0, MAX_MOMENT_CLIPS).map((segment) => `clip_id ${segment.id}（${clipLabel(segment)}）`).join("、");
+      const more = showing.length > MAX_MOMENT_CLIPS ? `等 ${showing.length} 段` : "";
+      const what = showing.length ? `这一刻正在显示或播放的有：${listed}${more}` : "这一刻时间线上什么都没有";
+      refs.set(`time:${time}`, { kind: "time", time_us: time, label: secondMark(time), detail: `时刻 ${seconds(time)} 秒（${what}）` });
+    } else if (item.kind === "media") {
+      if (typeof item.media_id !== "string") throw bad();
+      const media = isMediaId(item.media_id) ? library.get(item.media_id) : null;
+      if (!media) continue;
+      refs.set(`media:${media.id}`, { kind: "media", media_id: media.id, label: `素材“${media.name}”`, detail: `media_id ${media.id}（素材“${media.name}”，${mediaDetail(media)}）` });
+    } else {
+      throw bad();
+    }
+  }
+  return [...refs.values()];
+}
+
+function describeRefs(refs) {
+  return `用户这句话引用了：${refs.map((ref) => ref.detail).join("、")}。用户说的「这段」「这里」「这个素材」指的就是这些；引用的东西在工程现状里找不到了，就以工程现状为准，并跟用户说一声。`;
+}
+
+/** 进模型历史的这条用户消息：前面附上用户在看板上手动改过的地方、框选、引用和贴的图；都没有就是原话。 */
+function userContent(text, { notes = [], region = null, refs = [], attachments = [] } = {}) {
+  if (!notes.length && !region && !refs.length && !attachments.length) return text;
   return [
     "【应用自动附上，不是用户说的话】",
     ...(notes.length ? ["用户在看板上手动改过（以工程现状为准，这些是用户自己改的，别改回去，除非用户这次明说）：", ...notes.map((note) => `- ${note}`)] : []),
     ...(region ? [describeRegion(region)] : []),
+    ...(refs.length ? [describeRefs(refs)] : []),
+    ...(attachments.length ? [describeAttachments(attachments)] : []),
     "【用户这次说的话】",
     text,
   ].join("\n");
@@ -498,6 +575,13 @@ export function createAiEdit({
       const result = await converse({
         config, history: session.history, tools: TOOL_DEFINITIONS, signal, fetchImpl, onText, maxToolCalls: MAX_TOOL_CALLS,
         localAi, goal: () => session.goal,
+        // 贴的图存在会话的附图目录里；模型看不了图、历史太长被裁这类事记进这一轮
+        readAttachment: (attachment) => sessions.readAttachment(session, attachment),
+        onAction: (action) => {
+          streaming.actions.push(action);
+          void sessions.touch(session);
+        },
+        onTrimmed: () => { session.trimmed = true; },
         // 系统提示只放不常变的；工程现状每步都变，附在每次请求的最后，不打断接口的前缀缓存
         // 目标每次请求都读最新的：一轮做到一半改了，下一步就照新的来
         system: async () => buildSystemPrompt({ project: await store.getProject(session.projectId), media: library.list(), goal: session.goal }),
@@ -530,7 +614,9 @@ export function createAiEdit({
     if (text || actions.length) {
       session.messages.push({ id: randomBytes(8).toString("hex"), role: "assistant", text, at: now().toISOString(), ...(actions.length ? { actions } : {}) });
     }
-    session.history = trimHistory(session.history, STORED_HISTORY_CHARS);
+    const stored = trimHistory(session.history, STORED_HISTORY_CHARS);
+    if (stored.length < session.history.length) session.trimmed = true;
+    session.history = stored;
     // 这一轮没动工程就不留开跑前的存档；动了的话之前撤销掉的就不能再重做了（看不出动没动也按动了算）
     const revision = await store.getProject(session.projectId).then((project) => project.revision, () => null);
     if (turn.checkpoint && revision === turn.revision) await sessions.dropCheckpoint(session, turn.checkpoint.id).catch(() => undefined);
@@ -541,12 +627,21 @@ export function createAiEdit({
     await sessions.touch(session, { persist: true });
   };
 
-  const startTurn = async (session, text, config, region = null) => {
+  /** region、refs、attachments 是 parseRegion、parseRefs、parseAttachments 校验过的。 */
+  const startTurn = async (session, text, config, { region = null, refs = [], attachments = [] } = {}) => {
     const { store, sessions } = state;
     const controller = new AbortController();
     const run = { controller, promise: null };
     // 先占住「正在跑」再存档：存档要读写盘，这期间别的请求不能插进来
     running.set(session.id, run);
+    // 贴的图先存成文件，历史里只记 id
+    const images = [];
+    try {
+      for (const item of attachments) images.push({ id: await sessions.saveAttachment(session, item), media_id: item.media_id, name: item.name, mime: item.mime });
+    } catch (error) {
+      running.delete(session.id);
+      throw error;
+    }
     const turn = {};
     try {
       // 每轮开跑前存一份，可以撤销这一轮或者退回到这句话之前
@@ -556,9 +651,18 @@ export function createAiEdit({
       console.error("AI 剪辑存档失败:", error);
     }
     const first = !session.messages.some((item) => item.role === "user");
-    session.messages.push({ id: randomBytes(8).toString("hex"), role: "user", text, at: now().toISOString(), ...(region ? { region } : {}) });
-    // 模型看到的这条消息前面附上看板上的手动改动和框选；页面上显示的还是原话
-    session.history.push({ role: "user", content: userContent(text, session.pendingNotes, region) });
+    session.messages.push({
+      id: randomBytes(8).toString("hex"), role: "user", text, at: now().toISOString(),
+      ...(region ? { region } : {}),
+      ...(refs.length ? { refs: refs.map(({ detail: _detail, ...ref }) => ref) } : {}),
+      ...(images.length ? { attachments: images.map(({ media_id: mediaId, name }) => ({ media_id: mediaId, name })) } : {}),
+    });
+    // 模型看到的这条消息前面附上看板上的手动改动、框选、引用和贴的图；页面上显示的还是原话
+    session.history.push({
+      role: "user",
+      content: userContent(text, { notes: session.pendingNotes, region, refs, attachments: images }),
+      ...(images.length ? { attachments: images } : {}),
+    });
     session.pendingNotes = [];
     Object.assign(session, { status: "running", error: null, streaming: { text: "", actions: [] } });
     if (first && session.title === DEFAULT_TITLE && titleFrom(text)) {
@@ -754,11 +858,15 @@ export function createAiEdit({
         if (!text) throw new AiEditError("invalid_request", "先输入想怎么剪。");
         if (text.length > MAX_MESSAGE_CHARS) throw new AiEditError("message_too_long", "这条消息太长了，分几次说。");
         const config = parseEditConfig(body.config);
-        const region = body.region === undefined || body.region === null ? null : parseRegion(body.region, await store.getProject(session.projectId));
+        const given = (value) => value !== undefined && value !== null;
+        const project = given(body.region) || given(body.refs) ? await store.getProject(session.projectId) : null;
+        const region = given(body.region) ? parseRegion(body.region, project) : null;
+        const refs = parseRefs(body.refs, project, library);
+        const attachments = parseAttachments(body.attachments, library);
         if (running.has(id)) throw new AiEditError("session_busy", "AI 还在处理上一条，等它做完或先停止。", 409);
         if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
         if (editing.has(id)) throw new AiEditError("session_busy", "看板上的改动还没做完，请稍等。", 409);
-        await startTurn(session, text, config, region);
+        await startTurn(session, text, config, { region, refs, attachments });
         sendJson(response, 202, { session: sessionDetail(session) });
         return;
       }

@@ -11,7 +11,7 @@ import {
 import { clipCallName, selectableIds, settleSelection, splitOffset, splitTarget, tooManyEditsText, undoKind, type PendingSelect, type Picked } from "./aiEditBoardEdit";
 import {
   BoardContext, BoardRegistryContext, BoardTimeContext, createBoardRegistry, discardHeld, dispatchBoardKey, dispatchEscape, flushHeld, useRegistryEscape, useRegistryKeys,
-  type BoardArea, type BoardContextValue, type BoardEdit, type BoardPlayback, type BoardSelection, type EditCall, type EditPerformer, type PointerArea, type ToastTone,
+  type BoardArea, type BoardContextValue, type BoardEdit, type BoardJump, type BoardPlayback, type BoardRef, type BoardSelection, type EditCall, type EditPerformer, type PointerArea, type ToastTone,
 } from "./aiEditBoardContext";
 import { IN_FLIGHT_REASON, lastingReason, redoneText, undoneText } from "./aiEditInspect";
 import { composing, inMenuOrDialog, readBoardKey, typingInto } from "./aiEditKeymap";
@@ -53,7 +53,10 @@ export interface BoardProps {
   /** 页面那一层的请求：一次只飞一个，回来的会话和工程由它换上 */
   perform: EditPerformer;
   onRegion: (region: BoardRegion) => void;
-  onMention: (text: string) => void;
+  /** 引用到对话（右键菜单、详情卡、播放器的「引用这一刻」） */
+  onRefer: (refs: readonly BoardRef[]) => void;
+  /** 页面请看板跳过去：点了回复里的片段、时间 */
+  jump?: BoardJump | null;
   /** 导入剪映；mode 是草稿在剪映里被改过以后选的另存或覆盖。上一个改动还没回来、没开始导入时返回 false */
   onExport: (mode?: AiEditExportMode) => boolean;
   /** 草稿被改过时选了取消 */
@@ -223,10 +226,28 @@ export function Board(props: BoardProps) {
   };
   // 详情卡数值框 flush 完以后按这个重新取工程（Board 的 latest 在请求回来时就换了，不等重渲染）
   const projectNow = useCallback(() => latest.current.project, []);
-  const mention = useCallback((text: string) => propsRef.current.onMention(text), []);
+  const refer = useCallback((refs: readonly BoardRef[]) => propsRef.current.onRefer(refs), []);
   const setRegion = useCallback((value: BoardRegion) => propsRef.current.onRegion(value), []);
   const startRegionSelect = useCallback(() => { latest.current.playback.pause(); setRegionMode(true); }, []);
   const stopRegionSelect = useCallback(() => setRegionMode(false), []);
+
+  // ---------- 页面让跳过去（回复里的片段、时间）：片段选中它、播放头放到开头；轨道区跟着滚到播放头 ----------
+  const [revealSeq, setRevealSeq] = useState(0);
+  const jump = props.jump ?? null;
+  const jumped = useRef(0);
+  useEffect(() => {
+    if (!jump || jump.seq === jumped.current) return;
+    jumped.current = jump.seq;
+    const { project: current, playback: player } = latest.current;
+    player.pause();
+    if ("clipId" in jump) {
+      const found = findSegment(current, jump.clipId);
+      if (!found) { toast("这段已经不在时间线上了"); return; }
+      setSelection([jump.clipId], jump.clipId);
+      player.seek(found.segment.timeline.start_us);
+    } else player.seek(jump.timeUs);
+    setRevealSeq((value) => value + 1);
+  }, [jump, toast, setSelection]);
 
   // ---------- 键盘、Esc、焦点（C1–C6） ----------
   const lastArea = useRef<PointerArea | null>(null);
@@ -355,10 +376,10 @@ export function Board(props: BoardProps) {
     [playback.playing, playback.timeRef, playback.toggle, playback.seek, playback.pause]);
   const value = useMemo<BoardContextValue>(() => ({
     session, project, canvas, frameUs, duration, mediaById, mediaUrl, running, editable, notEditableReason, playback: playbackApi, selection, selected, splitHint, callName,
-    expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushHeld: flushPending, selectAll, mention, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
+    expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushHeld: flushPending, selectAll, refer, revealSeq, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
     lastPointerArea,
   }), [session, project, canvas, frameUs, duration, mediaById, mediaUrl, running, editable, notEditableReason, playbackApi, selection, selected, splitHint, callName,
-    expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushPending, selectAll, mention, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
+    expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushPending, selectAll, refer, revealSeq, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
     lastPointerArea]);
 
   const [height, setHeight] = useState(0);

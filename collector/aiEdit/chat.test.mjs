@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_TOOL_CALLS, parseEditConfig, requestCompletion, runConversation, sealHistory, trimHistory } from "./chat.mjs";
+import { MAX_TOOL_CALLS, compactHistory, parseEditConfig, recallLines, requestCompletion, requestHistory, runConversation, saysCantSeeImages, sealHistory, trimHistory } from "./chat.mjs";
+
+const OMITTED = "较早的内容，细节已省略；还要用就用同样的参数再调一次（参考解析和节拍一般有缓存、马上返回，应用重启过就要重新解析，很慢，没必要别重调）；时间线和素材以工程现状和系统提示为准";
 
 const ARK = { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "test-key", model: "doubao-seed-2-1-lite-260915" };
 
@@ -357,5 +359,333 @@ describe("history helpers", () => {
     expect(trimmed.length).toBeLessThan(history.length);
     expect(trimmed.at(-1)).toBe(history.at(-1));
     expect(trimHistory(history.slice(-4), 10)).toEqual(history.slice(-4));
+  });
+
+  it("compacts long old tool results and arguments in place, keeping words, pairing and the latest turn", () => {
+    const turn = (index, big) => [
+      { role: "user", content: `第 ${index} 轮：字幕用黄色描边` },
+      { role: "assistant", content: "", tool_calls: [{ id: `t${index}`, type: "function", function: { name: "add_subtitles", arguments: JSON.stringify({ items: "字".repeat(big) }) } }] },
+      { role: "tool", tool_call_id: `t${index}`, content: JSON.stringify({ ok: index !== 2, ...(index === 2 ? { code: "TIMELINE_OVERLAP", message: "和别的片段重叠了" } : {}), timeline: "x".repeat(big) }) },
+      { role: "assistant", content: `第 ${index} 轮做完了` },
+    ];
+    const small = [1, 2].flatMap((index) => turn(index, 100));
+    const before = structuredClone(small);
+    compactHistory(small, 10_000);
+    expect(small).toEqual(before);
+
+    const history = [1, 2, 3, 4].flatMap((index) => turn(index, 2000));
+    const latest = structuredClone(history.slice(-4));
+    compactHistory(history, 10_000);
+    expect(history).toHaveLength(16);
+    expect(history.slice(-4)).toEqual(latest);
+    expect(history.filter((entry) => entry.role === "user").map((entry) => entry.content)).toEqual([1, 2, 3, 4].map((index) => `第 ${index} 轮：字幕用黄色描边`));
+    expect(history[3].content).toBe("第 1 轮做完了");
+    expect(JSON.parse(history[2].content)).toEqual({ ok: true, omitted: OMITTED });
+    expect(JSON.parse(history[6].content)).toEqual({ ok: false, code: "TIMELINE_OVERLAP", message: "和别的片段重叠了", omitted: OMITTED });
+    expect(history[1].tool_calls[0]).toMatchObject({ id: "t1", function: { name: "add_subtitles" } });
+    expect(JSON.parse(history[1].tool_calls[0].function.arguments).omitted).toMatch(/^较早的参数，细节已省略：\{"items":"字/u);
+    const total = history.reduce((sum, entry) => sum + (typeof entry.content === "string" ? entry.content.length : 0) + JSON.stringify(entry.tool_calls ?? "").length, 0);
+    expect(total).toBeLessThanOrEqual(5_000 + 4_100);
+    const once = structuredClone(history);
+    compactHistory(history, 1_000);
+    expect(history.slice(0, 12)).toEqual(once.slice(0, 12));
+  });
+
+  it("compacts before each request so an oversized old turn is sent briefly", async () => {
+    const { fetchImpl, requests } = scripted([textReply("好了")]);
+    const history = [
+      { role: "user", content: "先剪一版" },
+      { role: "assistant", content: "", tool_calls: [{ id: "old", type: "function", function: { name: "get_timeline", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "old", content: JSON.stringify({ ok: true, timeline: "x".repeat(130_000) }) },
+      { role: "assistant", content: "剪好了" },
+      { role: "user", content: "再快一点" },
+    ];
+    await runConversation({ config: ARK, history, tools: [{}], fetchImpl, system: async () => "系统提示", execute: async () => ({ ok: true }) });
+    const sent = requests[0].body.messages;
+    expect(sent.map((message) => message.role)).toEqual(["system", "user", "assistant", "tool", "assistant", "user"]);
+    expect(JSON.parse(sent[3].content)).toEqual({ ok: true, omitted: OMITTED });
+    expect(history[2].content).toBe(sent[3].content);
+  });
+
+  it("keeps the start of results the model still needs, and does not compact them twice", () => {
+    const analysis = JSON.stringify({ ok: true, video: { title: "参考" }, analysis: "镜头".repeat(5_000) });
+    const history = [
+      { role: "user", content: "照这条剪" },
+      { role: "assistant", content: "", tool_calls: [
+        { id: "r1", type: "function", function: { name: "analyze_reference", arguments: "{\"url\":\"https://v.douyin.com/x\"}" } },
+        { id: "g1", type: "function", function: { name: "get_timeline", arguments: "{}" } },
+        { id: "s1", type: "function", function: { name: "search_douyin", arguments: "{}" } },
+      ] },
+      { role: "tool", tool_call_id: "r1", content: analysis },
+      { role: "tool", tool_call_id: "g1", content: JSON.stringify({ ok: true, timeline: "x".repeat(10_000) }) },
+      // 没比要留的长多少：压了反而更长，不动
+      { role: "tool", tool_call_id: "s1", content: JSON.stringify({ ok: true, videos: "链".repeat(1_400) }) },
+      { role: "assistant", content: "解析好了" },
+      { role: "user", content: "开始剪" },
+    ];
+    const searched = history[4].content;
+    compactHistory(history, 10_000);
+    expect(JSON.parse(history[2].content)).toEqual({ ok: true, kept: `${analysis.slice(0, 6_000)}…`, omitted: OMITTED });
+    expect(JSON.parse(history[3].content)).toEqual({ ok: true, omitted: OMITTED });
+    expect(history[4].content).toBe(searched);
+    const once = structuredClone(history);
+    compactHistory(history, 1_000);
+    expect(history).toEqual(once);
+  });
+
+  it("never cuts an emoji in half when shortening old arguments", () => {
+    const args = JSON.stringify({ text: `${"字".repeat(70)}😀${"尾".repeat(300)}` });
+    // 第 80 个字正好落在 emoji 的两半之间
+    expect(args.slice(0, 80)).toMatch(/[\ud800-\udbff]$/u);
+    const history = [
+      { role: "user", content: "加字幕" },
+      { role: "assistant", content: "", tool_calls: [{ id: "a", type: "function", function: { name: "add_text_clip", arguments: args } }] },
+      { role: "tool", tool_call_id: "a", content: JSON.stringify({ ok: false, code: "x", message: `${"错".repeat(119)}😀${"y".repeat(500)}` }) },
+      { role: "user", content: "再来" },
+    ];
+    compactHistory(history, 100);
+    const omitted = JSON.parse(history[1].tool_calls[0].function.arguments).omitted;
+    const message = JSON.parse(history[2].content).message;
+    for (const text of [omitted, message]) {
+      expect(text).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/u);
+      expect(text.endsWith("…")).toBe(true);
+      expect(text.endsWith("……")).toBe(false);
+    }
+  });
+});
+
+describe("what the model still knows after old turns are dropped", () => {
+  const call = (id) => ({ id, type: "function", function: { name: "f", arguments: "{}" } });
+  const turn = (index, said) => [
+    { role: "user", content: said },
+    { role: "assistant", content: "", tool_calls: [call(`t${index}`)] },
+    { role: "tool", tool_call_id: `t${index}`, content: "y".repeat(100) },
+    { role: "assistant", content: `第 ${index} 轮做完了` },
+  ];
+  const noted = (said) => `【应用自动附上，不是用户说的话】\n用户在看板上手动改过（以工程现状为准）：\n- 挪了片段\n【用户这次说的话】\n${said}`;
+
+  it("puts the dropped user words in front of the first kept message for this request only", () => {
+    const history = [...turn(1, "字幕用黄色\n描边"), ...turn(2, noted("节奏快一点")), ...turn(3, "第三轮"), ...turn(4, "第四轮")];
+    const before = structuredClone(history);
+    const budget = history.slice(8).reduce((sum, entry) => sum + (entry.content?.length ?? 0) + JSON.stringify(entry.tool_calls ?? "").length, 0);
+    const { entries, trimmed } = requestHistory(history, budget);
+    expect(trimmed).toBe(true);
+    expect(entries).toHaveLength(8);
+    // 只取用户真正说的话，换行并成空格
+    expect(entries[0]).toEqual({ role: "user", content: "【应用自动附上，不是用户说的话】更早的对话已经省略，用户之前说过：\n- 字幕用黄色 描边\n- 节奏快一点\n【用户这次说的话】\n第三轮" });
+    expect(entries.slice(1)).toEqual(history.slice(9));
+    expect(history).toEqual(before);
+
+    // 留下的第一条本来就带着应用附上的说明：并成一段，不重复开头
+    const merged = requestHistory([...turn(1, "字幕用黄色"), ...turn(2, noted("第二轮"))], budget).entries[0].content;
+    expect(merged).toBe("【应用自动附上，不是用户说的话】更早的对话已经省略，用户之前说过：\n- 字幕用黄色\n用户在看板上手动改过（以工程现状为准）：\n- 挪了片段\n【用户这次说的话】\n第二轮");
+    expect(requestHistory(history)).toEqual({ entries: history, trimmed: false });
+  });
+
+  it("cuts each recalled message at 200 characters and all of them at 3000, keeping the latest", () => {
+    const dropped = Array.from({ length: 30 }, (_, index) => ({ role: "user", content: `第 ${index} 句${"字".repeat(500)}` }));
+    const lines = recallLines([...dropped, { role: "assistant", content: "好" }]);
+    expect(lines).toHaveLength(14);
+    expect(lines.every((line) => line.length <= 2 + 200 + 1 && line.endsWith("…"))).toBe(true);
+    expect(lines.reduce((sum, line) => sum + line.length - 2, 0)).toBeLessThanOrEqual(3_000);
+    expect(lines[0].startsWith("- 第 16 句")).toBe(true);
+    expect(lines.at(-1).startsWith("- 第 29 句")).toBe(true);
+    // 应用附上的说明不算用户的话；只说了说明、没说话的不列
+    expect(recallLines([{ role: "user", content: noted("加转场") }, { role: "user", content: "【应用自动附上，不是用户说的话】\n【用户这次说的话】\n" }])).toEqual(["- 加转场"]);
+  });
+
+  it("tells the caller when a request dropped turns, without writing the recall back", async () => {
+    const { fetchImpl, requests } = scripted([textReply("好")]);
+    const words = (index) => `第 ${index} 轮：${"说".repeat(10)}`;
+    const history = [1, 2, 3].flatMap((index) => [{ role: "user", content: words(index) }, { role: "assistant", content: "回".repeat(50_000) }]);
+    history.push({ role: "user", content: "再快一点" });
+    const before = structuredClone(history);
+    let trimmed = 0;
+    await runConversation({ config: ARK, history, tools: [{}], fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), onTrimmed: () => { trimmed += 1; } });
+    expect(trimmed).toBe(1);
+    const sent = requests[0].body.messages;
+    expect(sent[1].content).toBe(`【应用自动附上，不是用户说的话】更早的对话已经省略，用户之前说过：\n- ${words(1)}\n【用户这次说的话】\n${words(2)}`);
+    expect(history.slice(0, before.length)).toEqual(before);
+    // 没丢东西就不叫
+    trimmed = 0;
+    await runConversation({ config: ARK, history: [{ role: "user", content: "剪" }], tools: [{}], fetchImpl: scripted([textReply("好")]).fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), onTrimmed: () => { trimmed += 1; } });
+    expect(trimmed).toBe(0);
+  });
+
+  it("counts each attached image towards the history size", () => {
+    const history = [
+      { role: "user", content: "照这几张图剪", attachments: [1, 2, 3].map((index) => ({ id: `${index}`.repeat(16), media_id: "a".repeat(32), name: `${index}.png`, mime: "image/png" })) },
+      { role: "assistant", content: "好" },
+      { role: "user", content: "再快一点" },
+    ];
+    expect(trimHistory(history, 5_000)).toEqual(history.slice(2));
+    expect(trimHistory(history, 7_000)).toEqual(history);
+  });
+
+  it("only counts the images that are sent, so old pictures alone never drop a turn", () => {
+    const image = (index) => ({ id: `${index}`.padStart(16, "0"), media_id: "a".repeat(32), name: `${index}.png`, mime: "image/png" });
+    const history = Array.from({ length: 30 }, (_, index) => [
+      { role: "user", content: `第 ${index} 张`, attachments: [image(index * 2), image(index * 2 + 1)] },
+      { role: "assistant", content: "好" },
+    ]).flat();
+    // 正文加起来不到 300 字；只有最近两条的 4 张图算数
+    expect(requestHistory(history, 9_000)).toEqual({ entries: history, trimmed: false });
+    const before = structuredClone(history);
+    compactHistory(history, 9_000);
+    expect(history).toEqual(before);
+    expect(trimHistory(history, 7_000)).toEqual(history.slice(-2));
+  });
+});
+
+describe("images the user pasted into the chat", () => {
+  const attachment = (id, name = `${id}.jpg`) => ({ id: id.padEnd(16, "0"), media_id: "a".repeat(32), name, mime: "image/jpeg" });
+  const pasted = () => [
+    { role: "user", content: "第一张", attachments: [attachment("1")] },
+    { role: "assistant", content: "好" },
+    { role: "user", content: "第二张", attachments: [attachment("2")] },
+    { role: "assistant", content: "好" },
+    { role: "user", content: "这两张一起", attachments: [attachment("3"), attachment("4")] },
+  ];
+  const readAttachment = (reads) => async ({ id }) => { reads.push(id); return `data:image/jpeg;base64,${id}`; };
+  const imageUrls = (message) => (Array.isArray(message.content) ? message.content.filter((part) => part.type === "image_url").map((part) => part.image_url) : []);
+
+  it("sends the images of the last two messages that have any, names only for older ones, and never the attachments key", async () => {
+    const { fetchImpl, requests } = scripted([toolReply([{ name: "get_timeline" }]), textReply("看到了")]);
+    const reads = [];
+    const history = pasted();
+    await runConversation({ config: { ...ARK, model: "sees-images" }, history, tools: [{}], fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment(reads) });
+    for (const request of requests) {
+      const users = request.body.messages.filter((message) => message.role === "user");
+      expect(users[0].content).toBe("第一张");
+      expect(users[1].content).toEqual([{ type: "text", text: "第二张" }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${"2".padEnd(16, "0")}`, detail: "low" } }]);
+      expect(imageUrls(users[2]).map((image) => image.url)).toEqual(["3", "4"].map((id) => `data:image/jpeg;base64,${id.padEnd(16, "0")}`));
+      expect(request.body.messages.some((message) => "attachments" in message)).toBe(false);
+    }
+    // 一轮里每张图只读一次；历史里还是原样
+    expect(reads.sort()).toEqual(["2", "3", "4"].map((id) => id.padEnd(16, "0")));
+    expect(history[4]).toMatchObject({ content: "这两张一起", attachments: [{ name: "3.jpg" }, { name: "4.jpg" }] });
+    // 图读不出来（文件没了）就照纯文字发
+    const missing = scripted([textReply("好")]);
+    await runConversation({ config: { ...ARK, model: "sees-images" }, history: pasted(), tools: [{}], fetchImpl: missing.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: async () => null });
+    expect(missing.requests[0].body.messages.every((message) => typeof message.content === "string" && !("attachments" in message))).toBe(true);
+  });
+
+  it("resends without images when the model refuses them, remembers that and says so once", async () => {
+    const config = { ...ARK, model: "no-eyes" };
+    const actions = [];
+    const refused = scripted([new Response(JSON.stringify({ error: { message: "Invalid content type. image_url is only supported by certain models." } }), { status: 400 }), toolReply([{ name: "a" }]), textReply("好了")]);
+    const history = pasted();
+    const result = await runConversation({ config, history, tools: [{}], fetchImpl: refused.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]), onAction: (action) => actions.push(action) });
+    expect(result.text).toBe("好了");
+    expect(refused.requests.map((request) => request.body.messages.some((message) => Array.isArray(message.content)))).toEqual([true, false, false]);
+    expect(actions).toEqual([{ name: "see_images", summary: "这个模型看不了图片，只告诉了它图片的名字", ok: false }]);
+
+    // 之后都只写文字：不再试图，但用户这次又贴了图就再告诉用户一声
+    const later = scripted([textReply("好")]);
+    actions.length = 0;
+    await runConversation({ config, history: pasted(), tools: [{}], fetchImpl: later.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]), onAction: (action) => actions.push(action) });
+    expect(later.requests[0].body.messages.some((message) => Array.isArray(message.content))).toBe(false);
+    expect(actions).toHaveLength(1);
+    const quiet = [];
+    await runConversation({ config, history: [...pasted(), { role: "assistant", content: "好" }, { role: "user", content: "再快一点" }], tools: [{}], fetchImpl: scripted([textReply("好")]).fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]), onAction: (action) => quiet.push(action) });
+    expect(quiet).toEqual([]);
+  });
+
+  it("does not blame the images when the request fails without them too", async () => {
+    const config = { ...ARK, model: "broken-tools" };
+    const invalid = () => new Response(JSON.stringify({ error: { message: "tools are not supported" } }), { status: 400 });
+    const actions = [];
+    await expect(runConversation({ config, history: pasted(), tools: [{}], fetchImpl: scripted([invalid(), invalid()]).fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]), onAction: (action) => actions.push(action) }))
+      .rejects.toMatchObject({ code: "provider_error" });
+    expect(actions).toEqual([]);
+    const next = scripted([textReply("好")]);
+    await runConversation({ config, history: pasted(), tools: [{}], fetchImpl: next.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]) });
+    expect(next.requests[0].body.messages.some((message) => Array.isArray(message.content))).toBe(true);
+    // 流里报错、说的是图：也算拒收
+    const streamed = scripted([sse([{ error: { message: "unknown variant `image_url`, expected `text`" } }]), textReply("好")]);
+    const seen = [];
+    await runConversation({ config: { ...ARK, model: "relay-text-only" }, history: pasted(), tools: [{}], fetchImpl: streamed.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]), onAction: (action) => seen.push(action.name) });
+    expect(seen).toEqual(["see_images"]);
+  });
+
+  it("resends without images when the answer says it cannot see them, keeping that answer out of the history", async () => {
+    const shown = [];
+    const { fetchImpl, requests } = scripted([textReply("抱歉，我无法查看图片，请描述一下。"), textReply("按名字理解，先放上去了。")]);
+    const history = pasted();
+    const result = await runConversation({ config: { ...ARK, model: "says-blind" }, history, tools: [{}], fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]), onText: (text) => shown.push(text) });
+    expect(result.text).toBe("按名字理解，先放上去了。");
+    expect(requests.map((request) => request.body.messages.some((message) => Array.isArray(message.content)))).toEqual([true, false]);
+    expect(history.at(-1)).toEqual({ role: "assistant", content: "按名字理解，先放上去了。" });
+    expect(shown.at(-1)).toBe("按名字理解，先放上去了。");
+    // 看得到图、只是图里没有字：不算
+    const fine = scripted([textReply("看不到图片里有文字，我加一行标题。")]);
+    await runConversation({ config: { ...ARK, model: "sees-fine" }, history: pasted(), tools: [{}], fetchImpl: fine.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]) });
+    expect(fine.requests).toHaveLength(1);
+  });
+
+  it("only listens for 'cannot see' in the first answer after new images, and not to talk about the timeline", async () => {
+    const config = { ...ARK, model: "sees-timeline" };
+    // 图是更早贴的，这一轮回答说的是时间线上没有图
+    const earlier = [...pasted(), { role: "assistant", content: "好" }, { role: "user", content: "片头那张图怎么不见了" }];
+    const first = scripted([textReply("时间线上没有看到图片，只有两段视频。我看不到你发的图片的话会直说。")]);
+    await runConversation({ config, history: earlier, tools: [{}], fetchImpl: first.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]) });
+    expect(first.requests).toHaveLength(1);
+    // 这一轮贴了图，但做完事以后的总结里才说看不到：也不算
+    const later = scripted([toolReply([{ name: "a" }]), textReply("我看不到你发的图片里的字幕，先按名字放了。")]);
+    await runConversation({ config, history: pasted(), tools: [{}], fetchImpl: later.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]) });
+    expect(later.requests).toHaveLength(2);
+    // 没记成看不了图：下一次照样带图
+    const next = scripted([textReply("好")]);
+    await runConversation({ config, history: pasted(), tools: [{}], fetchImpl: next.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]) });
+    expect(next.requests[0].body.messages.some((message) => Array.isArray(message.content))).toBe(true);
+    // 这一轮刚贴了图、第一句就说看不到：照常去图重发
+    const blind = scripted([textReply("我看不到你发的图片，能描述一下吗？"), textReply("好")]);
+    await runConversation({ config: { ...ARK, model: "says-blind-2" }, history: pasted(), tools: [{}], fetchImpl: blind.fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]) });
+    expect(blind.requests).toHaveLength(2);
+  });
+
+  it("tells answers about the user's pictures from talk about the project", () => {
+    for (const text of [
+      "抱歉，我无法查看图片，请描述一下。", "我看不到你发的图片，能描述一下吗？", "抱歉，目前无法查看图片内容。", "您上传的图片我看不到。",
+      "我是纯文本模型，没法看图。", "看不到这张图，能说说里面是什么吗", "我无法查看图片中的内容", "I'm sorry, but I can't view images.",
+    ]) expect(saysCantSeeImages(text)).toBe(true);
+    for (const text of [
+      "时间线上没有看到图片，只有两段视频", "素材库里没有看到图片素材", "我没法直接处理图片格式的字幕", "剪映里不能直接显示截图水印",
+      "片头那段现在看不到图片了，我把它加回去了", "画面里看不见照片，因为被视频盖住了", "看不到图片里有文字，我加一行标题。",
+    ]) expect(saysCantSeeImages(text)).toBe(false);
+  });
+
+  it("drops the images once when the relay says the request is too large, without calling the model blind, and keeps later turns light", async () => {
+    const config = { ...ARK, model: "too-big" };
+    const requests = [];
+    const withPictures = (body) => body.messages.some((message) => Array.isArray(message.content));
+    const fetchImpl = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push(body);
+      return withPictures(body) && requests.length <= 2
+        ? new Response("<html><center><h1>413 Request Entity Too Large</h1></center></html>", { status: 413, headers: { "content-type": "text/html" } })
+        : textReply("好");
+    };
+    const actions = [];
+    const history = pasted();
+    const turn = () => runConversation({ config, history, tools: [{}], fetchImpl, system: async () => "s", execute: async () => ({ ok: true }), readAttachment: readAttachment([]), onAction: (action) => actions.push(action) });
+    await expect(turn()).resolves.toMatchObject({ text: "好" });
+    expect(requests.map(withPictures)).toEqual([true, false]);
+    expect(actions).toEqual([{ name: "see_images", summary: "图太大，接口收不下，这次只告诉了它图片的名字", ok: false }]);
+    // 下一轮没贴图：旧消息里的图不再发，不会每轮都撞一次
+    history.push({ role: "user", content: "再快一点" });
+    actions.length = 0;
+    await expect(turn()).resolves.toMatchObject({ text: "好" });
+    expect(requests.slice(2).map(withPictures)).toEqual([false]);
+    expect(actions).toEqual([]);
+    // 没被记成看不了图：又贴了图就只发这一条自己的图
+    history.push({ role: "user", content: "换这张", attachments: [attachment("5")] });
+    await turn();
+    const users = requests.at(-1).messages.filter((message) => message.role === "user");
+    expect(users.slice(0, -1).every((message) => typeof message.content === "string")).toBe(true);
+    expect(imageUrls(users.at(-1)).map((image) => image.url)).toEqual([`data:image/jpeg;base64,${"5".padEnd(16, "0")}`]);
+    // 纯文字的请求真遇到 413 也有线索
+    const plainTooBig = async () => new Response("<html>413</html>", { status: 413, headers: { "content-type": "text/html" } });
+    await expect(requestCompletion({ config, messages: [], fetchImpl: plainTooBig })).rejects.toMatchObject({ message: "请求太大，接口收不下（多半是图太多或太大）。" });
   });
 });

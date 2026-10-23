@@ -8,9 +8,12 @@ import { renameRetrying } from "./rename.mjs";
 // AI 剪辑的会话：一个会话对应一个剪辑工程。页面看到的是 messages（对话气泡），
 // 发给模型的原始消息历史另存在 history 里，不发给页面。每个会话一个文件 ai-edit/sessions/<id>.json。
 // 撤销、退回用的工程存档每份一个文件，放在 ai-edit/checkpoints/<会话 id>/ 下；重做用的快照也放在这里，id 是同一种。
+// 对话里贴的图（页面生成的小预览）放在 ai-edit/attachments/<会话 id>/ 下，会话删了一起删。
 
 const SESSION_ID = /^[0-9a-f]{32}$/u;
 const CHECKPOINT_ID = /^[0-9a-f]{16}$/u;
+const ATTACHMENT_ID = /^[0-9a-f]{16}$/u;
+const IMAGE_EXTENSIONS = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 // 存档（撤销、退回用）最多留这么多份，再多删最旧的；重做栈也最多这么多
 export const MAX_CHECKPOINTS = 50;
 const INTERRUPTED = { code: "interrupted", message: "上次 AI 还在处理时采集器关掉了，这一轮没做完，可以接着说。" };
@@ -36,12 +39,16 @@ export function sessionDetail(session) {
   return {
     ...sessionSummary(session),
     goal: session.goal,
+    // 历史太长、更早的对话 AI 已经记不全了
+    trimmed: Boolean(session.trimmed),
     revision: session.revision,
     error: session.error ? { ...session.error } : null,
     messages: session.messages.map((item) => ({
       ...item,
       ...(item.actions ? { actions: item.actions.map((action) => ({ ...action })) } : {}),
       ...(item.region ? { region: structuredClone(item.region) } : {}),
+      ...(item.refs ? { refs: item.refs.map((ref) => ({ ...ref })) } : {}),
+      ...(item.attachments ? { attachments: item.attachments.map((attachment) => ({ ...attachment })) } : {}),
     })),
     undo: checkpoints.length ? { label: checkpoints.at(-1).label, kind: checkpoints.at(-1).kind } : null,
     redo: session.redo?.length ? { label: session.redo.at(-1).label } : null,
@@ -58,9 +65,13 @@ export function sessionDetail(session) {
 }
 
 export class SessionStore {
-  constructor({ directory, checkpointDirectory = path.join(path.dirname(directory), "checkpoints"), now = () => new Date(), newId = () => randomBytes(16).toString("hex") }) {
+  constructor({
+    directory, checkpointDirectory = path.join(path.dirname(directory), "checkpoints"), attachmentDirectory = path.join(path.dirname(directory), "attachments"),
+    now = () => new Date(), newId = () => randomBytes(16).toString("hex"),
+  }) {
     this.directory = directory;
     this.checkpointDirectory = checkpointDirectory;
+    this.attachmentDirectory = attachmentDirectory;
     this.now = now;
     this.newId = newId;
     this.sessions = new Map();
@@ -81,6 +92,8 @@ export class SessionStore {
       session.revision = Number.isSafeInteger(session.revision) ? session.revision : 1;
       // 加目标之前存的会话没有这个字段
       session.goal = typeof session.goal === "string" ? session.goal : "";
+      // 加「历史被裁过」之前存的会话没有这个字段
+      session.trimmed = session.trimmed === true;
       // arrange_grid 排过的格子（片段 id → 位置），换画布时重排用
       session.grids = session.grids && typeof session.grids === "object" && !Array.isArray(session.grids) ? session.grids : {};
       // 加撤销、退回和看板手动改之前存的会话没有这几个字段
@@ -147,6 +160,7 @@ export class SessionStore {
       projectId,
       draftBox: null,
       goal: "",
+      trimmed: false,
       grids: {},
       checkpoints: [],
       checkpointsTrimmedAt: -1,
@@ -198,6 +212,7 @@ export class SessionStore {
     await rm(path.join(this.directory, `${id}.json`), { force: true });
     await rm(path.join(this.directory, `${id}.json.tmp`), { force: true });
     await rm(path.join(this.checkpointDirectory, id), { recursive: true, force: true });
+    await rm(path.join(this.attachmentDirectory, id), { recursive: true, force: true });
     for (const finish of [...(this.waiters.get(id) ?? [])]) finish();
     return true;
   }
@@ -271,6 +286,31 @@ export class SessionStore {
     const dropped = session.redo;
     session.redo = [];
     for (const item of dropped) await rm(this.#checkpointFile(session, item.id), { force: true });
+  }
+
+  #attachmentFile(session, attachmentId, mime) {
+    const extension = IMAGE_EXTENSIONS[mime];
+    if (!ATTACHMENT_ID.test(attachmentId) || !extension) throw new Error("bad attachment");
+    return path.join(this.attachmentDirectory, session.id, `${attachmentId}.${extension}`);
+  }
+
+  /** 存一张对话里贴的图（mime 是 image/jpeg、png 或 webp），回它的 id。 */
+  async saveAttachment(session, { mime, bytes }) {
+    const id = randomBytes(8).toString("hex");
+    const file = this.#attachmentFile(session, id, mime);
+    await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    await writeFile(`${file}.tmp`, bytes, { mode: 0o600 });
+    await renameRetrying(`${file}.tmp`, file);
+    return id;
+  }
+
+  /** 读回一张贴的图给模型看（data URL）；文件没了或记录不对回 null。 */
+  async readAttachment(session, { id, mime }) {
+    try {
+      return `data:${mime};base64,${(await readFile(this.#attachmentFile(session, id, mime))).toString("base64")}`;
+    } catch {
+      return null;
+    }
   }
 
   /** 长轮询：revision 和 afterRevision 不同就立刻返回，否则最多等 timeoutMs；signal 断开时清理。 */

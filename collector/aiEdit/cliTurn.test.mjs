@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createLocalAi } from "../localAi.mjs";
-import { parseEditConfig, runConversation, sealHistory } from "./chat.mjs";
+import { compactHistory, parseEditConfig, runConversation, sealHistory } from "./chat.mjs";
 import { CLI_SYSTEM_NOTE, renderTranscript, runCliConversation } from "./cliTurn.mjs";
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/local-ai/fake-cli.mjs");
@@ -233,10 +233,73 @@ describe("retelling earlier turns", () => {
     const long = renderTranscript([{ role: "user", content: "字".repeat(5_000) }, { role: "assistant", content: "好" }], 1_000);
     expect(long.length).toBeLessThan(1_200);
     // 太长时从前面整行丢：留下的第一行是完整的一句
-    const many = renderTranscript(Array.from({ length: 40 }, (_, index) => ({ role: "user", content: `第 ${index} 句😀${"字".repeat(80)}` })), 1_000);
-    const kept = many.split("\n").slice(2);
+    let trimmed = 0;
+    const many = renderTranscript(Array.from({ length: 40 }, (_, index) => ({ role: "user", content: `第 ${index} 句😀${"字".repeat(80)}` })), 1_000, () => { trimmed += 1; });
+    const [, skipped, ...rest] = many.split("\n");
+    // 截掉的那部分里用户说过的话另外列出来
+    expect(skipped).toBe("（更早的对话太长，略过了；用户在那部分说过：）");
+    const recalled = rest.filter((line) => line.startsWith("- "));
+    const kept = rest.filter((line) => !line.startsWith("- "));
+    expect(recalled[0]).toBe(`- 第 0 句😀${"字".repeat(80)}`);
     expect(kept.every((line) => line.startsWith("用户：第 "))).toBe(true);
+    expect(recalled.length + kept.length).toBe(40);
     expect(many).toContain("用户：第 39 句");
     expect(many).not.toContain("用户：第 0 句");
+    expect(trimmed).toBe(1);
+    renderTranscript([{ role: "user", content: "短" }], 1_000, () => { trimmed += 1; });
+    expect(trimmed).toBe(1);
+  });
+
+  it("still retells the start of a reference analysis after the API mode compacted it", () => {
+    const analysis = JSON.stringify({ ok: true, video: { title: "参考" }, analysis: "第 1 段 0–2 秒硬切；".repeat(800) });
+    const history = [
+      { role: "user", content: "照这条剪" },
+      { role: "assistant", content: "", tool_calls: [{ id: "r", type: "function", function: { name: "analyze_reference", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "r", content: analysis },
+      { role: "assistant", content: "解析好了" },
+      { role: "user", content: "开始剪" },
+    ];
+    compactHistory(history, 1_000);
+    expect(JSON.parse(history[2].content)).toMatchObject({ ok: true, kept: expect.any(String), omitted: expect.any(String) });
+    // 转述的是留下的那段原文，不是包了两层的 JSON
+    expect(renderTranscript(history.slice(0, -1))).toContain(`（调了 analyze_reference，结果：${analysis.slice(0, 6_000)}…）`);
+  });
+
+  it("recalls only what the user said, at most 200 characters each and 3000 in all, when cutting the front", () => {
+    const noted = (said) => `【应用自动附上，不是用户说的话】\n用户在看板上手动改过：\n- 挪了片段\n【用户这次说的话】\n${said}`;
+    const text = renderTranscript([
+      ...Array.from({ length: 30 }, (_, index) => [
+        { role: "user", content: index === 28 ? noted("最后一句被截的") : `第 ${index} 句${"字".repeat(400)}` },
+        { role: "assistant", content: "好".repeat(1_000) },
+      ]).flat(),
+      { role: "user", content: "留下的那句" },
+    ], 1_500);
+    const recalled = text.split("\n").filter((line) => line.startsWith("- "));
+    expect(recalled.at(-1)).toBe("- 最后一句被截的");
+    expect(recalled.slice(0, -1).every((line) => line.length === 2 + 200 + 1)).toBe(true);
+    expect(recalled.reduce((sum, line) => sum + line.length - 2, 0)).toBeLessThanOrEqual(3_000);
+    expect(text.endsWith("用户：留下的那句")).toBe(true);
+  });
+});
+
+describe("images and trimming through a local CLI", () => {
+  it("only names the pasted images, tells the user the model could not see them, and reports a cut transcript", async () => {
+    const { ai, records } = await fakeAi({ steps: [{ say: "按名字放上去了" }] });
+    const content = "【应用自动附上，不是用户说的话】\n用户这句话附了 1 张图：素材“封面.png”（media_id " + "b".repeat(32) + "）。图已经放进素材库，要放进时间线就用这个 media_id。\n【用户这次说的话】\n用这张当封面";
+    const history = [
+      { role: "user", content: "字".repeat(50_000) },
+      { role: "assistant", content: "好" },
+      { role: "user", content, attachments: [{ id: "1".repeat(16), media_id: "b".repeat(32), name: "封面.png", mime: "image/png" }] },
+    ];
+    const actions = [];
+    let trimmed = 0;
+    await runCliConversation(turn({ history, localAi: ai, onAction: (action) => actions.push(action), onTrimmed: () => { trimmed += 1; } }));
+    expect(actions).toEqual([{ name: "see_images", summary: "Codex 这里看不了图片，只告诉了它图片的名字", ok: false }]);
+    expect(trimmed).toBe(1);
+    const [record] = await records();
+    expect(record.stdin).toContain(`素材“封面.png”（media_id ${"b".repeat(32)}）`);
+    expect(record.stdin).not.toContain("data:image");
+    expect(record.stdin).toContain("（更早的对话太长，略过了；用户在那部分说过：）");
+    expect(record.system).toContain("用户在对话里贴的图传不到这里");
   });
 });

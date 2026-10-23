@@ -193,6 +193,17 @@ export function Timeline({ height }: { height: number }) {
     if (x < scroller.scrollLeft || x > scroller.scrollLeft + viewWidth - 8) scroller.scrollLeft = Math.max(0, x - viewWidth * 0.1);
   }, [time, playback.playing, pxPerUs, viewWidth]);
 
+  // 点了回复里的片段、时间，播放头跳走了：不在视图里就滚过去
+  const revealSeq = board.revealSeq;
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!revealSeq || !scroller || !(pxPerUs > 0)) return;
+    const x = latest.current.playback.timeRef.current * pxPerUs;
+    if (x < scroller.scrollLeft || x > scroller.scrollLeft + viewWidth - 8) scroller.scrollLeft = Math.max(0, x - viewWidth * 0.3);
+    // 只在又跳了一次时滚，缩放、改宽度不算
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealSeq]);
+
   // ---------- 坐标 ----------
   /** 指针下的时间（微秒，不早于 0）：按轨道内容现在的位置算，滚动过也对 */
   const usAt = (clientX: number) => {
@@ -723,7 +734,7 @@ export function Timeline({ height }: { height: number }) {
     }
     entries.push(
       { id: "seek", label: "播放头移到这段开头", onSelect: () => now.playback.seek(segment.timeline.start_us) },
-      { id: "mention", label: "交给 AI", onSelect: () => now.mention(now.callName(segment)) },
+      { id: "refer", label: many ? `把选中的 ${ids.length} 段引用到对话` : "引用到对话", onSelect: () => now.refer(ids.map((one) => ({ kind: "clip" as const, clipId: one }))) },
       { id: "sep-copy", separator: true },
       { id: "copy", label: many ? `复制选中的 ${ids.length} 段` : "复制", shortcut: "copy", disabled: noCopy, onSelect: () => copyClips(ids) },
       pasteItem(reason),

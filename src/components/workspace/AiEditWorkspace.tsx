@@ -1,32 +1,39 @@
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { Check, ChevronDown, Film, FolderOpen, Library, Music2, Plus, Scissors, Send, Settings2, Sparkles, Square, SquareDashed, Target, Trash2, X } from "lucide-react-native";
+import { Check, ChevronDown, Clock, Film, FolderOpen, ImageIcon, ImagePlus, Library, Music2, Plus, Scissors, Send, Settings2, Sparkles, Square, SquareDashed, Target, Trash2, X } from "lucide-react-native";
 import type { PersonalRecordCollection, PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import {
   aiConfigReady, aiEditLookUrl, aiEditMediaUrl, aiRuntimeOf, answerAiEditLook, isLocalAiRuntime, createAiEditSession, deleteAiEditMedia, deleteAiEditSession, exportAiEditSession, getAiEditDraftBox, getAiEditSession,
   importDouyinMedia, listAiEditMedia, listAiEditSessions, loadAiEditConfig, probeAiEditVideo, revertAiEdit, saveAiEditConfig, sendAiEditMessage, sessionRunning,
-  setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey,
+  setAiEditGoal, stopAiEditSession, uploadAiEditMedia, videoProbeKey, MAX_MESSAGE_ATTACHMENTS, MAX_MESSAGE_REFS,
   type AiEditAction, type AiEditChatItem, type AiEditConfig, type AiEditDraftBoxStatus, type AiEditExportMode, type AiEditMediaItem,
-  type AiEditSession, type AiEditSessionState, type AiEditSessionSummary, type EditCanvas,
+  type AiEditSession, type AiEditSessionState, type AiEditSessionSummary, type EditCanvas, type EditSegment,
 } from "../../services/aiEdit";
 import { searchRecords } from "../../services/recordSearch";
-import { mediaThumbView, spokenDuration, US_PER_SECOND, visibleExportNote, type ExportNote } from "./aiEditModel";
-import { regionCaption, regionHint } from "./aiEditBoardEdit";
+import { mediaIdFromPath, mediaThumbView, spokenDuration, US_PER_SECOND, visibleExportNote, type ExportNote } from "./aiEditModel";
+import { clipCallName, regionCaption, regionHint } from "./aiEditBoardEdit";
 import { IN_FLIGHT_REASON } from "./aiEditInspect";
-import type { EditOutcome, EditPerformer } from "./aiEditBoardContext";
+import type { BoardJump, EditOutcome, EditPerformer } from "./aiEditBoardContext";
+import {
+  adoptDraft, attachmentRequests, attachmentsPending, clearSent, dropMedia, imagePreview, isImageFile, pasteIsRichText, pastedName, patchAttachment, planAttachments, type AttachDraft,
+} from "./aiEditAttach";
+import {
+  addRefs, composerRefLabel, hideOpenRef, plainReplyRefs, refKey, refRequest, refsCaption, replyRefLabel, sendableRefs, splitReplyRefs, type ComposerRef,
+} from "./aiEditRefs";
 import { Board } from "./AiEditBoard";
 import { areaProps, CANVASES, Expand, errorText, mediaTitle, shortTime, webAutoHeight, webPointer, web, type BoardRegion } from "./aiEditShared";
 import { AiRuntimeField, RUNTIME_LABELS, runtimeProblem } from "./AiRuntimeField";
 import { dropLookJobs, runLookJob } from "./aiEditLook";
 import { createUploadQueue } from "./aiEditUploads";
 import { kit, Segmented, SmallButton } from "./CreatorKit";
-import { Markdown } from "./markdownView";
+import { Markdown, type InlineRender } from "./markdownView";
 import { ws } from "./motion";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 
 // AI 剪辑：左边和 AI 对话（会话、素材库、输入框），右边是剪辑看板（AiEditBoard：画面预览 + 轨道）。看板上也能手动挪、裁、切、删片段，
-// 改文字和位置大小，在画面上框一块让 AI 只改那里；每一步都能撤销，也能退回到某句话之前。
+// 改文字和位置大小，在画面上框一块让 AI 只改那里；片段、某一刻、素材能引用到对话里，图能贴进对话框给 AI 看；
+// AI 回复里提到的片段和时间点一下看板就跳过去。每一步都能撤销，也能退回到某句话之前。
 // 会话、工程、素材都在采集器里（collector/aiEdit/），页面发请求、看结果；切走再回来按采集器的状态恢复。
 
 type Props = { connection: ExploreConnection | null; records: PersonalRecordCollection; onOpenSettings: () => void };
@@ -36,7 +43,22 @@ const LAST_SESSION_KEY = "dy2.aiEditSession";
 // 测模型能不能看视频：整个页面共用，切走再回来不重复测（probing 正在测的、probeTried 自动测过的「地址|模型|Key」）
 const probing = new Set<string>();
 const probeTried = new Set<string>();
-const uploadQueue = createUploadQueue(uploadAiEditMedia, (reason) => errorText(reason, "没传上去，请稍后重试。"));
+// 对话框里附的图、拖进对话的文件也走这个队列：按 File 认出是哪一个，进度和传好的素材 id 交回输入框上方那一条
+type UploadWatch = { progress: (ratio: number) => void; done: (item: AiEditMediaItem) => void; fail: () => void };
+const uploadWatch = new Map<File, UploadWatch>();
+const uploadQueue = createUploadQueue((connection: ExploreConnection, file: File, onProgress: (ratio: number) => void) => {
+  const watch = uploadWatch.get(file);
+  uploadWatch.delete(file);
+  return uploadAiEditMedia(connection, file, (ratio) => { onProgress(ratio); watch?.progress(ratio); })
+    .then((item) => { watch?.done(item); return item; }, (reason: unknown) => { watch?.fail(); throw reason; });
+}, (reason) => errorText(reason, "没传上去，请稍后重试。"));
+let attachSequence = 0;
+
+/** 输入框上方攒着、随下一句话发出去的：引用的东西和附的文件。记在发起的那个剪辑名下（还没有剪辑时是 null） */
+type ComposerDraft = { sessionId: string | null; refs: ComposerRef[]; files: AttachDraft[] };
+const emptyDraft = (sessionId: string | null): ComposerDraft => ({ sessionId, refs: [], files: [] });
+const NO_REFS: ComposerRef[] = [];
+const NO_FILES: AttachDraft[] = [];
 
 function readLastSession(): string | null {
   try { return globalThis.localStorage?.getItem(LAST_SESSION_KEY) ?? null; } catch { return null; }
@@ -72,6 +94,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const uploads = useSyncExternalStore(uploadQueue.subscribe, uploadQueue.getSnapshot);
   const [config, setConfig] = useState<AiEditConfig>(loadAiEditConfig);
   const [configOpen, setConfigOpen] = useState(() => !aiConfigReady(loadAiEditConfig()));
+  const configOpenRef = useRef(configOpen);
+  configOpenRef.current = configOpen;
   // 测模型能不能直接看视频：key 是测的哪个接口地址+模型，running 时在测，error 是没测出来的原因
   const [probe, setProbe] = useState<{ key: string; running: boolean; error?: string }>({ key: "", running: false });
   const [draftBox, setDraftBox] = useState<AiEditDraftBoxStatus | null>(null);
@@ -87,6 +111,13 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const revisionNow = useRef<number | null>(null);
   // 画面上框的一块，记在发起框选的剪辑名下；发出去或清掉就没了
   const [regionDraft, setRegionDraft] = useState<{ sessionId: string; region: BoardRegion } | null>(null);
+  const [draft, setDraft] = useState<ComposerDraft>(() => emptyDraft(null));
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  // 点了回复里的片段、时间：交给看板跳过去
+  const [jump, setJump] = useState<BoardJump | null>(null);
+  const [dropping, setDropping] = useState(false);
+  const sideRef = useRef<View>(null);
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -101,6 +132,14 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const exportNote = visibleExportNote(currentId ? exportNotes[currentId] : null, project?.revision);
   const exportConflict = currentId ? exportConflicts[currentId] ?? null : null;
   const region = regionDraft?.sessionId === currentId ? regionDraft.region : null;
+  const currentIdRef = useRef(currentId);
+  currentIdRef.current = currentId;
+  const shownDraft = draft.sessionId === currentId ? draft : null;
+  const shownRefs = shownDraft?.refs ?? NO_REFS;
+  const shownFiles = shownDraft?.files ?? NO_FILES;
+  // 附的图、拖进来的文件没传完（或预览没画好）先不发
+  const uploading = attachmentsPending(shownFiles);
+  const mediaById = useMemo(() => new Map(media.map((item) => [item.id, item])), [media]);
   // 能在看板上手动改：有工程、AI 没在剪、没在导入、上一个手动改动已经回来
   const notEditableReason = !project ? "还没有时间线" : running ? "AI 正在剪，等它做完再改" : exporting ? "正在导入剪映，等导完再改" : editBusy ? IN_FLIGHT_REASON : null;
   const editable = !notEditableReason;
@@ -268,6 +307,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     setMenuOpen(false);
     try {
       const created = await createAiEditSession(conn, canvas ? { canvas } : {});
+      // 还没有剪辑时攒在输入框上方的引用和附图，跟着进这个新剪辑
+      if (!currentIdRef.current) setDraft((current) => adoptDraft(current, created.session.id));
       setState(created);
       setSessions((list) => [summaryOf(created.session), ...list.filter((item) => item.id !== created.session.id)]);
       setCurrentId(created.session.id);
@@ -291,7 +332,9 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
 
   const send = async (raw = input) => {
     const text = raw.trim();
-    if (!conn || !text || running || editLock.current) return;
+    if (!conn || !text || running || editLock.current || uploading) return;
+    // 发的是此刻看得到的引用和附图；发出去之后才加的留着
+    const outgoing = shownDraft;
     if (!aiConfigReady(config)) {
       setConfigOpen(true);
       setError("先在 AI 设置里填好 Key 和模型。");
@@ -311,11 +354,18 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       const target = currentId ? { id: currentId, project } : await createSession().then((created) => created && { id: created.session.id, project: created.project });
       if (!target) return;
       const framed = region && target.id === currentId ? region : null;
-      const next = await sendAiEditMessage(conn, target.id, text, config, framed && {
-        time_us: framed.time_us, x: framed.x, y: framed.y, width: framed.width, height: framed.height, clip_ids: framed.clip_ids,
+      const refs = outgoing?.refs ?? [];
+      const files = outgoing?.files ?? [];
+      const next = await sendAiEditMessage(conn, target.id, text, config, {
+        region: framed && { time_us: framed.time_us, x: framed.x, y: framed.y, width: framed.width, height: framed.height, clip_ids: framed.clip_ids },
+        // 片尾之后的时刻不发（小条上写着），发了后端会整条拒收
+        refs: sendableRefs(refs, target.project).map(refRequest),
+        attachments: attachmentRequests(files),
       });
       setInput("");
       if (framed) setRegionDraft((current) => (current?.sessionId === target.id ? null : current));
+      // 这一排全部清掉（没发的片尾之后的时刻也清）；还没有剪辑时发的，这一排已经交给了新建的剪辑
+      if (outgoing) setDraft((current) => clearSent(current, [outgoing.sessionId, target.id], { refs, files }));
       setState((current) => current?.session.id === next.id ? { ...current, session: next } : target.project ? { session: next, project: target.project } : current);
     } catch (reason) {
       setError(errorText(reason, "消息没发出去，请稍后重试。"));
@@ -419,7 +469,11 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
 
   const removeMedia = async (id: string) => {
     if (!conn) return;
-    try { await deleteAiEditMedia(conn, id); await loadMedia(); } catch (reason) { setError(errorText(reason, "没删掉，请稍后重试。")); }
+    try {
+      await deleteAiEditMedia(conn, id);
+      setDraft((current) => dropMedia(current, id));
+      await loadMedia();
+    } catch (reason) { setError(errorText(reason, "没删掉，请稍后重试。")); }
   };
 
   const addRecord = async (record: PersonalVideoRecord) => {
@@ -432,10 +486,124 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     await loadMedia();
   };
 
-  /** 往输入框末尾插一段（点素材、看板上「交给 AI」），和前面的字隔一个空格 */
-  const insertMention = useCallback((piece: string) => setInput((text) => `${text}${text && !text.endsWith(" ") ? " " : ""}${piece}`), []);
-  const mention = (item: AiEditMediaItem) => insertMention(`「${mediaTitle(item)}」`);
-  const pickRegion = useCallback((value: BoardRegion) => { if (currentId) setRegionDraft({ sessionId: currentId, region: value }); }, [currentId]);
+  // AI 设置开着时左栏只有设置面板，引用、框选加上了也看不见：说一声。关掉设置时这句跟着撤掉
+  const configHint = useRef<string | null>(null);
+  const hintBehindConfig = useCallback((text: string) => { configHint.current = text; setError(text); }, []);
+  useEffect(() => {
+    const hint = configHint.current;
+    if (configOpen || !hint) return;
+    configHint.current = null;
+    setError((current) => (current === hint ? null : current));
+  }, [configOpen]);
+
+  const pickRegion = useCallback((value: BoardRegion) => {
+    if (!currentId) return;
+    setRegionDraft({ sessionId: currentId, region: value });
+    setLeftTab("chat");
+    if (configOpenRef.current) hintBehindConfig("框好了，关掉 AI 设置就能在输入框上方看到。");
+  }, [currentId, hintBehindConfig]);
+
+  // ---------- 引用和附图（输入框上方那一排） ----------
+  /** 改当前剪辑的那一排；原来那排是别的剪辑的，就从空的开始 */
+  const changeOwnDraft = useCallback((owner: string | null, change: (current: ComposerDraft) => ComposerDraft) =>
+    setDraft((current) => change(current.sessionId === owner ? current : emptyDraft(owner))), []);
+  /** 引用到对话（看板右键菜单、详情卡、引用这一刻、点素材）：加到输入框上方，切回对话页签 */
+  const refer = useCallback((more: readonly ComposerRef[]) => {
+    const owner = currentIdRef.current;
+    const own = draftRef.current.sessionId === owner ? draftRef.current.refs : NO_REFS;
+    if (addRefs(own, more).dropped) setError(`一句话最多引用 ${MAX_MESSAGE_REFS} 样东西，多的没加上。`);
+    else if (configOpenRef.current) hintBehindConfig("引用上了，关掉 AI 设置就能在输入框上方看到。");
+    changeOwnDraft(owner, (current) => ({ ...current, refs: addRefs(current.refs, more).refs }));
+    setLeftTab("chat");
+  }, [changeOwnDraft, hintBehindConfig]);
+  const unrefer = (ref: ComposerRef) => setDraft((current) => ({ ...current, refs: current.refs.filter((item) => refKey(item) !== refKey(ref)) }));
+  /** 某个附件传了多少、传好了、画好了预览（patch 为 null 是没传上去，拿掉）；传好又不当图带的变成素材引用，引用满了说一声 */
+  const patchFile = useCallback((key: string, patch: Partial<AttachDraft> | null) => {
+    if (patchAttachment(draftRef.current, key, patch)?.dropped) setError(`一句话最多引用 ${MAX_MESSAGE_REFS} 样东西，多的文件只放进了素材库。`);
+    setDraft((current) => patchAttachment(current, key, patch)?.draft ?? current);
+  }, []);
+  /** 贴进对话框、拖进对话区、点「附图」选的文件：都传进素材库；前 4 张图带给 AI 看，别的传完当素材引用 */
+  const attachFiles = useCallback((files: File[]) => {
+    if (!conn || !files.length) return;
+    const owner = currentIdRef.current;
+    const own = draftRef.current.sessionId === owner ? draftRef.current.files : NO_FILES;
+    const plan = planAttachments(own.filter((file) => file.image).length, files);
+    if (plan.filter(Boolean).length < files.filter(isImageFile).length) {
+      setError(`一句话最多带 ${MAX_MESSAGE_ATTACHMENTS} 张图给 AI 看，多的放进了素材库，当成引用发过去。`);
+    }
+    const entries: AttachDraft[] = files.map((file, index) => ({ key: `attach-${++attachSequence}`, name: file.name, image: plan[index]!, progress: 0, mediaId: null }));
+    changeOwnDraft(owner, (current) => ({ ...current, files: [...current.files, ...entries] }));
+    files.forEach((file, index) => {
+      const { key, image } = entries[index]!;
+      uploadWatch.set(file, {
+        progress: (ratio) => patchFile(key, { progress: ratio }),
+        done: (item) => {
+          // 先并进素材列表：变成引用的小条马上叫得出名字，不用等素材栏刷新回来
+          setMedia((list) => (list.some((other) => other.id === item.id) ? list : [...list, item]));
+          patchFile(key, { mediaId: item.id, progress: 1 });
+        },
+        // 没传上去的原因在错误条里，这一条直接拿掉
+        fail: () => patchFile(key, null),
+      });
+      if (image) void imagePreview(file).then((preview) => patchFile(key, { preview }));
+    });
+    void uploadQueue.enqueue(conn, files);
+    setLeftTab("chat");
+  }, [conn, changeOwnDraft, patchFile]);
+  const unattach = (key: string) => setDraft((current) => ({ ...current, files: current.files.filter((file) => file.key !== key) }));
+
+  // 文件拖到左栏：对话页签里加进这句话，素材页签、设置里直接放进素材库；拖到页面别处的文件不让窗口打开它
+  const dropRef = useRef<(files: File[]) => void>(() => undefined);
+  dropRef.current = (files) => (leftTab === "chat" && !configOpen ? attachFiles(files) : uploadFiles(files));
+  useEffect(() => {
+    const zone = sideRef.current as unknown as HTMLElement | null;
+    if (!web || !conn || !zone?.addEventListener) return undefined;
+    const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    const inside = (event: DragEvent) => zone.contains(event.target as Node | null);
+    let depth = 0;
+    const enter = (event: DragEvent) => { if (carriesFiles(event)) { depth += 1; setDropping(true); } };
+    const leave = (event: DragEvent) => { if (carriesFiles(event)) { depth = Math.max(0, depth - 1); if (!depth) setDropping(false); } };
+    const over = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = inside(event) ? "copy" : "none";
+    };
+    const drop = (event: DragEvent) => {
+      if (!carriesFiles(event)) return;
+      event.preventDefault();
+      depth = 0;
+      setDropping(false);
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (inside(event) && files.length) dropRef.current(files);
+    };
+    zone.addEventListener("dragenter", enter);
+    zone.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      zone.removeEventListener("dragenter", enter);
+      zone.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, [conn]);
+
+  // ---------- 回复里的片段、时间 ----------
+  const nameOf = useCallback((segment: EditSegment) => {
+    const item = "path" in segment ? mediaById.get(mediaIdFromPath(segment.path) ?? "") : undefined;
+    return clipCallName(segment, item ? mediaTitle(item) : null);
+  }, [mediaById]);
+  const jumpTo = useCallback((target: { clipId: string } | { timeUs: number }) => setJump((current) => ({ ...target, seq: (current?.seq ?? 0) + 1 })), []);
+  const replyInline = useCallback<InlineRender>((text) => splitReplyRefs(text).map((piece, index) => {
+    if (piece.kind === "text") return piece.text;
+    const { label, found } = replyRefLabel(piece, project, nameOf);
+    if (!found) return <Text key={index} style={styles.refGone}>{label}</Text>;
+    const go = () => jumpTo(piece.kind === "clip" ? { clipId: piece.clipId } : { timeUs: piece.timeUs });
+    return <Text key={index} accessibilityRole="link" accessibilityHint="在看板上跳过去" onPress={go} style={[styles.refLink, webPointer]}>{label}</Text>;
+  }), [project, nameOf, jumpTo]);
+  // 还在写的回复：写完的引用先换成说法，没写完的「[[…」藏起来
+  const streamText = useCallback((text: string) => plainReplyRefs(hideOpenRef(text), (piece) => replyRefLabel(piece, project, nameOf).label), [project, nameOf]);
+  const refLabelOf = (ref: ComposerRef) => composerRefLabel(ref, project, nameOf, (id) => { const item = mediaById.get(id); return item ? mediaTitle(item) : null; });
 
   if (!conn) return <View style={[styles.root, styles.gate]}>
     <Scissors size={34} color={color.accent} />
@@ -455,8 +623,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     />
   </View>;
 
-  // 剪辑软件左上角那块：AI 对话一页、素材一页；点素材把它提进消息里并回到对话
-  const side = <View {...areaProps("outside", "e-box", "ai-panel", "ai-left")} style={[styles.left, { width: leftWidth }]}>
+  // 剪辑软件左上角那块：AI 对话一页、素材一页；点素材把它引用到对话里并回到对话
+  const side = <View ref={sideRef} {...areaProps("outside", "e-box", "ai-panel", "ai-left")} style={[styles.left, { width: leftWidth }]}>
     {configOpen ? null : <View style={styles.tabs}>
       <Segmented small value={leftTab} onChange={setLeftTab} options={[{ label: "AI 对话", value: "chat" }, { label: media.length ? `素材 ${media.length}` : "素材", value: "media" }]} />
     </View>}
@@ -484,7 +652,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
             media={media}
             uploads={uploads.tasks}
             mediaUrl={mediaUrl}
-            onPick={(item) => { mention(item); setLeftTab("chat"); }}
+            onPick={(item) => refer([{ kind: "media", mediaId: item.id }])}
             onRemove={(id) => void removeMedia(id)}
             onOpenLibrary={() => setPickerOpen(true)}
             onUpload={uploadFiles}
@@ -492,11 +660,20 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
         : <>
           <GoalBar sessionId={currentId} goal={session?.goal ?? ""} onSave={saveGoal} />
           <View style={styles.middle}>
-            <Conversation session={session} loaded={sessionsLoaded} running={running} editable={editable} onSuggest={(text) => setInput(text)} onRevert={revert} />
+            <Conversation session={session} loaded={sessionsLoaded} running={running} editable={editable} mediaUrl={mediaUrl} inline={replyInline} streamText={streamText}
+              onSuggest={(text) => setInput(text)} onRevert={revert} />
           </View>
-          {region ? <RegionHint region={region} onClear={() => setRegionDraft(null)} /> : null}
-          <Composer value={input} onChange={setInput} running={running} sending={sending} blocked={editBusy} onSend={() => void send()} onStop={() => void stop()} />
+          {region || shownRefs.length || shownFiles.length ? <View style={styles.tray}>
+            {region ? <RegionHint region={region} onClear={() => setRegionDraft(null)} /> : null}
+            {shownFiles.map((file) => <AttachChip key={file.key} file={file} onRemove={() => unattach(file.key)} />)}
+            {shownRefs.map((ref) => <RefChip key={refKey(ref)} kind={ref.kind} label={refLabelOf(ref)} onRemove={() => unrefer(ref)}
+              onShow={ref.kind === "clip" ? () => jumpTo({ clipId: ref.clipId }) : ref.kind === "time" ? () => jumpTo({ timeUs: ref.timeUs }) : undefined} />)}
+          </View> : null}
+          <Composer value={input} onChange={setInput} running={running} sending={sending} blocked={editBusy} uploading={uploading} onFiles={attachFiles} onSend={() => void send()} onStop={() => void stop()} />
         </>}
+    {dropping ? <View pointerEvents="none" style={styles.dropMask}>
+      <Text style={styles.dropText}>{leftTab === "chat" && !configOpen ? "松开就加进这句话：图片会带给 AI 看，别的文件放进素材库并引用" : "松开就放进素材库"}</Text>
+    </View> : null}
     {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)} /> : null}
   </View>;
 
@@ -516,7 +693,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       region={region}
       perform={perform}
       onRegion={pickRegion}
-      onMention={insertMention}
+      onRefer={refer}
+      jump={jump}
       onExport={exportDraft}
       onDismissConflict={() => {
         if (currentId) setExportConflicts((all) => { const next = { ...all }; delete next[currentId]; return next; });
@@ -706,8 +884,13 @@ function ConfigPanel({ connection, config, probe, onSave, onRetest, onCancel }: 
   </ScrollView>;
 }
 
-function Conversation({ session, loaded, running, editable, onSuggest, onRevert }: {
-  session: AiEditSession | null; loaded: boolean; running: boolean; editable: boolean; onSuggest: (text: string) => void; onRevert: (messageId: string) => Promise<boolean>;
+function Conversation({ session, loaded, running, editable, mediaUrl, inline, streamText, onSuggest, onRevert }: {
+  session: AiEditSession | null; loaded: boolean; running: boolean; editable: boolean; mediaUrl: (id: string) => string | null;
+  /** 回复里的片段、时间画成能点的 */
+  inline: InlineRender;
+  /** 还在写的回复怎么显示（引用换成说法） */
+  streamText: (text: string) => string;
+  onSuggest: (text: string) => void; onRevert: (messageId: string) => Promise<boolean>;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const stick = useRef(true);
@@ -716,6 +899,8 @@ function Conversation({ session, loaded, running, editable, onSuggest, onRevert 
   const liveActions = session?.streaming?.actions ?? [];
   const look = session?.streaming?.look;
   const busy = sessionRunning(session);
+  // 「看不了图」只是提示，不算动手改了时间线
+  const working = liveActions.some((action) => action.name !== "see_images");
   const revertible = useMemo(() => new Set(session?.revertible ?? []), [session?.revertible]);
   // 新消息、流式文字一长就贴着底部；用户往上翻了就不打扰
   useLayoutEffect(() => {
@@ -748,25 +933,31 @@ function Conversation({ session, loaded, running, editable, onSuggest, onRevert 
       stick.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 60;
     }}
   >
-    {messages.map((item) => <Message key={item.id} item={item} revertible={!running && revertible.has(item.id)} editable={editable} onRevert={onRevert} />)}
+    {session?.trimmed ? <Text style={styles.note}>对话比较长了，更早几轮的细节 AI 只记得你当时说的话；一直要照着做的要求写进上面的目标更稳。</Text> : null}
+    {messages.map((item) => <Message key={item.id} item={item} revertible={!running && revertible.has(item.id)} editable={editable} mediaUrl={mediaUrl} inline={inline} onRevert={onRevert} />)}
     {busy ? <View {...ws("c-bubble", "in")} style={[styles.bubble, styles.bubbleIn]}>
-      {streaming ? <Markdown compact ink text={streaming} /> : null}
+      {streaming ? <Markdown compact ink text={streamText(streaming)} /> : null}
       {liveActions.length ? <ActionList actions={liveActions} live /> : null}
-      <View style={kit.row}><ActivityIndicator size="small" color={color.cyan} /><Text {...ws("ai-shimmer")} style={kit.muted}>{look ? (look.kind === "beats" ? "正在测配乐的节拍…" : "正在把参考视频拆成镜头截图和节拍，拆完交给 AI 看…") : liveActions.length ? "正在改时间线…" : streaming ? "还在写…" : "AI 正在想…"}</Text></View>
+      <View style={kit.row}><ActivityIndicator size="small" color={color.cyan} /><Text {...ws("ai-shimmer")} style={kit.muted}>{look ? (look.kind === "beats" ? "正在测配乐的节拍…" : "正在把参考视频拆成镜头截图和节拍，拆完交给 AI 看…") : working ? "正在改时间线…" : streaming ? "还在写…" : "AI 正在想…"}</Text></View>
     </View> : null}
     {session?.error ? <View accessibilityRole="alert" style={styles.sessionError}><Text style={styles.errorText}>{session.error.message}</Text></View> : null}
   </ScrollView>;
 }
 
-function Message({ item, revertible = false, editable = false, onRevert }: {
-  item: AiEditChatItem; revertible?: boolean; editable?: boolean; onRevert?: (messageId: string) => Promise<boolean>;
+function Message({ item, revertible = false, editable = false, mediaUrl, inline, onRevert }: {
+  item: AiEditChatItem; revertible?: boolean; editable?: boolean; mediaUrl?: (id: string) => string | null; inline?: InlineRender; onRevert?: (messageId: string) => Promise<boolean>;
 }) {
   const [confirming, setConfirming] = useState(false);
   useEffect(() => { if (!revertible) setConfirming(false); }, [revertible]);
   if (item.role === "note") return <Text style={styles.note}>{item.text}</Text>;
+  const referred = item.role === "user" ? refsCaption(item.refs) : null;
   if (item.role === "user") return <View style={styles.ownLine}>
+    {item.attachments?.length ? <View style={styles.ownImages}>
+      {item.attachments.map((image, index) => <SentImage key={`${image.media_id}-${index}`} url={mediaUrl?.(image.media_id) ?? null} name={image.name} />)}
+    </View> : null}
     <View {...ws("c-bubble", "own")} style={[styles.bubble, styles.bubbleOwn]}><Text selectable style={styles.bubbleText}>{item.text}</Text></View>
     {item.region ? <Text style={styles.ownMeta}>{regionCaption(item.region.time_us, item.region.labels)}</Text> : null}
+    {referred ? <Text style={styles.ownMeta}>{referred}</Text> : null}
     {revertible && onRevert ? confirming
       ? <View style={styles.revertConfirm}>
         <Text style={styles.ownMeta}>这句话之后的改动都会撤掉，退回后还能撤销。</Text>
@@ -779,7 +970,7 @@ function Message({ item, revertible = false, editable = false, onRevert }: {
       : null}
   </View>;
   return <View {...ws("c-bubble", "in")} style={[styles.bubble, styles.bubbleIn]}>
-    {item.text ? <Markdown compact text={item.text} /> : null}
+    {item.text ? <Markdown compact text={item.text} inline={inline} /> : null}
     {item.actions?.length ? <ActionList actions={item.actions} /> : null}
   </View>;
 }
@@ -832,7 +1023,7 @@ function MediaShelf({ media, uploads, mediaUrl, onPick, onRemove, onOpenLibrary,
         <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.round(item.progress * 100)}%` }]} /></View>
       </View>)}
       {media.map((item) => <View key={item.id} style={styles.card}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`在消息里提到「${mediaTitle(item)}」`} disabled={item.status !== "ready"} onPress={() => onPick(item)} style={webPointer}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`把「${mediaTitle(item)}」引用到对话`} disabled={item.status !== "ready"} onPress={() => onPick(item)} style={webPointer}>
           <MediaThumb item={item} url={mediaUrl(item.id)} />
           <Text numberOfLines={1} style={styles.cardName}>{mediaTitle(item)}</Text>
           <Text numberOfLines={1} style={[styles.cardMeta, item.status === "failed" && { color: color.danger }]}>
@@ -849,7 +1040,7 @@ function MediaShelf({ media, uploads, mediaUrl, onPick, onRemove, onOpenLibrary,
           </Pressable>}
       </View>)}
     </ScrollView> : <Text style={[kit.muted, styles.shelfEmpty]}>还没有素材：可以从内容库挑抖音视频，也可以选本机的视频、图片和音乐。</Text>}
-    {media.length ? <Text style={[kit.muted, styles.shelfEmpty]}>点一个素材，会把它写进给 AI 的消息里。</Text> : null}
+    {media.length ? <Text style={[kit.muted, styles.shelfEmpty]}>点一个素材就引用到对话里，跟 AI 说「这个素材」它就知道是哪个。</Text> : null}
   </View>;
 }
 
@@ -890,13 +1081,93 @@ function RegionHint({ region, onClear }: { region: BoardRegion; onClear: () => v
   </View>;
 }
 
-function Composer({ value, onChange, running, sending, blocked, onSend, onStop }: {
+/** 输入框上方的一条引用：点说法在看板上跳过去（片段、时刻），叉掉就不引用了 */
+function RefChip({ kind, label, onRemove, onShow }: { kind: ComposerRef["kind"]; label: string; onRemove: () => void; onShow?: () => void }) {
+  const icon = kind === "clip" ? <Scissors size={12} color={color.accent} /> : kind === "time" ? <Clock size={12} color={color.accent} /> : <Library size={12} color={color.accent} />;
+  return <View style={styles.refChip}>
+    {icon}
+    {onShow
+      ? <Pressable accessibilityRole="button" accessibilityLabel={`在看板上看${label}`} onPress={onShow} style={[styles.refChipLabel, webPointer]}><Text numberOfLines={1} style={styles.refChipText}>{label}</Text></Pressable>
+      : <Text numberOfLines={1} style={[styles.refChipLabel, styles.refChipText]}>{label}</Text>}
+    <Pressable accessibilityRole="button" accessibilityLabel={`不引用${label}`} hitSlop={6} onPress={onRemove} style={webPointer}><X size={11} color={color.textMuted} /></Pressable>
+  </View>;
+}
+
+/** 附的文件：图是一张小缩略图，别的文件写名字；传完之前盖着进度 */
+function AttachChip({ file, onRemove }: { file: AttachDraft; onRemove: () => void }) {
+  const percent = `${Math.round(file.progress * 100)}%`;
+  const remove = <Pressable accessibilityRole="button" accessibilityLabel={`拿掉「${file.name}」`} hitSlop={6} onPress={onRemove} style={[styles.attachRemove, webPointer]}>
+    <X size={10} color={color.white} />
+  </Pressable>;
+  if (!file.image) return <View style={styles.refChip}>
+    <FolderOpen size={12} color={color.textMuted} />
+    <Text numberOfLines={1} style={[styles.refChipLabel, styles.refChipText]}>{file.name}</Text>
+    <Text style={styles.attachPercent}>{file.mediaId ? "" : percent}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel={`拿掉「${file.name}」`} hitSlop={6} onPress={onRemove} style={webPointer}><X size={11} color={color.textMuted} /></Pressable>
+  </View>;
+  return <View accessibilityLabel={file.mediaId ? `附图「${file.name}」` : `附图「${file.name}」正在上传 ${percent}`} style={styles.attach}>
+    {file.preview ? <img src={file.preview} alt="" draggable={false} style={thumbMedia} /> : <ImageIcon size={16} color={color.textMuted} />}
+    {file.mediaId && file.preview !== undefined ? null : <View style={styles.attachMask}><Text style={styles.attachProgress}>{file.mediaId ? "…" : percent}</Text></View>}
+    {remove}
+  </View>;
+}
+
+/** 用户气泡上方附的图：素材删了读不出来就画个图标 */
+function SentImage({ url, name }: { url: string | null; name: string }) {
+  const [failed, setFailed] = useState(false);
+  return <View accessibilityLabel={`附图「${name}」`} style={styles.sentImage}>
+    {url && !failed ? <img src={url} alt={name} title={name} draggable={false} style={thumbMedia} onError={() => setFailed(true)} /> : <ImageIcon size={16} color={color.textMuted} />}
+  </View>;
+}
+
+/** 粘贴板里的文件（截图、从访达复制的文件、办公软件复制字时顺带的预览图） */
+function clipboardFiles(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  return data.files?.length ? Array.from(data.files)
+    : Array.from(data.items ?? []).flatMap((item) => { const file = item.kind === "file" ? item.getAsFile() : null; return file ? [file] : []; });
+}
+
+/** 截图都叫 image.png，换个认得出的名字 */
+function renamePasted(files: File[]): File[] {
+  const now = new Date();
+  return files.map((file) => { const name = pastedName(file.name, file.type, now); return name === file.name ? file : new File([file], name, { type: file.type }); });
+}
+
+function Composer({ value, onChange, running, sending, blocked, uploading, onFiles, onSend, onStop }: {
   value: string; onChange: (text: string) => void; running: boolean; sending: boolean;
   /** 看板上的手动改动还没回来，先不发 */
-  blocked: boolean; onSend: () => void; onStop: () => void;
+  blocked: boolean;
+  /** 附的文件还没传完，先不发 */
+  uploading: boolean;
+  /** 贴进来的、点「附图」选的文件 */
+  onFiles: (files: File[]) => void;
+  onSend: () => void; onStop: () => void;
 }) {
-  const canSend = Boolean(value.trim()) && !running && !blocked;
-  return <View {...ws("c-composer")} style={styles.composer}>
+  const canSend = Boolean(value.trim()) && !running && !blocked && !uploading;
+  const boxRef = useRef<View>(null);
+  const pickRef = useRef<HTMLInputElement | null>(null);
+  const filesRef = useRef(onFiles);
+  filesRef.current = onFiles;
+  // 粘贴挂在外层的 DOM 上：输入框里的 paste 会冒泡上来；有文件才接走。纯文字、从 Excel / Word 复制的字（顺带一张预览图）照常粘贴
+  useEffect(() => {
+    const node = boxRef.current as unknown as HTMLElement | null;
+    if (!web || !node?.addEventListener) return undefined;
+    const onPaste = (event: ClipboardEvent) => {
+      const data = event.clipboardData;
+      const files = clipboardFiles(data);
+      if (!files.length || (data && pasteIsRichText({ text: data.getData("text/plain"), html: data.getData("text/html"), files }))) return;
+      event.preventDefault();
+      filesRef.current(renamePasted(files));
+    };
+    node.addEventListener("paste", onPaste);
+    return () => node.removeEventListener("paste", onPaste);
+  }, []);
+  return <View ref={boxRef} {...ws("c-composer")} style={styles.composer}>
+    <Pressable {...ws("btn square")} accessibilityRole="button" accessibilityLabel="附图" onPress={() => pickRef.current?.click()} style={[styles.attachButton, webPointer]}>
+      <ImagePlus size={16} color={color.textSecondary} />
+    </Pressable>
+    {web ? <input ref={pickRef} type="file" multiple accept="image/*" style={{ display: "none" }}
+      onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; if (files.length) onFiles(files); }} /> : null}
     <TextInput
       accessibilityLabel="和 AI 说怎么剪"
       multiline
@@ -910,7 +1181,7 @@ function Composer({ value, onChange, running, sending, blocked, onSend, onStop }
         event.preventDefault();
         if (canSend) onSend();
       }}
-      placeholder={running ? "AI 正在剪，可以先想下一句" : "说说想怎么剪（回车发送，Shift+回车换行）"}
+      placeholder={running ? "AI 正在剪，可以先想下一句" : uploading ? "图片还在传，传完就能发" : "说说想怎么剪（回车发送，能直接贴图）"}
       placeholderTextColor={color.textMuted}
       {...ws("c-input")}
       style={[styles.input, webAutoHeight]}
@@ -919,8 +1190,8 @@ function Composer({ value, onChange, running, sending, blocked, onSend, onStop }
       ? <Pressable {...ws("c-send", "on")} accessibilityRole="button" accessibilityLabel="停止" onPress={onStop} style={[styles.send, styles.sendReady, webPointer]}>
         <Square size={14} color={color.canvas} fill={color.canvas} />
       </Pressable>
-      : <Pressable {...ws("c-send", canSend && "on")} accessibilityRole="button" accessibilityLabel={sending ? "正在发送" : "发送"} accessibilityState={{ disabled: !canSend, busy: sending }} disabled={!canSend} onPress={onSend} style={[styles.send, canSend && styles.sendReady, webPointer]}>
-        {sending ? <ActivityIndicator size="small" color={color.textMuted} /> : <Send size={16} color={canSend ? color.canvas : color.textMuted} />}
+      : <Pressable {...ws("c-send", canSend && "on")} accessibilityRole="button" accessibilityLabel={sending ? "正在发送" : uploading ? "等文件传完再发" : "发送"} accessibilityState={{ disabled: !canSend, busy: sending || uploading }} disabled={!canSend} onPress={onSend} style={[styles.send, canSend && styles.sendReady, webPointer]}>
+        {sending || uploading ? <ActivityIndicator size="small" color={color.textMuted} /> : <Send size={16} color={canSend ? color.canvas : color.textMuted} />}
       </Pressable>}
   </View>;
 }
@@ -1109,9 +1380,25 @@ const styles = StyleSheet.create({
   progressTrack: { height: 3, borderRadius: 2, overflow: "hidden", backgroundColor: color.surfaceMuted },
   progressFill: { height: 3, backgroundColor: color.accentAction },
 
-  regionHint: { flexDirection: "row", alignItems: "center", gap: 7, marginHorizontal: 12, marginTop: 8, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.small, backgroundColor: color.accentSoft },
+  tray: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingTop: 8 },
+  regionHint: { width: "100%", flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.small, backgroundColor: color.accentSoft },
   regionHintText: { flex: 1, minWidth: 0, color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 16 },
-  composer: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border },
+  refChip: { maxWidth: "100%", flexDirection: "row", alignItems: "center", gap: 5, paddingLeft: 8, paddingRight: 6, paddingVertical: 4, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.small, backgroundColor: color.accentSoft },
+  refChipLabel: { flexShrink: 1, minWidth: 0 },
+  refChipText: { color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 16 },
+  attach: { width: 44, height: 44, alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.small, backgroundColor: color.surfaceMuted },
+  attachMask: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", backgroundColor: alpha(color.black, 0.45) },
+  attachProgress: { color: color.white, fontFamily: font.mono, fontSize: 10 },
+  attachPercent: { color: color.textMuted, fontFamily: font.mono, fontSize: 10 },
+  attachRemove: { position: "absolute", top: 2, right: 2, width: 14, height: 14, alignItems: "center", justifyContent: "center", borderRadius: 7, backgroundColor: alpha(color.black, 0.6) },
+  attachButton: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.medium },
+  ownImages: { maxWidth: "88%", flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: 4 },
+  sentImage: { width: 56, height: 56, alignItems: "center", justifyContent: "center", overflow: "hidden", position: "relative", borderRadius: radius.small, backgroundColor: color.surfaceMuted },
+  refLink: { color: color.accentAction, textDecorationLine: "underline" },
+  refGone: { color: color.textMuted },
+  dropMask: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 8, alignItems: "center", justifyContent: "center", padding: 24, borderWidth: 2, borderStyle: "dashed", borderColor: color.accent, borderRadius: radius.medium, backgroundColor: alpha(color.surface, 0.92) },
+  dropText: { color: color.text, fontFamily: font.body, fontSize: 13, lineHeight: 20, textAlign: "center" },
+  composer: { flexDirection: "row", alignItems: "flex-end", gap: 6, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border },
   input: { flex: 1, minWidth: 0, minHeight: 36, maxHeight: 120, paddingHorizontal: 11, paddingVertical: 8, color: color.text, fontFamily: font.body, fontSize: 12.5, lineHeight: 19, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
   send: { width: 36, height: 36, alignItems: "center", justifyContent: "center", borderRadius: radius.medium, backgroundColor: color.surfaceMuted },
   sendReady: { backgroundColor: color.accent },
