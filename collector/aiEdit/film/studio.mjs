@@ -159,7 +159,7 @@ export function createFilmStudio({ root, library, provider, getOrigin }) {
         };
         await walk(folder, 0);
         found.sort((a, b) => a.depth - b.depth);
-        if (!found.length) throw new AiEditError("film_not_found", "压缩包里没有 film.html，这不是 openfilm 的工程。", 422);
+        if (!found.length) throw new AiEditError("film_not_found", "压缩包里没有 film.html，不是能导入的网页工程。", 422);
         const filmFile = found[0].full;
         let plan;
         try { plan = filmToPlan(await readFile(filmFile, "utf8"), path.dirname(filmFile)); }

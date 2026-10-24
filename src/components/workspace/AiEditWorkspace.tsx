@@ -894,10 +894,10 @@ function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove, onImport
       {CANVASES.map((item) => <Pressable key={item.label} {...ws("btn small")} accessibilityRole="button" onPress={() => onCreate(item.canvas)} style={[styles.chip, webPointer]}><Text style={styles.chipText}>{item.label}</Text></Pressable>)}
     </View>
     {web ? <View style={styles.menuFoot}>
-      <Pressable {...ws("btn small")} accessibilityRole="button" accessibilityLabel="导入 openfilm 工程" disabled={!onImport} onPress={() => pickRef.current?.click()}
+      <Pressable {...ws("btn small")} accessibilityRole="button" accessibilityLabel="导入网页工程" disabled={!onImport} onPress={() => pickRef.current?.click()}
         style={[styles.chip, !onImport && { opacity: 0.45 }, webPointer]}>
         <FolderOpen size={13} color={color.text} />
-        <Text style={styles.chipText}>导入 openfilm 工程</Text>
+        <Text style={styles.chipText}>导入网页工程</Text>
       </Pressable>
       <Text numberOfLines={2} style={[kit.muted, { flex: 1 }]}>选 film.html 所在文件夹打的 .zip</Text>
       <input ref={pickRef} type="file" accept=".zip,application/zip" style={{ display: "none" }}

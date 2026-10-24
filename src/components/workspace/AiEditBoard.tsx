@@ -407,7 +407,7 @@ export function Board(props: BoardProps) {
     const rect = target?.closest?.("[data-output-menu]")?.getBoundingClientRect();
     outputMenu.open(rect ? { x: rect.left, y: rect.bottom + 4 } : { x: 0, y: 0 }, [
       { id: "mp4", label: "导出成 MP4（不经剪映，在本机直接出片）", icon: <Download size={14} color={color.text} />, disabled: outputBlocked, onSelect: () => props.onOutput("mp4") },
-      { id: "film", label: "导出 openfilm 工程（film.html，打成 zip）", icon: <FolderInput size={14} color={color.text} />, disabled: outputBlocked, onSelect: () => props.onOutput("film") },
+      { id: "film", label: "导出网页工程（打成 zip）", icon: <FolderInput size={14} color={color.text} />, disabled: outputBlocked, onSelect: () => props.onOutput("film") },
     ]);
   };
   const status = exporting ? { tone: "muted" as const, text: "正在写进剪映草稿箱…" }
@@ -436,7 +436,7 @@ export function Board(props: BoardProps) {
               </View>
             </WebTitle> : null}
             {output && output.kind !== "import" ? <OutputChip output={output} filmUrl={filmUrl} onOutput={props.onOutput} /> : null}
-            {web ? <WebTitle title={outputBlocked ?? "不经剪映直接出 MP4，或者导出成 openfilm 工程"}>
+            {web ? <WebTitle title={outputBlocked ?? "不经剪映直接出 MP4，或者导出成网页工程"}>
               <div data-output-menu="" style={{ flexShrink: 0 }}>
                 <Pressable
                   {...ws("btn")}
