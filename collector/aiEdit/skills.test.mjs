@@ -293,7 +293,8 @@ describe("skills registry", () => {
   });
 });
 
-describe("GitHub install", () => {
+// 造超大、上千个文件的 zip 再解压，Windows CI 上一条要六七秒
+describe("GitHub install", { timeout: 30_000 }, () => {
   it("downloads the zip, strips the outer folder, keeps switches on reinstall and deletes the package with its last skill", async () => {
     let version = 1;
     const zips = {
