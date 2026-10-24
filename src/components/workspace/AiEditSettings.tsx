@@ -3,7 +3,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, Text
 import { Bot, Check, ChevronRight, Plug, Plus, Puzzle, Sparkles, X, type LucideIcon } from "lucide-react-native";
 import type { ExploreConnection } from "../../services/explorer";
 import {
-  aiConfigReady, aiRuntimeOf, borrowArkKey, generateConfigProblem, generateKey, isArkUrl, isLocalAiRuntime, keepValidGenerateUrls, DEFAULT_AI_EDIT_GENERATE_CONFIG, GENERATE_SLOTS, LIBTV_CLI, VIDEO_PROVIDER_SLOT,
+  aiConfigReady, aiRuntimeOf, borrowArkKey, generateConfigProblem, generateKey, isArkUrl, isLocalAiRuntime, keepValidGenerateUrls, DEFAULT_AI_EDIT_GENERATE_CONFIG, GENERATE_SLOTS, LOCAL_CLI, VIDEO_PROVIDER_SLOT,
   type AiEditConfig, type AiEditGenerateConfig, type AiEditGenerateSlot, type AiEditVideoProvider,
 } from "../../services/aiEdit";
 import { loadAnalysisConfig } from "../../services/videoAnalysis";
@@ -15,21 +15,21 @@ import { ws } from "./motion";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 
 // AI 剪辑的设置窗口，照 openfilm 的设置排：左边分页导航，右边一页是标题 + 几组、组里一行一行用发丝线隔开，
-// 每行左边是名字和一句说明、右边是按钮。剪辑模型一页（用哪个 AI 来剪），服务商一页（生成图片、视频的几家，各自连上自己的 Key），
+// 每行左边是名字和一句说明、右边是按钮。剪辑模型一页（用哪个 AI 来剪），服务商一页（生成图片、视频的几家，各自连上自己的 Key 或本机命令行），
 // 生成素材一页（图片、视频各用连上的哪家）。服务商那一行点「连接」才在下面展开填 Key，接口地址和模型再收进「高级选项」。
 
 export type AiEditSettingsSection = "model" | "providers" | "generate" | "skills";
 
 const SECTIONS: Array<{ key: AiEditSettingsSection; title: string; icon: LucideIcon; note: string }> = [
   { key: "model", title: "剪辑模型", icon: Bot, note: "AI 剪辑用哪个模型来听你的话、改时间线。和解析库的设置分开存。" },
-  { key: "providers", title: "服务商", icon: Plug, note: "生成图片和视频的服务。用你自己的 Key，按各家的价格另外计费，钱直接付给服务商；Key 只存在这台电脑上。" },
+  { key: "providers", title: "服务商", icon: Plug, note: "生成图片和视频的服务。用你自己的 Key 或这台电脑上登录好的命令行，按各家的价格另外计费，钱直接付给服务商；Key 只存在这台电脑上。" },
   { key: "generate", title: "生成素材", icon: Sparkles, note: "AI 剪辑时缺画面，可以自己生成图片和视频放进素材库。这里选各用连上的哪一家；每次生成视频前都会先问你。" },
   { key: "skills", title: "技能", icon: Puzzle, note: "技能是别人写好的一套做法，就是一个带 SKILL.md 的文件夹。装上以后，你的要求用得上它时，AI 会照着它的说明做，比如写一段配乐、做一张字卡；要在这台电脑上运行命令时会先问你。" },
 ];
 
-type FieldKey = "apiKey" | "secretKey" | "model" | "baseUrl";
+type FieldKey = "apiKey" | "model" | "baseUrl";
 type Field = { key: FieldKey; label: string; secret?: boolean; placeholder?: string };
-/** cli：不填 Key，用这台电脑上登录好的命令行（LibTV）；note 是展开后写在表单最上面的一句 */
+/** cli：不填 Key，用这台电脑上登录好的命令行（即梦、小云雀、LibTV）；note 是展开后写在表单最上面的一句 */
 type Provider = { slot: AiEditGenerateSlot; mark: string; name: string; what: string; hint: string; fields: Field[]; advanced: Field[]; cli?: boolean; note?: string };
 
 const defaults = (slot: AiEditGenerateSlot, key: "model" | "baseUrl") => DEFAULT_AI_EDIT_GENERATE_CONFIG[slot][key];
@@ -45,11 +45,12 @@ const IMAGE_PROVIDERS: Provider[] = [
 const VIDEO_PROVIDERS: Array<Provider & { provider: AiEditVideoProvider }> = [
   { provider: "seedance", slot: "video", mark: "方", name: "火山方舟 Seedance", what: "生成视频", hint: "Seedance 模型要先在火山方舟控制台「开通管理」里开通（账户余额不少于 200 元）。",
     fields: [{ key: "apiKey", label: "API Key", secret: true, placeholder: "方舟的 API Key" }], advanced: advanced("video") },
-  { provider: "jimeng", slot: "jimeng", mark: "即", name: "即梦", what: "生成视频", hint: "火山引擎「访问控制」里新建 AccessKey，再到控制台的即梦 AI 里开通视频生成，按秒计费。",
-    note: "火山引擎从 2026 年 9 月起把即梦的视频生成接口都标成了「下线中」，还没说哪天停：停了以后这里会生成失败，到时换一家。",
-    fields: [{ key: "apiKey", label: "AccessKeyId", secret: true, placeholder: "AKLT…" }, { key: "secretKey", label: "SecretAccessKey", secret: true }], advanced: advanced("jimeng", "模型（req_key）") },
-  { provider: "xyq", slot: "xyq", mark: "云", name: "小云雀", what: "生成视频", hint: "剪映团队的 AI 视频创作，按积分扣费。要会员才能建 Key：小云雀网页版顶部「CLI/API」→「API」→ 新建秘钥。",
-    fields: [{ key: "apiKey", label: "Access Key", secret: true }], advanced: advanced("xyq") },
+  { provider: "jimeng", slot: "jimeng", mark: "即", name: "即梦", what: "生成视频", hint: "字节的 AI 创作平台，能用 Seedance 2.0、2.5 等模型，扣即梦账号的积分。用这台电脑上登录好的即梦命令行，不用填 Key。",
+    note: "先在终端里运行 curl -fsSL https://jimeng.jianying.com/cli | bash 装好即梦命令行（dreamina），再运行 dreamina login 登录一次，回来点保存。有的模型第一次用要先在即梦网页版上用它生成一次。模型名用 dreamina text2video -h 查。",
+    cli: true, fields: [], advanced: [{ key: "model", label: "模型", placeholder: defaults("jimeng", "model") }] },
+  { provider: "xyq", slot: "xyq", mark: "云", name: "小云雀", what: "生成视频", hint: "剪映团队的 AI 视频创作，按积分扣费。用这台电脑上登录好的小云雀命令行，不用填 Key。",
+    note: "先在终端里运行 npx @pippit-dev/cli@latest install 装好小云雀命令行（pippit-tool-cli），再运行 pippit-tool-cli login 在浏览器里授权一次，回来点保存。模型名用 pippit-tool-cli model list 查。",
+    cli: true, fields: [], advanced: [{ key: "model", label: "模型", placeholder: defaults("xyq", "model") }] },
   { provider: "libtv", slot: "libtv", mark: "L", name: "LibTV", what: "生成视频", hint: "LiblibAI 的视频创作平台，能用 Seedance、可灵、万相等模型，按积分扣费。用这台电脑上登录好的 LibTV 命令行，不用填 Key。",
     note: "LibTV 原来的 Access Key 接口已经下线，现在只能用官方命令行：到 liblib.tv/plugin 的「CLI」页装好，在终端里运行 libtv login web 登录一次，再回来点保存。模型名用 libtv model search --type video 查。",
     cli: true, fields: [], advanced: [{ key: "model", label: "模型", placeholder: defaults("libtv", "model") }] },
@@ -252,7 +253,8 @@ function ProviderRow({ provider, draft, stored, ai, onDraft, onStore }: {
   const borrowed = slot === "video" && !ownKey && usingKey ? borrowArkKey(ai.config, ai.analysis) : null;
   // 有没保存的改动、或者还没连上时被点开：展开；接口地址和模型填过非默认值的，「高级选项」也先展开
   const [open, setOpen] = useState(() => slotChanged(draft, stored, slot));
-  const [more, setMore] = useState(() => (["model", "baseUrl"] as const).some((key) => {
+  // 只看「高级选项」里真有的那几项：用命令行的几家没有接口地址，旧配置里留着的老地址不算
+  const [more, setMore] = useState(() => provider.advanced.some(({ key }) => {
     const text = stored[slot][key].trim();
     return Boolean(text) && text !== DEFAULT_AI_EDIT_GENERATE_CONFIG[slot][key];
   }));
@@ -260,7 +262,7 @@ function ProviderRow({ provider, draft, stored, ai, onDraft, onStore }: {
   const set = (key: FieldKey, text: string) => { setProblem(null); onDraft((current) => ({ ...current, [slot]: { ...current[slot], [key]: text } })); };
   const reset = () => { setProblem(null); onDraft((current) => ({ ...current, [slot]: stored[slot] })); setOpen(false); };
   const save = () => {
-    const next = { ...stored, [slot]: { ...trimSlot(draft[slot]), ...(provider.cli ? { apiKey: LIBTV_CLI } : {}) } } as AiEditGenerateConfig;
+    const next = { ...stored, [slot]: { ...trimSlot(draft[slot]), ...(provider.cli ? { apiKey: LOCAL_CLI } : {}) } } as AiEditGenerateConfig;
     const bad = generateConfigProblem(next, [slot]);
     if (bad) { setProblem(bad); return; }
     onStore(withUse(next, stored, ai));
@@ -268,12 +270,12 @@ function ProviderRow({ provider, draft, stored, ai, onDraft, onStore }: {
     setOpen(false);
   };
   const disconnect = () => {
-    const cleared = { ...stored[slot], apiKey: "", ...(slot === "jimeng" ? { secretKey: "" } : {}), ...(slot === "video" ? { borrow: false } : {}) };
+    const cleared = { ...stored[slot], apiKey: "", ...(slot === "video" ? { borrow: false } : {}) };
     const next = { ...stored, [slot]: cleared } as AiEditGenerateConfig;
     onStore(next);
     onDraft((current) => ({ ...current, [slot]: cleared }));
   };
-  const required = provider.fields.filter(({ key }) => key === "apiKey" || key === "secretKey");
+  const required = provider.fields.filter(({ key }) => key === "apiKey");
   // 方舟可以不填 Key、借已经填过的方舟 Key（用户自己勾）
   const arkBorrow = slot === "video" && isArkUrl(draft.video.baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl) ? borrowArkKey(ai.config, ai.analysis) : null;
   const filled = required.every(({ key }) => value[key]?.trim()) || Boolean(slot === "video" && draft.video.borrow && arkBorrow);

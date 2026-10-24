@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { open, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants, createWriteStream } from "node:fs";
+import { copyFile, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -12,11 +12,11 @@ import { findCli, loginShellEnv, runFile, withoutHostVars } from "../localAi.mjs
 import { modelFetch } from "../systemProxy.mjs";
 import { apiBaseUrl, networkFailure, providerMessage } from "../videoAnalysis.mjs";
 import { AiEditError } from "./library.mjs";
-import { jimengRequest } from "./volcSign.mjs";
 
 // AI 剪辑里生成素材：generate_image 走 OpenAI 兼容的图片接口，generate_video 走用户选的那家视频服务的异步任务
 // （火山方舟 Seedance、即梦、小云雀、LibTV，各家一个 VIDEO_APIS 适配器，排队、确认、轮询、后台、下载、去重共用一套）。
-// Key 是用户在 AI 剪辑设置里开启生成时填的（方舟也可以借用已填的方舟 Key），每次随消息带来，采集器不写盘、不写日志、不进任何报错。
+// 方舟和 OpenAI 的 Key 是用户在 AI 剪辑设置里填的（方舟也可以借用已填的方舟 Key），每次随消息带来，采集器不写盘、不写日志、不进任何报错；
+// 即梦、小云雀、LibTV 不填 Key，用这台电脑上装好、登录好的官方命令行（dreamina、pippit-tool-cli、libtv）。
 // 两边都按次扣费：创建请求只发一次、不自动重发；生成的文件下载进素材库（来源记成 generated），同样的说明再调直接回那一个。
 // 视频要先经页面上用户点「生成」（ctx.askSpend，见 spend.mjs）才建任务。
 
@@ -25,9 +25,9 @@ export const VIDEO_DEFAULTS = { baseUrl: "https://ark.cn-beijing.volces.com/api/
 // 另外几家视频服务的默认地址和模型（和页面 DEFAULT_AI_EDIT_GENERATE_CONFIG 一致）
 export const VIDEO_PROVIDER_DEFAULTS = {
   seedance: VIDEO_DEFAULTS,
-  jimeng: { baseUrl: "https://visual.volcengineapi.com", model: "jimeng_ti2v_v30_pro" },
+  // 这三家不走接口，用本机的官方命令行；地址只是占位
+  jimeng: { baseUrl: "https://jimeng.jianying.com", model: "seedance2.0fast" },
   xyq: { baseUrl: "https://xyq.jianying.com", model: "Seedance_2.0_mini" },
-  // LibTV 不走接口，用本机的 libtv 命令行；地址只是占位
   libtv: { baseUrl: "https://www.liblib.tv", model: "Seedance 2.0 VIP" },
 };
 
@@ -113,16 +113,13 @@ function parseProvider(raw, defaults, label, { versioned = true } = {}) {
   return { baseUrl, apiKey, model: text(raw.model, 100) || defaults.model };
 }
 
-/** 生成视频那一项：provider 是哪家（老页面不带，当方舟）；即梦还要 SecretAccessKey，没填当没配 */
+/** 生成视频那一项：provider 是哪家（老页面不带，当方舟）；用命令行的几家 apiKey 只是连上的记号 */
 function parseVideo(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const provider = raw.provider ?? "seedance";
   if (!Object.hasOwn(VIDEO_PROVIDER_DEFAULTS, provider)) throw new AiEditError("invalid_config", "认不出生成视频用的是哪家服务，更新一下应用再试。");
   const parsed = parseProvider(raw, VIDEO_PROVIDER_DEFAULTS[provider], "生成视频", { versioned: provider === "seedance" });
-  if (!parsed) return null;
-  if (provider !== "jimeng") return { provider, ...parsed };
-  const secretKey = typeof raw.secretKey === "string" ? raw.secretKey.trim().slice(0, 500) : "";
-  return secretKey ? { provider, ...parsed, secretKey } : null;
+  return parsed ? { provider, ...parsed } : null;
 }
 
 /** 请求体里的生成配置：信任边界。填了 Key 的那项才算配了，都没配回 null。 */
@@ -386,10 +383,12 @@ export async function generateImage(ctx, args) {
 //   plan(ctx, config, args, prompt) 校验参数（问用户之前）：回 { key, spend, notes, duration, audio, payload }，key 是认重复用的字段，
 //     payload(ctx, config) 读参考图、拼请求（也在问之前，不合格的图别让用户白点一次确认）；
 //   create(ctx, config, request) 建任务，只发一次、不自动重发，回任务号；说不准建没建上就抛 unclear；
-//   query(ctx, config, taskId, signal) 查一次进度，回 { status, videoUrl, tokens, failure }：
+//   query(ctx, config, taskId, signal) 查一次进度，回 { status, videoUrl, file, tokens, failure }：
 //     status 是 queued / running / succeeded / failed / expired / cancelled，failure 是结束了却没做成时给模型的话（不扣费）；
+//     file 是命令行已经下好、拷成素材库临时文件的视频（有就不再按 videoUrl 下）；queryMs 是查一次的时限（不写是 30 秒）；
 //     断网、超时、限流、对方 5xx 抛带 transient 的错，轮询歇一下再试；
-//   cancel(ctx, config, taskId) 取消还在排队的（不扣费），取消不了回 false。
+//   cancel(ctx, config, taskId) 取消还在排队的（不扣费），取消不了回 false；
+//   cli 是用本机命令行的几家：命令名、官方安装位置、没装和没登录时的话。
 
 /** 建任务出了岔子、又说不准对方建没建上：同样的说明再调时也不再建（job 记成 unknown）。 */
 const unclear = (api, why) => Object.assign(new AiEditError("create_uncertain", `建任务时${why}，不知道任务建没建上，可能已经在生成并扣费：先别重试，到${api.findIt}看看。`, 502), { uncertain: true });
@@ -581,169 +580,225 @@ const SEEDANCE = {
   },
 };
 
-// ---------- 即梦（火山引擎视觉智能，AccessKey 签名） ----------
+// ---------- 本机命令行（即梦、小云雀、LibTV） ----------
 
-// 官方 2026-04 价（元/秒，只有成功出片才扣）：按 req_key 认，长的先比
-const JIMENG_PRICES = [["jimeng_ti2v_v30_pro", 1], ["v30_1080", 0.63], ["v30", 0.28], ["vgfm", 0.65]];
-// 即梦收的图：JPEG、PNG，单张 4.7MB 以内，短边不小于 320、长边不超过 4096，长短边比不超过 3
-const JIMENG_REF_BYTES = 4.7 * 1024 ** 2;
+// 这三家都用用户自己装好、在终端里登录过一次的官方命令行，不填 Key：即梦 dreamina、小云雀 pippit-tool-cli、LibTV libtv。
+// 按积分扣、估不出价钱，命令行也都没有取消。即梦、小云雀查进度时让命令行把做好的视频下到临时目录，拷进素材库，不再按链接下一遍。
+const CLI_CHECK_MS = 60_000;
+// 提交时命令行要先传参考图：留够五分钟，到点还没回就说不准建没建上
+const CLI_CREATE_MS = 5 * 60_000;
 
-function jimengError(status, raw, config) {
-  const parsed = parseJson(raw) ?? {};
-  const gateway = parsed.ResponseMetadata?.Error?.Code ?? "";
-  const code = Number(parsed.code);
-  const detail = String(parsed.message ?? parsed.ResponseMetadata?.Error?.Message ?? "").slice(0, 240);
-  const fail = (errorCode, text, httpStatus = 502) => new AiEditError(errorCode, scrub(scrub(text, config.apiKey), config.secretKey), httpStatus);
-  if (/InvalidAccessKey|SignatureDoesNotMatch|MissingAuthenticationToken/iu.test(gateway)) return fail("generate_key_invalid", "即梦的 AccessKeyId 或 SecretAccessKey 不对，到 AI 剪辑设置里检查一下。", 401);
-  if (/InvalidTimestamp/iu.test(gateway)) return fail("clock_skew", "这台电脑的时间和标准时间差得太多，即梦拒收了请求：校准一下系统时间再试。", 401);
-  if (/AccessDenied/iu.test(gateway)) return fail("access_denied", "这个 AccessKey 没有权限调即梦：子账号要在火山引擎「访问控制」里授权视觉智能（cv）的权限。", 403);
-  if (/FlowLimitExceeded/iu.test(gateway) || code === 50429 || code === 50430) return transient(fail("rate_limited", "即梦那边请求太多（并发上限：免费 1 个、付费 2 个），稍后再试。", 429));
-  if (code === 50400) return fail("service_not_open", `即梦没开通或者欠费了：到火山引擎控制台的即梦 AI 里开通视频生成（${config.model}）、确认余额够用（欠费超过 24 小时要重新开通）。`, 403);
-  if ([50411, 50412, 50413, 50518].includes(code)) return fail("moderation_blocked", "说明或参考图没通过即梦的内容审核，视频没生成。改改说明或换一张图再试。", 422);
-  if ([50511, 50516, 50517, 50519].includes(code)) return fail("moderation_blocked", "生成出来的画面没通过即梦的审核，没给视频，也不扣费。换个说法再试。", 422);
-  if (code === 50207 || code === 50213) return fail("image_unsupported", "即梦读不了这张参考图（格式不对或太大），换一张 JPEG 或 PNG 再试。", 422);
-  if (code === 50500 || code === 50501 || status >= 500) return transient(fail("provider_unavailable", `即梦视频服务暂时不可用${code ? `（${code}）` : status ? `（${status}）` : ""}，稍后再试。`, 502));
-  return fail("provider_error", `视频没生成出来${detail ? `：${detail}` : status ? `（即梦回了 ${status}）` : ""}`, 502);
+/**
+ * 找这家的命令行（api.cli）：登录 shell 的 PATH 和常见安装位置，再看官方安装脚本放的目录（dirs，相对用户目录）。
+ * 测试里用 ctx.cli[命令名] 换成假的。
+ */
+async function localCli(ctx, api) {
+  const { id, dirs, missing } = api.cli;
+  if (ctx.cli?.[id]) return ctx.cli[id];
+  const env = await loginShellEnv() ?? withoutHostVars(process.env);
+  const found = await findCli(id, { env }) ?? await findCli(id, { env: { PATH: dirs.map((dir) => path.join(os.homedir(), dir)).join(path.delimiter) } });
+  if (!found) throw new AiEditError("cli_missing", missing, 409);
+  return { command: found.command, prefix: found.prefix, env: { ...env, ...found.env } };
 }
 
-/** 即梦的一次接口调用：签名、发送、认结果；code 10000 才算成功，回 data。 */
-async function jimengCall(ctx, config, action, payload, { signal, once = false, version } = {}) {
-  const { url, init } = jimengRequest({ baseUrl: config.baseUrl, action, version, payload, accessKeyId: config.apiKey, secretKey: config.secretKey });
-  const { status, raw } = once ? await sendOnce(ctx, JIMENG, url, init) : await sendQuery(ctx, JIMENG, url, { ...init, signal });
-  const parsed = parseJson(raw);
-  if (status >= 200 && status < 300 && Number(parsed?.code) === 10000) return parsed.data ?? {};
-  throw jimengError(status, raw, config);
+/** 跑一次命令行，回 runFile 的 { code, stdout, stderr, error }：起不来是 code null + error，超时是 code null */
+async function cliRun(ctx, api, args, { timeoutMs = CLI_CHECK_MS, signal } = {}) {
+  const cli = await localCli(ctx, api);
+  return runFile(cli.command, [...cli.prefix, ...args], { env: cli.env, timeoutMs, signal });
 }
 
-/** req_key 的用法：首尾帧、只收首帧、只收文字、文字或首帧都行（3.0 Pro） */
-function jimengMode(model) {
-  if (/first_tail/iu.test(model)) return "first_last";
-  if (/(^|_)i2v/iu.test(model)) return "first";
-  if (/(^|_)t2v/iu.test(model)) return "text";
-  return "either";
+const plain = (text) => String(text ?? "").replace(/\u001b\[[0-9;]*[A-Za-z]/gu, "");
+
+/** stdout 里的 JSON：命令行偶尔在前后多打几行字，取第一个 { 到最后一个 } */
+function cliJson(stdout) {
+  const text = plain(stdout);
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  return start >= 0 && end > start ? parseJson(text.slice(start, end + 1)) : null;
 }
 
-async function jimengImage(ctx, id) {
-  const { item, bytes, format } = await readReference(ctx, id, JIMENG_REF_BYTES, "即梦");
-  if (format === "webp") throw new AiEditError("image_unsupported", `“${item.name}”是 WebP，即梦只收 JPEG 和 PNG，换一张。`);
-  const { width, height } = item;
-  if (width && height && (Math.min(width, height) < 320 || Math.max(width, height) > 4096 || Math.max(width, height) / Math.min(width, height) > 3)) {
-    throw new AiEditError("image_size_invalid", `“${item.name}”是 ${width}×${height}，即梦要求短边不小于 320、长边不超过 4096、长短边比不超过 3，换一张。`);
+/** 命令行报错的最后一句原话（去掉 Error: 前缀），给人看 */
+const cliReason = (run) => plain(run.stderr || run.error?.message || run.stdout).trim().split("\n").filter(Boolean).at(-1)?.replace(/^error:\s*/iu, "").slice(0, 240) ?? "";
+
+/**
+ * 命令行没成功时给人看的错。words 是各家认得出的说法 [正则, 错误码, 话（可以是 reason => 话）, 状态码]，没登录之后先比；
+ * 都认不出时：提交那一步（submitting）当说不准建没建上，查进度时当一时的问题（歇一下再查）。
+ */
+function cliFailure(api, run, { submitting = false, words = [] } = {}) {
+  const all = plain(`${run.stderr}\n${run.stdout}\n${run.error?.message ?? ""}`);
+  const reason = cliReason(run);
+  if (run.code === null && run.error) return new AiEditError("cli_missing", `${api.name}命令行起不来（${run.error.message}）${submitting ? "，任务没建上" : ""}。`, 502);
+  if (api.cli.login.test(all)) {
+    const still = submitting ? "" : `视频可能还在${api.name}上生成、照常扣积分，做完会在${api.findIt}。`;
+    return new AiEditError("cli_login", `${api.cli.loginText}${still}`, 401);
   }
-  // 即梦要不带 data:image/…;base64, 前缀的 base64
-  return bytes.toString("base64");
+  const known = words.find(([pattern]) => pattern.test(all));
+  if (known) return new AiEditError(known[1], typeof known[2] === "function" ? known[2](reason) : known[2], known[3] ?? 502);
+  if (submitting) return unclear(api, run.code === null ? `${api.name}命令行 ${CLI_CREATE_MS / 60_000} 分钟没回话` : `${api.name}命令行报错（${reason || "原因不明"}）`);
+  return transient(new AiEditError("provider_error", run.code === null ? `${api.name}命令行没回话` : `${api.name}命令行报错：${reason || "原因不明"}`, 502));
+}
+
+/**
+ * 查一次进度：给命令行一个新的临时目录（dir => 参数），done(json) 说做好了就把它下进去的 mp4 拷成素材库里的临时文件（file），目录删掉。
+ * 下视频可能要几分钟，所以这两家查一次的时限是 queryMs。
+ */
+async function cliQuery(ctx, api, args, signal, done) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "dy2-video-"));
+  try {
+    const run = await cliRun(ctx, api, args(dir), { timeoutMs: api.queryMs, signal });
+    const json = cliJson(run.stdout);
+    let file = null;
+    const name = done(json) ? (await readdir(dir, { recursive: true })).find((item) => /\.mp4$/iu.test(item)) : null;
+    if (name) {
+      file = tempFile(ctx, ".mp4");
+      await copyFile(path.join(dir, name), file, constants.COPYFILE_FICLONE);
+    }
+    return { ...run, json, file };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/** JSON 里随便哪一层的 key 字段里的第一个 http 链接；值是 JSON 字符串的也拆开看 */
+function findUrl(value, key, depth = 0) {
+  if (depth > 8 || !value) return undefined;
+  if (typeof value === "string") return /^\s*[[{]/u.test(value) ? findUrl(parseJson(value), key, depth + 1) : undefined;
+  if (typeof value !== "object") return undefined;
+  if (typeof value[key] === "string" && /^https?:\/\//iu.test(value[key])) return value[key];
+  for (const item of Object.values(value)) {
+    const found = findUrl(item, key, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+const CLI_QUOTA = [/积分|余额|credit/iu, "quota_exceeded"];
+const CLI_REVIEW = [/审核|违规|sensitive|risk/iu, "moderation_blocked"];
+
+// ---------- 即梦（dreamina 命令行） ----------
+
+// 2.5 能生成 4–30 秒、1.0 fast 5–10 秒、1.5 pro 5–12 秒，其余（2.0 系列）4–15 秒
+const DREAMINA_SECONDS = [[/2\.5/u, 4, 30], [/1\.0/u, 5, 10], [/1\.5/u, 5, 12]];
+const DREAMINA_WORDS = [
+  // 有的模型第一次用要先在网页上确认授权
+  [/AigcComplianceConfirmationRequired/u, "compliance_required", "这个模型第一次用要先在即梦网页版上用它生成一次（确认授权），之后这边才能用：到即梦网页版选同一个模型生成一次再试。", 403],
+  [CLI_QUOTA[0], CLI_QUOTA[1], "即梦的积分不够了，视频没生成：充值或开通会员后再试。", 402],
+  [/会员|\bvip\b/iu, "vip_required", "这个模型要即梦会员才能用：开通会员，或者在 AI 剪辑设置里把即梦的模型换成 seedance2.0fast。", 402],
+  [CLI_REVIEW[0], CLI_REVIEW[1], "说明或参考图没通过即梦的内容审核，视频没生成。改改说明或换一张图再试。", 422],
+];
+// 提交前命令行自己查出来的（参数不对、参考图没传上去）：任务肯定没建
+const DREAMINA_SUBMIT_WORDS = [
+  ...DREAMINA_WORDS,
+  [/upload/iu, "upload_failed", (reason) => `参考图没传上去，任务没建上${reason ? `：${reason}` : ""}。`],
+  [/is required|must be one of|not supported|unsupported|does not exist|unknown flag/iu, "arguments_invalid", (reason) => `即梦命令行没接这个任务，任务没建上${reason ? `：${reason}` : ""}。`, 422],
+];
+const DREAMINA_QUERY_WORDS = [[/not found/iu, "generate_expired", "即梦上找不到这个任务了，跟不上这段视频：到即梦网页版的生成记录里看看。", 404]];
+
+/** 即梦说任务没做成（fail_reason）：给人看的话 */
+function dreaminaFailure(reason) {
+  const text = plain(reason).trim().slice(0, 240);
+  const known = DREAMINA_WORDS.find(([pattern]) => pattern.test(text));
+  if (known) return new AiEditError(known[1], known[2], known[3]);
+  return new AiEditError("generate_failed", `视频没生成出来${text ? `：${text}` : "，原因即梦没说，换个说法再试。"}`, 502);
 }
 
 const JIMENG = {
   name: "即梦",
   title: "即梦",
-  findIt: "火山引擎控制台的即梦 AI 里",
-  linkHours: 1,
+  findIt: "即梦网页版的生成记录里",
+  linkHours: 0,
+  queryMs: DOWNLOAD_TIMEOUT_MS,
+  cli: {
+    id: "dreamina",
+    // 官方安装脚本在 Windows 上装到 ~/bin，别的系统 ~/.local/bin（常见位置里已经有）
+    dirs: ["bin"],
+    missing: "这台电脑上没找到即梦命令行（dreamina）：在终端里运行 curl -fsSL https://jimeng.jianying.com/cli | bash 装好，再运行 dreamina login 登录一次。",
+    login: /登录态|dreamina login|not logged in|login expired|login pending/iu,
+    loginText: "即梦命令行还没登录或登录过期了：在终端里运行 dreamina login 登录后再试。",
+  },
   async plan(ctx, config, args, prompt) {
     const { model } = config;
     const notes = [];
-    const mode = jimengMode(model);
+    const [, shortest, longest] = DREAMINA_SECONDS.find(([pattern]) => pattern.test(model)) ?? [null, 4, 15];
+    const duration = durationOf(args, shortest, longest, notes);
+    // 2.5 能出 480p、2.0 VIP 能出 1080p，其余固定 720p；2.5 的 1080p 是 10 位色深的 H.265，剪映和看板可能放不了，不让选
+    const allowed = model === "seedance2.0_vip" ? ["720p", "1080p"] : /2\.5/u.test(model) ? ["480p", "720p"] : ["720p"];
+    const asked = pick(args.resolution, RESOLUTIONS, "清晰度") ?? "720p";
+    const resolution = allowed.includes(asked) ? asked : "720p";
+    if (resolution !== asked) notes.push(`即梦这个模型出不了 ${asked}，按 720p 生成的。`);
     const { first, last, refs } = frameArgs(args);
-    if (refs.length) throw new AiEditError("arguments_invalid", "即梦不收参考图：要从某张图动起来就把它当首帧给，不然就只写说明。");
-    if (mode === "text" && first) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）只能用文字生成，不收首帧：去掉首帧再试。`);
-    if ((mode === "first" || mode === "first_last") && !first) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）要给首帧${mode === "first_last" ? "和尾帧" : ""}才能生成。`);
-    if (mode === "first_last" && !last) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）要首帧和尾帧一起给。`);
-    if (mode !== "first_last" && last) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）不收尾帧：只给首帧，或者请用户换成首尾帧模型。`);
-    // 即梦只有 5 秒、10 秒两档（S2.0 固定 5 秒）；按要的秒数取近的那档
-    const fixed = /vgfm/iu.test(model);
-    const asked = typeof args.duration === "number" && Number.isFinite(args.duration) ? Math.round(args.duration) : 5;
-    const duration = fixed || asked <= 7 ? 5 : 10;
-    if (duration !== asked) notes.push(`即梦只能生成${fixed ? " 5 秒" : " 5 秒或 10 秒"}，按 ${duration} 秒生成的。`);
-    const resolution = /1080|pro/iu.test(model) ? "1080p" : "720p";
-    if (args.resolution && args.resolution !== resolution) notes.push(`即梦这个模型固定出 ${resolution}。`);
-    // 比例只有文生视频能选；给了首帧时按首帧取最近的比例再居中裁
+    if (/1\.[05]/u.test(model) && !first) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）要给首帧才能生成。`);
+    const command = first && last ? "frames2video" : first ? "image2video" : refs.length ? "multimodal2video" : "text2video";
+    // 给了首帧（首尾帧）时比例跟着首帧走，命令行不收比例
     const ratio = first ? "adaptive" : pick(args.ratio, VIDEO_RATIOS, "画面比例") ?? await canvasRatio(ctx, VIDEO_RATIOS);
-    if (args.with_audio === true) notes.push("即梦生成的视频不带声音。");
-    const price = JIMENG_PRICES.find(([part]) => model.toLowerCase().includes(part))?.[1];
+    if (args.with_audio === true) notes.push("即梦没法指定带不带声音，按它的默认生成。");
     return {
-      key: { kind: "video", provider: "jimeng", model, prompt, ratio, duration, first, last },
-      spend: { model, seconds: duration, resolution, ratio, audio: false, estimate: price ? Math.round(price * duration * 100) / 100 : null },
-      notes, duration, audio: false,
+      key: { kind: "video", provider: "jimeng", model, prompt, ratio, duration, resolution, first, last, refs },
+      spend: { model, seconds: duration, resolution, ratio, audio: null, estimate: null },
+      notes, duration, audio: null,
       async payload() {
-        const images = [];
-        if (first) images.push(await jimengImage(ctx, first));
-        if (last) images.push(await jimengImage(ctx, last));
-        return {
-          req_key: model, prompt, seed: -1, frames: duration === 10 ? 241 : 121,
-          ...(images.length ? { binary_data_base64: images } : { aspect_ratio: ratio }),
-        };
+        // 图在本地查好（不合格的别让用户白点一次确认），交给命令行上传
+        const file = async (id) => (await readReference(ctx, id, ARK_REF_BYTES, "即梦")) && ctx.library.readyPath(id);
+        const images = first ? [`--${last ? "first" : "image"}=${await file(first)}`, ...(last ? [`--last=${await file(last)}`] : [])] : [];
+        for (const id of refs) images.push(`--image=${await file(id)}`);
+        return [command, `--prompt=${prompt}`, `--model_version=${model}`, `--duration=${duration}`, `--video_resolution=${resolution}`,
+          ...(ratio === "adaptive" ? [] : [`--ratio=${ratio}`]), ...images];
       },
     };
   },
-  async create(ctx, config, payload) {
-    const data = await jimengCall(ctx, config, "CVSync2AsyncSubmitTask", payload, { once: true }).catch((error) => {
-      // 即梦自己说没建成的（审核、参数、Key、没开通、限流）原样报；它回的 5xx 说不准建没建
-      if (error?.code !== "provider_unavailable") throw error;
-      throw unclear(this, "即梦回了服务出错");
-    });
-    const id = data.task_id;
-    if (typeof id !== "string" || !id) throw unclear(this, "即梦回了成功，却没给任务编号");
-    return id;
+  async create(ctx, config, args) {
+    // 不跟着「停止」断开：断在半路就不知道任务建没建
+    const run = await cliRun(ctx, this, args, { timeoutMs: CLI_CREATE_MS });
+    const result = cliJson(run.stdout);
+    if (result?.gen_status === "fail") throw dreaminaFailure(result.fail_reason);
+    const id = result?.submit_id;
+    if ((typeof id === "string" && id) || Number.isFinite(id)) return String(id);
+    if (run.code === 0) throw unclear(this, "即梦命令行回了成功，却没给任务编号");
+    throw cliFailure(this, run, { submitting: true, words: DREAMINA_SUBMIT_WORDS });
   },
   async query(ctx, config, taskId, signal) {
-    let data;
-    try {
-      data = await jimengCall(ctx, config, "CVSync2AsyncGetResult", { req_key: config.model, task_id: taskId }, { signal });
-    } catch (error) {
-      // 生成出来没过审、参数不对之类：任务结束了，没做成（不扣费）；限流、5xx、断网照常往外抛，歇一下再查
-      if (error?.transient || error?.name === "AbortError" || ["generate_key_invalid", "access_denied", "clock_skew", "service_not_open"].includes(error?.code)) throw error;
-      return { status: "failed", failure: error };
-    }
-    const state = data.status;
-    if (state === "in_queue") return { status: "queued" };
-    if (state === "generating") return { status: "running" };
-    if (state === "not_found" || state === "expired") return { status: "expired", failure: new AiEditError("generate_expired", "即梦上这个任务过期了（任务只留十几个小时），没有扣费。稍后再试。", 504) };
-    if (state === "done") return { status: "succeeded", videoUrl: data.video_url, tokens: null };
-    return { status: "running" };
+    const run = await cliQuery(ctx, this, (dir) => ["query_result", `--submit_id=${taskId}`, `--download_dir=${dir}`], signal, (json) => json?.gen_status === "success");
+    const result = run.json;
+    if (!result?.gen_status) throw cliFailure(this, run, { words: DREAMINA_QUERY_WORDS });
+    if (result.gen_status === "fail") return { status: "failed", failure: dreaminaFailure(result.fail_reason) };
+    if (result.gen_status !== "success") return { status: "running" };
+    return { status: "succeeded", videoUrl: findUrl(result, "video_url"), file: run.file, tokens: null };
   },
-  async cancel(ctx, config, taskId) {
-    await jimengCall(ctx, config, "CVCancelTask", { req_key: config.model, task_id: taskId }, { version: "2024-06-06", signal: AbortSignal.timeout(QUERY_TIMEOUT_MS) });
-    return true;
-  },
+  // 命令行没有取消
+  async cancel() { return false; },
 };
 
-// ---------- 小云雀（剪映团队，Bearer Access Key） ----------
+// ---------- 小云雀（pippit-tool-cli 命令行） ----------
 
-// 官方《小云雀 API 体验指南》：上传素材 → submit_run（沉浸式短片 pippit_video_part_agent）→ query_generate_video_result。
-// 按积分扣、没有估价接口；任务号是 thread_id/run_id。run_state：3 成功、4 失败（积分不够是 fail_reason 11001）、5 取消，其余在做
 const XYQ_REF_BYTES = 200 * 1024 ** 2;
-
-function xyqError(status, raw, config) {
-  const parsed = parseJson(raw) ?? {};
-  const ret = String(parsed.ret ?? "");
-  const detail = String(parsed.errmsg ?? "").slice(0, 240);
-  const fail = (errorCode, text, httpStatus = 502) => new AiEditError(errorCode, scrub(text, config.apiKey), httpStatus);
-  if (status === 401 || status === 403) return fail("generate_key_invalid", "小云雀的 Access Key 不对、没启用或者过期了，到 AI 剪辑设置里换一把（要会员才能建 Key）。", 401);
-  if (ret === "10" || ret === "16010" || status === 429) return transient(fail("rate_limited", "小云雀那边请求太频繁了，过一分钟再试。", 429));
-  if (ret === "15") return fail("daily_limit", "小云雀今天的生成次数到上限了，明天再试。", 429);
-  if (["12004", "12005", "12006", "12015"].includes(ret)) return fail("moderation_blocked", "说明或参考素材没通过小云雀的内容审核，视频没生成。改改说明或换一张图再试。", 422);
-  if (ret === "2") return fail("generate_key_invalid", `小云雀拒收了请求${detail ? `：${detail}` : ""}。多半是 Access Key 不对或过期，也可能是模型名 ${config.model} 不对，到 AI 剪辑设置里检查一下。`, 400);
-  if (ret === "5" || status >= 500) return transient(fail("provider_unavailable", "小云雀暂时不可用，稍后再试。", 502));
-  return fail("provider_error", `视频没生成出来${detail ? `：${detail}` : status ? `（小云雀回了 ${status}）` : ""}`, 502);
-}
-
-/** 小云雀的一次 JSON 请求：ret 是 "0" 才算成功，回 data */
-async function xyqCall(ctx, config, apiPath, body, { signal, once = false } = {}) {
-  const init = { method: "POST", headers: { Authorization: `Bearer ${config.apiKey}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(body) };
-  const url = `${config.baseUrl}${apiPath}`;
-  const { status, raw } = once ? await sendOnce(ctx, XYQ, url, init) : await sendQuery(ctx, XYQ, url, { ...init, signal });
-  const parsed = parseJson(raw);
-  if (status >= 200 && status < 300 && String(parsed?.ret) === "0") return parsed.data ?? {};
-  throw xyqError(status, raw, config);
-}
-
 const XYQ_RATIOS = ["16:9", "9:16", "4:3", "3:4", "1:1"];
+const XYQ_WORDS = [
+  [/积分|余额|credit|11001/iu, CLI_QUOTA[1], "小云雀的积分不够了，视频没生成：充值或开通会员后再试。", 402],
+  [/ret=(?:12004|12005|12006|12015)\b|审核|违规|sensitive|risk/iu, CLI_REVIEW[1], "说明或参考素材没通过小云雀的内容审核，视频没生成。改改说明或换一张图再试。", 422],
+];
+// 小云雀自己说没接的（参考图没传上去、参数不对、限流、到上限）：任务肯定没建；它回的 5xx、断网说不准
+const XYQ_SUBMIT_WORDS = [
+  [/未提交生成/u, "upload_failed", (reason) => `参考图没传上去，任务没建上${reason ? `：${reason}` : ""}。`],
+  [/ret=(?:10|16010)\b/u, "rate_limited", "小云雀那边请求太频繁了，过一分钟再试。", 429],
+  [/ret=15\b/u, "daily_limit", "小云雀今天的生成次数到上限了，明天再试。", 429],
+  ...XYQ_WORDS,
+  [/请求返回失败|缺少必填参数|不支持的/u, "provider_error", (reason) => `小云雀没接这个任务，任务没建上${reason ? `：${reason}` : ""}。`],
+];
 
 const XYQ = {
   name: "小云雀",
   title: "小云雀",
   findIt: "小云雀网页版的历史会话里",
   linkHours: 0,
+  queryMs: DOWNLOAD_TIMEOUT_MS,
+  cli: {
+    id: "pippit-tool-cli",
+    // npm 全局装的（npx @pippit-dev/cli@latest install），常见位置里都有
+    dirs: [],
+    missing: "这台电脑上没找到小云雀命令行（pippit-tool-cli）：在终端里运行 npx @pippit-dev/cli@latest install 装好，再运行 pippit-tool-cli login 登录一次。",
+    login: /未登录|登录凭证|pippit-tool-cli login|HTTP 40[13]\b/u,
+    loginText: "小云雀命令行还没登录或登录过期了：在终端里运行 pippit-tool-cli login 登录后再试。",
+  },
   async plan(ctx, config, args, prompt) {
     const { model } = config;
     const notes = [];
@@ -751,108 +806,67 @@ const XYQ = {
     const duration = durationOf(args, 4, /2\.5/u.test(model) ? 30 : 15, notes);
     const resolution = pick(args.resolution, RESOLUTIONS, "清晰度") ?? "720p";
     const { first, last, refs } = frameArgs(args);
-    const ratio = pick(args.ratio, VIDEO_RATIOS, "画面比例") ?? await canvasRatio(ctx, XYQ_RATIOS);
-    if (!XYQ_RATIOS.includes(ratio)) throw new AiEditError("arguments_invalid", `小云雀的画面比例只能是 ${XYQ_RATIOS.join("、")} 之一。`);
+    // 2.5 的首尾帧比例跟着首帧走，不传比例
+    const ratio = first && /2\.5/u.test(model) ? "adaptive" : pick(args.ratio, VIDEO_RATIOS, "画面比例") ?? await canvasRatio(ctx, XYQ_RATIOS);
+    if (ratio !== "adaptive" && !XYQ_RATIOS.includes(ratio)) throw new AiEditError("arguments_invalid", `小云雀的画面比例只能是 ${XYQ_RATIOS.join("、")} 之一。`);
     if (args.with_audio === true) notes.push("小云雀没法指定带不带声音，按它的默认生成。");
+    // 首帧（首尾帧）模式：图片按首帧、尾帧排；参考图模式让它参考图里的样子
     const ids = first ? [first, last].filter(Boolean) : refs;
     return {
       key: { kind: "video", provider: "xyq", model, prompt, ratio, duration, resolution, first, last, refs },
       spend: { model, seconds: duration, resolution, ratio, audio: null, estimate: null },
       notes, duration, audio: null,
       async payload() {
-        // 图先在本地查好；真正上传在用户点了「生成」之后
+        // 图先在本地查好，交给命令行上传（命令行按后缀认图，素材库的文件名带着原后缀）
         const images = [];
-        for (const id of ids) {
-          const { item, bytes, format } = await readReference(ctx, id, XYQ_REF_BYTES, "小云雀");
-          images.push({ name: `${item.id}.${format === "jpeg" ? "jpg" : format}`, type: `image/${format}`, bytes });
-        }
-        return {
-          images,
-          body: {
-            message: prompt,
-            agent_name: "pippit_video_part_agent",
-            video_part_tool_param: {
-              prompt, model, duration_sec: duration, ratio, resolution,
-              // 首帧（首尾帧）模式：图片按首帧、尾帧排；参考图模式让它参考图里的样子
-              ...(first ? { generate_type: 1 } : refs.length ? { task_type: "reference" } : {}),
-            },
-          },
-        };
+        for (const id of ids) images.push(`--image=${(await readReference(ctx, id, XYQ_REF_BYTES, "小云雀")) && ctx.library.readyPath(id)}`);
+        return ["generate-video", `--prompt=${prompt}`, `--model=${model}`, `--duration=${duration}`, `--resolution=${resolution}`,
+          ...(ratio === "adaptive" ? [] : [`--ratio=${ratio}`]), ...images, ...(first ? ["--generate-type=1"] : refs.length ? ["--task-type=reference"] : [])];
       },
     };
   },
-  async create(ctx, config, { images, body }) {
-    // 上传参考图：这一步不花钱，失败了照常报（任务还没建）
-    const assets = [];
-    for (const image of images) {
-      const form = new FormData();
-      form.append("file", new Blob([image.bytes], { type: image.type }), image.name);
-      const { status, raw } = await sendQuery(ctx, this, `${config.baseUrl}/api/biz/v1/skill/upload_file`, {
-        method: "POST", headers: { Authorization: `Bearer ${config.apiKey}`, Accept: "application/json" }, body: form, signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
-      });
-      const parsed = parseJson(raw);
-      const id = parsed?.data?.pippit_asset_id;
-      if (!(status >= 200 && status < 300 && String(parsed?.ret) === "0" && typeof id === "string" && id)) throw transient(xyqError(status, raw, config), false);
-      assets.push({ pippit_asset_id: id });
-    }
-    const request = assets.length ? { ...body, video_part_tool_param: { ...body.video_part_tool_param, images: assets } } : body;
-    let run;
-    try {
-      run = (await xyqCall(ctx, config, "/api/biz/v1/skill/submit_run", request, { once: true })).run;
-    } catch (error) {
-      // 小云雀自己说没建成的（审核、Key、限流、到上限）原样报；它回的 5xx 说不准建没建
-      if (error?.code !== "provider_unavailable") throw error;
-      throw unclear(this, "小云雀回了服务出错");
-    }
-    if (typeof run?.thread_id !== "string" || typeof run?.run_id !== "string" || !run.thread_id || !run.run_id) throw unclear(this, "小云雀回了成功，却没给任务编号");
-    return `${run.thread_id}/${run.run_id}`;
+  async create(ctx, config, args) {
+    const run = await cliRun(ctx, this, args, { timeoutMs: CLI_CREATE_MS });
+    const result = cliJson(run.stdout);
+    if (run.code === 0 && typeof result?.thread_id === "string" && result.thread_id && typeof result.run_id === "string" && result.run_id) return `${result.thread_id}/${result.run_id}`;
+    if (run.code === 0) throw unclear(this, "小云雀命令行回了成功，却没给任务编号");
+    throw cliFailure(this, run, { submitting: true, words: XYQ_SUBMIT_WORDS });
   },
   async query(ctx, config, taskId, signal) {
     const [threadId, runId] = taskId.split("/");
-    const data = await xyqCall(ctx, config, "/api/biz/v1/agent/query_generate_video_result", { thread_id: threadId, run_id: runId }, { signal });
-    const state = Number(data.run_state);
-    const reason = data.fail_reason ?? {};
-    if (state === 3) {
-      const url = Array.isArray(data.video_urls) ? data.video_urls.find((item) => typeof item === "string") : undefined;
-      return { status: "succeeded", videoUrl: url, tokens: null };
+    // 报错也是退出码 0、写在 error_message 里；completed 是「结束了」，失败也算
+    const done = (json) => json?.completed === true && !json.error_message;
+    const run = await cliQuery(ctx, this, (dir) => ["query-result", `--thread-id=${threadId}`, `--run-id=${runId}`, `--download-dir=${dir}`], signal, done);
+    const result = run.json;
+    if (!result || typeof result.completed !== "boolean") throw cliFailure(this, run);
+    const error = plain(result.error_message).trim();
+    if (error && result.completed) {
+      const known = XYQ_WORDS.find(([pattern]) => pattern.test(error));
+      return { status: "failed", failure: known ? new AiEditError(known[1], known[2], known[3]) : new AiEditError("generate_failed", `视频没生成出来：${error.slice(0, 240)}`, 502) };
     }
-    if (state === 4 || state === 8) {
-      const text = Number(reason.code) === 11001 ? "小云雀的积分不够了，视频没生成：充值或开通会员后再试。" : `视频没生成出来${reason.message ? `：${String(reason.message).slice(0, 240)}` : "，原因小云雀没说，换个说法再试。"}`;
-      return { status: "failed", failure: new AiEditError(Number(reason.code) === 11001 ? "quota_exceeded" : "generate_failed", text, 502) };
-    }
-    if (state === 5) return { status: "cancelled", failure: new AiEditError("generate_cancelled", "这个任务在小云雀上被取消了。", 409) };
-    // 6 等补充输入、9 等人工确认：这边接不了，请用户到网页上看
-    if (state === 6 || state === 9) return { status: "failed", failure: new AiEditError("generate_failed", `小云雀在等网页上${state === 6 ? "补充信息" : "人工确认"}，这边接不下去：到小云雀网页版的历史会话里看看。`, 409) };
-    return { status: state === 0 ? "queued" : "running" };
+    // 查的时候出错（断网、下载失败、登录过期）：登录过期直接说，别的歇一下再查
+    if (error) throw cliFailure(this, { ...run, code: 1, stderr: error, stdout: "" });
+    // ponytail: 命令行分不出排队、取消、等网页上补充信息，没结束都当在做；被取消的要跟满 3 小时才放弃
+    if (!result.completed) return { status: "running" };
+    const video = Array.isArray(result.videos) ? result.videos.find((item) => typeof item?.download_url === "string") : undefined;
+    return { status: "succeeded", videoUrl: video?.download_url, file: run.file, tokens: null };
   },
-  // 小云雀没有取消接口
+  // 命令行没有取消
   async cancel() { return false; },
 };
 
-// ---------- LibTV（LiblibAI，用本机登录好的官方命令行） ----------
+// ---------- LibTV（libtv 命令行） ----------
 
-// LibTV 原来的 Access Key 接口（im.liblib.tv/openapi）2026 年已经下线，只回「已升级为 LibTV CLI」；
-// 现在能程序调用的只有官方命令行 libtv（用户自己装、在终端里 libtv login web 登录一次）。这里照官方用法：
+// LibTV 原来的 Access Key 接口（im.liblib.tv/openapi）2026 年已经下线，只回「已升级为 LibTV CLI」。这里照官方用法：
 // project create 建一张画布（一个采集器进程只建一张）→ upload 传参考图 → node create … --run 生成，它一直阻塞到出结果，
 // 官方说中途杀掉结果就写不回画布，所以起一个子进程让它自己跑完（采集器退出也不杀），query 只看它跑完没有。
-// 任务号是「画布/节点名」；按积分扣、没有估价，也没有取消。
-const LIBTV_CHECK_MS = 60_000;
+// 任务号是「画布/节点名」。
 const libtvRuns = new Map();
 let libtvProject = null;
 
-/** 找 libtv：登录 shell 的 PATH 里、官方安装脚本的 ~/.libtv 里 */
-async function libtvCli(ctx) {
-  if (ctx.libtvCli) return ctx.libtvCli;
-  const env = await loginShellEnv() ?? withoutHostVars(process.env);
-  const found = await findCli("libtv", { env }) ?? await findCli("libtv", { env: { PATH: path.join(os.homedir(), ".libtv") } });
-  if (!found) throw new AiEditError("libtv_missing", "这台电脑上没找到 LibTV 命令行：到 liblib.tv/plugin 的「CLI」页装好，再在终端里运行 libtv login web 登录一次。", 409);
-  return { command: found.command, prefix: found.prefix, env: { ...env, ...found.env } };
-}
-
 /** 跑一条很快就结束的 libtv 命令，回解析好的 stdout JSON；失败说清楚（没登录、没会员之类原样带上 stderr） */
 async function libtvRun(ctx, args) {
-  const cli = await libtvCli(ctx);
-  const { code, stdout, stderr, error } = await runFile(cli.command, [...cli.prefix, ...args], { env: cli.env, timeoutMs: LIBTV_CHECK_MS });
+  const { code, stdout, stderr, error } = await cliRun(ctx, LIBTV, args);
   const parsed = parseJson(stdout.trim());
   if (code === 0 && parsed) return parsed;
   throw libtvError(stderr || error?.message || stdout);
@@ -871,6 +885,12 @@ const LIBTV = {
   title: "LibTV",
   findIt: "LibTV 网页版的「AI 剪辑生成」画布里",
   linkHours: 0,
+  cli: {
+    id: "libtv",
+    // 官方安装脚本装到 ~/.libtv
+    dirs: [".libtv"],
+    missing: "这台电脑上没找到 LibTV 命令行：到 liblib.tv/plugin 的「CLI」页装好，再在终端里运行 libtv login web 登录一次。",
+  },
   async plan(ctx, config, args, prompt) {
     const { model } = config;
     const notes = [];
@@ -907,7 +927,7 @@ const LIBTV = {
       left.push("--left", String(uploaded.nodeKey));
     }
     const node = `AI 剪辑-${stamp}`;
-    const cli = await libtvCli(ctx);
+    const cli = await localCli(ctx, this);
     const args = ["node", "create", node, "-t", "video", "-p", libtvProject, "--prompt", prompt,
       ...Object.entries(settings).flatMap(([key, value]) => ["-s", `${key}=${value}`]), ...left, "--run"];
     const run = { done: false, code: null, stdout: "", stderr: "" };
@@ -916,7 +936,7 @@ const LIBTV = {
       // 不跟着采集器退出：中途杀掉结果写不回画布
       child = spawn(cli.command, [...cli.prefix, ...args], { env: cli.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32" });
     } catch (error) {
-      throw new AiEditError("libtv_missing", `LibTV 命令行起不来（${error.message}），任务没建上。`, 502);
+      throw new AiEditError("cli_missing", `LibTV 命令行起不来（${error.message}），任务没建上。`, 502);
     }
     child.unref();
     const take = (current, chunk) => (current.length < 1_000_000 ? current + chunk : current);
@@ -958,7 +978,10 @@ const apiOf = (config) => VIDEO_APIS[config.provider ?? "seedance"] ?? SEEDANCE;
  */
 async function currentTask(ctx, api, config, job) {
   try {
-    return await api.query(ctx, config, job.taskId, AbortSignal.any([job.signal, AbortSignal.timeout(QUERY_TIMEOUT_MS)]));
+    const task = await api.query(ctx, config, job.taskId, AbortSignal.any([job.signal, AbortSignal.timeout(QUERY_TIMEOUT_MS)]));
+    // 只是看一眼：命令行顺手下好的视频不留，轮询那边会再取一次
+    if (task.file) await rm(task.file, { force: true }).catch(() => undefined);
+    return task;
   } catch {
     return null;
   }
@@ -1057,7 +1080,7 @@ async function runVideoJob(ctx, api, config, job, { request, name, source }) {
     // 到了上限也先再查一次：做完了照常收，还没结束才放弃
     const late = Date.now() > giveUpAt;
     try {
-      task = await api.query(ctx, config, job.taskId, AbortSignal.any([job.signal, AbortSignal.timeout(QUERY_TIMEOUT_MS)]));
+      task = await api.query(ctx, config, job.taskId, AbortSignal.any([job.signal, AbortSignal.timeout(api.queryMs ?? QUERY_TIMEOUT_MS)]));
       misses = 0;
       wait = every;
     } catch (error) {
@@ -1077,11 +1100,16 @@ async function runVideoJob(ctx, api, config, job, { request, name, source }) {
     if (late) throw givenUp(api, job);
   }
   const url = task.videoUrl;
-  if (typeof url !== "string" || !/^https?:\/\//iu.test(url)) {
-    throw new AiEditError("provider_error", `${api.name}说视频生成好了，但没给下载链接。钱已经扣了，别换说法重新生成：过一会儿用同样的参数再调一次会重新去取，不会再扣钱；也可以到${api.findIt}按任务号 ${job.taskId} 下载。`, 502);
+  job.videoUrl = url ?? null;
+  // 命令行自己下好的（即梦、小云雀）：是 mp4 就直接收，不再按链接下一遍
+  let temp = task.file && await isMp4(task.file).catch(() => false) ? task.file : null;
+  if (task.file && !temp) await rm(task.file, { force: true }).catch(() => undefined);
+  if (!temp) {
+    if (typeof url !== "string" || !/^https?:\/\//iu.test(url)) {
+      throw new AiEditError("provider_error", `${api.name}说视频生成好了，但没给下载链接。钱已经扣了，别换说法重新生成：过一会儿用同样的参数再调一次会重新去取，不会再扣钱；也可以到${api.findIt}按任务号 ${job.taskId} 下载。`, 502);
+    }
+    temp = await downloadVideo(ctx, api, url, job.signal, job.taskId);
   }
-  job.videoUrl = url;
-  const temp = await downloadVideo(ctx, api, url, job.signal, job.taskId);
   const item = await adopt(ctx, temp, { name, extension: ".mp4", source });
   return { item, tokens: task.tokens ?? null };
 }

@@ -77,7 +77,8 @@ const exists = async (file) => {
  * 跑一条命令拿输出（检测版本、登录状态这类）：stdin 关掉，输出只留前 1MB。
  * 到点就杀整组、不等它关管道（rc 里起的后台进程会一直占着输出管道）；until(stdout) 为真就提前收工。
  */
-export function runFile(command, args, { env, cwd, timeoutMs = CHECK_TIMEOUT_MS, until } = {}) {
+/** signal 断了就杀掉进程，回 { code: null, aborted: true } */
+export function runFile(command, args, { env, cwd, timeoutMs = CHECK_TIMEOUT_MS, until, signal } = {}) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -93,6 +94,7 @@ export function runFile(command, args, { env, cwd, timeoutMs = CHECK_TIMEOUT_MS,
       if (done) return;
       done = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", stop);
       child.stdout.destroy();
       child.stderr.destroy();
       resolve({ stdout, stderr, ...result });
@@ -104,6 +106,9 @@ export function runFile(command, args, { env, cwd, timeoutMs = CHECK_TIMEOUT_MS,
     });
     child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr = take(stderr, chunk); });
     const timer = setTimeout(() => { killTree(child, { hard: true }); finish({ code: null }); }, timeoutMs);
+    const stop = () => { killTree(child, { hard: true }); finish({ code: null, aborted: true }); };
+    if (signal?.aborted) stop();
+    else signal?.addEventListener("abort", stop, { once: true });
     child.once("error", (error) => finish({ code: null, error }));
     child.once("close", (code) => finish({ code }));
   });
@@ -201,8 +206,18 @@ async function launchSpec(file, { platform, arch }) {
       if (await exists(native)) return { command: native, prefix: [], env: {}, path: real };
     }
   }
+  // 小云雀的 npm 包：scripts/run.js 只是转手给包里 bin/ 下的原生程序
+  const pippit = path.join(root, "bin", `pippit-tool-cli${exe}`);
+  if (/[\\/]@pippit-dev[\\/]cli[\\/]scripts[\\/]run\.js$/u.test(real) && await exists(pippit)) return { command: pippit, prefix: [], env: {}, path: real };
   return { command: process.execPath, prefix: [real], env: { ELECTRON_RUN_AS_NODE: "1" }, path: real };
 }
+
+// npm 全局装在 Windows 上的：.cmd 旁边 node_modules 里真正要起的那个
+const NPM_TARGETS = {
+  codex: ["@openai", "codex", "bin", "codex.js"],
+  claude: ["@anthropic-ai", "claude-code", "bin", "claude.exe"],
+  "pippit-tool-cli": ["@pippit-dev", "cli", "bin", "pippit-tool-cli.exe"],
+};
 
 /** 找 CLI：PATH 里和常见安装位置挨个看。Windows 永远不起 .cmd（Node 起 .cmd 要过 cmd.exe，参数一转义就乱）。 */
 export async function findCli(id, { platform = process.platform, arch = process.arch, env = process.env, home = os.homedir() } = {}) {
@@ -214,11 +229,8 @@ export async function findCli(id, { platform = process.platform, arch = process.
     }
     const exe = path.join(dir, `${id}.exe`);
     if (await exists(exe)) return launchSpec(exe, { platform, arch });
-    if (!await exists(path.join(dir, `${id}.cmd`))) continue;
-    // npm 全局装的：.cmd 旁边的 node_modules 里才是真的
-    const target = id === "codex"
-      ? path.join(dir, "node_modules", "@openai", "codex", "bin", "codex.js")
-      : path.join(dir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+    if (!NPM_TARGETS[id] || !await exists(path.join(dir, `${id}.cmd`))) continue;
+    const target = path.join(dir, "node_modules", ...NPM_TARGETS[id]);
     if (await exists(target)) return launchSpec(target, { platform, arch });
   }
   return null;

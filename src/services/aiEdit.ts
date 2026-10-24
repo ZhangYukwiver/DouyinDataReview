@@ -83,8 +83,6 @@ export function saveAiEditConfig(config: AiEditConfig): void {
 export interface AiEditGenerateService { baseUrl: string; apiKey: string; model: string }
 /** 方舟 Seedance 多一个开关 borrow：Key 留空时借不借方舟的 Key（AI 剪辑的，其次解析库的）；用户勾了才借，默认不借 */
 export interface AiEditGenerateVideoService extends AiEditGenerateService { borrow: boolean }
-/** 即梦走火山引擎的 AccessKey 签名：apiKey 存 AccessKeyId，secretKey 存 SecretAccessKey */
-export interface AiEditJimengService extends AiEditGenerateService { secretKey: string }
 /** 生成视频能用的几家 */
 export type AiEditVideoProvider = "seedance" | "jimeng" | "xyq" | "libtv";
 /** 配置里存服务的几项：image 是 OpenAI，video 是方舟 Seedance（老名字不改，存着的配置照读），另外三家各一项 */
@@ -96,7 +94,7 @@ export const GENERATE_SLOTS: AiEditGenerateSlot[] = ["image", "video", "jimeng",
 export interface AiEditGenerateConfig {
   image: AiEditGenerateService;
   video: AiEditGenerateVideoService;
-  jimeng: AiEditJimengService;
+  jimeng: AiEditGenerateService;
   xyq: AiEditGenerateService;
   libtv: AiEditGenerateService;
   use: { image: "openai" | null; video: AiEditVideoProvider | null };
@@ -104,22 +102,23 @@ export interface AiEditGenerateConfig {
 /** 随消息发给采集器的那份：只带要用、也连上了的那家；视频带上是哪家 */
 export interface AiEditGenerationRequest {
   image?: AiEditGenerateService;
-  video?: AiEditGenerateService & { provider: AiEditVideoProvider; secretKey?: string };
+  video?: AiEditGenerateService & { provider: AiEditVideoProvider };
 }
 
 export const DEFAULT_AI_EDIT_GENERATE_CONFIG: AiEditGenerateConfig = {
   image: { baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-image-2.5-flare" },
   video: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "", model: "doubao-seedance-2-0-260128", borrow: false },
-  jimeng: { baseUrl: "https://visual.volcengineapi.com", apiKey: "", secretKey: "", model: "jimeng_ti2v_v30_pro" },
+  // 即梦、小云雀、LibTV 没有 Key：走这台电脑上登录好的官方命令行，连上时 apiKey 记成 LOCAL_CLI，地址只是占位
+  jimeng: { baseUrl: "https://jimeng.jianying.com", apiKey: "", model: "seedance2.0fast" },
   xyq: { baseUrl: "https://xyq.jianying.com", apiKey: "", model: "Seedance_2.0_mini" },
-  // LibTV 没有 Key：走这台电脑上登录好的官方命令行，连上时 apiKey 记成 LIBTV_CLI
   libtv: { baseUrl: "https://www.liblib.tv", apiKey: "", model: "Seedance 2.0 VIP" },
   // 老配置没有这一项：照原来的规矩，图片填了 Key 就用，视频走方舟
   use: { image: "openai", video: "seedance" },
 };
 
-/** LibTV 连上的记号（它不用 Key，采集器调本机的 libtv 命令行） */
-export const LIBTV_CLI = "cli";
+/** 即梦、小云雀、LibTV 连上的记号（它们不用 Key，采集器调本机的 dreamina、pippit-tool-cli、libtv 命令行） */
+export const LOCAL_CLI = "cli";
+const CLI_SLOTS: AiEditGenerateSlot[] = ["jimeng", "xyq", "libtv"];
 
 const GENERATE_CONFIG_KEY = "dy2.aiEditGenerateConfig";
 const VIDEO_PROVIDERS = Object.keys(VIDEO_PROVIDER_SLOT) as AiEditVideoProvider[];
@@ -132,13 +131,18 @@ export function loadAiEditGenerateConfig(): AiEditGenerateConfig {
       const value = stored && typeof stored === "object" ? stored[key] : undefined;
       return typeof value === "string" ? value : (DEFAULT_AI_EDIT_GENERATE_CONFIG[slot] as unknown as Record<string, string>)[key]!;
     };
-    const service = (slot: AiEditGenerateSlot): AiEditGenerateService => ({ baseUrl: text(slot, "baseUrl"), apiKey: text(slot, "apiKey"), model: text(slot, "model") });
+    const service = (slot: AiEditGenerateSlot): AiEditGenerateService => {
+      const apiKey = text(slot, "apiKey");
+      // 即梦、小云雀原来填的是 Key，现在改走命令行：老 Key 不再用，要重新连一次
+      return { baseUrl: text(slot, "baseUrl"), apiKey: CLI_SLOTS.includes(slot) && apiKey !== LOCAL_CLI ? "" : apiKey, model: text(slot, "model") };
+    };
     const use = (saved?.use ?? {}) as { image?: unknown; video?: unknown };
     return {
       image: service("image"),
       // 借 Key 只认存着的 true：没有这一项的老配置读出来是不借
       video: { ...service("video"), borrow: (saved?.video as { borrow?: unknown } | undefined)?.borrow === true },
-      jimeng: { ...service("jimeng"), secretKey: text("jimeng", "secretKey") },
+      // 原来火山引擎接口的模型名（jimeng_ti2v_v30_pro 这类 req_key）命令行不认，换回默认
+      jimeng: { ...service("jimeng"), ...(/^seedance/iu.test(text("jimeng", "model").trim()) ? {} : { model: DEFAULT_AI_EDIT_GENERATE_CONFIG.jimeng.model }) },
       xyq: service("xyq"),
       libtv: service("libtv"),
       use: {
@@ -220,12 +224,11 @@ export function borrowArkKey(aiConfig: ArkKeyHolder, analysisConfig?: ArkKeyHold
 }
 
 /**
- * 这一项连没连上，连上了用哪把 Key（去掉首尾空格）；没连上回 ""。即梦要两把都填。
+ * 这一项连没连上，连上了用哪把 Key（去掉首尾空格）；没连上回 ""。
  * 方舟 Seedance 的 Key 留空时，用户勾了借 Key 才借方舟的 Key，而且只在地址也是方舟时借，免得把方舟 Key 发给别家。
  */
 export function generateKey(generate: AiEditGenerateConfig, slot: AiEditGenerateSlot, aiConfig: ArkKeyHolder, analysisConfig?: ArkKeyHolder | null): string {
   const own = generate[slot].apiKey.trim();
-  if (slot === "jimeng") return own && generate.jimeng.secretKey.trim() ? own : "";
   if (own || slot !== "video" || generate.video.borrow !== true) return own;
   return isArkUrl(generate.video.baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl) ? borrowArkKey(aiConfig, analysisConfig)?.apiKey ?? "" : "";
 }
@@ -245,7 +248,7 @@ export function generationForRequest(generate: AiEditGenerateConfig, aiConfig: A
   const slot = provider ? VIDEO_PROVIDER_SLOT[provider] : null;
   const videoKey = slot ? generateKey(generate, slot, aiConfig, analysisConfig) : "";
   const video = provider && slot && videoKey
-    ? { provider, ...service(slot, videoKey), ...(slot === "jimeng" ? { secretKey: generate.jimeng.secretKey.trim() } : {}) }
+    ? { provider, ...service(slot, videoKey) }
     : null;
   if (!imageKey && !video) return undefined;
   return { ...(imageKey ? { image: service("image", imageKey) } : {}), ...(video ? { video } : {}) };
