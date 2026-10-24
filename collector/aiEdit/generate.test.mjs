@@ -75,10 +75,12 @@ const mp4 = () => readFile(path.join(FIXTURES, "clip-720p.mp4"));
 const generations = (call) => call.url === `${IMAGE.baseUrl}/images/generations`;
 const edits = (call) => call.url === `${IMAGE.baseUrl}/images/edits`;
 const generatedFiles = async (media) => (await readdir(media.root)).filter((name) => !name.startsWith("index.json"));
-/** 等后台做完：素材库里有了东西（最多 5 秒）。 */
+/** 等后台做完：素材库里有了东西、索引也存好了（最多 5 秒）。 */
 async function settled(media) {
   const deadline = Date.now() + 5_000;
   while (!media.list().length && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  // 条目一放进去就列得出来，索引还在写：不等的话 afterEach 删目录时 index.json.tmp 又冒出来（ENOTEMPTY）
+  await media.saving;
   return media.list();
 }
 
