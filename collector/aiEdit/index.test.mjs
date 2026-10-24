@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLocalAi } from "../localAi.mjs";
 import { EditError, invalid } from "./errors.mjs";
 import { createAiEdit } from "./index.mjs";
-import { MediaLibrary } from "./library.mjs";
+import { AiEditError, MediaLibrary } from "./library.mjs";
 import { ProjectStore } from "./projectStore.mjs";
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/ai-edit/media");
@@ -105,6 +105,57 @@ function fakeDraftBox(overrides = {}) {
   };
 }
 
+const SKILL_ROOT = path.resolve("/skills/pack");
+
+function skillEntry(fields = {}) {
+  return {
+    id: "demo", name: "示例技能", description: "按乐谱渲染一段音频", root: SKILL_ROOT, dir: SKILL_ROOT, work: path.resolve("/data/skill-work/demo"),
+    source: { type: "folder", path: SKILL_ROOT }, enabled: true, trustCommands: false, installedAt: "2026-10-24T00:00:00.000Z", problem: null, ...fields,
+  };
+}
+
+/** 照 skills.mjs 契约的内存版技能管理器：登记表在内存里，命令不真跑，记下每次调用。 */
+function fakeSkills(initial = []) {
+  const calls = [];
+  const registry = new Map(initial.map((skill) => [skill.id, { ...skill }]));
+  const missing = () => new AiEditError("skill_not_found", "没有这个技能。", 404);
+  const sorted = () => [...registry.values()].sort((left, right) => (left.name < right.name ? -1 : 1)).map((skill) => ({ ...skill }));
+  const logged = (name, run) => async (...args) => {
+    calls.push({ name, args });
+    return run(...args);
+  };
+  return {
+    calls,
+    called: (name) => calls.filter((item) => item.name === name).map((item) => item.args),
+    list: logged("list", sorted),
+    enabled: logged("enabled", () => sorted().filter((skill) => skill.enabled && !skill.problem)),
+    get: logged("get", (id) => {
+      if (!registry.has(id)) throw missing();
+      return { ...registry.get(id) };
+    }),
+    install: logged("install", (source) => {
+      const skill = skillEntry({ id: `s${registry.size + 1}`, name: path.basename(source), root: source, dir: source, source: { type: "folder", path: source } });
+      registry.set(skill.id, skill);
+      return { installed: [{ ...skill }] };
+    }),
+    update: logged("update", (id, patch) => {
+      if (!registry.has(id)) throw missing();
+      return { ...Object.assign(registry.get(id), patch) };
+    }),
+    remove: logged("remove", (id) => {
+      if (!registry.delete(id)) throw missing();
+    }),
+    resolve: logged("resolve", (skill, value) => path.resolve(skill.dir, value)),
+    run: logged("run", () => ({ job_id: "j1", exit_code: 0, duration_seconds: 0.1, stdout_head: "好了", stdout_tail: "好了", stderr_tail: "", truncated: false, log: "/w/.runs/j1.log", new_files: [] })),
+    job: logged("job", (id, { stop }) => {
+      if (id !== "j1") throw new AiEditError("job_not_found", "没有这个后台命令。", 404);
+      return { job_id: id, status: stop ? "stopped" : "running", exit_code: null };
+    }),
+    jobs: logged("jobs", () => [{ job_id: "j1", skill: "示例技能", command: ["node", "serve.mjs"], started_at: "2026-10-24T00:00:00.000Z", status: "running" }]),
+    close: logged("close", () => undefined),
+  };
+}
+
 // ---------- 假的模型接口 ----------
 
 function sse(chunks) {
@@ -119,11 +170,11 @@ const toolReply = (calls) => sse([
 const lastToolResult = (body) => JSON.parse(body.messages.filter((message) => message.role === "tool").at(-1).content);
 
 /** 起一个和采集器一样接线的小服务：配对校验前后各调一次 handle。 */
-async function start({ real = false, store = real ? undefined : memoryStore(), draftBox = fakeDraftBox(), fetchImpl, collector = null, dataDirectory, ...options } = {}) {
+async function start({ real = false, store = real ? undefined : memoryStore(), draftBox = fakeDraftBox(), fetchImpl, collector = null, dataDirectory, realSkills = false, skills = realSkills ? undefined : fakeSkills(), ...options } = {}) {
   const directory = dataDirectory ?? await temporaryDirectory("ai-edit-index-");
-  // real：工程库和媒体探测都用模块 B、C 的真实实现
+  // real：工程库和媒体探测都用模块 B、C 的真实实现；realSkills：技能用 skills.mjs 的真实实现（默认是没装技能的桩）
   const fakes = real ? {} : { probe, kindOf };
-  const aiEdit = createAiEdit({ dataDirectory: directory, store, draftBox, fetchImpl, ...fakes, getCollector: () => collector, pollMs: 10, ...options });
+  const aiEdit = createAiEdit({ dataDirectory: directory, store, draftBox, fetchImpl, ...fakes, getCollector: () => collector, pollMs: 10, ...(skills ? { skills } : {}), ...options });
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     if (await aiEdit.handle(request, response, url)) return;
@@ -1800,6 +1851,174 @@ describe("AI edit through a local CLI", () => {
     await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "继续", config: { runtime: "claude" } } });
     done = await waitIdle(session.id);
     expect(done.session).toMatchObject({ status: "failed", error: { code: "local_expired", message: expect.stringContaining("claude auth login") } });
+  }, 30_000);
+});
+
+describe("AI edit skills", () => {
+  it("installs, switches, removes skills and stops their background commands from the settings, all behind pairing", async () => {
+    const skills = fakeSkills([skillEntry()]);
+    const { call, base } = await start({ skills });
+    for (const [method, pathname] of [["GET", "/v1/ai-edit/skills"], ["POST", "/v1/ai-edit/skills"], ["PATCH", "/v1/ai-edit/skills/demo"], ["DELETE", "/v1/ai-edit/skills/demo"], ["POST", "/v1/ai-edit/skills/jobs/j1/stop"]]) {
+      expect((await fetch(`${base}${pathname}`, { method, ...(method === "GET" ? {} : { body: "{}" }) })).status, `${method} ${pathname}`).toBe(401);
+    }
+    expect(skills.calls).toEqual([]);
+
+    expect((await call("/v1/ai-edit/skills")).body).toEqual({
+      skills: [skillEntry()],
+      jobs: [{ job_id: "j1", skill: "示例技能", command: ["node", "serve.mjs"], started_at: "2026-10-24T00:00:00.000Z", status: "running" }],
+    });
+    expect(await call("/v1/ai-edit/skills", { method: "POST", body: {} })).toMatchObject({ status: 400, body: { error: "invalid_request" } });
+    expect(await call("/v1/ai-edit/skills", { method: "POST", body: { source: "x".repeat(2_001) } })).toMatchObject({ status: 400, body: { error: "invalid_request", message: "地址太长了。" } });
+    expect(skills.called("install")).toEqual([]);
+    const installed = await call("/v1/ai-edit/skills", { method: "POST", body: { source: "  /Users/me/skills/my-skill  " } });
+    expect(installed).toMatchObject({ status: 201, body: { installed: [{ id: "s2", name: "my-skill", source: { type: "folder", path: "/Users/me/skills/my-skill" } }] } });
+    // GitHub 的要下载：带着 3 分钟就放弃的信号
+    expect(skills.called("install")[0]).toEqual(["/Users/me/skills/my-skill", { signal: expect.any(AbortSignal) }]);
+    expect(skills.called("install")[0][1].signal.aborted).toBe(false);
+
+    expect(await call("/v1/ai-edit/skills/s2", { method: "PATCH", body: { enabled: "no" } })).toMatchObject({ status: 400, body: { error: "invalid_request" } });
+    const patched = await call("/v1/ai-edit/skills/s2", { method: "PATCH", body: { trustCommands: true, enabled: false, name: "改不了" } });
+    expect(patched).toMatchObject({ status: 200, body: { skill: { id: "s2", name: "my-skill", enabled: false, trustCommands: true } } });
+    expect(skills.called("update")).toEqual([["s2", { enabled: false, trustCommands: true }]]);
+    expect(await call(`/v1/ai-edit/skills/${encodeURIComponent("没 装")}`, { method: "PATCH", body: { enabled: true } })).toMatchObject({ status: 404, body: { error: "skill_not_found" } });
+    expect(skills.called("update").at(-1)).toEqual(["没 装", { enabled: true }]);
+    expect((await call("/v1/ai-edit/skills/s2")).status).toBe(405);
+    expect(await call("/v1/ai-edit/skills/s2", { method: "DELETE" })).toEqual({ status: 200, body: { removed: true } });
+    expect(await call("/v1/ai-edit/skills/s2", { method: "DELETE" })).toMatchObject({ status: 404, body: { error: "skill_not_found" } });
+
+    expect(await call("/v1/ai-edit/skills/jobs/j1/stop", { method: "POST" })).toEqual({ status: 200, body: { job: { job_id: "j1", status: "stopped", exit_code: null } } });
+    expect(skills.called("job")).toEqual([["j1", { stop: true }]]);
+    expect((await call("/v1/ai-edit/skills/jobs/j1/stop")).status).toBe(405);
+    expect(await call("/v1/ai-edit/skills/jobs/j9/stop", { method: "POST" })).toMatchObject({ status: 404, body: { error: "job_not_found" } });
+  });
+
+  it("gives the model the enabled skills of each turn and asks the user before a command runs, remembering when told to", async () => {
+    const skills = fakeSkills([skillEntry({ enabled: false })]);
+    const chats = [];
+    const render = { name: "run_skill_command", args: { skill: "示例技能", command: ["node", "scripts/render.mjs"] } };
+    const replies = [
+      textReply("现在没有技能"),
+      toolReply([render]), textReply("那就不跑了"),
+      toolReply([render]), textReply("渲染好了"),
+      toolReply([render]), textReply("又渲染了一遍"),
+    ];
+    const fetchImpl = async (_url, init) => {
+      chats.push(JSON.parse(init.body));
+      return replies.shift();
+    };
+    const { aiEdit, call, base, until, waitIdle } = await start({ skills, fetchImpl });
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    const send = async (text) => {
+      expect((await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text, config: CONFIG } })).status).toBe(202);
+    };
+    const toolNames = (body) => body.tools.map((tool) => tool.function.name);
+    const pending = () => until(async () => (await call(`/v1/ai-edit/sessions/${session.id}`)).body.session.streaming?.command, Boolean, "command question");
+    const answer = (askId, body, sessionId = session.id) => call(`/v1/ai-edit/sessions/${sessionId}/command/${askId}`, { method: "POST", body });
+    const listed = async () => (await call("/v1/ai-edit/sessions")).body.sessions.find((item) => item.id === session.id);
+
+    // 技能停用着：不发技能工具，系统提示里也没有
+    await send("随便聊聊");
+    await waitIdle(session.id);
+    expect(toolNames(chats[0])).not.toContain("read_skill");
+    expect(chats[0].messages[0].content).not.toContain("可用技能");
+
+    // 打开以后的下一轮才有
+    await call("/v1/ai-edit/skills/demo", { method: "PATCH", body: { enabled: true } });
+    await send("用技能做段配乐");
+    const ask = await pending();
+    expect(toolNames(chats[1])).toEqual(expect.arrayContaining(["read_skill", "write_skill_file", "run_skill_command", "skill_job", "import_skill_file", "give_media_to_skill"]));
+    expect(chats[1].messages[0].content).toContain("可用技能（用户自己装在这台电脑上的");
+    expect(chats[1].messages[0].content).toContain("- 示例技能：按乐谱渲染一段音频");
+    expect(ask).toEqual({
+      id: expect.stringMatching(/^[0-9a-f]{16}$/u), kind: "command", skill: "示例技能", skill_id: "demo", command: ["node", "scripts/render.mjs"],
+      cwd: SKILL_ROOT, background: false, expiresAt: expect.any(Number),
+    });
+    expect(ask.expiresAt).toBeGreaterThan(Date.now() + 14 * 60_000);
+    expect(await listed()).toMatchObject({ status: "running", awaitingSpend: false, awaitingCommand: true });
+    expect((await call(`/v1/ai-edit/sessions/${session.id}/command/${ask.id}`)).status).toBe(405);
+    expect(await answer(ask.id, { allow: "yes" })).toMatchObject({ status: 400, body: { error: "invalid_request" } });
+    expect(await answer("0".repeat(16), { allow: true })).toMatchObject({ status: 404 });
+    expect(await answer(ask.id, { allow: true }, "f".repeat(32))).toMatchObject({ status: 404 });
+    expect((await fetch(`${base}/v1/ai-edit/sessions/${session.id}/command/${ask.id}`, { method: "POST", body: JSON.stringify({ allow: true }) })).status).toBe(401);
+    expect(skills.called("run")).toEqual([]);
+
+    // 不运行：模型拿到没同意，对话里是一句人话、不画成失败；勾了「以后不用问」也不记
+    expect(await answer(ask.id, { allow: false, remember: true })).toEqual({ status: 200, body: { answered: true } });
+    let done = await waitIdle(session.id);
+    expect(lastToolResult(chats[2])).toEqual({ ok: false, code: "command_denied", message: "用户没同意运行这条命令，命令没有执行。用户没再提就别再试这条，换别的做法或在回复里说明需要什么。" });
+    expect(done.session.messages.at(-1).actions).toEqual([{ name: "run_skill_command", summary: "没运行技能命令「node scripts/render.mjs」", ok: true }]);
+    expect(await listed()).toMatchObject({ status: "idle", awaitingCommand: false });
+    expect(skills.called("run")).toEqual([]);
+    expect(skills.called("update")).toEqual([["demo", { enabled: true }]]);
+
+    // 运行，并且以后不用问：记进登记表
+    await send("还是跑吧");
+    const again = await pending();
+    expect(again.id).not.toBe(ask.id);
+    expect(await answer(again.id, { allow: true, remember: true })).toEqual({ status: 200, body: { answered: true } });
+    done = await waitIdle(session.id);
+    expect(lastToolResult(chats[4])).toMatchObject({ ok: true, job_id: "j1", exit_code: 0 });
+    expect(done.session.messages.at(-1)).toMatchObject({ text: "渲染好了", actions: [{ name: "run_skill_command", summary: "运行了技能命令「node scripts/render.mjs」", ok: true }] });
+    expect(skills.called("update").at(-1)).toEqual(["demo", { trustCommands: true }]);
+    expect(skills.called("run")).toEqual([[expect.objectContaining({ id: "demo" }), ["node", "scripts/render.mjs"], expect.objectContaining({ cwd: SKILL_ROOT, background: false })]]);
+
+    // 信任以后直接跑，不再挂确认
+    await send("再渲染一遍");
+    done = await waitIdle(session.id);
+    expect(done.session.messages.at(-1)).toMatchObject({ text: "又渲染了一遍" });
+    expect(skills.called("run")).toHaveLength(2);
+    expect(lastToolResult(chats[6])).toMatchObject({ ok: true });
+
+    // 采集器关掉时连同技能命令一起关
+    await aiEdit.close();
+    expect(skills.called("close")).toHaveLength(1);
+  }, 20_000);
+});
+
+// skills.mjs 在时：装一个本机文件夹里的技能，模型照着说明读文件、在用户点了「运行」后真跑一条 node 命令，删了也不动原文件夹
+describe.runIf(existsSync(path.join(HERE, "skills.mjs")))("AI edit skills with the real skills module", () => {
+  it("installs a local skill folder, lets the model read it and run a command once the user agrees", async () => {
+    const folder = await realpath(await temporaryDirectory("ai-edit-skill-pack-"));
+    await writeFile(path.join(folder, "SKILL.md"), "---\nname: 示例技能\ndescription: 把一句话写进工作目录\n---\n\n# 用法\n运行 node scripts/say.mjs <文字>\n");
+    await mkdir(path.join(folder, "scripts"));
+    await writeFile(path.join(folder, "scripts", "say.mjs"), [
+      "import { writeFileSync } from \"node:fs\";",
+      "import path from \"node:path\";",
+      "writeFileSync(path.join(process.env.DY2_WORK_DIR, \"said.txt\"), process.argv[2]);",
+      "console.log(\"说了\", process.argv[2]);",
+    ].join("\n"));
+    const chats = [];
+    const replies = [
+      toolReply([{ name: "read_skill", args: { skill: "示例技能" } }]),
+      toolReply([{ name: "run_skill_command", args: { skill: "示例技能", command: ["node", "scripts/say.mjs", "你好"] } }]),
+      textReply("好了"),
+    ];
+    const fetchImpl = async (_url, init) => {
+      chats.push(JSON.parse(init.body));
+      return replies.shift();
+    };
+    const { call, until, waitIdle } = await start({ realSkills: true, fetchImpl });
+    const installed = await call("/v1/ai-edit/skills", { method: "POST", body: { source: folder } });
+    expect(installed).toMatchObject({ status: 201, body: { installed: [{ name: "示例技能", description: "把一句话写进工作目录", root: folder, dir: folder, enabled: true, trustCommands: false, problem: null }] } });
+    const [skill] = installed.body.installed;
+    expect((await call("/v1/ai-edit/skills")).body.skills).toEqual([expect.objectContaining({ id: skill.id, source: { type: "folder", path: folder } })]);
+
+    const { session } = (await call("/v1/ai-edit/sessions", { method: "POST", body: {} })).body;
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "用技能说句你好", config: CONFIG } });
+    const ask = await until(async () => (await call(`/v1/ai-edit/sessions/${session.id}`)).body.session.streaming?.command, Boolean, "command question");
+    expect(ask).toMatchObject({ skill: "示例技能", skill_id: skill.id, command: ["node", "scripts/say.mjs", "你好"], cwd: folder, background: false });
+    expect(lastToolResult(chats[1])).toMatchObject({ ok: true, kind: "text", lines: expect.stringContaining("# 用法"), skill_dir: folder, package_root: folder, work_dir: skill.work });
+    await call(`/v1/ai-edit/sessions/${session.id}/command/${ask.id}`, { method: "POST", body: { allow: true } });
+    await waitIdle(session.id);
+    const ran = lastToolResult(chats[2]);
+    expect(ran).toMatchObject({ ok: true, exit_code: 0 });
+    expect(`${ran.stdout_head}${ran.stdout_tail}`).toContain("说了 你好");
+    expect(await readFile(path.join(skill.work, "said.txt"), "utf8")).toBe("你好");
+
+    // 本机文件夹只去掉登记，文件留着
+    expect((await call(`/v1/ai-edit/skills/${encodeURIComponent(skill.id)}`, { method: "DELETE" })).body).toEqual({ removed: true });
+    expect((await call("/v1/ai-edit/skills")).body.skills).toEqual([]);
+    expect(existsSync(path.join(folder, "SKILL.md"))).toBe(true);
   }, 30_000);
 });
 

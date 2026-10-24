@@ -291,13 +291,16 @@ export class MediaLibrary {
     return publicItem(item);
   }
 
-  /** 本机文件夹里的文件（导入的工程）：复制进素材库。同一个文件导入两遍就是两个素材。 */
-  async importFile(filePath, name = path.basename(filePath)) {
+  /**
+   * 本机文件夹里的文件（导入的工程）：复制进素材库。同一个文件导入两遍就是两个素材。
+   * source 默认是本机文件；技能产出的传 { type: "skill", skill: 技能名 }。
+   */
+  async importFile(filePath, name = path.basename(filePath), { source = { type: "local" } } = {}) {
     const extension = path.extname(filePath).toLowerCase();
     try { this.kindOf(`media${extension}`); }
     catch { throw new AiEditError("media_type_unsupported", `“${cleanName(name)}”这种文件格式不能当素材。`, 422); }
     this.assertRoom();
-    const item = this.newItem({ name: cleanName(name) || `素材${extension}`, kind: this.kindOf(`media${extension}`), file: "", source: { type: "local" } });
+    const item = this.newItem({ name: cleanName(name) || `素材${extension}`, kind: this.kindOf(`media${extension}`), file: "", source: { ...source } });
     item.file = `${item.id}${extension}`;
     const partial = `${this.filePath(item)}.part`;
     try {

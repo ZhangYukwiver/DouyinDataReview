@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { Bot, Check, ChevronRight, Plug, Plus, Sparkles, X, type LucideIcon } from "lucide-react-native";
+import { Bot, Check, ChevronRight, Plug, Plus, Puzzle, Sparkles, X, type LucideIcon } from "lucide-react-native";
 import type { ExploreConnection } from "../../services/explorer";
 import {
   aiConfigReady, aiRuntimeOf, borrowArkKey, generateConfigProblem, generateKey, isArkUrl, isLocalAiRuntime, keepValidGenerateUrls, DEFAULT_AI_EDIT_GENERATE_CONFIG, GENERATE_SLOTS, LIBTV_CLI, VIDEO_PROVIDER_SLOT,
@@ -8,6 +8,7 @@ import {
 } from "../../services/aiEdit";
 import { loadAnalysisConfig } from "../../services/videoAnalysis";
 import { AiRuntimeField, RUNTIME_LABELS } from "./AiRuntimeField";
+import { SkillsPanel } from "./AiEditSkills";
 import { Expand, webPointer } from "./aiEditShared";
 import { kit, SmallButton } from "./CreatorKit";
 import { ws } from "./motion";
@@ -17,12 +18,13 @@ import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii
 // 每行左边是名字和一句说明、右边是按钮。剪辑模型一页（用哪个 AI 来剪），服务商一页（生成图片、视频的几家，各自连上自己的 Key），
 // 生成素材一页（图片、视频各用连上的哪家）。服务商那一行点「连接」才在下面展开填 Key，接口地址和模型再收进「高级选项」。
 
-export type AiEditSettingsSection = "model" | "providers" | "generate";
+export type AiEditSettingsSection = "model" | "providers" | "generate" | "skills";
 
 const SECTIONS: Array<{ key: AiEditSettingsSection; title: string; icon: LucideIcon; note: string }> = [
   { key: "model", title: "剪辑模型", icon: Bot, note: "AI 剪辑用哪个模型来听你的话、改时间线。和解析库的设置分开存。" },
   { key: "providers", title: "服务商", icon: Plug, note: "生成图片和视频的服务。用你自己的 Key，按各家的价格另外计费，钱直接付给服务商；Key 只存在这台电脑上。" },
   { key: "generate", title: "生成素材", icon: Sparkles, note: "AI 剪辑时缺画面，可以自己生成图片和视频放进素材库。这里选各用连上的哪一家；每次生成视频前都会先问你。" },
+  { key: "skills", title: "技能", icon: Puzzle, note: "技能是别人写好的一套做法，就是一个带 SKILL.md 的文件夹。装上以后，你的要求用得上它时，AI 会照着它的说明做，比如写一段配乐、做一张字卡；要在这台电脑上运行命令时会先问你。" },
 ];
 
 type FieldKey = "apiKey" | "secretKey" | "model" | "baseUrl";
@@ -76,8 +78,8 @@ export interface AiEditSettingsProps {
   onSaveGenerate: (config: AiEditGenerateConfig) => void;
   /** 关窗时有地址填错没存上：这句交给外面的提示条 */
   onGenerateNote: (text: string) => void;
-  /** AI 正在等你确认要不要花钱生成视频：窗口顶上提醒一句，「去确认」关窗回对话 */
-  spendWaiting: boolean;
+  /** AI 正在等你确认（花钱生成视频、运行技能命令）：窗口顶上提醒这一句，「去确认」关窗回对话；没在等是 null */
+  waiting: string | null;
   onGoConfirm: () => void;
 }
 
@@ -88,7 +90,7 @@ export function AiEditSettings(props: AiEditSettingsProps) {
   </Modal>;
 }
 
-function Window({ section, onSection, onClose, connection, config, probe, onSave, onRetest, generate, onSaveGenerate, onGenerateNote, spendWaiting, onGoConfirm }: AiEditSettingsProps) {
+function Window({ section, onSection, onClose, connection, config, probe, onSave, onRetest, generate, onSaveGenerate, onGenerateNote, waiting, onGoConfirm }: AiEditSettingsProps) {
   const { width, height } = useWindowDimensions();
   // 服务商的改动整个窗口共用一份草稿：每家点「保存」存自己那一项，没点保存就关窗的，关窗时替用户存上（填错的地址退回原来的）
   const [draft, setDraft] = useState(generate);
@@ -133,8 +135,8 @@ function Window({ section, onSection, onClose, connection, config, probe, onSave
         {/* key 跟着页走：换页时滚回顶上 */}
         <ScrollView key={shown.key} style={{ flex: 1 }} contentContainerStyle={styles.page}>
           <Text accessibilityRole="header" style={styles.pageTitle}>{shown.title}</Text>
-          {spendWaiting ? <View accessibilityRole="alert" style={styles.notice}>
-            <Text style={styles.noticeText}>AI 想花钱生成一段视频，在对话里等你确认。</Text>
+          {waiting ? <View accessibilityRole="alert" style={styles.notice}>
+            <Text style={styles.noticeText}>{`${waiting}，在对话里等你确认。`}</Text>
             <SmallButton label="去确认" onPress={onGoConfirm} />
           </View> : null}
           <Text style={styles.pageNote}>{shown.note}</Text>
@@ -142,7 +144,9 @@ function Window({ section, onSection, onClose, connection, config, probe, onSave
             ? <ModelPage connection={connection} config={config} probe={probe} onSave={onSave} onRetest={onRetest} />
             : shown.key === "providers"
               ? <ProvidersPage draft={draft} stored={generate} ai={ai} onDraft={setDraft} onStore={store} />
-              : <GeneratePage stored={generate} ai={ai} onStore={store} onConnect={() => onSection("providers")} />}
+              : shown.key === "generate"
+                ? <GeneratePage stored={generate} ai={ai} onStore={store} onConnect={() => onSection("providers")} />
+                : <SkillsPanel connection={connection} />}
         </ScrollView>
       </View>
     </View>

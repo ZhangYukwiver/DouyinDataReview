@@ -12,6 +12,7 @@ import {
 } from "../../services/aiEdit";
 import { searchRecords } from "../../services/recordSearch";
 import { loadAnalysisConfig } from "../../services/videoAnalysis";
+import { answerAiEditCommand, SKILL_TOOLS } from "../../services/aiEditSkills";
 import { mediaIdFromPath, mediaThumbView, spokenDuration, US_PER_SECOND, visibleExportNote, type ExportNote } from "./aiEditModel";
 import { catalogEdit, catalogTargetName, clipCallName, regionCaption, regionHint } from "./aiEditBoardEdit";
 import { IN_FLIGHT_REASON } from "./aiEditInspect";
@@ -23,6 +24,7 @@ import {
   addRefs, composerRefLabel, hideOpenRef, plainReplyRefs, refKey, refRequest, refsCaption, replyRefLabel, sendableRefs, splitReplyRefs, type ComposerRef,
 } from "./aiEditRefs";
 import { Board } from "./AiEditBoard";
+import { CommandCard } from "./AiEditSkills";
 import { areaProps, CANVASES, Expand, errorText, mediaTitle, shortTime, webAutoHeight, webPointer, web, type BoardRegion } from "./aiEditShared";
 import { runtimeProblem } from "./AiRuntimeField";
 import { AiEditSettings, type AiEditSettingsSection } from "./AiEditSettings";
@@ -148,9 +150,12 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   // 附的图、拖进来的文件没传完（或预览没画好）先不发
   const uploading = attachmentsPending(shownFiles);
   const mediaById = useMemo(() => new Map(media.map((item) => [item.id, item])), [media]);
-  // 能在看板上手动改：有工程、AI 没在剪、没在导入、上一个手动改动已经回来；AI 停下来等确认生成视频时直说在等用户
-  const notEditableReason = !project ? "还没有时间线" : running ? (session?.streaming?.spend ? "等你确认要不要生成视频" : "AI 正在剪，等它做完再改") : exporting ? "正在导入剪映，等导完再改" : editBusy ? IN_FLIGHT_REASON : null;
+  // AI 停下来等用户点头：花钱生成视频，或者运行技能里的命令
+  const waitingFor = session?.streaming?.spend ? "等你确认要不要生成视频" : session?.streaming?.command ? "等你确认要不要运行技能命令" : null;
+  // 能在看板上手动改：有工程、AI 没在剪、没在导入、上一个手动改动已经回来；AI 停下来等确认时直说在等用户
+  const notEditableReason = !project ? "还没有时间线" : running ? (waitingFor ?? "AI 正在剪，等它做完再改") : exporting ? "正在导入剪映，等导完再改" : editBusy ? IN_FLIGHT_REASON : null;
   const editable = !notEditableReason;
+  const building = boardBuilding(running, session?.streaming);
   revisionNow.current = project?.revision ?? null;
 
   // ---------- 会话列表：进页面时选上次看的那个，没有就选最近的 ----------
@@ -187,8 +192,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     const timer = setInterval(() => void refreshSessions(), 3000);
     return () => clearInterval(timer);
   }, [menuOpen, someRunning, otherRunning, refreshSessions]);
-  // 别的剪辑停下来等确认生成视频：在这边提醒一句，能切过去（不切过去它等满 15 分钟就当没同意）
-  const waitingElsewhere = sessions.find((item) => item.id !== currentId && item.awaitingSpend && item.status === "running") ?? null;
+  // 别的剪辑停下来等确认生成视频、运行技能命令：在这边提醒一句，能切过去（不切过去它等满 15 分钟就当没同意）
+  const waitingElsewhere = sessions.find((item) => item.id !== currentId && (item.awaitingSpend || item.awaitingCommand) && item.status === "running") ?? null;
 
   // ---------- 当前会话长轮询：采集器最多挂 8 秒，会话一变立刻回来 ----------
   // 连续失败时报的那条错误记下来，连上了就撤掉（别的地方报的错不动）
@@ -470,6 +475,11 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     if (!conn || !currentId) return;
     await answerAiEditSpend(conn, currentId, askId, allow);
   };
+  /** 运行技能命令前的确认卡片：点「运行」或「不运行」（勾了「以后不用问」一起带上）交回采集器，和上面一样 */
+  const answerCommand = async (askId: string, allow: boolean, remember: boolean): Promise<void> => {
+    if (!conn || !currentId) return;
+    await answerAiEditCommand(conn, currentId, askId, allow, remember);
+  };
 
   const stop = async () => {
     if (!conn || !currentId) return;
@@ -662,6 +672,8 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     />
   </View>;
   const importingFilm = session?.output?.kind === "import" && session.output.state === "running";
+  // 确认卡片上那件事的说法：人不在对话页时提醒一句用
+  const asking = session?.streaming?.spend ? "AI 想花钱生成一段视频" : session?.streaming?.command ? `AI 想运行技能「${session.streaming.command.skill}」的命令` : null;
 
   // 剪辑软件左上角那块：AI 对话一页、素材一页；点素材把它引用到对话里并回到对话
   const side = <View ref={sideRef} {...areaProps("outside", "e-box", "ai-panel", "ai-left")} style={[styles.left, { width: leftWidth }]}>
@@ -677,12 +689,12 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       <Pressable accessibilityRole="button" accessibilityLabel="关闭提示" hitSlop={8} onPress={() => setError(null)} style={webPointer}><X size={13} color={color.danger} /></Pressable>
     </View> : null}
     {/* 确认卡片只在对话页里：人在素材页时这一轮会一直卡着，这里提醒一句（开着设置窗口时窗口顶上也有一句） */}
-    {session?.streaming?.spend && leftTab !== "chat" ? <View accessibilityRole="alert" style={styles.noticeBar}>
-      <Text style={[styles.noticeText, { color: color.text }]}>AI 想花钱生成一段视频，等你确认</Text>
+    {asking && leftTab !== "chat" ? <View accessibilityRole="alert" style={styles.noticeBar}>
+      <Text style={[styles.noticeText, { color: color.text }]}>{`${asking}，等你确认`}</Text>
       <SmallButton label="去确认" onPress={() => setLeftTab("chat")} />
     </View> : null}
     {waitingElsewhere ? <View accessibilityRole="alert" style={styles.noticeBar}>
-      <Text numberOfLines={2} style={[styles.noticeText, { color: color.text }]}>另一个剪辑「{waitingElsewhere.title || "未命名剪辑"}」在等你确认要不要生成视频</Text>
+      <Text numberOfLines={2} style={[styles.noticeText, { color: color.text }]}>另一个剪辑「{waitingElsewhere.title || "未命名剪辑"}」在等你确认要不要{waitingElsewhere.awaitingSpend ? "生成视频" : "运行技能命令"}</Text>
       <SmallButton label="切过去" onPress={() => { setCurrentId(waitingElsewhere.id); setMenuOpen(false); setLeftTab("chat"); }} />
     </View> : null}
     {leftTab === "jianying"
@@ -701,7 +713,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
           <GoalBar sessionId={currentId} goal={session?.goal ?? ""} onSave={saveGoal} />
           <View style={styles.middle}>
             <Conversation session={session} loaded={sessionsLoaded} running={running} editable={editable} mediaUrl={mediaUrl} inline={replyInline} streamText={streamText}
-              onSuggest={(text) => setInput(text)} onRevert={revert} onSpend={answerSpend} />
+              onSuggest={(text) => setInput(text)} onRevert={revert} onSpend={answerSpend} onCommand={answerCommand} />
           </View>
           {region || shownRefs.length || shownFiles.length ? <View style={styles.tray}>
             {region ? <RegionHint region={region} onClear={() => setRegionDraft(null)} /> : null}
@@ -709,7 +721,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
             {shownRefs.map((ref) => <RefChip key={refKey(ref)} kind={ref.kind} label={refLabelOf(ref)} onRemove={() => unrefer(ref)}
               onShow={ref.kind === "clip" ? () => jumpTo({ clipId: ref.clipId }) : ref.kind === "time" ? () => jumpTo({ timeUs: ref.timeUs }) : undefined} />)}
           </View> : null}
-          <Composer value={input} onChange={setInput} running={running} waiting={Boolean(session?.streaming?.spend)} sending={sending} blocked={editBusy} uploading={uploading} onFiles={attachFiles} onSend={() => void send()} onStop={() => void stop()} />
+          <Composer value={input} onChange={setInput} running={running} waiting={waitingFor} sending={sending} blocked={editBusy} uploading={uploading} onFiles={attachFiles} onSend={() => void send()} onStop={() => void stop()} />
         </>}
     {dropping ? <View pointerEvents="none" style={styles.dropMask}>
       <Text style={styles.dropText}>{leftTab === "chat" ? "松开就加进这句话：图片会带给 AI 看，别的文件放进素材库并引用" : "松开就放进素材库"}</Text>
@@ -728,7 +740,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       exporting={exporting}
       exportNote={exportNote}
       exportConflict={exportConflict}
-      running={running}
+      running={building}
       editable={editable}
       notEditableReason={notEditableReason}
       region={region}
@@ -767,7 +779,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       generate={generate}
       onSaveGenerate={(next) => { saveAiEditGenerateConfig(next); setGenerate(next); }}
       onGenerateNote={setError}
-      spendWaiting={Boolean(session?.streaming?.spend)}
+      waiting={asking}
       onGoConfirm={() => { setSettings(null); setLeftTab("chat"); }}
     />
   </View>;
@@ -780,7 +792,7 @@ export const AiEditWorkspace = memo(AiEditWorkspaceImpl, (before, after) =>
 const sortSessions = (list: AiEditSessionSummary[]) => [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
 const summaryOf = ({ id, title, createdAt, updatedAt, status, projectId, draftBox, streaming }: AiEditSession): AiEditSessionSummary =>
-  ({ id, title, createdAt, updatedAt, status, projectId, draftBox, awaitingSpend: Boolean(streaming?.spend) });
+  ({ id, title, createdAt, updatedAt, status, projectId, draftBox, awaitingSpend: Boolean(streaming?.spend), awaitingCommand: Boolean(streaming?.command) });
 
 // ============================== 左栏 ==============================
 
@@ -866,7 +878,7 @@ function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove, onImport
         return <View key={item.id} style={[styles.menuRow, on && styles.menuRowOn]}>
           <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={() => onPick(item.id)} style={[styles.menuPick, webPointer]}>
             <Text numberOfLines={1} style={[styles.menuTitle, on && kit.strong]}>{item.title || "未命名剪辑"}</Text>
-            <Text style={[kit.muted, item.awaitingSpend && item.status === "running" && { color: color.accent }]}>{item.status !== "running" ? shortTime(item.updatedAt) : item.awaitingSpend ? "等你确认生成视频" : "AI 正在剪"}{item.draftBox ? " · 已导入剪映" : ""}</Text>
+            <Text style={[kit.muted, (item.awaitingSpend || item.awaitingCommand) && item.status === "running" && { color: color.accent }]}>{item.status !== "running" ? shortTime(item.updatedAt) : item.awaitingSpend ? "等你确认生成视频" : item.awaitingCommand ? "等你确认运行命令" : "AI 正在剪"}{item.draftBox ? " · 已导入剪映" : ""}</Text>
           </Pressable>
           {confirm === item.id
             ? <View style={kit.row}>
@@ -895,7 +907,7 @@ function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove, onImport
   </View>;
 }
 
-function Conversation({ session, loaded, running, editable, mediaUrl, inline, streamText, onSuggest, onRevert, onSpend }: {
+function Conversation({ session, loaded, running, editable, mediaUrl, inline, streamText, onSuggest, onRevert, onSpend, onCommand }: {
   session: AiEditSession | null; loaded: boolean; running: boolean; editable: boolean; mediaUrl: (id: string) => string | null;
   /** 回复里的片段、时间画成能点的 */
   inline: InlineRender;
@@ -904,6 +916,8 @@ function Conversation({ session, loaded, running, editable, mediaUrl, inline, st
   onSuggest: (text: string) => void; onRevert: (messageId: string) => Promise<boolean>;
   /** 生成视频前的确认卡片上点了「生成」或「不生成」 */
   onSpend: (askId: string, allow: boolean) => Promise<void>;
+  /** 运行技能命令前的确认卡片上点了「运行」或「不运行」 */
+  onCommand: (askId: string, allow: boolean, remember: boolean) => Promise<void>;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const stick = useRef(true);
@@ -912,22 +926,23 @@ function Conversation({ session, loaded, running, editable, mediaUrl, inline, st
   const liveActions = session?.streaming?.actions ?? [];
   const look = session?.streaming?.look;
   const spend = session?.streaming?.spend;
+  const command = session?.streaming?.command;
   const generating = session?.streaming?.generating;
   const busy = sessionRunning(session);
-  // 「看不了图」只是提示，不算动手改了时间线
-  const working = liveActions.some((action) => action.name !== "see_images");
+  // 「看不了图」只是提示，技能那几步（读写技能文件、跑命令、导入产出）也没动时间线，都不算动手改了时间线
+  const working = liveActions.some(touchesTimeline);
   const revertible = useMemo(() => new Set(session?.revertible ?? []), [session?.revertible]);
-  // AI 停下来问要不要花钱生成视频：卡片挂在最底下，往上翻着也滚回底部让它露出来（不点的话这一轮白等 15 分钟）。
+  // AI 停下来问要不要花钱生成视频、运行技能命令：卡片挂在最底下，往上翻着也滚回底部让它露出来（不点的话这一轮白等 15 分钟）。
   // 要排在下面那个滚动之前，先把 stick 置回来
-  const spendId = spend?.id;
-  useLayoutEffect(() => { if (spendId) stick.current = true; }, [spendId]);
+  const askId = spend?.id ?? command?.id;
+  useLayoutEffect(() => { if (askId) stick.current = true; }, [askId]);
   // 新消息、流式文字一长就贴着底部；用户往上翻了就不打扰
   useLayoutEffect(() => {
     if (!stick.current) return;
     const node = (scrollRef.current as unknown as { getScrollableNode?: () => HTMLElement | null } | null)?.getScrollableNode?.();
     if (node && typeof node.scrollHeight === "number") node.scrollTop = node.scrollHeight;
     else scrollRef.current?.scrollToEnd({ animated: false });
-  }, [messages.length, streaming.length, liveActions.length, busy, session?.id, session?.error, spendId]);
+  }, [messages.length, streaming.length, liveActions.length, busy, session?.id, session?.error, askId]);
   useEffect(() => { stick.current = true; }, [session?.id]);
 
   if (!loaded) return <View style={styles.centered}><ActivityIndicator color={color.cyan} /></View>;
@@ -958,10 +973,23 @@ function Conversation({ session, loaded, running, editable, mediaUrl, inline, st
       {streaming ? <Markdown compact ink text={streamText(streaming)} /> : null}
       {liveActions.length ? <ActionList actions={liveActions} live /> : null}
       {spend ? <SpendCard key={spend.id} ask={spend} onAnswer={onSpend} /> : null}
-      <View style={kit.row}><ActivityIndicator size="small" color={color.cyan} /><Text {...ws("ai-shimmer")} style={kit.muted}>{spend ? "等你确认要不要生成视频…" : generating ? generating : look ? (look.kind === "beats" ? "正在测配乐的节拍…" : look.kind === "squeeze" ? "视频太大，正在本机压一份小的再交给 AI…" : "正在把参考视频拆成镜头截图和节拍，拆完交给 AI 看…") : working ? "正在改时间线…" : streaming ? "还在写…" : "AI 正在想…"}</Text></View>
+      {command ? <CommandCard key={command.id} ask={command} onAnswer={onCommand} /> : null}
+      <View style={kit.row}><ActivityIndicator size="small" color={color.cyan} /><Text {...ws("ai-shimmer")} style={kit.muted}>{spend ? "等你确认要不要生成视频…" : command ? "等你确认要不要运行这条命令…" : generating ? generating : look ? (look.kind === "beats" ? "正在测配乐的节拍…" : look.kind === "squeeze" ? "视频太大，正在本机压一份小的再交给 AI…" : "正在把参考视频拆成镜头截图和节拍，拆完交给 AI 看…") : working ? "正在改时间线…" : streaming ? "还在写…" : "AI 正在想…"}</Text></View>
     </View> : null}
     {session?.error ? <View accessibilityRole="alert" style={styles.sessionError}><Text style={styles.errorText}>{session.error.message}</Text></View> : null}
   </ScrollView>;
+}
+
+/** 只看不改的步骤：出现了也不说「正在改时间线」 */
+const LOOK_ONLY_ACTIONS = new Set(["see_images", ...SKILL_TOOLS]);
+const touchesTimeline = (action: { name: string }) => !LOOK_ONLY_ACTIONS.has(action.name);
+
+/** 空画面上那句「AI 正在搭时间线…」（看板的 running 只管这一句）：停下来等确认、正在跑技能命令或生成图片视频（采集器挂着 generating
+ *  那句状态），或者这一轮到现在只看了图、用了技能（读说明、写文件、跑命令都不动时间线）时不说；刚开始还没动作时照旧说 */
+export function boardBuilding(running: boolean, streaming: AiEditSession["streaming"] | undefined): boolean {
+  if (!running || streaming?.spend || streaming?.command || streaming?.generating) return false;
+  const actions = streaming?.actions ?? [];
+  return !actions.length || actions.some(touchesTimeline);
 }
 
 function Message({ item, revertible = false, editable = false, mediaUrl, inline, onRevert }: {
@@ -1095,7 +1123,7 @@ function MediaShelf({ media, uploads, mediaUrl, onPick, onRemove, onOpenLibrary,
           <MediaThumb item={item} url={mediaUrl(item.id)} />
           <Text numberOfLines={1} style={styles.cardName}>{mediaTitle(item)}</Text>
           <Text numberOfLines={1} style={[styles.cardMeta, item.status === "failed" && { color: color.danger }]}>
-            {item.status === "importing" ? "正在导入…" : item.status === "failed" ? (item.error || "导入失败") : `${item.source.type === "generated" ? "AI 生成 · " : ""}${item.kind === "image" ? "图片" : item.durationUs ? spokenDuration(item.durationUs) : item.kind === "audio" ? "音频" : "视频"}`}
+            {item.status === "importing" ? "正在导入…" : item.status === "failed" ? (item.error || "导入失败") : `${item.source.type === "generated" ? "AI 生成 · " : item.source.type === "skill" ? `技能${item.source.skill ? ` · ${item.source.skill}` : ""} · ` : ""}${item.kind === "image" ? "图片" : item.durationUs ? spokenDuration(item.durationUs) : item.kind === "audio" ? "音频" : "视频"}`}
           </Text>
         </Pressable>
         {confirm === item.id
@@ -1291,8 +1319,8 @@ function renamePasted(files: File[]): File[] {
 
 function Composer({ value, onChange, running, waiting, sending, blocked, uploading, onFiles, onSend, onStop }: {
   value: string; onChange: (text: string) => void; running: boolean; sending: boolean;
-  /** AI 停下来等用户确认要不要生成视频 */
-  waiting: boolean;
+  /** AI 停下来等用户确认（生成视频、运行技能命令）时占位的那句话；没在等是 null */
+  waiting: string | null;
   /** 看板上的手动改动还没回来，先不发 */
   blocked: boolean;
   /** 附的文件还没传完，先不发 */
@@ -1339,7 +1367,7 @@ function Composer({ value, onChange, running, waiting, sending, blocked, uploadi
         event.preventDefault();
         if (canSend) onSend();
       }}
-      placeholder={waiting ? "等你确认要不要生成视频" : running ? "AI 正在剪，可以先想下一句" : uploading ? "图片还在传，传完就能发" : "说说想怎么剪（回车发送，能直接贴图）"}
+      placeholder={waiting ?? (running ? "AI 正在剪，可以先想下一句" : uploading ? "图片还在传，传完就能发" : "说说想怎么剪（回车发送，能直接贴图）")}
       placeholderTextColor={color.textMuted}
       {...ws("c-input")}
       style={[styles.input, webAutoHeight]}

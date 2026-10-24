@@ -38,11 +38,19 @@ describe("SessionStore", () => {
     first.streaming = { text: "半句", actions: [] };
     await sessions.touch(first, { persist: true });
     expect(sessions.list().map((item) => item.id)).toEqual([first.id, second.id]);
-    expect(sessions.list()[0]).toEqual({ id: first.id, title: "第一个", createdAt: first.createdAt, updatedAt: first.updatedAt, status: "idle", projectId: "p1", draftBox: null, awaitingSpend: false });
+    expect(sessions.list()[0]).toEqual({ id: first.id, title: "第一个", createdAt: first.createdAt, updatedAt: first.updatedAt, status: "idle", projectId: "p1", draftBox: null, awaitingSpend: false, awaitingCommand: false });
     // 这一轮挂着花钱确认：会话菜单要标出来
     first.streaming.spend = { id: "a".repeat(16), kind: "video" };
     expect(sessions.list()[0].awaitingSpend).toBe(true);
     delete first.streaming.spend;
+    // 技能命令等用户点：同样标出来，页面拿到的是一份拷贝
+    first.streaming.command = { id: "b".repeat(16), kind: "command", skill: "示例", skill_id: "demo", command: ["node", "run.mjs"], cwd: "/x", background: false, expiresAt: 1 };
+    expect(sessions.list()[0]).toMatchObject({ awaitingSpend: false, awaitingCommand: true });
+    const shown = sessionDetail(first).streaming.command;
+    expect(shown).toEqual(first.streaming.command);
+    shown.command.push("--rm");
+    expect(first.streaming.command.command).toEqual(["node", "run.mjs"]);
+    delete first.streaming.command;
 
     const saved = JSON.parse(await readFile(path.join(directory, `${first.id}.json`), "utf8"));
     expect(saved.history).toEqual([{ role: "user", content: "hi" }]);

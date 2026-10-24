@@ -692,9 +692,16 @@ describe("collector AI edit routes", () => {
     const { session } = await (await fetch(`${base}/v1/ai-edit/sessions`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: "{}" })).json();
     const spendUrl = `${base}/v1/ai-edit/sessions/${session.id}/spend/0123456789abcdef`;
     const answer = (extra) => fetch(spendUrl, { method: "POST", headers: { ...headers, ...extra, "Content-Type": "application/json" }, body: JSON.stringify({ allow: true }) });
+    // 技能命令的确认、技能的「不用问」开关也一样：页面替用户点不了「运行」
+    const commandUrl = `${base}/v1/ai-edit/sessions/${session.id}/command/0123456789abcdef`;
+    const answerCommand = (extra) => fetch(commandUrl, { method: "POST", headers: { ...headers, ...extra, "Content-Type": "application/json" }, body: JSON.stringify({ allow: true, remember: true }) });
+    const trust = (extra) => fetch(`${base}/v1/ai-edit/skills/some-skill`, { method: "PATCH", headers: { ...headers, ...extra, "Content-Type": "application/json" }, body: JSON.stringify({ trustCommands: true }) });
     // 带着合法 token 也不行：页面万一从别处拿到了 token，同样替用户答不了花钱确认
     for (const own of ownPages) {
-      for (const response of [await fetch(`${base}/v1/ai-edit/sessions`, { headers: { ...headers, ...own } }), await answer(own), await fetch(`${base}/v1/status`, { headers: { ...headers, ...own } })]) {
+      for (const response of [
+        await fetch(`${base}/v1/ai-edit/sessions`, { headers: { ...headers, ...own } }), await answer(own), await answerCommand(own), await trust(own),
+        await fetch(`${base}/v1/status`, { headers: { ...headers, ...own } }),
+      ]) {
         expect(response.status).toBe(403);
         expect(await response.json()).toEqual({ error: "same_origin_not_allowed" });
       }
@@ -715,7 +722,19 @@ describe("collector AI edit routes", () => {
       const answered = await answer(site);
       expect(answered.status).toBe(404);
       expect(await answered.json()).toMatchObject({ error: "spend_not_found" });
+      const commanded = await answerCommand(site);
+      expect(commanded.status).toBe(404);
+      expect(await commanded.json()).toMatchObject({ error: "spend_not_found" });
+      const trusted = await trust(site);
+      expect(trusted.status).toBe(404);
+      expect(await trusted.json()).toMatchObject({ error: "skill_not_found" });
     }
+    // 设置里开关技能用 PATCH：跨源的应用页面要先过预检
+    const preflight = await fetch(`${base}/v1/ai-edit/skills/some-skill`, {
+      method: "OPTIONS", headers: { Origin: "http://localhost:8081", "Access-Control-Request-Method": "PATCH" },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-methods")).toContain("PATCH");
     const paired = await pair({ "Sec-Fetch-Site": "same-site", Origin: "http://127.0.0.1:47651" });
     expect(paired.status).toBe(200);
     expect((await paired.json()).token).toHaveLength(43);

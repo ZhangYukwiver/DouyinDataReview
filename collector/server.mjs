@@ -422,7 +422,8 @@ export async function startCollectorServer({
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
         "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        // PATCH：AI 剪辑设置里开关技能
+        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
         "Access-Control-Max-Age": "600",
       });
       response.end();

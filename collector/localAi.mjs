@@ -157,7 +157,7 @@ async function nvmBins(home) {
     .map(({ name }) => path.join(root, name, "bin"));
 }
 
-async function searchDirs({ platform, env, home }) {
+export async function searchDirs({ platform, env, home }) {
   const pathVar = env.PATH ?? env.Path ?? "";
   const listed = pathVar.split(platform === "win32" ? ";" : ":").filter(Boolean);
   if (platform === "win32") {
