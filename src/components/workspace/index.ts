@@ -1,5 +1,6 @@
 export { ContentWorkspace, type ContentWorkspaceProps, type WorkspaceViewKey } from "./ReportWorkspace";
 export { ChatWorkspace, buildChatConversationRows, type ChatConversationRow, type ChatWorkspaceProps } from "./ChatWorkspace";
+export { CredentialBanner } from "./CredentialBanner";
 export {
   ContentWorkspace as LegacyContentWorkspace,
   type RecordDownloadState,

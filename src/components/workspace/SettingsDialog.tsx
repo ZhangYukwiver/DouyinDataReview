@@ -55,6 +55,8 @@ export interface SettingsDialogProps {
   browserConnection?: Omit<BrowserConnectionPanelProps, "visible" | "blocked">;
   /** 桌面版：登录在采集器页首屏，设置里只放一个过去的按钮，不再开第二个登录面板 */
   onShowLogin?: () => void;
+  /** 正在用的号登录失效了：账号行和「登录与凭据」那行都要说出来 */
+  loginExpired?: boolean;
 }
 
 const web = Platform.OS === "web";
@@ -279,7 +281,7 @@ function Privacy({ onTogglePrivacy, privacy }: SettingsDialogProps) {
   );
 }
 
-function Account({ accountBlocked, accounts, activeAccountName, appStyle, connected, onActivateAccount, onAddAccount, onClose, onRemoveAccount, switchingAccount = false, browserConnection, onShowLogin, visible }: SettingsDialogProps) {
+function Account({ accountBlocked, accounts, activeAccountName, appStyle, connected, onActivateAccount, onAddAccount, onClose, onRemoveAccount, switchingAccount = false, browserConnection, onShowLogin, loginExpired = false, visible }: SettingsDialogProps) {
   if (!connected) {
     return (
       <View style={styles.row}>
@@ -311,7 +313,7 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
               {note ? <Text numberOfLines={1} style={styles.detail}>{note}</Text> : null}
             </View>
             {current ? (
-              <View style={styles.currentTag}><Text style={styles.currentText}>正在用</Text></View>
+              <View style={styles.currentTag}><Text style={[styles.currentText, loginExpired && { color: color.danger }]}>{loginExpired ? "登录失效" : "正在用"}</Text></View>
             ) : (
               <View style={styles.actions}>
                 <Button appStyle={appStyle} accessibilityLabel={`切换到${name}`} disabled={blocked} label="切换" onPress={() => onActivateAccount(account.id)} />
@@ -329,8 +331,10 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
       </View>
       {browserConnection ? <BrowserConnectionPanel {...browserConnection} visible={visible} blocked={blocked} />
         : onShowLogin ? <View style={styles.row}>
-          <RowCopy detail="在采集器页首屏扫码登录；也可以在那里改用 Chrome、Edge 或 Comet 导入。" title="登录与凭据" />
-          <Button appStyle={appStyle} label="去扫码登录" onPress={() => { onClose(); onShowLogin(); }} testID="settings-show-login" />
+          {loginExpired
+            ? <RowCopy detail="抖音登录过期了或者要安全验证，搜索、下载和读取都停了。到采集器页首屏重新扫码就好。" title="登录失效了" />
+            : <RowCopy detail="在采集器页首屏扫码登录；也可以在那里改用 Chrome、Edge 或 Comet 导入。" title="登录与凭据" />}
+          <Button appStyle={appStyle} kind={loginExpired ? "primary" : "secondary"} label="去扫码登录" onPress={() => { onClose(); onShowLogin(); }} testID="settings-show-login" />
         </View> : null}
     </>
   );
