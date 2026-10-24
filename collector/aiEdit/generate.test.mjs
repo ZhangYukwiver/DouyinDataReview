@@ -389,11 +389,13 @@ describe("generate_video", () => {
   it("lets a running task finish in the background after the user stops, and keeps the video", async () => {
     const controller = new AbortController();
     let asked = 0;
+    let checked = false;
     const generated = { images: 0, background: [] };
     const { run, calls, media } = await setup({
       signal: controller.signal,
       generated,
-      routes: await videoApi([{ status: "running" }, { status: "running" }, SUCCEEDED], { onPoll: (count) => { if (count === 1) setTimeout(() => controller.abort(), 0); } }),
+      // 后台一直回 running，等下面「再调一次」查完才做完：慢机器上也不会抢先做完
+      routes: await videoApi((polls) => (polls < 2 || !checked ? { status: "running" } : SUCCEEDED), { onPoll: (count) => { if (count === 1) setTimeout(() => controller.abort(), 0); } }),
       askSpend: async () => { asked += 1; },
     });
     await expect(run("generate_video", { prompt: "海浪" })).rejects.toMatchObject({ name: "AbortError" });
@@ -404,6 +406,7 @@ describe("generate_video", () => {
     expect((await again.run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "generate_pending" });
     expect(asked).toBe(1);
     expect(again.calls).toEqual([]);
+    checked = true;
     expect(await settled(media)).toEqual([expect.objectContaining({ kind: "video", status: "ready", source: expect.objectContaining({ type: "generated", provider: "seedance" }) })]);
     expect(calls.filter((call) => call.method === "DELETE")).toEqual([]);
   });
