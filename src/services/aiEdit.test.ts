@@ -287,16 +287,13 @@ describe("生成图片和视频", () => {
 
   it("视频按选的那家带，带上是哪家；选的那家没连上就不带", () => {
     const generate = blank();
-    generate.jimeng = { ...generate.jimeng, apiKey: " AKLT-id ", secretKey: "" };
-    generate.libtv.apiKey = "lib-key";
+    generate.libtv.apiKey = "cli";
     generate.use.video = "jimeng";
-    // 即梦两把都要填
     expect(generationForRequest(generate, ark)).toBeUndefined();
-    generate.jimeng.secretKey = " secret ";
-    expect(generationForRequest(generate, ark)?.video).toEqual({ provider: "jimeng", baseUrl: DEFAULT_AI_EDIT_GENERATE_CONFIG.jimeng.baseUrl, apiKey: "AKLT-id", secretKey: "secret", model: DEFAULT_AI_EDIT_GENERATE_CONFIG.jimeng.model });
+    generate.jimeng.apiKey = "cli";
+    expect(generationForRequest(generate, ark)?.video).toEqual({ provider: "jimeng", baseUrl: DEFAULT_AI_EDIT_GENERATE_CONFIG.jimeng.baseUrl, apiKey: "cli", model: "seedance2.0fast" });
     generate.use.video = "libtv";
-    expect(generationForRequest(generate, ark)?.video).toMatchObject({ provider: "libtv", apiKey: "lib-key" });
-    expect(generationForRequest(generate, ark)?.video).not.toHaveProperty("secretKey");
+    expect(generationForRequest(generate, ark)?.video).toMatchObject({ provider: "libtv", apiKey: "cli" });
     // 选了不生成：哪怕 Key 都填了也不带；图片同理
     generate.use.video = null;
     generate.image.apiKey = "sk-image";
@@ -310,8 +307,11 @@ describe("生成图片和视频", () => {
     expect(loadAiEditGenerateConfig().use).toEqual({ image: "openai", video: "seedance" });
     saved.set("dy2.aiEditGenerateConfig", JSON.stringify({ use: { image: null, video: "kling" } }));
     expect(loadAiEditGenerateConfig().use).toEqual({ image: null, video: "seedance" });
-    saved.set("dy2.aiEditGenerateConfig", JSON.stringify({ use: { video: null }, jimeng: { apiKey: "a", secretKey: "b" } }));
-    expect(loadAiEditGenerateConfig()).toMatchObject({ use: { image: "openai", video: null }, jimeng: { apiKey: "a", secretKey: "b" } });
+    saved.set("dy2.aiEditGenerateConfig", JSON.stringify({ use: { video: null }, jimeng: { apiKey: "cli", model: "seedance2.5" } }));
+    expect(loadAiEditGenerateConfig()).toMatchObject({ use: { image: "openai", video: null }, jimeng: { apiKey: "cli", model: "seedance2.5" } });
+    // 即梦、小云雀原来填的 Key 改走命令行后不再算连上；火山引擎的模型名换回默认
+    saved.set("dy2.aiEditGenerateConfig", JSON.stringify({ jimeng: { apiKey: "AKLT-id", secretKey: "sk", model: "jimeng_ti2v_v30_pro" }, xyq: { apiKey: "xyq-key" } }));
+    expect(loadAiEditGenerateConfig()).toMatchObject({ jimeng: { apiKey: "", model: "seedance2.0fast" }, xyq: { apiKey: "", model: "Seedance_2.0_mini" } });
   });
 
   it("存在本机，按字段读回来，坏的字段退回默认", () => {

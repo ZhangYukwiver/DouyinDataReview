@@ -71,6 +71,27 @@ describe("finding the CLI", () => {
     expect(await findCli("claude", { platform: "win32", arch: "x64", env: { Path: npm, LOCALAPPDATA: root, APPDATA: root }, home: root })).toBeNull();
   });
 
+  it("starts the native program inside the Xiaoyunque npm package, on Windows too", async () => {
+    const root = await temporaryDirectory("find-cli-");
+    const npm = path.join(root, "npm");
+    const pkg = path.join(npm, "node_modules", "@pippit-dev", "cli");
+    await mkdir(path.join(pkg, "bin"), { recursive: true });
+    await mkdir(path.join(pkg, "scripts"), { recursive: true });
+    await writeFile(path.join(pkg, "scripts", "run.js"), "#!/usr/bin/env node\n");
+    await writeFile(path.join(pkg, "bin", "pippit-tool-cli.exe"), "binary");
+    await writeFile(path.join(npm, "pippit-tool-cli.cmd"), "@echo off\n");
+    const windows = await findCli("pippit-tool-cli", { platform: "win32", arch: "x64", env: { Path: npm, LOCALAPPDATA: root, APPDATA: root }, home: root });
+    expect(windows).toMatchObject({ command: await realpath(path.join(pkg, "bin", "pippit-tool-cli.exe")), prefix: [] });
+    // 别的命令名不会顺着 .cmd 去起 Codex 或 Claude
+    expect(await findCli("libtv", { platform: "win32", arch: "x64", env: { Path: npm, LOCALAPPDATA: root, APPDATA: root }, home: root })).toBeNull();
+    if (process.platform === "win32") return;
+    await writeFile(path.join(pkg, "bin", "pippit-tool-cli"), "binary");
+    await mkdir(path.join(root, "bin"));
+    await symlink(path.join(pkg, "scripts", "run.js"), path.join(root, "bin", "pippit-tool-cli"));
+    const mac = await findCli("pippit-tool-cli", { platform: "darwin", arch: "arm64", env: { PATH: path.join(root, "bin") }, home: root });
+    expect(mac).toMatchObject({ command: path.join(await realpath(pkg), "bin", "pippit-tool-cli"), prefix: [] });
+  });
+
   it.skipIf(process.platform === "win32")("looks in the usual folders, newest nvm first, when PATH has nothing", async () => {
     const home = await temporaryDirectory("find-cli-");
     for (const version of ["v20.1.0", "v24.18.0", "v9.0.0"]) {

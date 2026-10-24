@@ -849,132 +849,175 @@ describe("generate_video", () => {
 });
 
 describe("generate_video on Jimeng, Xiaoyunque and LibTV", () => {
-  const JIMENG = { provider: "jimeng", baseUrl: "https://visual.volcengineapi.com", apiKey: "AKLT-test-id", secretKey: "jimeng-secret-0123456789", model: "jimeng_ti2v_v30_pro" };
-  const XYQ = { provider: "xyq", baseUrl: "https://xyq.jianying.com", apiKey: "xyq-secret-0123456789", model: "Seedance_2.0_mini" };
-  const action = (call) => new URL(call.url).searchParams.get("Action");
+  const JIMENG = { provider: "jimeng", baseUrl: "https://jimeng.jianying.com", apiKey: "cli", model: "seedance2.0fast" };
+  const XYQ = { provider: "xyq", baseUrl: "https://xyq.jianying.com", apiKey: "cli", model: "Seedance_2.0_mini" };
+  const CLIP = path.join(FIXTURES, "clip-720p.mp4");
   const download = async () => [[(call) => call.url === "https://cdn.example.com/out.mp4", new Response(await mp4())]];
 
-  it("parses each service's settings: Jimeng needs both keys, other addresses stay as typed", () => {
-    expect(parseGenerateConfig({ video: { provider: "jimeng", apiKey: "id", secretKey: " " } })).toBeNull();
-    expect(parseGenerateConfig({ video: { provider: "jimeng", apiKey: " id ", secretKey: " sk " } }).video)
-      .toEqual({ provider: "jimeng", baseUrl: "https://visual.volcengineapi.com", apiKey: "id", secretKey: "sk", model: "jimeng_ti2v_v30_pro" });
-    expect(parseGenerateConfig({ video: { provider: "xyq", apiKey: "k", baseUrl: "https://xyq.jianying.com/" } }).video).toEqual({ provider: "xyq", baseUrl: "https://xyq.jianying.com", apiKey: "k", model: "Seedance_2.0_mini" });
+  /**
+   * 假命令行：body 是一段 JS，能用 args（参数）、flag(名字)（--名字=值 的值）、polls()（第几次查进度）、clip（一段真 mp4）、
+   * copyFileSync、fail(话)（stderr 写一句、退出码 1）；每次调用的参数记进日志，calls() 读回来。
+   */
+  async function fakeCli(body) {
+    const directory = await mkdtemp(path.join(tmpdir(), "ai-edit-cli-"));
+    directories.push(directory);
+    const script = path.join(directory, "cli.mjs");
+    const log = path.join(directory, "calls.jsonl");
+    await writeFile(script, `
+      import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+      const args = process.argv.slice(2);
+      appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+      const flag = (name) => args.find((arg) => arg.startsWith("--" + name + "="))?.slice(name.length + 3);
+      const counter = ${JSON.stringify(path.join(directory, "polls"))};
+      const polls = () => { const n = (existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0) + 1; writeFileSync(counter, String(n)); return n; };
+      const clip = ${JSON.stringify(CLIP)};
+      const fail = (text) => { console.error(text); process.exit(1); };
+      ${body}
+    `);
+    const calls = async () => {
+      try { return (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)); } catch { return []; }
+    };
+    return { cli: { command: process.execPath, prefix: [script], env: process.env }, calls };
+  }
+
+  it("parses each service's settings: the command-line ones only need the connected mark, other addresses stay as typed", () => {
+    expect(parseGenerateConfig({ video: { provider: "jimeng", apiKey: " cli ", secretKey: "old" } }).video)
+      .toEqual({ provider: "jimeng", baseUrl: "https://jimeng.jianying.com", apiKey: "cli", model: "seedance2.0fast" });
+    expect(parseGenerateConfig({ video: { provider: "xyq", apiKey: "cli", baseUrl: "https://xyq.jianying.com/" } }).video).toEqual({ provider: "xyq", baseUrl: "https://xyq.jianying.com", apiKey: "cli", model: "Seedance_2.0_mini" });
+    expect(parseGenerateConfig({ video: { provider: "jimeng", apiKey: "" } })).toBeNull();
     expect(() => parseGenerateConfig({ video: { provider: "kling", apiKey: "k" } })).toThrow(expect.objectContaining({ code: "invalid_config" }));
   });
 
-  it("signs Jimeng calls, maps its states and never leaks the secret", async () => {
+  it("runs Jimeng through dreamina, picks the command by frames and keeps the video it downloaded", async () => {
+    const fake = await fakeCli(`
+      if (args[0] === "query_result") {
+        if (polls() < 2) console.log(JSON.stringify({ submit_id: flag("submit_id"), gen_status: "querying", queue_info: { queue_status: "Generating" } }));
+        else { copyFileSync(clip, flag("download_dir") + "/out.mp4"); console.log("下载完成\\n" + JSON.stringify({ submit_id: flag("submit_id"), gen_status: "success", result_json: { videos: [{ video_url: "https://cdn.example.com/out.mp4" }] } })); }
+      } else console.log(JSON.stringify({ submit_id: "jm-" + args[0], gen_status: "querying" }));
+    `);
     const asked = [];
-    let polls = 0;
-    const { run, calls, media } = await setup({
-      generation: { video: JIMENG },
-      askSpend: async (spec) => { asked.push(spec); },
-      routes: [
-        [(call) => action(call) === "CVSync2AsyncSubmitTask", json({ code: 10000, data: { task_id: "jm-1" }, message: "Success" })],
-        [(call) => action(call) === "CVSync2AsyncGetResult", () => {
-          polls += 1;
-          return json({ code: 10000, data: polls === 1 ? { status: "in_queue" } : polls === 2 ? { status: "generating" } : { status: "done", video_url: "https://cdn.example.com/out.mp4" } });
-        }],
-        ...await download(),
-      ],
-    });
-    const { result } = await run("generate_video", { prompt: "雨夜霓虹街道", duration: 8, with_audio: true, resolution: "720p" });
-    expect(asked).toEqual([{ kind: "video", provider: "即梦", model: JIMENG.model, seconds: 10, resolution: "1080p", ratio: "9:16", audio: false, prompt: "雨夜霓虹街道", estimate: 10 }]);
-    const submit = calls.find((call) => action(call) === "CVSync2AsyncSubmitTask");
-    expect(JSON.parse(submit.body)).toEqual({ req_key: JIMENG.model, prompt: "雨夜霓虹街道", seed: -1, frames: 241, aspect_ratio: "9:16" });
-    expect(submit.headers.Authorization).toMatch(/^HMAC-SHA256 Credential=AKLT-test-id\/\d{8}\/cn-north-1\/cv\/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=[0-9a-f]{64}$/u);
-    expect(JSON.parse(calls.find((call) => action(call) === "CVSync2AsyncGetResult").body)).toEqual({ req_key: JIMENG.model, task_id: "jm-1" });
-    expect(JSON.stringify(calls)).not.toContain(JIMENG.secretKey);
+    const { run, calls, media } = await setup({ generation: { video: JIMENG }, cli: { dreamina: fake.cli }, askSpend: async (spec) => { asked.push(spec); } });
+    const { result } = await run("generate_video", { prompt: "雨夜霓虹街道", duration: 8, with_audio: true, resolution: "1080p" });
+    expect(asked).toEqual([{ kind: "video", provider: "即梦", model: JIMENG.model, seconds: 8, resolution: "720p", ratio: "9:16", audio: null, prompt: "雨夜霓虹街道", estimate: null }]);
+    const [submit, ...queries] = await fake.calls();
+    expect(submit).toEqual(["text2video", "--prompt=雨夜霓虹街道", "--model_version=seedance2.0fast", "--duration=8", "--video_resolution=720p", "--ratio=9:16"]);
+    expect(queries.at(-1)).toEqual(expect.arrayContaining(["query_result", "--submit_id=jm-text2video"]));
     expect(result).toMatchObject({ ok: true, media: { kind: "video", from: "AI 生成" } });
-    expect(result.note).toContain("按 10 秒生成的");
-    expect(result.note).toContain("不带声音");
+    expect(result.note).toContain("出不了 1080p");
+    expect(result.note).toContain("没法指定带不带声音");
+    // 用的是命令行下好的那个文件，没再按链接下载
+    expect(calls).toEqual([]);
     expect(media.get(result.media.media_id).source).toMatchObject({ provider: "jimeng", model: JIMENG.model });
-  });
-
-  it("explains Jimeng errors and only treats its server errors as unclear", async () => {
-    const cases = [
-      [json({ code: 50412, message: "Text Risk Not Pass", data: null }, 400), "moderation_blocked", "审核"],
-      [json({ code: 50400, message: "Access Denied", data: null }, 401), "service_not_open", "开通"],
-      [json({ ResponseMetadata: { Error: { Code: "InvalidAccessKey", Message: "x" } } }, 401), "generate_key_invalid", "AccessKeyId"],
-      [json({ code: 50430, message: "Concurrent Limit", data: null }, 429), "rate_limited", "并发上限"],
-      [json({ code: 50500, message: "Internal Error", data: null }, 500), "create_uncertain", "火山引擎控制台的即梦 AI 里"],
-    ];
-    for (const [reply, code, words] of cases) {
-      const { run, calls } = await setup({ generation: { video: JIMENG }, askSpend: async () => undefined, routes: [[(call) => action(call) === "CVSync2AsyncSubmitTask", reply]] });
-      const { result } = await run("generate_video", { prompt: "海浪" });
-      expect(result, code).toMatchObject({ ok: false, code, message: expect.stringContaining(words) });
-      expect(calls, code).toHaveLength(1);
-    }
-    // 生成出来没过审：任务结束、没做成
-    const { run } = await setup({
-      generation: { video: JIMENG }, askSpend: async () => undefined,
-      routes: [
-        [(call) => action(call) === "CVSync2AsyncSubmitTask", json({ code: 10000, data: { task_id: "jm-2" } })],
-        [(call) => action(call) === "CVSync2AsyncGetResult", json({ code: 50516, message: "Output Video Risk Not Pass", data: null }, 400)],
-      ],
-    });
-    expect((await run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "moderation_blocked", message: expect.stringContaining("不扣费") });
-  });
-
-  it("checks Jimeng's frame rules against the chosen model before asking", async () => {
-    const asked = [];
-    const routes = [[(call) => action(call) === "CVSync2AsyncSubmitTask", json({ code: 10000, data: { task_id: "jm-3" } })], [(call) => action(call) === "CVSync2AsyncGetResult", json({ code: 10000, data: { status: "generating" } })]];
-    const { run, media, calls } = await setup({ generation: { video: { ...JIMENG, model: "jimeng_t2v_v30" } }, askSpend: async (spec) => { asked.push(spec); throw new AiEditError("spend_denied", "没同意"); }, routes });
+    // 首尾帧走 frames2video，不传比例
     const first = await media.importFile(path.join(FIXTURES, "still.png"), "首帧.png");
-    const webp = await media.importFile(path.join(FIXTURES, "still.webp"), "首帧.webp");
-    expect((await run("generate_video", { prompt: "海浪", first_frame_media_id: first.id })).result).toMatchObject({ ok: false, message: expect.stringContaining("只能用文字生成") });
-    expect((await run("generate_video", { prompt: "海浪", reference_media_ids: [first.id] })).result).toMatchObject({ ok: false, message: expect.stringContaining("不收参考图") });
-    const pro = await setup({ generation: { video: JIMENG }, askSpend: async (spec) => { asked.push(spec); throw new AiEditError("spend_denied", "没同意"); }, routes });
-    const proFirst = await pro.media.importFile(path.join(FIXTURES, "still.webp"), "首帧.webp");
-    expect((await pro.run("generate_video", { prompt: "海浪", first_frame_media_id: proFirst.id })).result).toMatchObject({ ok: false, code: "image_unsupported", message: expect.stringContaining("WebP") });
-    expect(asked).toEqual([]);
-    expect([...calls, ...pro.calls]).toEqual([]);
-    expect(webp.kind).toBe("image");
+    const last = await media.importFile(path.join(FIXTURES, "still.webp"), "尾帧.webp");
+    expect((await run("generate_video", { prompt: "日落", first_frame_media_id: first.id, last_frame_media_id: last.id, ratio: "16:9" })).result.ok).toBe(true);
+    expect((await fake.calls()).find((args) => args[0] === "frames2video"))
+      .toEqual(["frames2video", "--prompt=日落", "--model_version=seedance2.0fast", "--duration=5", "--video_resolution=720p", `--first=${media.readyPath(first.id)}`, `--last=${media.readyPath(last.id)}`]);
   });
 
-  it("uploads Xiaoyunque references only after the user agrees, then submits and polls", async () => {
-    let polls = 0;
+  it("falls back to the link when dreamina did not download the video", async () => {
+    const fake = await fakeCli(`
+      if (args[0] === "query_result") console.log(JSON.stringify({ gen_status: "success", result_json: JSON.stringify({ videos: [{ video_url: "https://cdn.example.com/out.mp4" }] }) }));
+      else console.log(JSON.stringify({ submit_id: "jm-2", gen_status: "querying" }));
+    `);
+    const { run, calls } = await setup({ generation: { video: JIMENG }, cli: { dreamina: fake.cli }, askSpend: async () => undefined, routes: await download() });
+    expect((await run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: true });
+    expect(calls.map((call) => call.url)).toEqual(["https://cdn.example.com/out.mp4"]);
+  });
+
+  it("explains dreamina failures and treats the ones it can't read as unclear", async () => {
+    const cases = [
+      ['fail("未检测到有效登录态，请先执行 dreamina login")', "cli_login", "dreamina login"],
+      ['fail("submit failed (backend errmsg=AigcComplianceConfirmationRequired)")', "compliance_required", "即梦网页版"],
+      ['fail("--video_resolution is required")', "arguments_invalid", "任务没建上"],
+      ['fail("upload image: connection reset")', "upload_failed", "参考图没传上去"],
+      ['console.log(JSON.stringify({ submit_id: "x", gen_status: "fail", fail_reason: "credit not enough" }))', "quota_exceeded", "积分不够"],
+      ['fail("post /mweb/v1/aigc_draft/generate: EOF")', "create_uncertain", "即梦网页版的生成记录里"],
+    ];
+    for (const [body, code, words] of cases) {
+      const fake = await fakeCli(body);
+      const { run } = await setup({ generation: { video: JIMENG }, cli: { dreamina: fake.cli }, askSpend: async () => undefined });
+      expect((await run("generate_video", { prompt: "海浪" })).result, code).toMatchObject({ ok: false, code, message: expect.stringContaining(words) });
+      expect(await fake.calls(), code).toHaveLength(1);
+    }
+    // 做到一半失败：任务结束、没做成
+    const fake = await fakeCli(`
+      if (args[0] === "query_result") console.log(JSON.stringify({ gen_status: "fail", fail_reason: "output video risk not pass" }));
+      else console.log(JSON.stringify({ submit_id: "jm-3", gen_status: "querying" }));
+    `);
+    const { run } = await setup({ generation: { video: JIMENG }, cli: { dreamina: fake.cli }, askSpend: async () => undefined });
+    expect((await run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "moderation_blocked", message: expect.stringContaining("审核") });
+  });
+
+  it("checks Jimeng's model rules before asking", async () => {
+    const asked = [];
+    const fake = await fakeCli('console.log("{}")');
+    const { run, media } = await setup({ generation: { video: { ...JIMENG, model: "seedance1.5pro" } }, cli: { dreamina: fake.cli }, askSpend: async (spec) => { asked.push(spec); } });
+    expect((await run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "arguments_invalid", message: expect.stringContaining("要给首帧") });
+    const ref = await media.importFile(path.join(FIXTURES, "still.png"), "参考.png");
+    const vip = await setup({ generation: { video: { ...JIMENG, model: "seedance2.0_vip" } }, cli: { dreamina: fake.cli }, askSpend: async (spec) => { asked.push(spec); throw new AiEditError("spend_denied", "没同意"); } });
+    const vipRef = await vip.media.importFile(path.join(FIXTURES, "still.png"), "参考.png");
+    await vip.run("generate_video", { prompt: "海浪", resolution: "1080p", duration: 40, reference_media_ids: [vipRef.id] });
+    expect(asked).toEqual([expect.objectContaining({ model: "seedance2.0_vip", resolution: "1080p", seconds: 15 })]);
+    expect(await fake.calls()).toEqual([]);
+    expect(ref.kind).toBe("image");
+  });
+
+  it("runs Xiaoyunque through pippit-tool-cli only after the user agrees, then keeps the downloaded video", async () => {
+    const fake = await fakeCli(`
+      if (args[0] === "query-result") {
+        if (polls() < 2) console.log(JSON.stringify({ completed: false, thread_id: "t-1", run_id: "r-1", error_message: "", videos: [], images: [] }));
+        else {
+          const out = flag("download-dir") + "/猫.mp4";
+          copyFileSync(clip, out);
+          console.log(JSON.stringify({ completed: true, thread_id: "t-1", run_id: "r-1", error_message: "", videos: [{ download_url: "https://cdn.example.com/out.mp4", output_path: out }], images: [] }));
+        }
+      } else console.log(JSON.stringify({ team_id: "0", thread_id: "t-1", run_id: "r-1", web_thread_link: "https://xyq.jianying.com/x" }));
+    `);
     let allow = false;
     const { run, calls, media } = await setup({
-      generation: { video: XYQ },
+      generation: { video: XYQ }, cli: { "pippit-tool-cli": fake.cli },
       askSpend: async () => { if (!allow) throw new AiEditError("spend_denied", "没同意"); },
-      routes: [
-        [(call) => call.url.endsWith("/api/biz/v1/skill/upload_file"), json({ ret: "0", data: { pippit_asset_id: "asset-1" } })],
-        [(call) => call.url.endsWith("/api/biz/v1/skill/submit_run"), json({ ret: "0", data: { run: { thread_id: "t-1", run_id: "r-1" } } })],
-        [(call) => call.url.endsWith("/api/biz/v1/agent/query_generate_video_result"), () => {
-          polls += 1;
-          return json({ ret: "0", data: { thread_id: "t-1", run_id: "r-1", run_state: polls < 2 ? "2" : 3, video_urls: polls < 2 ? [] : ["https://cdn.example.com/out.mp4"] } });
-        }],
-        ...await download(),
-      ],
     });
     const first = await media.importFile(path.join(FIXTURES, "still.png"), "首帧.png");
     expect((await run("generate_video", { prompt: "猫跳上窗台", first_frame_media_id: first.id })).result).toMatchObject({ ok: false, code: "spend_denied" });
-    expect(calls).toEqual([]);
+    expect(await fake.calls()).toEqual([]);
     allow = true;
     const { result } = await run("generate_video", { prompt: "猫跳上窗台", first_frame_media_id: first.id, ratio: "1:1" });
     expect(result).toMatchObject({ ok: true, media: { kind: "video" } });
-    const upload = calls.find((call) => call.url.endsWith("upload_file"));
-    expect(upload.headers).toEqual({ Authorization: `Bearer ${XYQ.apiKey}`, Accept: "application/json" });
-    expect(upload.body.get("file").type).toBe("image/png");
-    expect(JSON.parse(calls.find((call) => call.url.endsWith("submit_run")).body)).toEqual({
-      message: "猫跳上窗台", agent_name: "pippit_video_part_agent",
-      video_part_tool_param: { prompt: "猫跳上窗台", model: XYQ.model, duration_sec: 5, ratio: "1:1", resolution: "720p", generate_type: 1, images: [{ pippit_asset_id: "asset-1" }] },
-    });
-    expect(JSON.parse(calls.find((call) => call.url.endsWith("query_generate_video_result")).body)).toEqual({ thread_id: "t-1", run_id: "r-1" });
+    const [submit, ...queries] = await fake.calls();
+    expect(submit).toEqual(["generate-video", "--prompt=猫跳上窗台", "--model=Seedance_2.0_mini", "--duration=5", "--resolution=720p", "--ratio=1:1", `--image=${media.readyPath(first.id)}`, "--generate-type=1"]);
+    expect(queries.at(-1)).toEqual(expect.arrayContaining(["query-result", "--thread-id=t-1", "--run-id=r-1"]));
+    expect(calls).toEqual([]);
     expect(result.note).not.toContain("没有声音");
   });
 
-  it("says plainly when Xiaoyunque runs out of credits", async () => {
-    const { run } = await setup({
-      generation: { video: XYQ }, askSpend: async () => undefined,
-      routes: [
-        [(call) => call.url.endsWith("submit_run"), json({ ret: "0", data: { run: { thread_id: "t-2", run_id: "r-2" } } })],
-        [(call) => call.url.endsWith("query_generate_video_result"), json({ ret: "0", data: { run_state: 4, fail_reason: { code: 11001, message: "credit not enough" } } })],
-      ],
-    });
-    expect((await run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "quota_exceeded", message: expect.stringContaining("积分不够") });
-    const denied = await setup({ generation: { video: XYQ }, askSpend: async () => undefined, routes: [[(call) => call.url.endsWith("submit_run"), json({ ret: "2", errmsg: "invalid access key" })]] });
-    expect((await denied.run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "generate_key_invalid" });
+  it("says plainly what went wrong on Xiaoyunque", async () => {
+    const cases = [
+      ['fail("未登录小云雀 CLI；请先运行 pippit-tool-cli login（CI 仍可设置 XYQ_ACCESS_KEY）")', "cli_login", "pippit-tool-cli login"],
+      ['fail("参考素材上传失败，未提交生成：\\n第1张参考图片 \\"a.png\\" 上传失败: timeout")', "upload_failed", "任务没建上"],
+      ['fail("generate-video 请求返回失败: ret=15 errmsg=daily limit")', "daily_limit", "上限"],
+      ['fail("提交 generate-video 请求失败: POST https://xyq.jianying.com/api 返回 HTTP 502: bad gateway")', "create_uncertain", "小云雀网页版的历史会话里"],
+    ];
+    for (const [body, code, words] of cases) {
+      const fake = await fakeCli(body);
+      const { run } = await setup({ generation: { video: XYQ }, cli: { "pippit-tool-cli": fake.cli }, askSpend: async () => undefined });
+      expect((await run("generate_video", { prompt: "海浪" })).result, code).toMatchObject({ ok: false, code, message: expect.stringContaining(words) });
+    }
+    const credits = await fakeCli(`
+      if (args[0] === "query-result") console.log(JSON.stringify({ completed: true, error_message: "积分不足（11001）", videos: [], images: [] }));
+      else console.log(JSON.stringify({ thread_id: "t-2", run_id: "r-2" }));
+    `);
+    const out = await setup({ generation: { video: XYQ }, cli: { "pippit-tool-cli": credits.cli }, askSpend: async () => undefined });
+    expect((await out.run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "quota_exceeded", message: expect.stringContaining("积分不够") });
+    // 查进度时登录过期了：说清楚视频可能还在做、照常扣积分
+    const expired = await fakeCli(`
+      if (args[0] === "query-result") console.log(JSON.stringify({ completed: false, error_message: "查询失败：未找到可用的小云雀登录凭证；请先运行 pippit-tool-cli login", videos: [], images: [] }));
+      else console.log(JSON.stringify({ thread_id: "t-3", run_id: "r-3" }));
+    `);
+    const late = await setup({ generation: { video: XYQ }, cli: { "pippit-tool-cli": expired.cli }, askSpend: async () => undefined });
+    expect((await late.run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "cli_login", message: expect.stringContaining("照常扣积分") });
   });
 
   it("runs LibTV through its command line and keeps the video", async () => {
@@ -994,7 +1037,7 @@ describe("generate_video on Jimeng, Xiaoyunque and LibTV", () => {
     const asked = [];
     const { run, media } = await setup({
       generation: { video: { provider: "libtv", baseUrl: "https://im.liblib.tv", apiKey: "cli", model: "Seedance 2.0 VIP" } },
-      libtvCli: { command: process.execPath, prefix: [script], env: process.env },
+      cli: { libtv: { command: process.execPath, prefix: [script], env: process.env } },
       askSpend: async (spec) => { asked.push(spec); },
       routes: await download(),
     });
