@@ -1152,7 +1152,7 @@ describe("reference videos", () => {
         return answering("① 照截图拆的时间轴", sent)(url, init);
       };
       const result = await watch(fetchImpl, { askLook });
-      expect(result).toMatchObject({ ok: true, analysis: "① 照截图拆的时间轴", seen_as: expect.stringContaining("截图"), measured: { shots: 3, bpm: 120, cuts_on_beat: "2/2", beat_synced: "切点太少，看不出是不是卡点" } });
+      expect(result).toMatchObject({ ok: true, analysis: "① 照截图拆的时间轴", seen_as: expect.stringMatching(/^整段视频发过去被接口拒收（HTTP 400：.*截图/u), measured:{ shots: 3, bpm: 120, cuts_on_beat: "2/2", beat_synced: "切点太少，看不出是不是卡点" } });
       expect(asked).toEqual([{ kind: "reference", url: `/v1/ai-edit/media/${VIDEO_ID}/file`, name: "参考.mp4" }]);
       const content = sent[0].messages[0].content;
       expect(content.filter((part) => part.type === "image_url").map((part) => part.image_url.url)).toEqual(["data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB"]);
@@ -1169,7 +1169,7 @@ describe("reference videos", () => {
       asked.length = 0;
       sent.length = 0;
       const direct = await watch(answering("② 截图拆解", sent), { askLook, config: { ...EDIT, videoInput: false } });
-      expect(direct).toMatchObject({ ok: true, analysis: "② 截图拆解" });
+      expect(direct).toMatchObject({ ok: true, analysis: "② 截图拆解", seen_as: expect.stringMatching(/^设置里测出这个模型看不了视频，/u) });
       expect(sent).toHaveLength(1);
       expect(sent[0].messages[0].content.some((part) => part.type === "video_url")).toBe(false);
       // 截图按低清晰度发、让推理模型少想（中转站 100 秒没回第一个字就 524）
@@ -1277,6 +1277,49 @@ describe("reference videos", () => {
       expect((await run("analyze_reference", { media_id: AUDIO_ID })).result).toMatchObject({ ok: false, code: "look_unavailable" });
       expect((await runnerWith().run("analyze_reference", { url: LINK })).result).toMatchObject({ ok: false, code: "collector_busy" });
       expect(sent).toHaveLength(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // 远端真实碰到的：能看视频的模型，参考视频 65MB，原来不发直接拆了截图、也不说为什么
+  it("squeezes a reference over 45MB in the page before sending it whole, and says why when it still falls back to screenshots", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "ai-edit-reference-"));
+    try {
+      const media = new MediaLibrary({ directory, probe: async () => ({}), kindOf: () => "video" });
+      media.root = directory;
+      media.items = [{ id: AUDIO_ID, kind: "video", status: "ready", name: "大.mp4", file: `${AUDIO_ID}.mp4`, durationUs: 8_000_000, size: 1, source: { type: "local" } }];
+      await writeFile(path.join(directory, `${AUDIO_ID}.mp4`), "");
+      await truncate(path.join(directory, `${AUDIO_ID}.mp4`), 46 * 1024 * 1024);
+      const small = Buffer.from("small-mp4");
+      const asked = [];
+      const squeezing = (outcome) => async (request) => {
+        asked.push(request);
+        if (request.kind === "reference") return LOOK;
+        if (outcome instanceof Error) throw outcome;
+        return { duration: 8, audio: true, video: outcome };
+      };
+      const watch = async (askLook, fetchImpl) => (await runnerWith({ library: media, config: { ...EDIT, videoInput: true }, askLook, fetchImpl }).run("analyze_reference", { media_id: AUDIO_ID })).result;
+
+      // 页面压到 45MB 以内：整段发压好的那份，不拆截图
+      const sent = [];
+      const whole = await watch(squeezing(small), answering("① 整段版", sent));
+      expect(whole).toMatchObject({ ok: true, analysis: "① 整段版" });
+      expect(whole.seen_as).toBeUndefined();
+      expect(asked).toEqual([{ kind: "squeeze", url: `/v1/ai-edit/media/${AUDIO_ID}/file`, name: "大.mp4", bytes: 45 * 1024 * 1024 }]);
+      expect(sent[0].messages[0].content[0].video_url.url).toBe(`data:video/mp4;base64,${small.toString("base64")}`);
+
+      // 压不了、压完还超、接口嫌大：拆截图，结果里写明原因
+      asked.length = 0;
+      const unencodable = await watch(squeezing(new AiEditError("look_failed", "页面没能压缩这个视频：这个浏览器不能重新编码视频", 422)), answering("② 截图版"));
+      expect(unencodable).toMatchObject({ ok: true, analysis: "② 截图版", seen_as: "视频有 46.0MB，超过整段发送的 45MB 上限，页面没能压缩这个视频：这个浏览器不能重新编码视频，所以这份拆解是按应用测出的镜头截图和节拍写的" });
+      expect(asked.map((request) => request.kind)).toEqual(["squeeze", "reference"]);
+      expect((await watch(squeezing(Buffer.alloc(46 * 1024 * 1024)), answering("② 截图版"))).seen_as).toContain("页面压过以后还有 46.0MB");
+      let calls = 0;
+      const tooLarge = async (url, init) => (++calls === 1 ? new Response(JSON.stringify({ error: { message: "request entity too large" } }), { status: 413 }) : answering("② 截图版")(url, init));
+      expect((await watch(squeezing(small), tooLarge)).seen_as).toContain("整段视频发过去被接口拒收（HTTP 413：");
+      // 没有页面来压：照常报要开着应用
+      expect(await watch(squeezing(new AiEditError("look_unavailable", "没有开着的应用页面", 409)), answering("不该用到"))).toMatchObject({ ok: false, code: "look_unavailable" });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
