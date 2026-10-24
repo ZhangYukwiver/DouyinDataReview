@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,8 @@ const VIDEO_KEY = "ark-test-video-secret-0123456789";
 const IMAGE = { baseUrl: "https://api.openai.com/v1", apiKey: IMAGE_KEY, model: "gpt-image-2.5-flare" };
 const VIDEO = { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: VIDEO_KEY, model: "doubao-seedance-2-0-260128" };
 const TASKS = `${VIDEO.baseUrl}/contents/generations/tasks`;
+// 转到后台的视频记下是哪家、去哪儿找（回复末尾那句话用）
+const ARK = { service: "方舟", findIt: "火山方舟控制台的视频生成任务里" };
 
 const directories = [];
 afterEach(async () => {
@@ -84,7 +86,7 @@ describe("parseGenerateConfig", () => {
   it("keeps only the providers with a key and cleans up pasted addresses", () => {
     for (const raw of [undefined, null, "x", [], {}, { image: { apiKey: "  " } }, { image: [], video: "k" }]) expect(parseGenerateConfig(raw)).toBeNull();
     expect(parseGenerateConfig({ image: { apiKey: " k " } })).toEqual({ image: { baseUrl: "https://api.openai.com/v1", apiKey: "k", model: "gpt-image-2.5-flare" } });
-    expect(parseGenerateConfig({ video: { apiKey: "k", baseUrl: "", model: "" } })).toEqual({ video: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "k", model: "doubao-seedance-2-0-260128" } });
+    expect(parseGenerateConfig({ video: { apiKey: "k", baseUrl: "", model: "" } })).toEqual({ video: { provider: "seedance", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "k", model: "doubao-seedance-2-0-260128" } });
     const pasted = parseGenerateConfig({
       image: { apiKey: "k", baseUrl: "https://relay.example.com/v1/images/generations/", model: "gpt-image-2" },
       video: { apiKey: "k", baseUrl: "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks" },
@@ -396,7 +398,7 @@ describe("generate_video", () => {
     });
     await expect(run("generate_video", { prompt: "海浪" })).rejects.toMatchObject({ name: "AbortError" });
     // 记下来（带任务号），这一轮的「（已停止）」后面告诉用户这段还会做完、照常扣费
-    expect(generated.background).toEqual([{ name: "海浪", taskId: "cgt-1", phase: "generating" }]);
+    expect(generated.background).toEqual([{ name: "海浪", taskId: "cgt-1", phase: "generating", ...ARK }]);
     // 还在后台做的时候同样的说明再调：不再问、不再建任务
     const again = await setup({ library: media, routes: [], askSpend: async () => { asked += 1; } });
     expect((await again.run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "generate_pending" });
@@ -428,7 +430,7 @@ describe("generate_video", () => {
     });
     await expect(run("generate_video", { prompt: "刚提交就停" })).rejects.toMatchObject({ name: "AbortError" });
     // 还没有任务号：结尾说「刚提交给方舟，如果已经开始生成就停不下来」
-    expect(generated.background).toEqual([{ name: "刚提交就停", phase: "submitted" }]);
+    expect(generated.background).toEqual([{ name: "刚提交就停", phase: "submitted", ...ARK }]);
     reply();
     expect(await settled(media)).toEqual([expect.objectContaining({ kind: "video", status: "ready" })]);
     expect(calls.map((call) => call.method)).toEqual(["POST", "DELETE", "GET", "GET", "GET"]);
@@ -447,7 +449,7 @@ describe("generate_video", () => {
     const { result } = await run("generate_video", { prompt: "慢慢涨潮" });
     expect(result).toMatchObject({ ok: false, code: "generate_background", message: expect.stringContaining("做完会自动放进素材库，照常扣费。别再生成一次") });
     expect(result.message).toContain("cgt-1");
-    expect(generated.background).toEqual([{ name: "慢慢涨潮", taskId: "cgt-1", phase: "generating" }]);
+    expect(generated.background).toEqual([{ name: "慢慢涨潮", taskId: "cgt-1", phase: "generating", ...ARK }]);
     expect(calls.filter((call) => call.method === "DELETE")).toEqual([]);
     // 后台还在做：同样的说明再调不问、不建
     const again = await setup({ library: media, routes: [], askSpend: async () => { asked += 1; } });
@@ -638,7 +640,7 @@ describe("generate_video", () => {
     await expect(run("generate_video", { prompt: "断网时做完的海浪" })).rejects.toMatchObject({ name: "AbortError" });
     expect(calls.filter((call) => call.method === "DELETE")).toEqual([]);
     // 现查到已经做好了：结尾说「已经生成好了，还在下载」，叫醒轮询马上去下载
-    expect(generated.background).toEqual([{ name: "断网时做完的海浪", taskId: "cgt-1", phase: "downloading" }]);
+    expect(generated.background).toEqual([{ name: "断网时做完的海浪", taskId: "cgt-1", phase: "downloading", ...ARK }]);
     expect(await settled(media)).toEqual([expect.objectContaining({ kind: "video", status: "ready" })]);
 
     // 到点时现查不到（还断着网）：缓存里是排队也不取消，当停不下来转后台
@@ -659,7 +661,7 @@ describe("generate_video", () => {
       const { result } = await stuck.run("generate_video", { prompt: "断着网排队" });
       expect(result).toMatchObject({ ok: false, code: "generate_background", message: expect.stringContaining("照常扣费") });
       expect(stuck.calls.filter((call) => call.method === "DELETE")).toEqual([]);
-      expect(stuck.ctx.generated.background).toEqual([{ name: "断着网排队", taskId: "cgt-1", phase: "generating" }]);
+      expect(stuck.ctx.generated.background).toEqual([{ name: "断着网排队", taskId: "cgt-1", phase: "generating", ...ARK }]);
     } finally {
       shutdown.abort();
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -736,7 +738,7 @@ describe("generate_video", () => {
       askSpend: async () => undefined,
     });
     await expect(run("generate_video", { prompt: "排队时停" })).rejects.toMatchObject({ name: "AbortError" });
-    expect(generated.background).toEqual([{ name: "排队时停", phase: "submitted" }]);
+    expect(generated.background).toEqual([{ name: "排队时停", phase: "submitted", ...ARK }]);
     // 马上再要同样的这段：说清楚排队的会被取消、不会自己进素材库
     let asked = 0;
     const again = await setup({ library: media, routes: [], askSpend: async () => { asked += 1; } });
@@ -780,7 +782,7 @@ describe("generate_video", () => {
     const generated = { images: 0, background: [] };
     const second = await setup({ library: first.media, signal: controller.signal, generated, routes, askSpend: async () => { throw new Error("不该问"); } });
     await expect(second.run("generate_video", { prompt: "重新下载时停" })).rejects.toMatchObject({ name: "AbortError" });
-    expect(generated.background).toEqual([{ name: "重新下载时停", taskId: "cgt-1", phase: "redownload" }]);
+    expect(generated.background).toEqual([{ name: "重新下载时停", taskId: "cgt-1", phase: "redownload", ...ARK }]);
     expect(await settled(first.media)).toEqual([expect.objectContaining({ kind: "video", status: "ready" })]);
     expect(first.calls.filter((call) => call.method === "POST")).toHaveLength(1);
     expect(second.calls.filter((call) => call.method === "POST")).toEqual([]);
@@ -841,27 +843,190 @@ describe("generate_video", () => {
   });
 });
 
+describe("generate_video on Jimeng, Xiaoyunque and LibTV", () => {
+  const JIMENG = { provider: "jimeng", baseUrl: "https://visual.volcengineapi.com", apiKey: "AKLT-test-id", secretKey: "jimeng-secret-0123456789", model: "jimeng_ti2v_v30_pro" };
+  const XYQ = { provider: "xyq", baseUrl: "https://xyq.jianying.com", apiKey: "xyq-secret-0123456789", model: "Seedance_2.0_mini" };
+  const action = (call) => new URL(call.url).searchParams.get("Action");
+  const download = async () => [[(call) => call.url === "https://cdn.example.com/out.mp4", new Response(await mp4())]];
+
+  it("parses each service's settings: Jimeng needs both keys, other addresses stay as typed", () => {
+    expect(parseGenerateConfig({ video: { provider: "jimeng", apiKey: "id", secretKey: " " } })).toBeNull();
+    expect(parseGenerateConfig({ video: { provider: "jimeng", apiKey: " id ", secretKey: " sk " } }).video)
+      .toEqual({ provider: "jimeng", baseUrl: "https://visual.volcengineapi.com", apiKey: "id", secretKey: "sk", model: "jimeng_ti2v_v30_pro" });
+    expect(parseGenerateConfig({ video: { provider: "xyq", apiKey: "k", baseUrl: "https://xyq.jianying.com/" } }).video).toEqual({ provider: "xyq", baseUrl: "https://xyq.jianying.com", apiKey: "k", model: "Seedance_2.0_mini" });
+    expect(() => parseGenerateConfig({ video: { provider: "kling", apiKey: "k" } })).toThrow(expect.objectContaining({ code: "invalid_config" }));
+  });
+
+  it("signs Jimeng calls, maps its states and never leaks the secret", async () => {
+    const asked = [];
+    let polls = 0;
+    const { run, calls, media } = await setup({
+      generation: { video: JIMENG },
+      askSpend: async (spec) => { asked.push(spec); },
+      routes: [
+        [(call) => action(call) === "CVSync2AsyncSubmitTask", json({ code: 10000, data: { task_id: "jm-1" }, message: "Success" })],
+        [(call) => action(call) === "CVSync2AsyncGetResult", () => {
+          polls += 1;
+          return json({ code: 10000, data: polls === 1 ? { status: "in_queue" } : polls === 2 ? { status: "generating" } : { status: "done", video_url: "https://cdn.example.com/out.mp4" } });
+        }],
+        ...await download(),
+      ],
+    });
+    const { result } = await run("generate_video", { prompt: "雨夜霓虹街道", duration: 8, with_audio: true, resolution: "720p" });
+    expect(asked).toEqual([{ kind: "video", provider: "即梦", model: JIMENG.model, seconds: 10, resolution: "1080p", ratio: "9:16", audio: false, prompt: "雨夜霓虹街道", estimate: 10 }]);
+    const submit = calls.find((call) => action(call) === "CVSync2AsyncSubmitTask");
+    expect(JSON.parse(submit.body)).toEqual({ req_key: JIMENG.model, prompt: "雨夜霓虹街道", seed: -1, frames: 241, aspect_ratio: "9:16" });
+    expect(submit.headers.Authorization).toMatch(/^HMAC-SHA256 Credential=AKLT-test-id\/\d{8}\/cn-north-1\/cv\/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=[0-9a-f]{64}$/u);
+    expect(JSON.parse(calls.find((call) => action(call) === "CVSync2AsyncGetResult").body)).toEqual({ req_key: JIMENG.model, task_id: "jm-1" });
+    expect(JSON.stringify(calls)).not.toContain(JIMENG.secretKey);
+    expect(result).toMatchObject({ ok: true, media: { kind: "video", from: "AI 生成" } });
+    expect(result.note).toContain("按 10 秒生成的");
+    expect(result.note).toContain("不带声音");
+    expect(media.get(result.media.media_id).source).toMatchObject({ provider: "jimeng", model: JIMENG.model });
+  });
+
+  it("explains Jimeng errors and only treats its server errors as unclear", async () => {
+    const cases = [
+      [json({ code: 50412, message: "Text Risk Not Pass", data: null }, 400), "moderation_blocked", "审核"],
+      [json({ code: 50400, message: "Access Denied", data: null }, 401), "service_not_open", "开通"],
+      [json({ ResponseMetadata: { Error: { Code: "InvalidAccessKey", Message: "x" } } }, 401), "generate_key_invalid", "AccessKeyId"],
+      [json({ code: 50430, message: "Concurrent Limit", data: null }, 429), "rate_limited", "并发上限"],
+      [json({ code: 50500, message: "Internal Error", data: null }, 500), "create_uncertain", "火山引擎控制台的即梦 AI 里"],
+    ];
+    for (const [reply, code, words] of cases) {
+      const { run, calls } = await setup({ generation: { video: JIMENG }, askSpend: async () => undefined, routes: [[(call) => action(call) === "CVSync2AsyncSubmitTask", reply]] });
+      const { result } = await run("generate_video", { prompt: "海浪" });
+      expect(result, code).toMatchObject({ ok: false, code, message: expect.stringContaining(words) });
+      expect(calls, code).toHaveLength(1);
+    }
+    // 生成出来没过审：任务结束、没做成
+    const { run } = await setup({
+      generation: { video: JIMENG }, askSpend: async () => undefined,
+      routes: [
+        [(call) => action(call) === "CVSync2AsyncSubmitTask", json({ code: 10000, data: { task_id: "jm-2" } })],
+        [(call) => action(call) === "CVSync2AsyncGetResult", json({ code: 50516, message: "Output Video Risk Not Pass", data: null }, 400)],
+      ],
+    });
+    expect((await run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "moderation_blocked", message: expect.stringContaining("不扣费") });
+  });
+
+  it("checks Jimeng's frame rules against the chosen model before asking", async () => {
+    const asked = [];
+    const routes = [[(call) => action(call) === "CVSync2AsyncSubmitTask", json({ code: 10000, data: { task_id: "jm-3" } })], [(call) => action(call) === "CVSync2AsyncGetResult", json({ code: 10000, data: { status: "generating" } })]];
+    const { run, media, calls } = await setup({ generation: { video: { ...JIMENG, model: "jimeng_t2v_v30" } }, askSpend: async (spec) => { asked.push(spec); throw new AiEditError("spend_denied", "没同意"); }, routes });
+    const first = await media.importFile(path.join(FIXTURES, "still.png"), "首帧.png");
+    const webp = await media.importFile(path.join(FIXTURES, "still.webp"), "首帧.webp");
+    expect((await run("generate_video", { prompt: "海浪", first_frame_media_id: first.id })).result).toMatchObject({ ok: false, message: expect.stringContaining("只能用文字生成") });
+    expect((await run("generate_video", { prompt: "海浪", reference_media_ids: [first.id] })).result).toMatchObject({ ok: false, message: expect.stringContaining("不收参考图") });
+    const pro = await setup({ generation: { video: JIMENG }, askSpend: async (spec) => { asked.push(spec); throw new AiEditError("spend_denied", "没同意"); }, routes });
+    const proFirst = await pro.media.importFile(path.join(FIXTURES, "still.webp"), "首帧.webp");
+    expect((await pro.run("generate_video", { prompt: "海浪", first_frame_media_id: proFirst.id })).result).toMatchObject({ ok: false, code: "image_unsupported", message: expect.stringContaining("WebP") });
+    expect(asked).toEqual([]);
+    expect([...calls, ...pro.calls]).toEqual([]);
+    expect(webp.kind).toBe("image");
+  });
+
+  it("uploads Xiaoyunque references only after the user agrees, then submits and polls", async () => {
+    let polls = 0;
+    let allow = false;
+    const { run, calls, media } = await setup({
+      generation: { video: XYQ },
+      askSpend: async () => { if (!allow) throw new AiEditError("spend_denied", "没同意"); },
+      routes: [
+        [(call) => call.url.endsWith("/api/biz/v1/skill/upload_file"), json({ ret: "0", data: { pippit_asset_id: "asset-1" } })],
+        [(call) => call.url.endsWith("/api/biz/v1/skill/submit_run"), json({ ret: "0", data: { run: { thread_id: "t-1", run_id: "r-1" } } })],
+        [(call) => call.url.endsWith("/api/biz/v1/agent/query_generate_video_result"), () => {
+          polls += 1;
+          return json({ ret: "0", data: { thread_id: "t-1", run_id: "r-1", run_state: polls < 2 ? "2" : 3, video_urls: polls < 2 ? [] : ["https://cdn.example.com/out.mp4"] } });
+        }],
+        ...await download(),
+      ],
+    });
+    const first = await media.importFile(path.join(FIXTURES, "still.png"), "首帧.png");
+    expect((await run("generate_video", { prompt: "猫跳上窗台", first_frame_media_id: first.id })).result).toMatchObject({ ok: false, code: "spend_denied" });
+    expect(calls).toEqual([]);
+    allow = true;
+    const { result } = await run("generate_video", { prompt: "猫跳上窗台", first_frame_media_id: first.id, ratio: "1:1" });
+    expect(result).toMatchObject({ ok: true, media: { kind: "video" } });
+    const upload = calls.find((call) => call.url.endsWith("upload_file"));
+    expect(upload.headers).toEqual({ Authorization: `Bearer ${XYQ.apiKey}`, Accept: "application/json" });
+    expect(upload.body.get("file").type).toBe("image/png");
+    expect(JSON.parse(calls.find((call) => call.url.endsWith("submit_run")).body)).toEqual({
+      message: "猫跳上窗台", agent_name: "pippit_video_part_agent",
+      video_part_tool_param: { prompt: "猫跳上窗台", model: XYQ.model, duration_sec: 5, ratio: "1:1", resolution: "720p", generate_type: 1, images: [{ pippit_asset_id: "asset-1" }] },
+    });
+    expect(JSON.parse(calls.find((call) => call.url.endsWith("query_generate_video_result")).body)).toEqual({ thread_id: "t-1", run_id: "r-1" });
+    expect(result.note).not.toContain("没有声音");
+  });
+
+  it("says plainly when Xiaoyunque runs out of credits", async () => {
+    const { run } = await setup({
+      generation: { video: XYQ }, askSpend: async () => undefined,
+      routes: [
+        [(call) => call.url.endsWith("submit_run"), json({ ret: "0", data: { run: { thread_id: "t-2", run_id: "r-2" } } })],
+        [(call) => call.url.endsWith("query_generate_video_result"), json({ ret: "0", data: { run_state: 4, fail_reason: { code: 11001, message: "credit not enough" } } })],
+      ],
+    });
+    expect((await run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "quota_exceeded", message: expect.stringContaining("积分不够") });
+    const denied = await setup({ generation: { video: XYQ }, askSpend: async () => undefined, routes: [[(call) => call.url.endsWith("submit_run"), json({ ret: "2", errmsg: "invalid access key" })]] });
+    expect((await denied.run("generate_video", { prompt: "海浪" })).result).toMatchObject({ ok: false, code: "generate_key_invalid" });
+  });
+
+  it("runs LibTV through its command line and keeps the video", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "ai-edit-libtv-"));
+    directories.push(directory);
+    const script = path.join(directory, "libtv.mjs");
+    const log = path.join(directory, "calls.jsonl");
+    await writeFile(script, `
+      import { appendFileSync } from "node:fs";
+      const args = process.argv.slice(2);
+      appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+      if (args[0] === "project") console.log(JSON.stringify({ uuid: "proj-1", name: args[2] }));
+      else if (args[0] === "upload") console.log(JSON.stringify({ nodeKey: "ref-node" }));
+      else if (args.includes("失败")) { console.error("生成失败：积分不足"); process.exit(1); }
+      else setTimeout(() => console.log(JSON.stringify({ nodeKey: "v", status: 2, data: { url: ["https://cdn.example.com/out.mp4"] } })), 30);
+    `);
+    const asked = [];
+    const { run, media } = await setup({
+      generation: { video: { provider: "libtv", baseUrl: "https://im.liblib.tv", apiKey: "cli", model: "Seedance 2.0 VIP" } },
+      libtvCli: { command: process.execPath, prefix: [script], env: process.env },
+      askSpend: async (spec) => { asked.push(spec); },
+      routes: await download(),
+    });
+    const first = await media.importFile(path.join(FIXTURES, "still.png"), "首帧.png");
+    const { result } = await run("generate_video", { prompt: "纸飞机穿过教室", first_frame_media_id: first.id, duration: 6 });
+    expect(result).toMatchObject({ ok: true, media: { kind: "video" } });
+    expect(asked[0]).toMatchObject({ provider: "LibTV", model: "Seedance 2.0 VIP", seconds: 6, estimate: null });
+    const lines = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    const generate = lines.find((args) => args[0] === "node");
+    expect(lines.find((args) => args[0] === "upload")).toEqual(expect.arrayContaining(["-t", "image", "-f", media.readyPath(first.id)]));
+    expect(generate).toEqual(expect.arrayContaining(["create", "-t", "video", "--prompt", "纸飞机穿过教室", "-s", "model=Seedance 2.0 VIP", "-s", "modeType=singleImage2video", "-s", "duration=6", "--left", "ref-node", "--run"]));
+    const failed = await run("generate_video", { prompt: "失败" });
+    expect(failed.result).toMatchObject({ ok: false, code: "quota_exceeded", message: expect.stringContaining("积分不够") });
+  });
+});
+
 describe("backgroundNote", () => {
   it("tells the user, by stage, whether a video still costs money and when it will show up", () => {
     const later = "要开着应用等它做完；关掉的话，到火山方舟控制台的视频生成任务里按任务号下载。";
     expect(backgroundNote([])).toBe("");
-    expect(backgroundNote([{ name: "涨潮", taskId: "cgt-1", phase: "generating" }], { stopped: true }))
+    expect(backgroundNote([{ name: "涨潮", taskId: "cgt-1", phase: "generating", ...ARK }], { stopped: true }))
       .toBe(`视频“涨潮”（方舟任务号 cgt-1）还在方舟上生成，停不下来，做完会自动放进素材库，照常扣费。${later}`);
-    expect(backgroundNote([{ name: "涨潮", taskId: "cgt-1", phase: "generating" }])).toBe(`视频“涨潮”（方舟任务号 cgt-1）还在方舟上生成，做完会自动放进素材库，照常扣费。${later}`);
+    expect(backgroundNote([{ name: "涨潮", taskId: "cgt-1", phase: "generating", ...ARK }])).toBe(`视频“涨潮”（方舟任务号 cgt-1）还在方舟上生成，做完会自动放进素材库，照常扣费。${later}`);
     // 已经生成好、正在下载：钱已经扣了，不是「还在生成」
-    expect(backgroundNote([{ name: "退潮", taskId: "cgt-2", phase: "downloading" }], { stopped: true }))
+    expect(backgroundNote([{ name: "退潮", taskId: "cgt-2", phase: "downloading", ...ARK }], { stopped: true }))
       .toBe("视频“退潮”（方舟任务号 cgt-2）已经在方舟上生成好了，钱已经扣了，还在下载，下完会自动放进素材库。要开着应用等它下完；关掉的话，到火山方舟控制台的视频生成任务里按任务号下载。");
     // 重新下载：不会再扣钱
-    const again = backgroundNote([{ name: "礁石", taskId: "cgt-3", phase: "redownload" }], { stopped: true });
+    const again = backgroundNote([{ name: "礁石", taskId: "cgt-3", phase: "redownload", ...ARK }], { stopped: true });
     expect(again).toContain("不会再扣钱");
     expect(again).not.toContain("照常扣费");
     // 刚提交：开始生成了就停不下来，排队中的会取消
-    expect(backgroundNote([{ name: "海鸥", phase: "submitted" }], { stopped: true }))
+    expect(backgroundNote([{ name: "海鸥", phase: "submitted", ...ARK }], { stopped: true }))
       .toBe("视频“海鸥”刚提交给方舟，如果已经开始生成就停不下来，做完会自动放进素材库，照常扣费；还在排队的会取消，不扣费。要开着应用等它做完；关掉的话，到火山方舟控制台的视频生成任务里下载。");
-    expect(backgroundNote([{ name: "海鸥", taskId: "cgt-4", phase: "submitted" }], { stopped: true })).toContain("“海鸥”（方舟任务号 cgt-4）已经提交给方舟，如果已经开始生成就停不下来");
+    expect(backgroundNote([{ name: "海鸥", taskId: "cgt-4", phase: "submitted", ...ARK }], { stopped: true })).toContain("“海鸥”（方舟任务号 cgt-4）已经提交给方舟，如果已经开始生成就停不下来");
     // 几种一起：各说各的
     const mixed = backgroundNote([
-      { name: "甲", taskId: "cgt-1", phase: "generating" }, { name: "乙", taskId: "cgt-2", phase: "downloading" }, { name: "丙", taskId: "cgt-3", phase: "generating" },
+      { name: "甲", taskId: "cgt-1", phase: "generating", ...ARK }, { name: "乙", taskId: "cgt-2", phase: "downloading", ...ARK }, { name: "丙", taskId: "cgt-3", phase: "generating", ...ARK },
     ]);
     expect(mixed).toBe(`视频“甲”（方舟任务号 cgt-1）、“丙”（方舟任务号 cgt-3）还在方舟上生成，做完会自动放进素材库，照常扣费。视频“乙”（方舟任务号 cgt-2）已经在方舟上生成好了，钱已经扣了，还在下载，下完会自动放进素材库。${later}`);
   });

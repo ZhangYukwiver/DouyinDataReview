@@ -24,7 +24,8 @@ import {
 } from "./aiEditRefs";
 import { Board } from "./AiEditBoard";
 import { areaProps, CANVASES, Expand, errorText, mediaTitle, shortTime, webAutoHeight, webPointer, web, type BoardRegion } from "./aiEditShared";
-import { AiRuntimeField, RUNTIME_LABELS, runtimeProblem } from "./AiRuntimeField";
+import { runtimeProblem } from "./AiRuntimeField";
+import { AiEditSettings, type AiEditSettingsSection } from "./AiEditSettings";
 import { dropLookJobs, runLookJob } from "./aiEditLook";
 import { createUploadQueue } from "./aiEditUploads";
 import { kit, Segmented, SmallButton } from "./CreatorKit";
@@ -98,11 +99,10 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
   const [filmUpload, setFilmUpload] = useState<number | null>(null);
   const uploads = useSyncExternalStore(uploadQueue.subscribe, uploadQueue.getSnapshot);
   const [config, setConfig] = useState<AiEditConfig>(loadAiEditConfig);
-  const [configOpen, setConfigOpen] = useState(() => !aiConfigReady(loadAiEditConfig()));
+  // 设置窗口开在哪一页（null 是关着）；剪辑模型没配好时一进来就开着
+  const [settings, setSettings] = useState<AiEditSettingsSection | null>(() => (aiConfigReady(loadAiEditConfig()) ? null : "model"));
   // 生成图片和视频的接口（可选）：单独存，哪项填了 Key 才随消息带过去
   const [generate, setGenerate] = useState<AiEditGenerateConfig>(loadAiEditGenerateConfig);
-  const configOpenRef = useRef(configOpen);
-  configOpenRef.current = configOpen;
   // 测模型能不能直接看视频：key 是测的哪个接口地址+模型，running 时在测，error 是没测出来的原因
   const [probe, setProbe] = useState<{ key: string; running: boolean; error?: string }>({ key: "", running: false });
   const [draftBox, setDraftBox] = useState<AiEditDraftBoxStatus | null>(null);
@@ -379,7 +379,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     // 发的是此刻看得到的引用和附图；发出去之后才加的留着
     const outgoing = shownDraft;
     if (!aiConfigReady(config)) {
-      setConfigOpen(true);
+      setSettings("model");
       setError("先在 AI 设置里填好 Key 和模型。");
       return;
     }
@@ -390,7 +390,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       // 已经查出本机的 Codex / Claude Code 用不了（没登录之类）：先说清楚，不白跑一轮
       const problem = await runtimeProblem(conn, config.runtime);
       if (problem) {
-        setConfigOpen(true);
+        setSettings("model");
         setError(problem);
         return;
       }
@@ -537,22 +537,11 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     await loadMedia();
   };
 
-  // AI 设置开着时左栏只有设置面板，引用、框选加上了也看不见：说一声。关掉设置时这句跟着撤掉
-  const configHint = useRef<string | null>(null);
-  const hintBehindConfig = useCallback((text: string) => { configHint.current = text; setError(text); }, []);
-  useEffect(() => {
-    const hint = configHint.current;
-    if (configOpen || !hint) return;
-    configHint.current = null;
-    setError((current) => (current === hint ? null : current));
-  }, [configOpen]);
-
   const pickRegion = useCallback((value: BoardRegion) => {
     if (!currentId) return;
     setRegionDraft({ sessionId: currentId, region: value });
     setLeftTab("chat");
-    if (configOpenRef.current) hintBehindConfig("框好了，关掉 AI 设置就能在输入框上方看到。");
-  }, [currentId, hintBehindConfig]);
+  }, [currentId]);
 
   // ---------- 引用和附图（输入框上方那一排） ----------
   /** 改当前剪辑的那一排；原来那排是别的剪辑的，就从空的开始 */
@@ -563,10 +552,9 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     const owner = currentIdRef.current;
     const own = draftRef.current.sessionId === owner ? draftRef.current.refs : NO_REFS;
     if (addRefs(own, more).dropped) setError(`一句话最多引用 ${MAX_MESSAGE_REFS} 样东西，多的没加上。`);
-    else if (configOpenRef.current) hintBehindConfig("引用上了，关掉 AI 设置就能在输入框上方看到。");
     changeOwnDraft(owner, (current) => ({ ...current, refs: addRefs(current.refs, more).refs }));
     setLeftTab("chat");
-  }, [changeOwnDraft, hintBehindConfig]);
+  }, [changeOwnDraft]);
   const unrefer = (ref: ComposerRef) => setDraft((current) => ({ ...current, refs: current.refs.filter((item) => refKey(item) !== refKey(ref)) }));
   /** 某个附件传了多少、传好了、画好了预览（patch 为 null 是没传上去，拿掉）；传好又不当图带的变成素材引用，引用满了说一声 */
   const patchFile = useCallback((key: string, patch: Partial<AttachDraft> | null) => {
@@ -605,7 +593,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
 
   // 文件拖到左栏：对话页签里加进这句话，素材页签、设置里直接放进素材库；拖到页面别处的文件不让窗口打开它
   const dropRef = useRef<(files: File[]) => void>(() => undefined);
-  dropRef.current = (files) => (leftTab === "chat" && !configOpen ? attachFiles(files) : uploadFiles(files));
+  dropRef.current = (files) => (leftTab === "chat" ? attachFiles(files) : uploadFiles(files));
   useEffect(() => {
     const zone = sideRef.current as unknown as HTMLElement | null;
     if (!web || !conn || !zone?.addEventListener) return undefined;
@@ -667,19 +655,19 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     <SessionBar
       title={session?.title || (currentId ? "未命名剪辑" : "还没有剪辑")}
       open={menuOpen}
-      configOpen={configOpen}
+      configOpen={settings !== null}
       onToggle={() => setMenuOpen((value) => !value)}
       onCreate={() => void createSession()}
-      onToggleConfig={() => setConfigOpen((value) => !value)}
+      onToggleConfig={() => setSettings((value) => (value ? null : "model"))}
     />
   </View>;
   const importingFilm = session?.output?.kind === "import" && session.output.state === "running";
 
   // 剪辑软件左上角那块：AI 对话一页、素材一页；点素材把它引用到对话里并回到对话
   const side = <View ref={sideRef} {...areaProps("outside", "e-box", "ai-panel", "ai-left")} style={[styles.left, { width: leftWidth }]}>
-    {configOpen ? null : <View style={styles.tabs}>
+    <View style={styles.tabs}>
       <Segmented small value={leftTab} onChange={setLeftTab} options={[{ label: "AI 对话", value: "chat" }, { label: media.length ? `素材 ${media.length}` : "素材", value: "media" }, { label: "剪映素材", value: "jianying" }]} />
-    </View>}
+    </View>
     {filmUpload !== null || importingFilm ? <View accessibilityLiveRegion="polite" style={styles.noticeBar}>
       <ActivityIndicator size="small" color={color.textMuted} />
       <Text style={styles.noticeText}>{filmUpload !== null ? `正在上传工程 ${Math.round(filmUpload * 100)}%` : `正在把工程里的片段排上时间线 ${Math.round((session?.output?.progress ?? 0) * 100)}%（网页要逐帧渲成视频，会慢一点）`}</Text>
@@ -688,35 +676,16 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       <Text style={styles.errorText}>{error}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="关闭提示" hitSlop={8} onPress={() => setError(null)} style={webPointer}><X size={13} color={color.danger} /></Pressable>
     </View> : null}
-    {/* 确认卡片只在对话页里：人在设置、素材页时这一轮会一直卡着，这里提醒一句。
-        开着设置时不替用户关（上面 AI 设置没保存的改动会丢），请用户自己保存或收起 */}
-    {session?.streaming?.spend && (configOpen || leftTab !== "chat") ? <View accessibilityRole="alert" style={styles.noticeBar}>
-      <Text style={[styles.noticeText, { color: color.text }]}>{configOpen ? "AI 想花钱生成一段视频，等你确认。先保存或收起设置，再去确认" : "AI 想花钱生成一段视频，等你确认"}</Text>
-      {configOpen ? null : <SmallButton label="去确认" onPress={() => setLeftTab("chat")} />}
+    {/* 确认卡片只在对话页里：人在素材页时这一轮会一直卡着，这里提醒一句（开着设置窗口时窗口顶上也有一句） */}
+    {session?.streaming?.spend && leftTab !== "chat" ? <View accessibilityRole="alert" style={styles.noticeBar}>
+      <Text style={[styles.noticeText, { color: color.text }]}>AI 想花钱生成一段视频，等你确认</Text>
+      <SmallButton label="去确认" onPress={() => setLeftTab("chat")} />
     </View> : null}
     {waitingElsewhere ? <View accessibilityRole="alert" style={styles.noticeBar}>
       <Text numberOfLines={2} style={[styles.noticeText, { color: color.text }]}>另一个剪辑「{waitingElsewhere.title || "未命名剪辑"}」在等你确认要不要生成视频</Text>
       <SmallButton label="切过去" onPress={() => { setCurrentId(waitingElsewhere.id); setMenuOpen(false); setLeftTab("chat"); }} />
     </View> : null}
-    {configOpen
-      ? <View style={styles.middle}><ConfigPanel
-          connection={conn}
-          config={config}
-          probe={probe.key === videoProbeKey(config) ? probe : { key: "", running: false }}
-          onRetest={() => void probeVideo(config)}
-          onSave={(saved) => {
-            // 接口地址和模型没变就沿用测过的结果，变了重测；面板留着显示测的结果
-            const next = videoProbeKey(saved) === config.videoProbe ? { ...saved, videoInput: config.videoInput, videoProbe: config.videoProbe } : saved;
-            saveAiEditConfig(next);
-            setConfig(next);
-            setError(null);
-          }}
-          onCancel={aiConfigReady(config) ? () => setConfigOpen(false) : undefined}
-          generate={generate}
-          onSaveGenerate={(next) => { saveAiEditGenerateConfig(next); setGenerate(next); }}
-          onGenerateNote={setError}
-        /></View>
-      : leftTab === "jianying"
+    {leftTab === "jianying"
         ? <CatalogShelf conn={conn} onPick={(text) => { setInput((value) => value.trim() ? `${value.trimEnd()} ${text}` : `用${text}`); setLeftTab("chat"); }} />
       : leftTab === "media"
         ? <MediaShelf
@@ -743,7 +712,7 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
           <Composer value={input} onChange={setInput} running={running} waiting={Boolean(session?.streaming?.spend)} sending={sending} blocked={editBusy} uploading={uploading} onFiles={attachFiles} onSend={() => void send()} onStop={() => void stop()} />
         </>}
     {dropping ? <View pointerEvents="none" style={styles.dropMask}>
-      <Text style={styles.dropText}>{leftTab === "chat" && !configOpen ? "松开就加进这句话：图片会带给 AI 看，别的文件放进素材库并引用" : "松开就放进素材库"}</Text>
+      <Text style={styles.dropText}>{leftTab === "chat" ? "松开就加进这句话：图片会带给 AI 看，别的文件放进素材库并引用" : "松开就放进素材库"}</Text>
     </View> : null}
     {menuOpen ? <SessionMenu sessions={sessions} currentId={currentId} onPick={(id) => { setCurrentId(id); setMenuOpen(false); }} onCreate={(canvas) => void createSession(canvas)} onRemove={(id) => void removeSession(id)}
       onImport={filmUpload === null ? (file) => void importFilm(file) : undefined} /> : null}
@@ -779,6 +748,28 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
     />
 
     {pickerOpen ? <LibraryPicker records={records} media={media} onAdd={addRecord} onClose={() => setPickerOpen(false)} /> : null}
+    <AiEditSettings
+      visible={settings !== null}
+      section={settings ?? "model"}
+      onSection={setSettings}
+      onClose={() => setSettings(null)}
+      connection={conn}
+      config={config}
+      probe={probe.key === videoProbeKey(config) ? probe : { key: "", running: false }}
+      onRetest={() => void probeVideo(config)}
+      onSave={(saved) => {
+        // 接口地址和模型没变就沿用测过的结果，变了重测；页面留着显示测的结果
+        const next = videoProbeKey(saved) === config.videoProbe ? { ...saved, videoInput: config.videoInput, videoProbe: config.videoProbe } : saved;
+        saveAiEditConfig(next);
+        setConfig(next);
+        setError(null);
+      }}
+      generate={generate}
+      onSaveGenerate={(next) => { saveAiEditGenerateConfig(next); setGenerate(next); }}
+      onGenerateNote={setError}
+      spendWaiting={Boolean(session?.streaming?.spend)}
+      onGoConfirm={() => { setSettings(null); setLeftTab("chat"); }}
+    />
   </View>;
 }
 
@@ -901,172 +892,6 @@ function SessionMenu({ sessions, currentId, onPick, onCreate, onRemove, onImport
         onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file && onImport) onImport(file); }} />
     </View> : null}
     <Text style={[kit.muted, styles.menuNote]}>删除只删这里的对话和时间线，已经放进剪映的草稿不受影响。</Text>
-  </View>;
-}
-
-function videoInputNote(config: AiEditConfig, probe: { running: boolean; error?: string; key?: string }): string {
-  if (probe.running) return "正在测这个模型能不能直接看视频……";
-  const known = config.videoInput === true ? "这个模型能直接看视频，参考视频会整段发给它（画面和声音都能用上）。"
-    : config.videoInput === false ? "这个模型看不了视频。解析参考视频时，应用会先把视频拆成镜头截图和音乐节拍再交给它，这时要开着应用。"
-      : null;
-  if (probe.error) return known ? `这次没测出来（${probe.error}），先沿用上次的结果：${known}` : `没测出这个模型能不能直接看视频（${probe.error}）。解析参考视频时会先整段发给它，看不了再拆成截图。`;
-  return known ?? "还没测过这个模型能不能直接看视频。";
-}
-
-function ConfigPanel({ connection, config, probe, onSave, onRetest, onCancel, generate, onSaveGenerate, onGenerateNote }: {
-  connection: ExploreConnection | null;
-  config: AiEditConfig;
-  probe: { running: boolean; error?: string; key?: string };
-  onSave: (config: AiEditConfig) => void;
-  onRetest: () => void;
-  onCancel?: () => void;
-  /** 生成图片和视频的接口：下面单独一节，自己保存 */
-  generate: AiEditGenerateConfig;
-  onSaveGenerate: (config: AiEditGenerateConfig) => void;
-  /** 收起时生成那一节有地址填错没存上的说明 */
-  onGenerateNote: (text: string) => void;
-}) {
-  const [draft, setDraft] = useState(config);
-  // 保存后面板留着显示测的结果，按钮上闪一下「已保存」
-  const [saved, setSaved] = useState(false);
-  useEffect(() => {
-    if (!saved) return undefined;
-    const timer = setTimeout(() => setSaved(false), 1600);
-    return () => clearTimeout(timer);
-  }, [saved]);
-  const field = (key: "apiKey" | "model" | "baseUrl", label: string, props: Partial<React.ComponentProps<typeof TextInput>> = {}) => <View style={styles.field}>
-    <Text style={styles.label}>{label}</Text>
-    <TextInput accessibilityLabel={label} value={draft[key]} onChangeText={(text) => setDraft((current) => ({ ...current, [key]: text }))} placeholderTextColor={color.textMuted} style={styles.fieldInput} {...props} />
-  </View>;
-  const runtime = aiRuntimeOf(draft.runtime);
-  const local = isLocalAiRuntime(runtime);
-  const ready = aiConfigReady({ ...draft, runtime });
-  const save = () => {
-    // 测视频的结果交给外面按地址和模型决定沿不沿用；本机模型名也要去掉首尾空格
-    const { videoInput: _input, videoProbe: _probe, localModels, ...rest } = draft;
-    const models = localModels ? Object.fromEntries(Object.entries(localModels).map(([key, model]) => [key, (model ?? "").trim()])) : undefined;
-    onSave({ ...rest, runtime, apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim(), ...(models ? { localModels: models } : {}) });
-    setSaved(true);
-  };
-  return <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.configScroll}>
-    <View {...ws("e-box")} style={styles.configBox}>
-      <Text style={styles.configTitle}>AI 设置</Text>
-      <AiRuntimeField connection={connection} value={runtime} onChange={(next) => setDraft((current) => ({ ...current, runtime: next }))} />
-      <Text style={kit.muted}>{local
-        ? `用这台电脑上登录好的 ${RUNTIME_LABELS[runtime]} 来剪，走你自己的订阅，不用填 Key。它看不了视频，解析参考视频时应用会先把视频拆成镜头截图和音乐节拍再交给它，这时要开着应用。`
-        : "AI 剪辑用自己的一套接口，和解析库的设置分开。模型要能调用工具，Key 只存在这台电脑上。"}</Text>
-      {local ? <View style={styles.field}>
-        <Text style={styles.label}>模型（选填）</Text>
-        <TextInput accessibilityLabel="模型（选填）" value={draft.localModels?.[runtime] ?? ""} onChangeText={(text) => setDraft((current) => ({ ...current, localModels: { ...current.localModels, [runtime]: text } }))}
-          placeholder={`留空就用 ${RUNTIME_LABELS[runtime]} 自己的默认模型`} placeholderTextColor={color.textMuted} style={styles.fieldInput} />
-      </View> : <>
-        {field("apiKey", "API Key", { secureTextEntry: true, placeholder: "从大模型服务商获取 API Key" })}
-        {field("model", "模型", { placeholder: "doubao-seed-2-1-lite-260915" })}
-        {field("baseUrl", "接口地址", { placeholder: "https://ark.cn-beijing.volces.com/api/v3" })}
-      </>}
-      <View style={kit.row}>
-        <SmallButton label={saved ? "已保存" : "保存"} done={saved} disabled={!ready} onPress={save} />
-        {onCancel ? <SmallButton label="收起" onPress={onCancel} /> : null}
-      </View>
-      {!local && !isLocalAiRuntime(config.runtime) && config.apiKey ? <View style={styles.probeRow}>
-        <Text style={[kit.muted, { flex: 1 }]}>{videoInputNote(config, probe)}</Text>
-        {probe.running ? <ActivityIndicator size="small" color={color.cyan} /> : <SmallButton label="重新测" onPress={onRetest} />}
-      </View> : null}
-    </View>
-    <GenerateSettings value={generate} aiConfig={config} onSave={onSaveGenerate} onNote={onGenerateNote} />
-  </ScrollView>;
-}
-
-/** 存之前去掉首尾空格；借 Key 的勾原样留着 */
-const trimGenerate = (config: AiEditGenerateConfig): AiEditGenerateConfig => {
-  const trim = (service: AiEditGenerateService): AiEditGenerateService => ({ baseUrl: service.baseUrl.trim(), apiKey: service.apiKey.trim(), model: service.model.trim() });
-  return { image: trim(config.image), video: { ...trim(config.video), borrow: config.video.borrow } };
-};
-
-/** 草稿和存着的那份有没有不一样（文字按去掉首尾空格比） */
-const generateChanged = (draft: AiEditGenerateConfig, value: AiEditGenerateConfig): boolean => {
-  const next = trimGenerate(draft);
-  return next.video.borrow !== value.video.borrow
-    || (["image", "video"] as const).some((kind) => (["baseUrl", "apiKey", "model"] as const).some((key) => next[kind][key] !== value[kind][key]));
-};
-
-/**
- * 生成图片和视频（可选）：图片走 OpenAI 兼容的图片接口，视频走火山方舟 Seedance，哪项填了 Key AI 才能用哪项。
- * 和上面的 AI 设置分开存、分开保存，不牵动测视频那一套；改了没点这里的保存就收起面板，收起时替用户存上（填错的地址不存，退回原来的）。
- * 视频 Key 留空时能借方舟的 Key（AI 剪辑的，其次解析库的），但要用户自己勾上：生成要花钱，不能默认打开。
- */
-function GenerateSettings({ value, aiConfig, onSave, onNote }: {
-  value: AiEditGenerateConfig; aiConfig: AiEditConfig; onSave: (config: AiEditGenerateConfig) => void;
-  /** 收起时有地址填错没存上：这句交给外面的提示条（面板已经收起，这一节里显示不出来） */
-  onNote: (text: string) => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  const [saved, setSaved] = useState(false);
-  // 地址填得不对：点保存时提示，不存；再改一下就收起提示
-  const [problem, setProblem] = useState<string | null>(null);
-  useEffect(() => {
-    if (!saved) return undefined;
-    const timer = setTimeout(() => setSaved(false), 1600);
-    return () => clearTimeout(timer);
-  }, [saved]);
-  // 收起面板（卸载）时还有没保存的改动就替用户存上。地址不合格的存了会让每条消息都发不出去：
-  // 只把那个地址退回原来的，Key、模型、借 Key 照存，再在外面的提示条里说一句哪个地址没存
-  const latest = useRef({ draft, value, onSave, onNote });
-  latest.current = { draft, value, onSave, onNote };
-  useEffect(() => () => {
-    const { draft: left, value: stored, onSave: store, onNote: note } = latest.current;
-    if (!generateChanged(left, stored)) return;
-    const kept = keepValidGenerateUrls(trimGenerate(left), stored);
-    const changed = generateChanged(kept.config, stored);
-    if (changed) store(kept.config);
-    if (kept.problem) note(changed ? `${kept.problem}这一节别的改动已经存上了。` : kept.problem);
-  }, []);
-  // 解析库的设置在别的页面，展开这一节时读一次就够
-  const analysis = useMemo(() => loadAnalysisConfig(), []);
-  const borrowed = isArkUrl(draft.video.baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl) ? borrowArkKey(aiConfig, analysis) : null;
-  const borrowing = Boolean(borrowed && draft.video.borrow);
-  const changed = generateChanged(draft, value);
-  const field = (kind: keyof AiEditGenerateConfig, key: keyof AiEditGenerateService, label: string, props: Partial<React.ComponentProps<typeof TextInput>> = {}) => <View style={styles.field}>
-    <Text style={styles.label}>{label}</Text>
-    <TextInput accessibilityLabel={`${kind === "image" ? "生成图片" : "生成视频"} · ${label}`} value={draft[kind][key]}
-      onChangeText={(text) => { setProblem(null); setDraft((current) => ({ ...current, [kind]: { ...current[kind], [key]: text } })); }}
-      placeholderTextColor={color.textMuted} style={styles.fieldInput} {...props} />
-  </View>;
-  const save = () => {
-    const next = trimGenerate(draft);
-    const bad = generateConfigProblem(next);
-    if (bad) { setProblem(bad); return; }
-    setProblem(null);
-    onSave(next);
-    setDraft(next);
-    setSaved(true);
-  };
-  const borrowLabel = borrowed?.from === "edit" ? "Key 留空时借用 AI 剪辑里填的方舟 Key" : "Key 留空时借用解析库里填的方舟 Key";
-  return <View {...ws("e-box")} style={styles.configBox}>
-    <Text style={styles.configTitle}>生成图片和视频（可选）</Text>
-    <Text style={kit.muted}>填了 Key，AI 剪辑时就能自己生成需要的图片和视频片段，放进素材库。这要另外付费，按服务商的价格计费；每次生成视频前都会先问你。</Text>
-    <Text style={styles.generateGroup}>生成图片 · OpenAI</Text>
-    {field("image", "baseUrl", "接口地址", { placeholder: DEFAULT_AI_EDIT_GENERATE_CONFIG.image.baseUrl })}
-    {field("image", "apiKey", "API Key", { secureTextEntry: true, placeholder: "留空就不生成图片" })}
-    {field("image", "model", "模型", { placeholder: DEFAULT_AI_EDIT_GENERATE_CONFIG.image.model })}
-    <Text style={styles.generateGroup}>生成视频 · 火山方舟 Seedance</Text>
-    {field("video", "apiKey", "API Key", {
-      secureTextEntry: true,
-      placeholder: borrowing ? (borrowed?.from === "edit" ? "留空就用上面填的方舟 Key" : "留空就用解析库里填的方舟 Key") : "留空就不生成视频",
-    })}
-    {borrowed ? <Pressable accessibilityRole="checkbox" accessibilityLabel={borrowLabel} accessibilityState={{ checked: draft.video.borrow }} aria-checked={draft.video.borrow}
-      onPress={() => setDraft((current) => ({ ...current, video: { ...current.video, borrow: !current.video.borrow } }))}
-      style={[styles.chip, styles.borrowChip, draft.video.borrow && styles.chipOn, webPointer]}>
-      {draft.video.borrow ? <Check size={12} color={color.accent} /> : null}
-      <Text style={[styles.chipText, styles.borrowText, draft.video.borrow && { color: color.accent }]}>{borrowLabel}</Text>
-    </Pressable> : null}
-    {field("video", "model", "模型", { placeholder: DEFAULT_AI_EDIT_GENERATE_CONFIG.video.model })}
-    {field("video", "baseUrl", "接口地址", { placeholder: DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl })}
-    <Text style={kit.muted}>Seedance 的模型要先在火山方舟控制台开通才能用。</Text>
-    {problem ? <Text accessibilityRole="alert" style={styles.errorText}>{problem}</Text> : null}
-    <View style={kit.row}>
-      <SmallButton label={saved ? "已保存" : "保存"} done={saved} disabled={!changed && !saved} onPress={save} />
-    </View>
   </View>;
 }
 
@@ -1198,7 +1023,7 @@ function SpendCard({ ask, onAnswer }: { ask: AiEditSpendAsk; onAnswer: (askId: s
     ask.seconds > 0 ? `${ask.seconds} 秒` : "时长由模型定",
     ask.resolution,
     ask.ratio === "adaptive" ? "比例由模型定" : ask.ratio,
-    ask.audio ? "带声音" : "不带声音",
+    ask.audio === null ? null : ask.audio ? "带声音" : "不带声音",
   ].filter(Boolean).join(" · ");
   const price = typeof ask.estimate === "number" && Number.isFinite(ask.estimate)
     ? `约 ¥${ask.estimate.toFixed(2)}（按官方价估算，以账单为准）`

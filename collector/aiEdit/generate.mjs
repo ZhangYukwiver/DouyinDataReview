@@ -1,22 +1,35 @@
+import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { open, readFile, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { findCli, loginShellEnv, runFile, withoutHostVars } from "../localAi.mjs";
 import { modelFetch } from "../systemProxy.mjs";
 import { apiBaseUrl, networkFailure, providerMessage } from "../videoAnalysis.mjs";
 import { AiEditError } from "./library.mjs";
+import { jimengRequest } from "./volcSign.mjs";
 
-// AI 剪辑里生成素材：generate_image 走 OpenAI 兼容的图片接口，generate_video 走火山方舟 Seedance 的异步任务。
-// Key 是用户在 AI 剪辑设置里开启生成时填的（视频也可以借用已填的方舟 Key），每次随消息带来，采集器不写盘、不写日志、不进任何报错。
+// AI 剪辑里生成素材：generate_image 走 OpenAI 兼容的图片接口，generate_video 走用户选的那家视频服务的异步任务
+// （火山方舟 Seedance、即梦、小云雀、LibTV，各家一个 VIDEO_APIS 适配器，排队、确认、轮询、后台、下载、去重共用一套）。
+// Key 是用户在 AI 剪辑设置里开启生成时填的（方舟也可以借用已填的方舟 Key），每次随消息带来，采集器不写盘、不写日志、不进任何报错。
 // 两边都按次扣费：创建请求只发一次、不自动重发；生成的文件下载进素材库（来源记成 generated），同样的说明再调直接回那一个。
 // 视频要先经页面上用户点「生成」（ctx.askSpend，见 spend.mjs）才建任务。
 
 export const IMAGE_DEFAULTS = { baseUrl: "https://api.openai.com/v1", model: "gpt-image-2.5-flare" };
 export const VIDEO_DEFAULTS = { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-seedance-2-0-260128" };
+// 另外几家视频服务的默认地址和模型（和页面 DEFAULT_AI_EDIT_GENERATE_CONFIG 一致）
+export const VIDEO_PROVIDER_DEFAULTS = {
+  seedance: VIDEO_DEFAULTS,
+  jimeng: { baseUrl: "https://visual.volcengineapi.com", model: "jimeng_ti2v_v30_pro" },
+  xyq: { baseUrl: "https://xyq.jianying.com", model: "Seedance_2.0_mini" },
+  // LibTV 不走接口，用本机的 libtv 命令行；地址只是占位
+  libtv: { baseUrl: "https://www.liblib.tv", model: "Seedance 2.0 VIP" },
+};
 
 const MAX_NAME = 30;
 const MAX_IMAGE_PROMPT = 4_000;
@@ -86,24 +99,37 @@ const VIDEO_NOTE = "还没放上时间线：用 add_media_clip 放进视频轨�
 // 用户常把整条接口地址粘进来：去掉末尾的具体接口，只留版本路径
 const ENDPOINT_TAIL = /\/(?:images\/(?:generations|edits)|contents\/generations\/tasks)$/iu;
 
-function parseProvider(raw, defaults, label) {
+/** versioned：OpenAI、方舟这类只填域名时要补上版本路径（/v1、/api/v3）；别家地址原样留着，只去掉末尾的斜杠 */
+function parseProvider(raw, defaults, label, { versioned = true } = {}) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const text = (value, max) => (typeof value === "string" ? value.trim().slice(0, max) : "");
   const apiKey = text(raw.apiKey, 500);
   if (!apiKey) return null;
-  const given = text(raw.baseUrl, 300).replace(/\/+$/u, "").replace(ENDPOINT_TAIL, "");
-  const baseUrl = given ? apiBaseUrl(given) : defaults.baseUrl;
+  const given = text(raw.baseUrl, 300).replace(/\/+$/u, "");
+  const baseUrl = !given ? defaults.baseUrl : versioned ? apiBaseUrl(given.replace(ENDPOINT_TAIL, "")) : given;
   let protocol = "";
   try { protocol = new URL(baseUrl).protocol; } catch { /* 下面统一报错 */ }
   if (protocol !== "https:" && protocol !== "http:") throw new AiEditError("invalid_config", `${label}的接口地址要以 https:// 开头。`);
   return { baseUrl, apiKey, model: text(raw.model, 100) || defaults.model };
 }
 
+/** 生成视频那一项：provider 是哪家（老页面不带，当方舟）；即梦还要 SecretAccessKey，没填当没配 */
+function parseVideo(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const provider = raw.provider ?? "seedance";
+  if (!Object.hasOwn(VIDEO_PROVIDER_DEFAULTS, provider)) throw new AiEditError("invalid_config", "认不出生成视频用的是哪家服务，更新一下应用再试。");
+  const parsed = parseProvider(raw, VIDEO_PROVIDER_DEFAULTS[provider], "生成视频", { versioned: provider === "seedance" });
+  if (!parsed) return null;
+  if (provider !== "jimeng") return { provider, ...parsed };
+  const secretKey = typeof raw.secretKey === "string" ? raw.secretKey.trim().slice(0, 500) : "";
+  return secretKey ? { provider, ...parsed, secretKey } : null;
+}
+
 /** 请求体里的生成配置：信任边界。填了 Key 的那项才算配了，都没配回 null。 */
 export function parseGenerateConfig(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const image = parseProvider(raw.image, IMAGE_DEFAULTS, "生成图片");
-  const video = parseProvider(raw.video, VIDEO_DEFAULTS, "生成视频");
+  const video = parseVideo(raw.video);
   if (!image && !video) return null;
   return { ...(image ? { image } : {}), ...(video ? { video } : {}) };
 }
@@ -353,7 +379,82 @@ export async function generateImage(ctx, args) {
   return { item, note: IMAGE_NOTE };
 }
 
-// ---------- 生成视频（火山方舟 Seedance） ----------
+// ---------- 生成视频：几家共用的任务流程 ----------
+
+// 每家一个适配器（VIDEO_APIS）：
+//   name 说话用的短称（「还在方舟上生成」）、title 确认卡片上的服务商、findIt 关掉应用或建任务说不准时去哪儿找、linkHours 视频链接几小时有效；
+//   plan(ctx, config, args, prompt) 校验参数（问用户之前）：回 { key, spend, notes, duration, audio, payload }，key 是认重复用的字段，
+//     payload(ctx, config) 读参考图、拼请求（也在问之前，不合格的图别让用户白点一次确认）；
+//   create(ctx, config, request) 建任务，只发一次、不自动重发，回任务号；说不准建没建上就抛 unclear；
+//   query(ctx, config, taskId, signal) 查一次进度，回 { status, videoUrl, tokens, failure }：
+//     status 是 queued / running / succeeded / failed / expired / cancelled，failure 是结束了却没做成时给模型的话（不扣费）；
+//     断网、超时、限流、对方 5xx 抛带 transient 的错，轮询歇一下再试；
+//   cancel(ctx, config, taskId) 取消还在排队的（不扣费），取消不了回 false。
+
+/** 建任务出了岔子、又说不准对方建没建上：同样的说明再调时也不再建（job 记成 unknown）。 */
+const unclear = (api, why) => Object.assign(new AiEditError("create_uncertain", `建任务时${why}，不知道任务建没建上，可能已经在生成并扣费：先别重试，到${api.findIt}看看。`, 502), { uncertain: true });
+
+/**
+ * 建任务的那一个请求：只发一次，不跟着「停止」断开（断在半路就不知道任务建没建，钱可能照扣、视频却拿不到）。
+ * 连不上（域名、拒绝连接、证书、连接超时）说明请求没发出去、肯定没建；别的网络问题都说不准，抛 unclear。回 { status, raw }。
+ */
+async function sendOnce(ctx, api, url, init) {
+  let status = 0;
+  try {
+    const response = await (ctx.fetchImpl ?? modelFetch)(url, { ...init, signal: AbortSignal.timeout(CREATE_TIMEOUT_MS) });
+    status = response.status;
+    return { status, raw: await response.text() };
+  } catch (error) {
+    const failure = networkFailure(error);
+    if (!status && failure && NOT_SENT.test(String(error.cause?.code ?? ""))) {
+      throw new AiEditError("network_error", `${failure.text.replace(/。$/u, "")}。请求没发出去，任务没建上，没扣费。`, 502);
+    }
+    if (status) throw unclear(api, `${api.name}的答复读到一半连接断了`);
+    if (error?.name === "TimeoutError") throw unclear(api, `${api.name} 2 分钟没回话`);
+    throw unclear(api, `没收到${api.name}的答复（${error?.cause?.code || error?.message || "原因不明"}）`);
+  }
+}
+
+/**
+ * 查进度、取消、上传这类可以重发的请求：网络错误、超时标成 transient（查进度时歇一下再试）。
+ * 回 { status, raw }；HTTP 报错交给各家自己认。
+ */
+async function sendQuery(ctx, api, url, init) {
+  try {
+    const response = await (ctx.fetchImpl ?? modelFetch)(url, init);
+    return { status: response.status, raw: await response.text() };
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    const failure = error?.name === "TimeoutError" ? { text: `${api.name} 30 秒没回话` } : networkFailure(error);
+    if (!failure) throw error;
+    throw Object.assign(new AiEditError("network_error", failure.text, 502), { transient: true });
+  }
+}
+
+const parseJson = (raw) => { try { return JSON.parse(raw || "{}"); } catch { return null; } };
+/** 一时的问题（408、429、5xx）：查进度时歇一下再试 */
+const transient = (error, yes = true) => Object.assign(error, { transient: yes });
+
+/** 素材库里的首帧、尾帧、参考图：去重、限量，三种用法的搭配查一遍。 */
+function frameArgs(args) {
+  const first = typeof args.first_frame_media_id === "string" ? args.first_frame_media_id : null;
+  const last = typeof args.last_frame_media_id === "string" ? args.last_frame_media_id : null;
+  const refs = idList(args.reference_media_ids, MAX_VIDEO_REFS, "参考图");
+  if (last && !first) throw new AiEditError("arguments_invalid", "给了尾帧就要同时给首帧。");
+  if (first && refs.length) throw new AiEditError("arguments_invalid", "首帧尾帧和参考图是两种用法，不能同时给：要从某张图动起来就只给首帧（可加尾帧），要参考几张图的样子就只给参考图。");
+  return { first, last, refs };
+}
+
+/** 时长：要的秒数（不填 5 秒）夹到 [shortest, longest]，夹过就记一句 */
+function durationOf(args, shortest, longest, notes, who = "这个模型") {
+  if (args.duration !== undefined && (typeof args.duration !== "number" || !Number.isFinite(args.duration))) throw new AiEditError("arguments_invalid", "时长要填秒数。");
+  const asked = args.duration === undefined ? 5 : Math.round(args.duration);
+  const duration = Math.min(longest, Math.max(shortest, asked));
+  if (duration !== asked) notes.push(`${who}只能生成 ${shortest} 到 ${longest} 秒，按 ${duration} 秒生成的。`);
+  return duration;
+}
+
+// ---------- 火山方舟 Seedance ----------
 
 function arkError(status, raw, { apiKey, model }) {
   let code = "";
@@ -399,52 +500,477 @@ async function arkImage(ctx, id, role) {
 
 const tasksUrl = (config, id) => `${config.baseUrl}/contents/generations/tasks${id ? `/${encodeURIComponent(id)}` : ""}`;
 
-/** 发一次 GET 或 DELETE；网络错误、超时、408、429、5xx 标成 transient（查进度时歇一下再试），别的 4xx 直接是方舟的报错。 */
+/** 发一次 GET 或 DELETE；网络错误、超时、408、429、5xx 标成 transient，别的 4xx 直接是方舟的报错。 */
 async function arkRequest(ctx, config, url, { method = "GET", signal }) {
-  let status;
-  let raw;
-  try {
-    const response = await (ctx.fetchImpl ?? modelFetch)(url, { method, headers: { Authorization: `Bearer ${config.apiKey}` }, signal });
-    status = response.status;
-    raw = await response.text();
-  } catch (error) {
-    if (error?.name === "AbortError") throw error;
-    const failure = error?.name === "TimeoutError" ? { text: "方舟 30 秒没回话" } : networkFailure(error);
-    if (!failure) throw error;
-    throw Object.assign(new AiEditError("network_error", failure.text, 502), { transient: true });
-  }
-  if (status >= 200 && status < 300) {
-    try { return JSON.parse(raw || "{}"); } catch { return {}; }
-  }
-  throw Object.assign(arkError(status, raw, config), { transient: status === 408 || status === 429 || status >= 500 });
+  const { status, raw } = await sendQuery(ctx, SEEDANCE, url, { method, headers: { Authorization: `Bearer ${config.apiKey}` }, signal });
+  if (status >= 200 && status < 300) return parseJson(raw) ?? {};
+  throw transient(arkError(status, raw, config), status === 408 || status === 429 || status >= 500);
 }
+
+const SEEDANCE = {
+  name: "方舟",
+  title: "火山方舟 Seedance",
+  findIt: "火山方舟控制台的视频生成任务里",
+  linkHours: 24,
+  async plan(ctx, config, args, prompt) {
+    const { model } = config;
+    const notes = [];
+    // 2.5 系列能生成 4–30 秒，其他 4–15 秒；超出就夹到范围里
+    const duration = durationOf(args, 4, /^doubao-seedance-2-5/iu.test(model) ? 30 : 15, notes);
+    const resolution = pick(args.resolution, RESOLUTIONS, "清晰度") ?? "720p";
+    if (resolution === "1080p" && /^doubao-seedance-2-0-(fast|mini)/iu.test(model)) {
+      throw new AiEditError("arguments_invalid", "用户设的视频模型（fast 或 mini）只能出 480p 或 720p，清晰度改成 720p。");
+    }
+    // 2.5 的 1080p 是 10 位色深的 H.265：剪映和看板（Chromium）在不少电脑上放不了，花了钱拿到黑屏
+    if (resolution === "1080p" && /^doubao-seedance-2-5/iu.test(model)) {
+      throw new AiEditError("arguments_invalid", "2.5 系列出的 1080p 视频是 10 位色深的 H.265 编码，剪映和这台电脑上可能放不了，清晰度改成 720p。");
+    }
+    const { first, last, refs } = frameArgs(args);
+    // 给了首帧（或首尾帧）时画面比例跟着首帧走
+    const ratio = first ? "adaptive" : pick(args.ratio, VIDEO_RATIOS, "画面比例") ?? await canvasRatio(ctx, VIDEO_RATIOS);
+    const audio = args.with_audio === true;
+    return {
+      key: { kind: "video", model, prompt, ratio, duration, resolution, audio, first, last, refs },
+      spend: { model, seconds: duration, resolution, ratio, audio, estimate: estimateVideoCost(model, duration, resolution) },
+      notes, duration, audio,
+      async payload() {
+        const images = [];
+        if (first) images.push(await arkImage(ctx, first, "first_frame"));
+        if (last) images.push(await arkImage(ctx, last, "last_frame"));
+        for (const id of refs) images.push(await arkImage(ctx, id, "reference_image"));
+        if (images.reduce((total, image) => total + image.image_url.url.length, 0) > ARK_BODY_CHARS) {
+          throw new AiEditError("image_too_large", "参考图加起来太大了，Seedance 一次收不下：少用几张，或者换小一点的图。");
+        }
+        return {
+          model,
+          content: [{ type: "text", text: prompt }, ...images],
+          resolution, ratio, duration, generate_audio: audio, watermark: false,
+          // 排队超过一小时就让方舟自己作废，别过两天突然做完扣费
+          execution_expires_after: 3600,
+        };
+      },
+    };
+  },
+  async create(ctx, config, body) {
+    const { status, raw } = await sendOnce(ctx, this, tasksUrl(config), {
+      method: "POST", headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (status >= 200 && status < 300) {
+      // 回了成功却没给任务号（不是 JSON、被中转站包了一层）：任务多半已经建上了
+      const id = parseJson(raw)?.id;
+      if (typeof id !== "string" || !id) throw unclear(this, "方舟回了成功，却没给任务编号");
+      return id;
+    }
+    // 网关、中转站回的 5xx 和 408：可能上游已经建好了
+    if (status >= 500 || status === 408) throw unclear(this, `方舟回了 ${status}`);
+    throw arkError(status, raw, config);
+  },
+  async query(ctx, config, taskId, signal) {
+    const task = await arkRequest(ctx, config, tasksUrl(config, taskId), { signal });
+    const status = typeof task?.status === "string" ? task.status : "running";
+    const failure = status === "failed" ? arkError(0, JSON.stringify({ error: task.error ?? {} }), config)
+      : status === "expired" ? new AiEditError("generate_expired", "排队超过一小时还没轮到，任务过期了，没有扣费。稍后再试。", 504)
+        : status === "cancelled" ? new AiEditError("generate_cancelled", "这个任务被取消了，没有扣费。", 409)
+          : null;
+    const tokens = task.usage?.completion_tokens;
+    return { status, videoUrl: task.content?.video_url, tokens: Number.isFinite(tokens) ? tokens : null, failure };
+  },
+  async cancel(ctx, config, taskId) {
+    await arkRequest(ctx, config, tasksUrl(config, taskId), { method: "DELETE", signal: AbortSignal.timeout(QUERY_TIMEOUT_MS) });
+    return true;
+  },
+};
+
+// ---------- 即梦（火山引擎视觉智能，AccessKey 签名） ----------
+
+// 官方 2026-04 价（元/秒，只有成功出片才扣）：按 req_key 认，长的先比
+const JIMENG_PRICES = [["jimeng_ti2v_v30_pro", 1], ["v30_1080", 0.63], ["v30", 0.28], ["vgfm", 0.65]];
+// 即梦收的图：JPEG、PNG，单张 4.7MB 以内，短边不小于 320、长边不超过 4096，长短边比不超过 3
+const JIMENG_REF_BYTES = 4.7 * 1024 ** 2;
+
+function jimengError(status, raw, config) {
+  const parsed = parseJson(raw) ?? {};
+  const gateway = parsed.ResponseMetadata?.Error?.Code ?? "";
+  const code = Number(parsed.code);
+  const detail = String(parsed.message ?? parsed.ResponseMetadata?.Error?.Message ?? "").slice(0, 240);
+  const fail = (errorCode, text, httpStatus = 502) => new AiEditError(errorCode, scrub(scrub(text, config.apiKey), config.secretKey), httpStatus);
+  if (/InvalidAccessKey|SignatureDoesNotMatch|MissingAuthenticationToken/iu.test(gateway)) return fail("generate_key_invalid", "即梦的 AccessKeyId 或 SecretAccessKey 不对，到 AI 剪辑设置里检查一下。", 401);
+  if (/InvalidTimestamp/iu.test(gateway)) return fail("clock_skew", "这台电脑的时间和标准时间差得太多，即梦拒收了请求：校准一下系统时间再试。", 401);
+  if (/AccessDenied/iu.test(gateway)) return fail("access_denied", "这个 AccessKey 没有权限调即梦：子账号要在火山引擎「访问控制」里授权视觉智能（cv）的权限。", 403);
+  if (/FlowLimitExceeded/iu.test(gateway) || code === 50429 || code === 50430) return transient(fail("rate_limited", "即梦那边请求太多（并发上限：免费 1 个、付费 2 个），稍后再试。", 429));
+  if (code === 50400) return fail("service_not_open", `即梦没开通或者欠费了：到火山引擎控制台的即梦 AI 里开通视频生成（${config.model}）、确认余额够用（欠费超过 24 小时要重新开通）。`, 403);
+  if ([50411, 50412, 50413, 50518].includes(code)) return fail("moderation_blocked", "说明或参考图没通过即梦的内容审核，视频没生成。改改说明或换一张图再试。", 422);
+  if ([50511, 50516, 50517, 50519].includes(code)) return fail("moderation_blocked", "生成出来的画面没通过即梦的审核，没给视频，也不扣费。换个说法再试。", 422);
+  if (code === 50207 || code === 50213) return fail("image_unsupported", "即梦读不了这张参考图（格式不对或太大），换一张 JPEG 或 PNG 再试。", 422);
+  if (code === 50500 || code === 50501 || status >= 500) return transient(fail("provider_unavailable", `即梦视频服务暂时不可用${code ? `（${code}）` : status ? `（${status}）` : ""}，稍后再试。`, 502));
+  return fail("provider_error", `视频没生成出来${detail ? `：${detail}` : status ? `（即梦回了 ${status}）` : ""}`, 502);
+}
+
+/** 即梦的一次接口调用：签名、发送、认结果；code 10000 才算成功，回 data。 */
+async function jimengCall(ctx, config, action, payload, { signal, once = false, version } = {}) {
+  const { url, init } = jimengRequest({ baseUrl: config.baseUrl, action, version, payload, accessKeyId: config.apiKey, secretKey: config.secretKey });
+  const { status, raw } = once ? await sendOnce(ctx, JIMENG, url, init) : await sendQuery(ctx, JIMENG, url, { ...init, signal });
+  const parsed = parseJson(raw);
+  if (status >= 200 && status < 300 && Number(parsed?.code) === 10000) return parsed.data ?? {};
+  throw jimengError(status, raw, config);
+}
+
+/** req_key 的用法：首尾帧、只收首帧、只收文字、文字或首帧都行（3.0 Pro） */
+function jimengMode(model) {
+  if (/first_tail/iu.test(model)) return "first_last";
+  if (/(^|_)i2v/iu.test(model)) return "first";
+  if (/(^|_)t2v/iu.test(model)) return "text";
+  return "either";
+}
+
+async function jimengImage(ctx, id) {
+  const { item, bytes, format } = await readReference(ctx, id, JIMENG_REF_BYTES, "即梦");
+  if (format === "webp") throw new AiEditError("image_unsupported", `“${item.name}”是 WebP，即梦只收 JPEG 和 PNG，换一张。`);
+  const { width, height } = item;
+  if (width && height && (Math.min(width, height) < 320 || Math.max(width, height) > 4096 || Math.max(width, height) / Math.min(width, height) > 3)) {
+    throw new AiEditError("image_size_invalid", `“${item.name}”是 ${width}×${height}，即梦要求短边不小于 320、长边不超过 4096、长短边比不超过 3，换一张。`);
+  }
+  // 即梦要不带 data:image/…;base64, 前缀的 base64
+  return bytes.toString("base64");
+}
+
+const JIMENG = {
+  name: "即梦",
+  title: "即梦",
+  findIt: "火山引擎控制台的即梦 AI 里",
+  linkHours: 1,
+  async plan(ctx, config, args, prompt) {
+    const { model } = config;
+    const notes = [];
+    const mode = jimengMode(model);
+    const { first, last, refs } = frameArgs(args);
+    if (refs.length) throw new AiEditError("arguments_invalid", "即梦不收参考图：要从某张图动起来就把它当首帧给，不然就只写说明。");
+    if (mode === "text" && first) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）只能用文字生成，不收首帧：去掉首帧再试。`);
+    if ((mode === "first" || mode === "first_last") && !first) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）要给首帧${mode === "first_last" ? "和尾帧" : ""}才能生成。`);
+    if (mode === "first_last" && !last) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）要首帧和尾帧一起给。`);
+    if (mode !== "first_last" && last) throw new AiEditError("arguments_invalid", `用户设的即梦模型（${model}）不收尾帧：只给首帧，或者请用户换成首尾帧模型。`);
+    // 即梦只有 5 秒、10 秒两档（S2.0 固定 5 秒）；按要的秒数取近的那档
+    const fixed = /vgfm/iu.test(model);
+    const asked = typeof args.duration === "number" && Number.isFinite(args.duration) ? Math.round(args.duration) : 5;
+    const duration = fixed || asked <= 7 ? 5 : 10;
+    if (duration !== asked) notes.push(`即梦只能生成${fixed ? " 5 秒" : " 5 秒或 10 秒"}，按 ${duration} 秒生成的。`);
+    const resolution = /1080|pro/iu.test(model) ? "1080p" : "720p";
+    if (args.resolution && args.resolution !== resolution) notes.push(`即梦这个模型固定出 ${resolution}。`);
+    // 比例只有文生视频能选；给了首帧时按首帧取最近的比例再居中裁
+    const ratio = first ? "adaptive" : pick(args.ratio, VIDEO_RATIOS, "画面比例") ?? await canvasRatio(ctx, VIDEO_RATIOS);
+    if (args.with_audio === true) notes.push("即梦生成的视频不带声音。");
+    const price = JIMENG_PRICES.find(([part]) => model.toLowerCase().includes(part))?.[1];
+    return {
+      key: { kind: "video", provider: "jimeng", model, prompt, ratio, duration, first, last },
+      spend: { model, seconds: duration, resolution, ratio, audio: false, estimate: price ? Math.round(price * duration * 100) / 100 : null },
+      notes, duration, audio: false,
+      async payload() {
+        const images = [];
+        if (first) images.push(await jimengImage(ctx, first));
+        if (last) images.push(await jimengImage(ctx, last));
+        return {
+          req_key: model, prompt, seed: -1, frames: duration === 10 ? 241 : 121,
+          ...(images.length ? { binary_data_base64: images } : { aspect_ratio: ratio }),
+        };
+      },
+    };
+  },
+  async create(ctx, config, payload) {
+    const data = await jimengCall(ctx, config, "CVSync2AsyncSubmitTask", payload, { once: true }).catch((error) => {
+      // 即梦自己说没建成的（审核、参数、Key、没开通、限流）原样报；它回的 5xx 说不准建没建
+      if (error?.code !== "provider_unavailable") throw error;
+      throw unclear(this, "即梦回了服务出错");
+    });
+    const id = data.task_id;
+    if (typeof id !== "string" || !id) throw unclear(this, "即梦回了成功，却没给任务编号");
+    return id;
+  },
+  async query(ctx, config, taskId, signal) {
+    let data;
+    try {
+      data = await jimengCall(ctx, config, "CVSync2AsyncGetResult", { req_key: config.model, task_id: taskId }, { signal });
+    } catch (error) {
+      // 生成出来没过审、参数不对之类：任务结束了，没做成（不扣费）；限流、5xx、断网照常往外抛，歇一下再查
+      if (error?.transient || error?.name === "AbortError" || ["generate_key_invalid", "access_denied", "clock_skew", "service_not_open"].includes(error?.code)) throw error;
+      return { status: "failed", failure: error };
+    }
+    const state = data.status;
+    if (state === "in_queue") return { status: "queued" };
+    if (state === "generating") return { status: "running" };
+    if (state === "not_found" || state === "expired") return { status: "expired", failure: new AiEditError("generate_expired", "即梦上这个任务过期了（任务只留十几个小时），没有扣费。稍后再试。", 504) };
+    if (state === "done") return { status: "succeeded", videoUrl: data.video_url, tokens: null };
+    return { status: "running" };
+  },
+  async cancel(ctx, config, taskId) {
+    await jimengCall(ctx, config, "CVCancelTask", { req_key: config.model, task_id: taskId }, { version: "2024-06-06", signal: AbortSignal.timeout(QUERY_TIMEOUT_MS) });
+    return true;
+  },
+};
+
+// ---------- 小云雀（剪映团队，Bearer Access Key） ----------
+
+// 官方《小云雀 API 体验指南》：上传素材 → submit_run（沉浸式短片 pippit_video_part_agent）→ query_generate_video_result。
+// 按积分扣、没有估价接口；任务号是 thread_id/run_id。run_state：3 成功、4 失败（积分不够是 fail_reason 11001）、5 取消，其余在做
+const XYQ_REF_BYTES = 200 * 1024 ** 2;
+
+function xyqError(status, raw, config) {
+  const parsed = parseJson(raw) ?? {};
+  const ret = String(parsed.ret ?? "");
+  const detail = String(parsed.errmsg ?? "").slice(0, 240);
+  const fail = (errorCode, text, httpStatus = 502) => new AiEditError(errorCode, scrub(text, config.apiKey), httpStatus);
+  if (status === 401 || status === 403) return fail("generate_key_invalid", "小云雀的 Access Key 不对、没启用或者过期了，到 AI 剪辑设置里换一把（要会员才能建 Key）。", 401);
+  if (ret === "10" || ret === "16010" || status === 429) return transient(fail("rate_limited", "小云雀那边请求太频繁了，过一分钟再试。", 429));
+  if (ret === "15") return fail("daily_limit", "小云雀今天的生成次数到上限了，明天再试。", 429);
+  if (["12004", "12005", "12006", "12015"].includes(ret)) return fail("moderation_blocked", "说明或参考素材没通过小云雀的内容审核，视频没生成。改改说明或换一张图再试。", 422);
+  if (ret === "2") return fail("generate_key_invalid", `小云雀拒收了请求${detail ? `：${detail}` : ""}。多半是 Access Key 不对或过期，也可能是模型名 ${config.model} 不对，到 AI 剪辑设置里检查一下。`, 400);
+  if (ret === "5" || status >= 500) return transient(fail("provider_unavailable", "小云雀暂时不可用，稍后再试。", 502));
+  return fail("provider_error", `视频没生成出来${detail ? `：${detail}` : status ? `（小云雀回了 ${status}）` : ""}`, 502);
+}
+
+/** 小云雀的一次 JSON 请求：ret 是 "0" 才算成功，回 data */
+async function xyqCall(ctx, config, apiPath, body, { signal, once = false } = {}) {
+  const init = { method: "POST", headers: { Authorization: `Bearer ${config.apiKey}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const url = `${config.baseUrl}${apiPath}`;
+  const { status, raw } = once ? await sendOnce(ctx, XYQ, url, init) : await sendQuery(ctx, XYQ, url, { ...init, signal });
+  const parsed = parseJson(raw);
+  if (status >= 200 && status < 300 && String(parsed?.ret) === "0") return parsed.data ?? {};
+  throw xyqError(status, raw, config);
+}
+
+const XYQ_RATIOS = ["16:9", "9:16", "4:3", "3:4", "1:1"];
+
+const XYQ = {
+  name: "小云雀",
+  title: "小云雀",
+  findIt: "小云雀网页版的历史会话里",
+  linkHours: 0,
+  async plan(ctx, config, args, prompt) {
+    const { model } = config;
+    const notes = [];
+    // 各模型能生成的秒数不一样（2.5 能到 30 秒），超出了小云雀自己会报错
+    const duration = durationOf(args, 4, /2\.5/u.test(model) ? 30 : 15, notes);
+    const resolution = pick(args.resolution, RESOLUTIONS, "清晰度") ?? "720p";
+    const { first, last, refs } = frameArgs(args);
+    const ratio = pick(args.ratio, VIDEO_RATIOS, "画面比例") ?? await canvasRatio(ctx, XYQ_RATIOS);
+    if (!XYQ_RATIOS.includes(ratio)) throw new AiEditError("arguments_invalid", `小云雀的画面比例只能是 ${XYQ_RATIOS.join("、")} 之一。`);
+    if (args.with_audio === true) notes.push("小云雀没法指定带不带声音，按它的默认生成。");
+    const ids = first ? [first, last].filter(Boolean) : refs;
+    return {
+      key: { kind: "video", provider: "xyq", model, prompt, ratio, duration, resolution, first, last, refs },
+      spend: { model, seconds: duration, resolution, ratio, audio: null, estimate: null },
+      notes, duration, audio: null,
+      async payload() {
+        // 图先在本地查好；真正上传在用户点了「生成」之后
+        const images = [];
+        for (const id of ids) {
+          const { item, bytes, format } = await readReference(ctx, id, XYQ_REF_BYTES, "小云雀");
+          images.push({ name: `${item.id}.${format === "jpeg" ? "jpg" : format}`, type: `image/${format}`, bytes });
+        }
+        return {
+          images,
+          body: {
+            message: prompt,
+            agent_name: "pippit_video_part_agent",
+            video_part_tool_param: {
+              prompt, model, duration_sec: duration, ratio, resolution,
+              // 首帧（首尾帧）模式：图片按首帧、尾帧排；参考图模式让它参考图里的样子
+              ...(first ? { generate_type: 1 } : refs.length ? { task_type: "reference" } : {}),
+            },
+          },
+        };
+      },
+    };
+  },
+  async create(ctx, config, { images, body }) {
+    // 上传参考图：这一步不花钱，失败了照常报（任务还没建）
+    const assets = [];
+    for (const image of images) {
+      const form = new FormData();
+      form.append("file", new Blob([image.bytes], { type: image.type }), image.name);
+      const { status, raw } = await sendQuery(ctx, this, `${config.baseUrl}/api/biz/v1/skill/upload_file`, {
+        method: "POST", headers: { Authorization: `Bearer ${config.apiKey}`, Accept: "application/json" }, body: form, signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
+      });
+      const parsed = parseJson(raw);
+      const id = parsed?.data?.pippit_asset_id;
+      if (!(status >= 200 && status < 300 && String(parsed?.ret) === "0" && typeof id === "string" && id)) throw transient(xyqError(status, raw, config), false);
+      assets.push({ pippit_asset_id: id });
+    }
+    const request = assets.length ? { ...body, video_part_tool_param: { ...body.video_part_tool_param, images: assets } } : body;
+    let run;
+    try {
+      run = (await xyqCall(ctx, config, "/api/biz/v1/skill/submit_run", request, { once: true })).run;
+    } catch (error) {
+      // 小云雀自己说没建成的（审核、Key、限流、到上限）原样报；它回的 5xx 说不准建没建
+      if (error?.code !== "provider_unavailable") throw error;
+      throw unclear(this, "小云雀回了服务出错");
+    }
+    if (typeof run?.thread_id !== "string" || typeof run?.run_id !== "string" || !run.thread_id || !run.run_id) throw unclear(this, "小云雀回了成功，却没给任务编号");
+    return `${run.thread_id}/${run.run_id}`;
+  },
+  async query(ctx, config, taskId, signal) {
+    const [threadId, runId] = taskId.split("/");
+    const data = await xyqCall(ctx, config, "/api/biz/v1/agent/query_generate_video_result", { thread_id: threadId, run_id: runId }, { signal });
+    const state = Number(data.run_state);
+    const reason = data.fail_reason ?? {};
+    if (state === 3) {
+      const url = Array.isArray(data.video_urls) ? data.video_urls.find((item) => typeof item === "string") : undefined;
+      return { status: "succeeded", videoUrl: url, tokens: null };
+    }
+    if (state === 4 || state === 8) {
+      const text = Number(reason.code) === 11001 ? "小云雀的积分不够了，视频没生成：充值或开通会员后再试。" : `视频没生成出来${reason.message ? `：${String(reason.message).slice(0, 240)}` : "，原因小云雀没说，换个说法再试。"}`;
+      return { status: "failed", failure: new AiEditError(Number(reason.code) === 11001 ? "quota_exceeded" : "generate_failed", text, 502) };
+    }
+    if (state === 5) return { status: "cancelled", failure: new AiEditError("generate_cancelled", "这个任务在小云雀上被取消了。", 409) };
+    // 6 等补充输入、9 等人工确认：这边接不了，请用户到网页上看
+    if (state === 6 || state === 9) return { status: "failed", failure: new AiEditError("generate_failed", `小云雀在等网页上${state === 6 ? "补充信息" : "人工确认"}，这边接不下去：到小云雀网页版的历史会话里看看。`, 409) };
+    return { status: state === 0 ? "queued" : "running" };
+  },
+  // 小云雀没有取消接口
+  async cancel() { return false; },
+};
+
+// ---------- LibTV（LiblibAI，用本机登录好的官方命令行） ----------
+
+// LibTV 原来的 Access Key 接口（im.liblib.tv/openapi）2026 年已经下线，只回「已升级为 LibTV CLI」；
+// 现在能程序调用的只有官方命令行 libtv（用户自己装、在终端里 libtv login web 登录一次）。这里照官方用法：
+// project create 建一张画布（一个采集器进程只建一张）→ upload 传参考图 → node create … --run 生成，它一直阻塞到出结果，
+// 官方说中途杀掉结果就写不回画布，所以起一个子进程让它自己跑完（采集器退出也不杀），query 只看它跑完没有。
+// 任务号是「画布/节点名」；按积分扣、没有估价，也没有取消。
+const LIBTV_CHECK_MS = 60_000;
+const libtvRuns = new Map();
+let libtvProject = null;
+
+/** 找 libtv：登录 shell 的 PATH 里、官方安装脚本的 ~/.libtv 里 */
+async function libtvCli(ctx) {
+  if (ctx.libtvCli) return ctx.libtvCli;
+  const env = await loginShellEnv() ?? withoutHostVars(process.env);
+  const found = await findCli("libtv", { env }) ?? await findCli("libtv", { env: { PATH: path.join(os.homedir(), ".libtv") } });
+  if (!found) throw new AiEditError("libtv_missing", "这台电脑上没找到 LibTV 命令行：到 liblib.tv/plugin 的「CLI」页装好，再在终端里运行 libtv login web 登录一次。", 409);
+  return { command: found.command, prefix: found.prefix, env: { ...env, ...found.env } };
+}
+
+/** 跑一条很快就结束的 libtv 命令，回解析好的 stdout JSON；失败说清楚（没登录、没会员之类原样带上 stderr） */
+async function libtvRun(ctx, args) {
+  const cli = await libtvCli(ctx);
+  const { code, stdout, stderr, error } = await runFile(cli.command, [...cli.prefix, ...args], { env: cli.env, timeoutMs: LIBTV_CHECK_MS });
+  const parsed = parseJson(stdout.trim());
+  if (code === 0 && parsed) return parsed;
+  throw libtvError(stderr || error?.message || stdout);
+}
+
+function libtvError(text) {
+  const reason = String(text ?? "").trim().split("\n").filter(Boolean).at(-1)?.slice(0, 240) ?? "";
+  if (/401|未登录|login/iu.test(reason)) return new AiEditError("libtv_login", "LibTV 命令行还没登录或登录过期了：在终端里运行 libtv login web 登录后再试。", 401);
+  if (/会员|vip/iu.test(reason)) return new AiEditError("libtv_vip", `这个模型要 LibTV 会员才能用${reason ? `（${reason}）` : ""}：开通会员，或者在 AI 剪辑设置里换一个不要会员的模型（比如万相）。`, 402);
+  if (/积分|余额|power/iu.test(reason)) return new AiEditError("quota_exceeded", "LibTV 的积分不够了，充值后再试。", 402);
+  return new AiEditError("provider_error", `LibTV 没生成出来${reason ? `：${reason}` : ""}`, 502);
+}
+
+const LIBTV = {
+  name: "LibTV",
+  title: "LibTV",
+  findIt: "LibTV 网页版的「AI 剪辑生成」画布里",
+  linkHours: 0,
+  async plan(ctx, config, args, prompt) {
+    const { model } = config;
+    const notes = [];
+    const duration = durationOf(args, 4, 15, notes);
+    const resolution = pick(args.resolution, RESOLUTIONS, "清晰度") ?? "720p";
+    const { first, last, refs } = frameArgs(args);
+    const ratio = first ? "adaptive" : pick(args.ratio, VIDEO_RATIOS, "画面比例") ?? await canvasRatio(ctx, VIDEO_RATIOS);
+    const audio = args.with_audio === true;
+    // 首尾帧、单图生视频、多图参考、文生视频
+    const modeType = first && last ? "frames2video" : first ? "singleImage2video" : refs.length ? "image2video" : "text2video";
+    const ids = first ? [first, last].filter(Boolean) : refs;
+    return {
+      key: { kind: "video", provider: "libtv", model, prompt, ratio, duration, resolution, audio, first, last, refs },
+      spend: { model, seconds: duration, resolution, ratio, audio, estimate: null },
+      notes, duration, audio,
+      async payload() {
+        // 图在本地查好，交给命令行上传
+        const files = [];
+        for (const id of ids) files.push({ id, file: (await readReference(ctx, id, ARK_REF_BYTES, "LibTV")) && ctx.library.readyPath(id) });
+        const settings = { model, modeType, ratio, resolution, duration: String(duration), enableSound: audio ? "on" : "off", count: "1" };
+        return { files, prompt, settings };
+      },
+    };
+  },
+  async create(ctx, config, { files, prompt, settings }) {
+    // 画布和参考图都不花钱，失败了照常报（任务还没建）
+    libtvProject ??= String((await libtvRun(ctx, ["project", "create", "AI 剪辑生成"])).uuid ?? "") || null;
+    if (!libtvProject) throw new AiEditError("provider_error", "LibTV 建画布时没给编号，稍后再试。", 502);
+    const stamp = `${Date.now().toString(36)}${randomBytes(2).toString("hex")}`;
+    const left = [];
+    for (const [index, { file }] of files.entries()) {
+      const uploaded = await libtvRun(ctx, ["upload", `参考图-${stamp}-${index + 1}`, "-t", "image", "-f", file, "-p", libtvProject]);
+      if (!uploaded.nodeKey) throw new AiEditError("provider_error", "LibTV 上传参考图时没给节点编号，稍后再试。", 502);
+      left.push("--left", String(uploaded.nodeKey));
+    }
+    const node = `AI 剪辑-${stamp}`;
+    const cli = await libtvCli(ctx);
+    const args = ["node", "create", node, "-t", "video", "-p", libtvProject, "--prompt", prompt,
+      ...Object.entries(settings).flatMap(([key, value]) => ["-s", `${key}=${value}`]), ...left, "--run"];
+    const run = { done: false, code: null, stdout: "", stderr: "" };
+    let child;
+    try {
+      // 不跟着采集器退出：中途杀掉结果写不回画布
+      child = spawn(cli.command, [...cli.prefix, ...args], { env: cli.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32" });
+    } catch (error) {
+      throw new AiEditError("libtv_missing", `LibTV 命令行起不来（${error.message}），任务没建上。`, 502);
+    }
+    child.unref();
+    const take = (current, chunk) => (current.length < 1_000_000 ? current + chunk : current);
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { run.stdout = take(run.stdout, chunk); });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { run.stderr = take(run.stderr, chunk); });
+    child.once("error", (error) => { Object.assign(run, { done: true, stderr: run.stderr || error.message }); });
+    child.once("close", (code) => { Object.assign(run, { done: true, code }); });
+    const taskId = `${libtvProject}/${node}`;
+    libtvRuns.set(taskId, run);
+    return taskId;
+  },
+  async query(ctx, config, taskId) {
+    const run = libtvRuns.get(taskId);
+    if (!run) return { status: "failed", failure: new AiEditError("generate_failed", `这边重启过，跟不上这段视频了：做完会在${LIBTV.findIt}，节点名 ${taskId.split("/").at(-1)}。`, 409) };
+    if (!run.done) return { status: "running" };
+    libtvRuns.delete(taskId);
+    const result = parseJson(run.stdout.trim()) ?? {};
+    const url = Array.isArray(result.data?.url) ? result.data.url[0] : Array.isArray(result.url) ? result.url[0] : undefined;
+    if (run.code === 0 && url) return { status: "succeeded", videoUrl: url, tokens: null };
+    // 命令行自己等了约 20 分钟还没终态（poll_timeout）：任务还在 LibTV 上跑，做完照样扣积分
+    if (/poll_timeout/iu.test(run.stdout + run.stderr)) {
+      return { status: "failed", failure: new AiEditError("generate_timeout", `LibTV 二十分钟还没做完，命令行不等了；做完会在${LIBTV.findIt}，照样扣积分，节点名 ${taskId.split("/").at(-1)}。`, 504) };
+    }
+    return { status: "failed", failure: libtvError(result.data?.taskInfo?.failedReason ?? result.failedReason ?? run.stderr) };
+  },
+  // 命令行没有取消
+  async cancel() { return false; },
+};
+
+// ---------- 任务：建、轮询、下载、后台 ----------
+
+/** 用户选的那家；老页面不带 provider，当方舟 */
+const VIDEO_APIS = { seedance: SEEDANCE, jimeng: JIMENG, xyq: XYQ, libtv: LIBTV };
+const apiOf = (config) => VIDEO_APIS[config.provider ?? "seedance"] ?? SEEDANCE;
 
 /**
  * 现查一次任务（查不到回 null）。取消之前用它，不信 job.status：轮询连着失败时 job.status 停在上次查到的 queued，
- * 方舟上可能早就做完扣费了，对做好的任务 DELETE 会把任务记录删掉（也回成功），钱扣了视频却再也找不回来。
+ * 对方可能早就做完扣费了，对做好的任务取消会把任务记录删掉（方舟也回成功），钱扣了视频却再也找不回来。
  */
-async function currentTask(ctx, config, job) {
+async function currentTask(ctx, api, config, job) {
   try {
-    const task = await arkRequest(ctx, config, tasksUrl(config, job.taskId), { signal: AbortSignal.any([job.signal, AbortSignal.timeout(QUERY_TIMEOUT_MS)]) });
-    return typeof task?.status === "string" ? task : null;
+    return await api.query(ctx, config, job.taskId, AbortSignal.any([job.signal, AbortSignal.timeout(QUERY_TIMEOUT_MS)]));
   } catch {
     return null;
   }
 }
 
-/** 方舟说任务结束了却没做成（失败、过期、被取消，都不扣费）：换成给模型的话；还没结束或做成了回 null。 */
-function endedError(task, config) {
-  if (task?.status === "failed") return arkError(0, JSON.stringify({ error: task.error ?? {} }), config);
-  if (task?.status === "expired") return new AiEditError("generate_expired", "排队超过一小时还没轮到，任务过期了，没有扣费。稍后再试。", 504);
-  if (task?.status === "cancelled") return new AiEditError("generate_cancelled", "这个任务被取消了，没有扣费。", 409);
-  return null;
-}
+/** 对方说任务结束了却没做成（失败、过期、被取消，都不扣费）：给模型的话；还没结束或做成了回 null。 */
+const endedError = (task) => (task && ["failed", "expired", "cancelled"].includes(task.status) ? task.failure ?? new AiEditError("generate_failed", "视频没生成出来，换个说法再试。", 502) : null);
 
-/** 排队中的任务取消掉（不扣费）；已经开始做的取消不了，回 false。只在刚查到还在排队时调。 */
-async function cancelTask(ctx, config, taskId) {
+/** 排队中的任务取消掉（不扣费）；已经开始做的、没有取消接口的回 false。只在刚查到还在排队时调。 */
+async function cancelTask(ctx, api, config, taskId) {
   try {
-    await arkRequest(ctx, config, tasksUrl(config, taskId), { method: "DELETE", signal: AbortSignal.timeout(QUERY_TIMEOUT_MS) });
-    return true;
+    return await api.cancel(ctx, config, taskId);
   } catch {
     return false;
   }
@@ -461,8 +987,8 @@ async function isMp4(file) {
   }
 }
 
-/** 方舟给的视频链接（24 小时有效，不带 Key）：先写 .part，失败了歇一下再试，最多 5 次。 */
-async function downloadVideo(ctx, url, signal, taskId) {
+/** 对方给的视频链接（不带 Key）：先写 .part，失败了歇一下再试，最多 5 次。 */
+async function downloadVideo(ctx, api, url, signal, taskId) {
   const fetchImpl = ctx.fetchImpl ?? modelFetch;
   const unit = ctx.pollMs ?? 1_000;
   const temp = tempFile(ctx, ".mp4");
@@ -490,52 +1016,12 @@ async function downloadVideo(ctx, url, signal, taskId) {
     }
   }
   // job 还留在登记里（做好了、钱扣了）：同样的说明再调就拿这个任务重新下载
-  throw new AiEditError("download_failed", `视频生成好了，但下载了 ${DOWNLOAD_ATTEMPTS} 次都没下下来（${reason}）。钱已经扣了，别换说法重新生成：用同样的参数再调一次 generate_video 会直接重新下载这一段，不会再扣钱，也不用用户再确认。方舟任务号 ${taskId}，也可以到火山方舟控制台按任务号下载（链接 24 小时内有效）。`, 502);
+  const elsewhere = api.linkHours ? `，也可以到${api.findIt}按任务号下载（链接 ${api.linkHours} 小时内有效）` : `，也可以到${api.findIt}找到它下载`;
+  throw new AiEditError("download_failed", `视频生成好了，但下载了 ${DOWNLOAD_ATTEMPTS} 次都没下下来（${reason}）。钱已经扣了，别换说法重新生成：用同样的参数再调一次 generate_video 会直接重新下载这一段，不会再扣钱，也不用用户再确认。${api.name}任务号 ${taskId}${elsewhere}。`, 502);
 }
 
-/** 建任务出了岔子、又说不准方舟那边建没建上：同样的说明再调时也不再建（job 记成 unknown）。 */
-const unclear = (why) => Object.assign(new AiEditError("create_uncertain", `建任务时${why}，不知道任务建没建上，可能已经在生成并扣费：先别重试，到火山方舟控制台的视频生成任务里看看。`, 502), { uncertain: true });
-
-/** 建任务：只发一次、不自动重发，拿到任务号记进 job。 */
-async function createTask(ctx, config, job, body) {
-  let status = 0;
-  let raw = "";
-  try {
-    const response = await (ctx.fetchImpl ?? modelFetch)(tasksUrl(config), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      // 建任务不跟着「停止」断开：断在半路就不知道任务建没建，钱可能照扣、视频却拿不到
-      signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
-    });
-    status = response.status;
-    raw = await response.text();
-  } catch (error) {
-    const failure = networkFailure(error);
-    // 连不上（域名、拒绝连接、证书、连接超时）：请求没发出去，肯定没建
-    if (!status && failure && NOT_SENT.test(String(error.cause?.code ?? ""))) {
-      throw new AiEditError("network_error", `${failure.text.replace(/。$/u, "")}。请求没发出去，任务没建上，没扣费。`, 502);
-    }
-    if (status) throw unclear("方舟的答复读到一半连接断了");
-    if (error?.name === "TimeoutError") throw unclear("方舟 2 分钟没回话");
-    throw unclear(`没收到方舟的答复（${error?.cause?.code || error?.message || "原因不明"}）`);
-  }
-  if (status >= 200 && status < 300) {
-    let created = null;
-    try { created = JSON.parse(raw); } catch { /* 下面按没给任务号处理 */ }
-    // 回了成功却没给任务号（不是 JSON、被中转站包了一层）：任务多半已经建上了
-    if (typeof created?.id !== "string" || !created.id) throw unclear("方舟回了成功，却没给任务编号");
-    job.taskId = created.id;
-    job.status = "queued";
-    return;
-  }
-  // 网关、中转站回的 5xx 和 408：可能上游已经建好了
-  if (status >= 500 || status === 408) throw unclear(`方舟回了 ${status}`);
-  throw arkError(status, raw, config);
-}
-
-/** 后台跟到上限还没做完：放弃，带上任务号（方舟上做完可能照样扣费）。 */
-const givenUp = (job, missed = "") => new AiEditError("generate_timeout", `跟了 3 小时视频还没做完${missed ? `（最后没查到进度：${missed.replace(/。$/u, "")}）` : ""}，这边不等了。方舟上做完可能照样扣费，到火山方舟控制台的视频生成任务里按任务号 ${job.taskId} 找。`, 504);
+/** 后台跟到上限还没做完：放弃，带上任务号（对方做完可能照样扣费）。 */
+const givenUp = (api, job, missed = "") => new AiEditError("generate_timeout", `跟了 3 小时视频还没做完${missed ? `（最后没查到进度：${missed.replace(/。$/u, "")}）` : ""}，这边不等了。${api.name}上做完可能照样扣费，到${api.findIt}按任务号 ${job.taskId} 找。`, 504);
 
 /** 轮询间歇：歇 ms，或者被 job.wake 叫醒（前台现查到任务有结果了，马上去收）。 */
 function nap(job, ms) {
@@ -551,13 +1037,14 @@ function nap(job, ms) {
  * job 和外面共用：前台不等了（用户点停止、等满 20 分钟）时外面现查一次状态，决定取消还是让它在后台做完；
  * job.signal 是「放弃」（取消成功或采集器关掉），和前台等不等无关。回 { item, tokens }，取消了回 null。
  */
-async function runVideoJob(ctx, config, job, { body, name, source }) {
+async function runVideoJob(ctx, api, config, job, { request, name, source }) {
   if (!job.taskId) {
-    await createTask(ctx, config, job, body);
+    job.taskId = await api.create(ctx, config, request);
+    job.status = "queued";
     // 建任务的时候用户已经点了停止：刚建好肯定还在排队，取消掉；没取消成功（断网、限流）下面轮询时接着试
-    if (job.stopped && await cancelTask(ctx, config, job.taskId)) return null;
+    if (job.stopped && await cancelTask(ctx, api, config, job.taskId)) return null;
   }
-  // 正式环境 ctx.pollMs 是 1 秒，方舟按 10 倍间隔查（10 秒后第一次，之后每 10 秒）；测试里调小
+  // 正式环境 ctx.pollMs 是 1 秒，按 10 倍间隔查（10 秒后第一次，之后每 10 秒）；测试里调小
   const unit = ctx.pollMs ?? 1_000;
   const every = unit * 10;
   const giveUpAt = Date.now() + VIDEO_GIVE_UP_POLLS * unit;
@@ -570,34 +1057,33 @@ async function runVideoJob(ctx, config, job, { body, name, source }) {
     // 到了上限也先再查一次：做完了照常收，还没结束才放弃
     const late = Date.now() > giveUpAt;
     try {
-      task = await arkRequest(ctx, config, tasksUrl(config, job.taskId), { signal: AbortSignal.any([job.signal, AbortSignal.timeout(QUERY_TIMEOUT_MS)]) });
+      task = await api.query(ctx, config, job.taskId, AbortSignal.any([job.signal, AbortSignal.timeout(QUERY_TIMEOUT_MS)]));
       misses = 0;
       wait = every;
     } catch (error) {
       if (job.signal.aborted || !error?.transient) throw error;
-      if (late) throw givenUp(job, error.message);
-      // 断网、超时、限流、方舟 5xx 都是一时的，任务还在方舟上跑，不能因为查不到就丢下：间隔翻倍往后退，最长一分钟
+      if (late) throw givenUp(api, job, error.message);
+      // 断网、超时、限流、对方 5xx 都是一时的，任务还在对方那边跑，不能因为查不到就丢下：间隔翻倍往后退，最长一分钟
       misses += 1;
       wait = Math.min(every * 2 ** (misses - 1), every * 6);
       continue;
     }
-    job.status = task?.status ?? job.status;
+    job.status = task.status ?? job.status;
     // 用户点了停止、刚查到还在排队：再试着取消（上一次碰上断网、限流没取消成功），跟着轮询的间隔一直试到它开跑
-    if (job.stopped && task?.status === "queued" && await cancelTask(ctx, config, job.taskId)) return null;
-    if (task?.status === "succeeded") break;
-    const ended = endedError(task, config);
+    if (job.stopped && task.status === "queued" && await cancelTask(ctx, api, config, job.taskId)) return null;
+    if (task.status === "succeeded") break;
+    const ended = endedError(task);
     if (ended) throw ended;
-    if (late) throw givenUp(job);
+    if (late) throw givenUp(api, job);
   }
-  const url = task.content?.video_url;
+  const url = task.videoUrl;
   if (typeof url !== "string" || !/^https?:\/\//iu.test(url)) {
-    throw new AiEditError("provider_error", `方舟说视频生成好了，但没给下载链接。钱已经扣了，别换说法重新生成：过一会儿用同样的参数再调一次会重新去取，不会再扣钱；也可以到火山方舟控制台按任务号 ${job.taskId} 下载。`, 502);
+    throw new AiEditError("provider_error", `${api.name}说视频生成好了，但没给下载链接。钱已经扣了，别换说法重新生成：过一会儿用同样的参数再调一次会重新去取，不会再扣钱；也可以到${api.findIt}按任务号 ${job.taskId} 下载。`, 502);
   }
   job.videoUrl = url;
-  const temp = await downloadVideo(ctx, url, job.signal, job.taskId);
+  const temp = await downloadVideo(ctx, api, url, job.signal, job.taskId);
   const item = await adopt(ctx, temp, { name, extension: ".mp4", source });
-  const tokens = task.usage?.completion_tokens;
-  return { item, tokens: Number.isFinite(tokens) ? tokens : null };
+  return { item, tokens: task.tokens ?? null };
 }
 
 /** 新开（或重新下载时重开）一次：放弃信号跟着采集器关掉走。redownload：做好了没下载下来、这次只是重新下载（不再扣钱）。 */
@@ -625,7 +1111,7 @@ function track(job, promise) {
  * 前台等 job 做完。用户点了停止、或者从点「生成」起等满 20 分钟，就不等了：现查一次，还在排队的取消掉（不扣费）；
  * 已经开始做的停不下来、照样扣费，留在后台做完、照样放进素材库，记进 generated.background（带上阶段），这一轮结尾告诉用户。
  */
-async function waitForVideo(ctx, config, job, status) {
+async function waitForVideo(ctx, api, config, job, status) {
   const waited = AbortSignal.timeout(VIDEO_WAIT_POLLS * (ctx.pollMs ?? 1_000));
   const foreground = AbortSignal.any([ctx.signal, waited].filter(Boolean));
   ctx.onGenerating?.(status);
@@ -636,15 +1122,15 @@ async function waitForVideo(ctx, config, job, status) {
     const stopped = Boolean(ctx.signal?.aborted);
     if (stopped) job.stopped = true;
     // 只有现查到还在排队才取消；查不到的、已经开始做的一律当停不下来，转到后台
-    const fresh = job.taskId && job.status !== "succeeded" ? await currentTask(ctx, config, job) : null;
+    const fresh = job.taskId && job.status !== "succeeded" ? await currentTask(ctx, api, config, job) : null;
     if (fresh) job.status = fresh.status;
-    if (fresh?.status === "queued" && await cancelTask(ctx, config, job.taskId)) {
+    if (fresh?.status === "queued" && await cancelTask(ctx, api, config, job.taskId)) {
       job.controller.abort();
       if (stopped) throw error;
       throw new AiEditError("generate_timeout", "排了 20 分钟队还没轮到，这边取消了，没有扣费。稍后再试。", 504);
     }
-    // 方舟上已经结束了却没做成：不扣费，也不用再跟
-    const ended = endedError(fresh, config);
+    // 对方那边已经结束了却没做成：不扣费，也不用再跟
+    const ended = endedError(fresh);
     if (ended) {
       job.controller.abort();
       if (stopped) throw error;
@@ -652,17 +1138,17 @@ async function waitForVideo(ctx, config, job, status) {
     }
     // 现查到已经做好了：叫醒轮询马上去下载，不用等下一次
     if (fresh?.status === "succeeded") job.wake?.();
-    ctx.generated?.background?.push({ name: job.name, ...(job.taskId ? { taskId: job.taskId } : {}), phase: videoPhase(job) });
+    ctx.generated?.background?.push({ name: job.name, ...(job.taskId ? { taskId: job.taskId } : {}), phase: videoPhase(job), service: api.name, findIt: api.findIt });
     job.promise.catch((failure) => {
       if (failure?.name !== "AbortError") console.error("AI 剪辑转到后台的视频没放进素材库:", job.taskId ?? "任务没建上", failure?.code ?? failure?.name);
-      else if (ctx.shutdown?.aborted && job.taskId) console.warn("AI 剪辑关掉时视频还没做完，方舟任务号:", job.taskId);
+      else if (ctx.shutdown?.aborted && job.taskId) console.warn(`AI 剪辑关掉时视频还没做完，${api.name}任务号:`, job.taskId);
     });
     if (stopped) throw error;
     if (job.status === "succeeded") {
-      const what = job.redownload ? "上次已经生成好了（不会再扣钱），还在重新下载" : "已经在方舟上生成好了（已经扣费），还在下载";
+      const what = job.redownload ? "上次已经生成好了（不会再扣钱），还在重新下载" : `已经在${api.name}上生成好了（已经扣费），还在下载`;
       throw new AiEditError("generate_background", `视频${what}（任务号 ${job.taskId}），下完会自动放进素材库。别再生成一次，过几分钟用 list_media 找它。`, 202);
     }
-    throw new AiEditError("generate_background", `视频还在方舟上生成${job.taskId ? `（任务号 ${job.taskId}）` : ""}，做完会自动放进素材库，照常扣费。别再生成一次，过几分钟用 list_media 找它。`, 202);
+    throw new AiEditError("generate_background", `视频还在${api.name}上生成${job.taskId ? `（任务号 ${job.taskId}）` : ""}，做完会自动放进素材库，照常扣费。别再生成一次，过几分钟用 list_media 找它。`, 202);
   } finally {
     ctx.onGenerating?.(null);
   }
@@ -680,55 +1166,39 @@ function videoPhase(job) {
   return "generating";
 }
 
-/** 这一轮转到后台的视频（generated.background），回复末尾跟用户说清楚：按阶段说扣不扣费、会不会自己进素材库、关掉应用怎么办。 */
+/**
+ * 这一轮转到后台的视频（generated.background），回复末尾跟用户说清楚：按阶段说扣不扣费、会不会自己进素材库、关掉应用怎么办。
+ * 一轮只用一家服务，用第一段记下的叫法（老记录没有，当方舟）。
+ */
 export function backgroundNote(background, { stopped = false } = {}) {
   if (!background?.length) return "";
-  const named = ({ name, taskId }) => `“${name}”${taskId ? `（方舟任务号 ${taskId}）` : ""}`;
+  const service = background[0].service ?? SEEDANCE.name;
+  const findIt = background[0].findIt ?? SEEDANCE.findIt;
+  const named = ({ name, taskId }) => `“${name}”${taskId ? `（${service}任务号 ${taskId}）` : ""}`;
   const list = (phase) => background.filter((video) => video.phase === phase).map(named).join("、");
   const submitted = background.filter((video) => video.phase === "submitted");
   const lines = [
-    list("generating") && `视频${list("generating")}还在方舟上生成${stopped ? "，停不下来" : ""}，做完会自动放进素材库，照常扣费。`,
-    list("downloading") && `视频${list("downloading")}已经在方舟上生成好了，钱已经扣了，还在下载，下完会自动放进素材库。`,
+    list("generating") && `视频${list("generating")}还在${service}上生成${stopped ? "，停不下来" : ""}，做完会自动放进素材库，照常扣费。`,
+    list("downloading") && `视频${list("downloading")}已经在${service}上生成好了，钱已经扣了，还在下载，下完会自动放进素材库。`,
     list("redownload") && `视频${list("redownload")}上次生成好了没下载下来，这次在重新下载，不会再扣钱，下完会自动放进素材库。`,
-    submitted.length && `视频${list("submitted")}${submitted.every((video) => !video.taskId) ? "刚提交给方舟" : "已经提交给方舟"}，如果已经开始生成就停不下来，做完会自动放进素材库，照常扣费；还在排队的会取消，不扣费。`,
+    submitted.length && `视频${list("submitted")}${submitted.every((video) => !video.taskId) ? `刚提交给${service}` : `已经提交给${service}`}，如果已经开始生成就停不下来，做完会自动放进素材库，照常扣费；还在排队的会取消，不扣费。`,
   ];
   const making = background.some((video) => video.phase === "generating" || video.phase === "submitted");
   const ids = background.some((video) => video.taskId);
-  lines.push(`要开着应用等它${making ? "做完" : "下完"}；关掉的话，到火山方舟控制台的视频生成任务里${ids ? "按任务号" : ""}下载。`);
+  lines.push(`要开着应用等它${making ? "做完" : "下完"}；关掉的话，到${findIt}${ids ? "按任务号" : ""}下载。`);
   return lines.filter(Boolean).join("");
 }
 
 /** generate_video：先查重，再请用户确认，同意了才建任务。回 { item, note, reused?, tokens? }。 */
 export async function generateVideo(ctx, args) {
   const config = ctx.generation?.video;
-  if (!config) throw new AiEditError("generate_unavailable", "还没在 AI 剪辑设置里填生成视频的 Key，这个工具现在用不了。", 409);
-  const { model } = config;
+  if (!config) throw new AiEditError("generate_unavailable", "还没在 AI 剪辑设置里连上生成视频的服务，这个工具现在用不了。", 409);
+  const api = apiOf(config);
   const prompt = promptOf(args.prompt, MAX_VIDEO_PROMPT);
   const name = nameOf(args.name, prompt);
-  const notes = [];
-  // 2.5 系列能生成 4–30 秒，其他 4–15 秒；超出就夹到范围里
-  const [shortest, longest] = /^doubao-seedance-2-5/iu.test(model) ? [4, 30] : [4, 15];
-  if (args.duration !== undefined && (typeof args.duration !== "number" || !Number.isFinite(args.duration))) throw new AiEditError("arguments_invalid", "时长要填秒数。");
-  const asked = args.duration === undefined ? 5 : Math.round(args.duration);
-  const duration = Math.min(longest, Math.max(shortest, asked));
-  if (duration !== asked) notes.push(`这个模型只能生成 ${shortest} 到 ${longest} 秒，按 ${duration} 秒生成的。`);
-  const resolution = pick(args.resolution, RESOLUTIONS, "清晰度") ?? "720p";
-  if (resolution === "1080p" && /^doubao-seedance-2-0-(fast|mini)/iu.test(model)) {
-    throw new AiEditError("arguments_invalid", "用户设的视频模型（fast 或 mini）只能出 480p 或 720p，清晰度改成 720p。");
-  }
-  // 2.5 的 1080p 是 10 位色深的 H.265：剪映和看板（Chromium）在不少电脑上放不了，花了钱拿到黑屏
-  if (resolution === "1080p" && /^doubao-seedance-2-5/iu.test(model)) {
-    throw new AiEditError("arguments_invalid", "2.5 系列出的 1080p 视频是 10 位色深的 H.265 编码，剪映和这台电脑上可能放不了，清晰度改成 720p。");
-  }
-  const first = typeof args.first_frame_media_id === "string" ? args.first_frame_media_id : null;
-  const last = typeof args.last_frame_media_id === "string" ? args.last_frame_media_id : null;
-  const refIds = idList(args.reference_media_ids, MAX_VIDEO_REFS, "参考图");
-  if (last && !first) throw new AiEditError("arguments_invalid", "给了尾帧就要同时给首帧。");
-  if (first && refIds.length) throw new AiEditError("arguments_invalid", "首帧尾帧和参考图是两种用法，不能同时给：要从某张图动起来就只给首帧（可加尾帧），要参考几张图的样子就只给参考图。");
-  // 给了首帧（或首尾帧）时画面比例跟着首帧走
-  const ratio = first ? "adaptive" : pick(args.ratio, VIDEO_RATIOS, "画面比例") ?? await canvasRatio(ctx, VIDEO_RATIOS);
-  const audio = args.with_audio === true;
-  const key = generationKey({ kind: "video", model, prompt, ratio, duration, resolution, audio, first, last, refs: refIds });
+  const plan = await api.plan(ctx, config, args, prompt);
+  const { notes, duration, audio } = plan;
+  const key = generationKey(plan.key);
   const existing = generatedBefore(ctx.library, key);
   if (existing) return { item: existing, reused: true, note: REUSED };
   const slot = `${ctx.library.root}\n${key}`;
@@ -745,29 +1215,30 @@ export async function generateVideo(ctx, args) {
   if (job?.promise) {
     // 上一轮点停止时这段还在提交、排队：还在排队的会被取消，别说「做完会自己放进素材库」
     if (job.stopped && (job.status === "creating" || job.status === "queued")) {
-      throw human(new AiEditError("generate_pending", "上一轮停止时这段视频刚提交给方舟：排队中的会被取消、不扣费；已经开始生成的停不下来，做完会自己放进素材库。过一会儿用 list_media 看看，没有的话再调 generate_video，会重新请用户确认。", 409),
+      throw human(new AiEditError("generate_pending", `上一轮停止时这段视频刚提交给${api.name}：排队中的会被取消、不扣费；已经开始生成的停不下来，做完会自己放进素材库。过一会儿用 list_media 看看，没有的话再调 generate_video，会重新请用户确认。`, 409),
         `上一轮停止时视频“${name}”刚提交，这次没再生成`);
     }
-    throw new AiEditError("generate_pending", "同样的这段视频还在方舟上生成，做完会自己放进素材库：过几分钟用 list_media 找它，别再生成一次。", 409);
+    throw new AiEditError("generate_pending", `同样的这段视频还在${api.name}上生成，做完会自己放进素材库：过几分钟用 list_media 找它，别再生成一次。`, 409);
   }
   if (job?.status === "unknown") {
-    throw new AiEditError("create_uncertain", "上次建这段视频的任务时没收到方舟的明确答复，不知道建没建上，可能已经在生成并扣费：先别重试，到火山方舟控制台的视频生成任务里看看。用户看过确实没建上、还要这段，就把说明改一点再生成。", 409);
+    throw new AiEditError("create_uncertain", `上次建这段视频的任务时没收到${api.name}的明确答复，不知道建没建上，可能已经在生成并扣费：先别重试，到${api.findIt}看看。用户看过确实没建上、还要这段，就把说明改一点再生成。`, 409);
   }
-  const source = { type: "generated", provider: "seedance", model, prompt: prompt.slice(0, 200), key };
+  const source = { type: "generated", provider: config.provider ?? "seedance", model: config.model, prompt: prompt.slice(0, 200), key };
   const finish = (result, extra = []) => {
     const seconds = result.item.durationUs ? Math.round(result.item.durationUs / 10_000) / 100 : duration;
+    const sound = audio === null ? "" : audio ? "带声音" : "没有声音";
     return {
       item: result.item,
       ...(result.tokens !== null ? { tokens: result.tokens } : {}),
-      note: [...notes, ...extra, `生成了 ${seconds} 秒${audio ? "带声音" : "没有声音"}的视频。`, VIDEO_NOTE].join(""),
+      note: [...notes, ...extra, `生成了 ${seconds} 秒${sound}的视频。`, VIDEO_NOTE].join(""),
     };
   };
   if (job?.status === "succeeded") {
     // 做好了、钱扣了，上次没下载下来：拿原任务重新查一次链接再下载，不问用户、不建任务
     job.name = name;
     armJob(job, ctx, { redownload: true });
-    track(job, runVideoJob(ctx, config, job, { name, source }));
-    return finish(await waitForVideo(ctx, config, job, `正在重新下载视频“${name}”…`), ["上次生成好了没下载下来，这次重新下载好了，没有再扣钱。"]);
+    track(job, runVideoJob(ctx, api, config, job, { name, source }));
+    return finish(await waitForVideo(ctx, api, config, job, `正在重新下载视频“${name}”…`), ["上次生成好了没下载下来，这次重新下载好了，没有再扣钱。"]);
   }
   if (ctx.generated && (ctx.generated.videos ?? 0) >= VIDEOS_PER_TURN) {
     throw human(new AiEditError("generate_limit", `这一轮已经请用户确认过 ${VIDEOS_PER_TURN} 段视频（没同意的也算），到上限了。先用已经有的素材，还要更多就跟用户说一声，等用户下一句话再生成。`, 429),
@@ -775,13 +1246,7 @@ export async function generateVideo(ctx, args) {
   }
   ctx.library.assertRoom();
   // 参考图在问用户之前查好：不合格的别让用户白点一次确认
-  const images = [];
-  if (first) images.push(await arkImage(ctx, first, "first_frame"));
-  if (last) images.push(await arkImage(ctx, last, "last_frame"));
-  for (const id of refIds) images.push(await arkImage(ctx, id, "reference_image"));
-  if (images.reduce((total, image) => total + image.image_url.url.length, 0) > ARK_BODY_CHARS) {
-    throw new AiEditError("image_too_large", "参考图加起来太大了，Seedance 一次收不下：少用几张，或者换小一点的图。");
-  }
+  const request = await plan.payload();
   if (!ctx.askSpend) throw new AiEditError("spend_unavailable", "生成视频要用户在应用里点确认，要开着应用才能确认。", 409);
   // 问之前就算一段：用户没同意也算，免得模型一轮里反复弹确认
   if (ctx.generated) ctx.generated.videos = (ctx.generated.videos ?? 0) + 1;
@@ -790,10 +1255,7 @@ export async function generateVideo(ctx, args) {
   videoJobs.set(slot, job);
   const release = () => { if (videoJobs.get(slot) === job) videoJobs.delete(slot); };
   try {
-    await ctx.askSpend({
-      kind: "video", provider: "火山方舟 Seedance", model, seconds: duration, resolution, ratio, audio,
-      prompt: prompt.slice(0, 200), estimate: estimateVideoCost(model, duration, resolution),
-    });
+    await ctx.askSpend({ kind: "video", provider: api.title, ...plan.spend, prompt: prompt.slice(0, 200) });
   } catch (error) {
     release();
     if (error?.code === "spend_denied") throw human(error, `你选了不生成视频“${name}”`, { declined: true });
@@ -809,16 +1271,6 @@ export async function generateVideo(ctx, args) {
   }
   Object.assign(job, { status: "creating", at: Date.now() });
   armJob(job, ctx);
-  track(job, runVideoJob(ctx, config, job, {
-    body: {
-      model,
-      content: [{ type: "text", text: prompt }, ...images],
-      resolution, ratio, duration, generate_audio: audio, watermark: false,
-      // 排队超过一小时就让方舟自己作废，别过两天突然做完扣费
-      execution_expires_after: 3600,
-    },
-    name,
-    source,
-  }));
-  return finish(await waitForVideo(ctx, config, job, `正在生成视频“${name}”，方舟一般要一到几分钟…`));
+  track(job, runVideoJob(ctx, api, config, job, { request, name, source }));
+  return finish(await waitForVideo(ctx, api, config, job, `正在生成视频“${name}”，${api.name}一般要一到几分钟…`));
 }
