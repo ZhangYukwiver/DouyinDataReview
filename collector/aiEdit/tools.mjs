@@ -60,7 +60,7 @@ import { MODEL_HINT, mergeCaptions, placeLines, transcribeMedia } from "./transc
 // 宿主内部用、不给模型：createProject（新建会话）、deleteProject（删会话）、listProjects（不需要，会话就是工程列表）。
 // 网页片段（openfilm 的页面，film/pages.mjs）：write_page 写好渲成素材、read_page 读回 HTML。
 // 生成素材（generate.mjs，用户在设置里开启了才发给模型：填了 Key，视频也可以勾选借用已填的方舟 Key）：generate_image 走 OpenAI 兼容的图片接口，
-// generate_video 走火山方舟 Seedance，要用户在页面上点「生成」确认（spend.mjs）才建任务。
+// generate_video 走用户选的那家视频服务（方舟 Seedance、即梦、小云雀、LibTV），要用户在页面上点「生成」确认（spend.mjs）才建任务。
 // 另外几个不碰工程的工具：list_media、search_my_records、import_douyin_video、search_catalog，
 // 以及参考视频用的 search_douyin（探索的抖音搜索）和 analyze_reference（用 AI 剪辑自己的模型看视频，提示词借用解析库的）。
 
@@ -264,10 +264,18 @@ function mediaLine(item) {
   return `- ${item.id}｜${kind}｜${item.name}｜${length}｜${size}${audio ? `｜${audio}` : ""}${page}${generated}${state}`;
 }
 
+// 用户选的那家视频服务各有什么限制（写进系统提示，免得模型白调一次）
+const VIDEO_SERVICE_NOTES = {
+  seedance: "这次用火山方舟 Seedance 生成：首帧、尾帧和参考图里不能有真人脸（Seedance 不收）。",
+  jimeng: "这次用即梦生成：只有 5 秒、10 秒两档，不带声音，不收参考图；能不能给首帧、尾帧看用户设的模型（不合适工具会说）。",
+  xyq: "这次用小云雀生成：按积分扣，确认卡片上估不出价钱；比例只有 16:9、9:16、4:3、3:4、1:1。",
+  libtv: "这次用 LibTV 生成（通过这台电脑上登录好的 LibTV 命令行）：按积分扣，确认卡片上估不出价钱；生成可能要十几分钟。",
+};
+
 /**
  * 系统提示只放一轮里基本不变的内容（规则、工程名和画布、素材清单）：方舟等接口按前缀缓存，
  * 系统提示一变后面整段历史都得重新算。总时长和当前时间线每做一步都会变，放在 buildContextMessage 里、每次请求附在最后。
- * generation：{ image, video } 这一轮配没配生成图片、生成视频（配了才有对应的工具和规则）。
+ * generation：{ image, video } 这一轮配没配生成图片、生成视频（配了才有对应的工具和规则）；video 是用哪家（seedance、jimeng、xyq、libtv），没配是 false。
  */
 export function buildSystemPrompt({ project, media, goal = "", freeOnly = false, generation = {} }) {
   const { width, height, fps } = project.canvas;
@@ -310,7 +318,7 @@ export function buildSystemPrompt({ project, media, goal = "", freeOnly = false,
     "  · 只用系统字体（\"PingFang SC\", \"Microsoft YaHei\", sans-serif），别引网络字体和网上的图片（会加载失败）；脚本库只能从 cdn.jsdelivr.net、cdnjs.cloudflare.com、unpkg.com 引。页面没有声音，配乐和音效另外放音频片段。",
     "  · write_page 返回 problems 时（脚本报错、加载失败、画面重画一次就不一样）要改好再用。改已有的网页片段先 read_page 读出来，改完带上同一个 page_id 再 write_page，时间线上的片段会自动换成新画面。",
     ...(generation.image ? [`- 素材库里没有、又确实缺的静态画面（背景、插画、示意图、封面底图、贴纸），可以用 generate_image 生成一张图：按张收费，一轮最多 ${IMAGES_PER_TURN} 张，只给真正缺的画面用。说明写清内容、风格、构图和颜色，别写真人名字；比例和画布不一样时放上时间线用 fit cover 铺满或按需缩放。`] : []),
-    ...(generation.video ? ["- 素材库里实在没有、又非要动态画面的镜头，可以用 generate_video 生成一段视频：要花钱（720p 5 秒约 5 元，1080p 和更长的更贵，2.5 系列的长视频一段要几十元；确切价钱看确认卡片），调用后应用会请用户在界面上确认，生成要几分钟。用户不同意或没人确认时别再调，改用图片、网页片段或素材库里现有的素材。时长按镜头需要来，别图省事一律拉满；一般不要声音（剪辑另配音乐）。首帧、尾帧和参考图里不能有真人脸（Seedance 不收）。"] : []),
+    ...(generation.video ? [`- 素材库里实在没有、又非要动态画面的镜头，可以用 generate_video 生成一段视频：要花钱（720p 5 秒大约几元，更清晰、更长的更贵；确切价钱看确认卡片），调用后应用会请用户在界面上确认，生成要几分钟。用户不同意或没人确认时别再调，改用图片、网页片段或素材库里现有的素材。时长按镜头需要来，别图省事一律拉满；一般不要声音（剪辑另配音乐）。${VIDEO_SERVICE_NOTES[generation.video] ?? VIDEO_SERVICE_NOTES.seedance}`] : []),
     ...(generation.image || generation.video ? ["- 生成过的图片和视频都在素材库里（来源写着 AI 生成），先用 list_media 找，别重复生成；同样的说明再调会直接回之前那一个。"] : []),
     `- 特效、滤镜、转场、动画、蒙版、混合模式、字体只能用剪映内置的名称：先用 search_catalog 查到准确名称再用，不要自己编。${freeOnly
       ? "用户选了只用免费素材：标着 vip 的要剪映会员才能导出，一个都不要用（search_catalog 也只会列出免费的）。"
@@ -1299,12 +1307,12 @@ const TOOLS = [
   },
   {
     name: "generate_video",
-    description: "用 AI（火山方舟 Seedance）生成一段视频放进素材库，返回 media_id，再用 add_media_clip 放上时间线。要花钱（720p 5 秒约 5 元，越长越贵，确切价钱看确认卡片），调用后应用会请用户在界面上确认，用户点了才生成，生成要几分钟。"
+    description: "用 AI（用户在设置里选的那家：火山方舟 Seedance、即梦、小云雀或 LibTV）生成一段视频放进素材库，返回 media_id，再用 add_media_clip 放上时间线。要花钱（越长越贵，确切价钱看确认卡片），调用后应用会请用户在界面上确认，用户点了才生成，生成要几分钟。"
       + "只给素材库里实在没有、又非要动态画面的镜头用。可以给首帧（或首尾帧）让画面从那张图动起来，也可以给几张参考图，两种用法不能同时用；图里不能有真人脸。同样的说明生成过会直接回那一段，不再花钱。",
     parameters: obj({
       prompt: str("画面说明：主体、动作、镜头怎么动、风格、光线，2000 字以内；别写真人名字"),
       name: str("素材名，30 字以内；不填就用说明的开头"),
-      duration: int("时长（秒），默认 5，按镜头需要定，越长越贵；一般模型 4 到 15 秒，2.5 系列 4 到 30 秒", { minimum: 4, maximum: 30 }),
+      duration: int("时长（秒），默认 5，按镜头需要定，越长越贵；一般模型 4 到 15 秒，Seedance 2.5 系列 4 到 30 秒，即梦只有 5 或 10 秒", { minimum: 4, maximum: 30 }),
       ratio: choice(["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"], "画面比例，不填按工程画布挑最接近的；给了首帧时跟着首帧"),
       resolution: choice(["480p", "720p", "1080p"], "清晰度，默认 720p；fast、mini 模型没有 1080p"),
       first_frame_media_id: str("首帧：素材库里图片的 media_id，视频从这张图开始动"),

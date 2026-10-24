@@ -80,30 +80,71 @@ export function saveAiEditConfig(config: AiEditConfig): void {
 
 /** 一项生成服务的接口地址、Key、模型 */
 export interface AiEditGenerateService { baseUrl: string; apiKey: string; model: string }
-/** 生成视频多一个开关 borrow：Key 留空时借不借方舟的 Key（AI 剪辑的，其次解析库的）；用户勾了才借，默认不借 */
+/** 方舟 Seedance 多一个开关 borrow：Key 留空时借不借方舟的 Key（AI 剪辑的，其次解析库的）；用户勾了才借，默认不借 */
 export interface AiEditGenerateVideoService extends AiEditGenerateService { borrow: boolean }
-/** 生成图片走 OpenAI 兼容的图片接口，生成视频走火山方舟 Seedance；哪项填了 Key（视频也可以勾选借 Key），AI 才有哪项工具 */
-export interface AiEditGenerateConfig { image: AiEditGenerateService; video: AiEditGenerateVideoService }
-/** 随消息发给采集器的那份：只带配好了的那项 */
-export interface AiEditGenerationRequest { image?: AiEditGenerateService; video?: AiEditGenerateService }
+/** 即梦走火山引擎的 AccessKey 签名：apiKey 存 AccessKeyId，secretKey 存 SecretAccessKey */
+export interface AiEditJimengService extends AiEditGenerateService { secretKey: string }
+/** 生成视频能用的几家 */
+export type AiEditVideoProvider = "seedance" | "jimeng" | "xyq" | "libtv";
+/** 配置里存服务的几项：image 是 OpenAI，video 是方舟 Seedance（老名字不改，存着的配置照读），另外三家各一项 */
+export type AiEditGenerateSlot = "image" | "video" | "jimeng" | "xyq" | "libtv";
+export const VIDEO_PROVIDER_SLOT: Record<AiEditVideoProvider, AiEditGenerateSlot> = { seedance: "video", jimeng: "jimeng", xyq: "xyq", libtv: "libtv" };
+export const GENERATE_SLOTS: AiEditGenerateSlot[] = ["image", "video", "jimeng", "xyq", "libtv"];
+
+/** 每家一项各存各的 Key；use 记图片、视频各用哪家（null 不生成），用的那家没连上（没填 Key）也是不生成 */
+export interface AiEditGenerateConfig {
+  image: AiEditGenerateService;
+  video: AiEditGenerateVideoService;
+  jimeng: AiEditJimengService;
+  xyq: AiEditGenerateService;
+  libtv: AiEditGenerateService;
+  use: { image: "openai" | null; video: AiEditVideoProvider | null };
+}
+/** 随消息发给采集器的那份：只带要用、也连上了的那家；视频带上是哪家 */
+export interface AiEditGenerationRequest {
+  image?: AiEditGenerateService;
+  video?: AiEditGenerateService & { provider: AiEditVideoProvider; secretKey?: string };
+}
 
 export const DEFAULT_AI_EDIT_GENERATE_CONFIG: AiEditGenerateConfig = {
   image: { baseUrl: "https://api.openai.com/v1", apiKey: "", model: "gpt-image-2.5-flare" },
   video: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "", model: "doubao-seedance-2-0-260128", borrow: false },
+  jimeng: { baseUrl: "https://visual.volcengineapi.com", apiKey: "", secretKey: "", model: "jimeng_ti2v_v30_pro" },
+  xyq: { baseUrl: "https://xyq.jianying.com", apiKey: "", model: "Seedance_2.0_mini" },
+  // LibTV 没有 Key：走这台电脑上登录好的官方命令行，连上时 apiKey 记成 LIBTV_CLI
+  libtv: { baseUrl: "https://www.liblib.tv", apiKey: "", model: "Seedance 2.0 VIP" },
+  // 老配置没有这一项：照原来的规矩，图片填了 Key 就用，视频走方舟
+  use: { image: "openai", video: "seedance" },
 };
 
+/** LibTV 连上的记号（它不用 Key，采集器调本机的 libtv 命令行） */
+export const LIBTV_CLI = "cli";
+
 const GENERATE_CONFIG_KEY = "dy2.aiEditGenerateConfig";
+const VIDEO_PROVIDERS = Object.keys(VIDEO_PROVIDER_SLOT) as AiEditVideoProvider[];
 
 export function loadAiEditGenerateConfig(): AiEditGenerateConfig {
   try {
-    const saved = JSON.parse(globalThis.localStorage?.getItem(GENERATE_CONFIG_KEY) ?? "{}") as { image?: Partial<AiEditGenerateService> | null; video?: Partial<AiEditGenerateVideoService> | null } | null;
-    const service = (kind: keyof AiEditGenerateConfig): AiEditGenerateService => {
-      const stored = saved?.[kind];
-      const pick = (key: keyof AiEditGenerateService): string => { const value = stored?.[key]; return typeof value === "string" ? value : DEFAULT_AI_EDIT_GENERATE_CONFIG[kind][key]; };
-      return { baseUrl: pick("baseUrl"), apiKey: pick("apiKey"), model: pick("model") };
+    const saved = JSON.parse(globalThis.localStorage?.getItem(GENERATE_CONFIG_KEY) ?? "{}") as Record<string, unknown> | null;
+    const text = (slot: AiEditGenerateSlot, key: string): string => {
+      const stored = saved?.[slot] as Record<string, unknown> | null | undefined;
+      const value = stored && typeof stored === "object" ? stored[key] : undefined;
+      return typeof value === "string" ? value : (DEFAULT_AI_EDIT_GENERATE_CONFIG[slot] as unknown as Record<string, string>)[key]!;
     };
-    // 借 Key 只认存着的 true：没有这一项的老配置读出来是不借
-    return { image: service("image"), video: { ...service("video"), borrow: saved?.video?.borrow === true } };
+    const service = (slot: AiEditGenerateSlot): AiEditGenerateService => ({ baseUrl: text(slot, "baseUrl"), apiKey: text(slot, "apiKey"), model: text(slot, "model") });
+    const use = (saved?.use ?? {}) as { image?: unknown; video?: unknown };
+    return {
+      image: service("image"),
+      // 借 Key 只认存着的 true：没有这一项的老配置读出来是不借
+      video: { ...service("video"), borrow: (saved?.video as { borrow?: unknown } | undefined)?.borrow === true },
+      jimeng: { ...service("jimeng"), secretKey: text("jimeng", "secretKey") },
+      xyq: service("xyq"),
+      libtv: service("libtv"),
+      use: {
+        image: use.image === null ? null : "openai",
+        video: use.video === null ? null : VIDEO_PROVIDERS.includes(use.video as AiEditVideoProvider) ? use.video as AiEditVideoProvider : "seedance",
+      },
+    };
   } catch {
     return DEFAULT_AI_EDIT_GENERATE_CONFIG;
   }
@@ -113,14 +154,18 @@ export function saveAiEditGenerateConfig(config: AiEditGenerateConfig): void {
   try { globalThis.localStorage?.setItem(GENERATE_CONFIG_KEY, JSON.stringify(config)); } catch { /* 存不了就只管这一次 */ }
 }
 
+/** 各项在报错里的叫法 */
+export const GENERATE_SLOT_LABELS: Record<AiEditGenerateSlot, string> = { image: "OpenAI", video: "火山方舟 Seedance", jimeng: "即梦", xyq: "小云雀", libtv: "LibTV" };
+/** 「某某的」：英文名后面空一格 */
+const whose = (names: string) => `${names}${/[A-Za-z0-9]$/u.test(names) ? " " : ""}的`;
+
 /**
  * 保存前查一遍接口地址：留空，或者是 http:// / https:// 开头的完整地址才行（和采集器的规矩一样）。
  * 填错了采集器会拒收每一条消息，所以不合格的不让存；没问题回 null。
  */
-export function generateConfigProblem(config: AiEditGenerateConfig): string | null {
-  if (badGenerateUrl(config.image.baseUrl)) return `生成图片的接口地址要以 https:// 开头，像 ${DEFAULT_AI_EDIT_GENERATE_CONFIG.image.baseUrl} 这样。`;
-  if (badGenerateUrl(config.video.baseUrl)) return `生成视频的接口地址要以 https:// 开头，像 ${DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl} 这样。`;
-  return null;
+export function generateConfigProblem(config: AiEditGenerateConfig, slots: AiEditGenerateSlot[] = GENERATE_SLOTS): string | null {
+  const bad = slots.find((slot) => badGenerateUrl(config[slot].baseUrl));
+  return bad ? `${whose(GENERATE_SLOT_LABELS[bad])}接口地址要以 https:// 开头，像 ${DEFAULT_AI_EDIT_GENERATE_CONFIG[bad].baseUrl} 这样。` : null;
 }
 
 /** 留空不算错；填了就得是 http:// 或 https:// 开头的完整地址 */
@@ -131,18 +176,18 @@ function badGenerateUrl(value: string): boolean {
 }
 
 /**
- * 没点保存就收起设置时替用户存的那份：接口地址填得不对的那项只把地址退回存着的（存着的也不对就留空、用默认），
- * Key、模型、借 Key 的勾照存，免得一个地址填错整节改动都丢掉。problem 是给人看的一句说明，地址都合格时为 null。
+ * 没点保存就关掉设置时替用户存的那份：接口地址填得不对的那项只把地址退回存着的（存着的也不对就留空、用默认），
+ * Key、模型、借 Key 照存，免得一个地址填错整页改动都丢掉。problem 是给人看的一句说明，地址都合格时为 null。
  */
 export function keepValidGenerateUrls(draft: AiEditGenerateConfig, stored: AiEditGenerateConfig): { config: AiEditGenerateConfig; problem: string | null } {
   const dropped: string[] = [];
-  const url = (kind: keyof AiEditGenerateConfig, label: string): string => {
-    if (!badGenerateUrl(draft[kind].baseUrl)) return draft[kind].baseUrl;
-    dropped.push(label);
-    return badGenerateUrl(stored[kind].baseUrl) ? "" : stored[kind].baseUrl;
-  };
-  const config = { image: { ...draft.image, baseUrl: url("image", "生成图片") }, video: { ...draft.video, baseUrl: url("video", "生成视频") } };
-  return { config, problem: dropped.length ? `${dropped.join("和")}的接口地址要以 https:// 开头，刚才填的没存，还用原来的。` : null };
+  const config = { ...draft };
+  for (const slot of GENERATE_SLOTS) {
+    if (!badGenerateUrl(draft[slot].baseUrl)) continue;
+    dropped.push(GENERATE_SLOT_LABELS[slot]);
+    (config as Record<AiEditGenerateSlot, AiEditGenerateService>)[slot] = { ...draft[slot], baseUrl: badGenerateUrl(stored[slot].baseUrl) ? "" : stored[slot].baseUrl };
+  }
+  return { config, problem: dropped.length ? `${whose(dropped.join("、"))}接口地址要以 https:// 开头，刚才填的没存，还用原来的。` : null };
 }
 
 /** 是不是火山方舟的地址（volces.com 下的域名）；不是合法地址的也算不是 */
@@ -159,7 +204,7 @@ export function isArkUrl(value: string): boolean {
 type ArkKeyHolder = { runtime?: AiRuntime; baseUrl: unknown; apiKey: unknown };
 
 /**
- * 生成视频的 Key 留空时借哪一把方舟 Key：先看 AI 剪辑的，再看视频解析的。
+ * 方舟 Seedance 的 Key 留空时借哪一把方舟 Key：先看 AI 剪辑的，再看视频解析的。
  * 只借走接口、地址是方舟的那把；选了本机 Codex / Claude 时存着的 Key 不拿出来用（和 aiRequestConfig 一样）。
  */
 export function borrowArkKey(aiConfig: ArkKeyHolder, analysisConfig?: ArkKeyHolder | null): { from: "edit" | "analysis"; apiKey: string } | null {
@@ -174,21 +219,35 @@ export function borrowArkKey(aiConfig: ArkKeyHolder, analysisConfig?: ArkKeyHold
 }
 
 /**
- * 随消息发给采集器的生成配置：只带填了 Key 的那项，都没有就是 undefined（请求里不带）。
- * 地址、模型留空用默认的；视频 Key 留空时，用户勾了借 Key 才借方舟的 Key，而且只在视频地址也是方舟时借，免得把方舟 Key 发给别家。
- * 没勾就不生成视频：生成要花钱，不能因为别处碰巧填过方舟 Key 就替用户打开。
+ * 这一项连没连上，连上了用哪把 Key（去掉首尾空格）；没连上回 ""。即梦要两把都填。
+ * 方舟 Seedance 的 Key 留空时，用户勾了借 Key 才借方舟的 Key，而且只在地址也是方舟时借，免得把方舟 Key 发给别家。
+ */
+export function generateKey(generate: AiEditGenerateConfig, slot: AiEditGenerateSlot, aiConfig: ArkKeyHolder, analysisConfig?: ArkKeyHolder | null): string {
+  const own = generate[slot].apiKey.trim();
+  if (slot === "jimeng") return own && generate.jimeng.secretKey.trim() ? own : "";
+  if (own || slot !== "video" || generate.video.borrow !== true) return own;
+  return isArkUrl(generate.video.baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl) ? borrowArkKey(aiConfig, analysisConfig)?.apiKey ?? "" : "";
+}
+
+/**
+ * 随消息发给采集器的生成配置：只带要用、也连上了的那家，都没有就是 undefined（请求里不带）。地址、模型留空用默认的。
+ * 没勾借 Key 就不借：生成要花钱，不能因为别处碰巧填过方舟 Key 就替用户打开。
  */
 export function generationForRequest(generate: AiEditGenerateConfig, aiConfig: ArkKeyHolder, analysisConfig?: ArkKeyHolder | null): AiEditGenerationRequest | undefined {
-  const service = (kind: keyof AiEditGenerateConfig, apiKey: string): AiEditGenerateService => ({
-    baseUrl: generate[kind].baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG[kind].baseUrl,
+  const service = (slot: AiEditGenerateSlot, apiKey: string): AiEditGenerateService => ({
+    baseUrl: generate[slot].baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG[slot].baseUrl,
     apiKey,
-    model: generate[kind].model.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG[kind].model,
+    model: generate[slot].model.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG[slot].model,
   });
-  const imageKey = generate.image.apiKey.trim();
-  const videoUrl = generate.video.baseUrl.trim() || DEFAULT_AI_EDIT_GENERATE_CONFIG.video.baseUrl;
-  const videoKey = generate.video.apiKey.trim() || (generate.video.borrow === true && isArkUrl(videoUrl) ? borrowArkKey(aiConfig, analysisConfig)?.apiKey ?? "" : "");
-  if (!imageKey && !videoKey) return undefined;
-  return { ...(imageKey ? { image: service("image", imageKey) } : {}), ...(videoKey ? { video: service("video", videoKey) } : {}) };
+  const imageKey = generate.use.image ? generateKey(generate, "image", aiConfig, analysisConfig) : "";
+  const provider = generate.use.video;
+  const slot = provider ? VIDEO_PROVIDER_SLOT[provider] : null;
+  const videoKey = slot ? generateKey(generate, slot, aiConfig, analysisConfig) : "";
+  const video = provider && slot && videoKey
+    ? { provider, ...service(slot, videoKey), ...(slot === "jimeng" ? { secretKey: generate.jimeng.secretKey.trim() } : {}) }
+    : null;
+  if (!imageKey && !video) return undefined;
+  return { ...(imageKey ? { image: service("image", imageKey) } : {}), ...(video ? { video } : {}) };
 }
 
 // ---------- 工程（与 JianYingAPI 的 Project 同形，字段保持 snake_case） ----------
@@ -382,7 +441,7 @@ export interface AiEditLookJob { id: string; kind: "reference" | "beats" | "sque
 export interface AiEditSpendAsk {
   id: string;
   kind: "video";
-  /** 服务商的说法（「火山方舟 Seedance」） */
+  /** 服务商的说法（「火山方舟 Seedance」「即梦」「小云雀」「LibTV」） */
   provider: string;
   model: string;
   /** 时长（秒）；0 或 -1 是让模型自己定 */
@@ -390,8 +449,8 @@ export interface AiEditSpendAsk {
   resolution: "480p" | "720p" | "1080p";
   /** 画面比例（「9:16」，adaptive 是由模型定） */
   ratio: string;
-  /** 带不带声音 */
-  audio: boolean;
+  /** 带不带声音；null 是这家没法指定（小云雀） */
+  audio: boolean | null;
   /** 提示词的前 200 字 */
   prompt: string;
   /** 按官方价估的人民币（元）；认不出的模型是 null */

@@ -712,7 +712,7 @@ export function createAiEdit({
         // 目标每次请求都读最新的：一轮做到一半改了，下一步就照新的来
         system: async () => buildSystemPrompt({
           project: await store.getProject(session.projectId), media: library.list(), goal: session.goal, freeOnly: turn.freeOnly,
-          generation: { image: Boolean(turn.generation?.image), video: Boolean(turn.generation?.video) },
+          generation: { image: Boolean(turn.generation?.image), video: turn.generation?.video ? turn.generation.video.provider ?? "seedance" : false },
         }),
         context: async () => buildContextMessage({ project: await store.getProject(session.projectId), library }),
         execute: async (call) => {
