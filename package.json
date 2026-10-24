@@ -55,7 +55,7 @@
   "devDependencies": {
     "@types/matter-js": "^0.20.2",
     "@types/react": "~19.2.2",
-    "electron": "^43.4.0",
+    "electron": "^43.8.3",
     "electron-builder": "^26.15.3",
     "sharp": "^0.34.4",
     "typescript": "~6.0.3",
