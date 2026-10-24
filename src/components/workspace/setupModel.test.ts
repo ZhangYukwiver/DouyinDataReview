@@ -6,6 +6,7 @@ import {
   accountBlockedReason,
   activeAccountLabel,
   appUpdateAction,
+  credentialsExpired,
   deriveSetup,
   desktopLoginNeeded,
   formatLongDay,
@@ -220,6 +221,16 @@ describe("提示文案", () => {
     expect(desktopLoginNeeded({}, false, withCredentials())).toBe(false);
     expect(tipNotes({ ...tip, loginNeeded: true, desktop: true })[0]!.body).not.toContain("设置");
     expect(tipNotes({ ...tip, connected: false, ready: false, desktop: true })[0]!.body).not.toContain("连接采集器");
+  });
+
+  it("登录过的号凭据被标失效才算失效，没登录过的号不算", () => {
+    const withSource = (browser: "app" | null, credentials: "ready" | "reconnect_required") =>
+      status({ browserSource: { mode: "cdp", browser, connected: false, credentials } });
+    expect(credentialsExpired(true, withSource("app", "reconnect_required"))).toBe(true);
+    expect(credentialsExpired(true, withSource("app", "ready"))).toBe(false);
+    expect(credentialsExpired(true, withSource(null, "reconnect_required"))).toBe(false);
+    expect(credentialsExpired(false, withSource("app", "reconnect_required"))).toBe(false);
+    expect(credentialsExpired(true, null)).toBe(false);
   });
 
   it("极简版不说按钮在哪边，导出数据指到设置里", () => {

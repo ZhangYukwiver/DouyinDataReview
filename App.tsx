@@ -11,6 +11,7 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
   ContentWorkspace,
+  CredentialBanner,
   LegacyContentWorkspace,
   SettingsDialog,
   SetupWorkspace,
@@ -21,7 +22,7 @@ import {
   type SettingsSection,
   workspaceColors,
 } from "./src/components/workspace";
-import { accountBlockedReason, activeAccountName, isCollectorSyncing } from "./src/components/workspace/setupModel";
+import { accountBlockedReason, activeAccountName, credentialsExpired, isCollectorSyncing } from "./src/components/workspace/setupModel";
 import { buildPersonalSummary } from "./src/domain/annualReport";
 import { buildLivingReport } from "./src/domain/livingReport";
 import {
@@ -257,6 +258,10 @@ function AppContent() {
   const [pairingCode, setPairingCode] = useState("");
   const [collectorToken, setCollectorToken] = useState<string | null>(null);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus | null>(null);
+  const loginExpired = credentialsExpired(collectorToken !== null, collectorStatus);
+  // 「稍后」只收起这一次失效的提示，登录好了再失效还会出来
+  const [loginNoticeHidden, setLoginNoticeHidden] = useState(false);
+  useEffect(() => { if (!loginExpired) setLoginNoticeHidden(false); }, [loginExpired]);
   const [collectorSnapshot, setCollectorSnapshot] = useState<CollectorSnapshot | null>(null);
   const [exportSnapshot, setExportSnapshot] = useState<CollectorSnapshot | null>(null);
   const [collectorBusy, setCollectorBusy] = useState(false);
@@ -1780,6 +1785,9 @@ function AppContent() {
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
       <StatusBar style="light" />
+      {/* 采集器页首屏自己就摆着扫码，不用再挂 */}
+      {loginExpired && !loginNoticeHidden && activeView !== "sources"
+        ? <CredentialBanner onLogin={openLogin} onDismiss={() => setLoginNoticeHidden(true)} /> : null}
       {activeView === "sources" ? (
         <SetupWorkspace
           archive={archiveInfo}
@@ -1960,6 +1968,7 @@ function AppContent() {
         browserConnection={collectorToken && !isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
           onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined}
         onShowLogin={isDesktopApp() ? openLogin : undefined}
+        loginExpired={loginExpired}
       />
       {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={() => setExportSnapshot(null)} onExport={exportSelectedData} /> : null}
     </SafeAreaView>

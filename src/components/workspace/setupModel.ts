@@ -241,6 +241,11 @@ export function desktopLoginNeeded(login: unknown, connected: boolean, status: C
   return Boolean(login) && connected && status !== null && credentials !== "ready" && credentials !== "exporting";
 }
 
+/** 登录过的号失效了（过期或要安全验证）：采集器之后的搜索、下载、读取都会直接拦下。从没登录过的号不算，没有 browser */
+export function credentialsExpired(connected: boolean, status: CollectorStatus | null): boolean {
+  return connected && Boolean(status?.browserSource?.browser) && status?.browserSource?.credentials === "reconnect_required";
+}
+
 /**
  * 按钮下面的几条提示：第一条跟着状态走，后两条是隐私和换电脑。
  * 两套版式按钮摆的地方不一样：手绘版「移除」在右边那张卡上、「导出数据」就在页面上；极简版「导出数据」收在设置里。
