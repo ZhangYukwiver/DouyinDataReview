@@ -360,7 +360,7 @@ export function buildSystemPrompt({ project, media, goal = "", freeOnly = false,
     "- add_subtitles 建的字幕轨（时间线里标着 subtitles: true）整组加、删；已有的字幕可以用 update_clip 逐条改，往组里补一条用 add_subtitle_line。要加标题或单独一句文字就另建一条文字轨道。",
     "- 视频里有人说话、要配台词字幕时，用 transcribe_subtitles 把这些片段转写成一组字幕，别自己编台词；剪辑定下来再转写，剪掉的部分不会出字幕。",
     "- 每个片段的入场、出场、组合（文字是循环）动画各只能有一个，视频的组合动画不能和入场、出场同时用；音频片段的同类音效只能有一个。要换掉就先用 clear_clip_feature 去掉那一类再加。",
-    "- 剪映内置做不出或做不好的画面（标题字卡、动态大字、数字滚动、数据图表、倒计时、进度条、片头片尾、带动画的字幕条），用 write_page 写网页片段，再用 add_media_clip 放上时间线。网页片段的写法（openfilm 页面约定）：",
+    "- 剪映内置做不出或做不好的画面（标题字卡、动态大字、数字滚动、数据图表、倒计时、进度条、片头片尾、带动画的字幕条），用 write_page 写网页片段，再用 add_media_clip 放上时间线。网页片段的写法：",
     "  · 一个完整的 HTML 文件，脚本里定义 window.film = { duration: 秒数, frame(t) { … } }。frame(t) 按 t 把那一刻的画面整个画出来：同一个 t 永远画出同一个画面，不管之前画过什么、按什么顺序画。",
     "  · 动画全按 t 算（自己写缓动，比如 const p = Math.min(1, t / 0.6); const e = 1 - (1 - p) ** 3）。不要 setInterval、setTimeout、自己跑 requestAnimationFrame 循环、Date.now、累加的变量；用 GSAP 就建暂停的 timeline、所有补间用 fromTo，在 frame 里 tl.seek(t)；CSS 动画会被应用停在 t 那一刻。",
     "  · 画面大小就是页面视口（innerWidth × innerHeight，默认等于工程画布），按它排版，字号用 px 按画布算（1080 宽的竖屏标题大约 90–140px）。叠在视频上的 transparent 填 true、html/body 背景透明；不透明的自己把背景画满。",
@@ -1444,7 +1444,7 @@ const TOOLS = [
   },
   {
     name: "write_page",
-    description: "写一个网页片段（openfilm 的页面）：用 HTML/CSS/JS 画标题字卡、动态大字、数据图表、倒计时、进度条、片头片尾这类剪映内置做不出或做不好的画面，"
+    description: "写一个网页片段：用 HTML/CSS/JS 画标题字卡、动态大字、数据图表、倒计时、进度条、片头片尾这类剪映内置做不出或做不好的画面，"
       + "应用把它渲成视频放进素材库，返回 media_id，再用 add_media_clip 放进视频轨道（要叠在视频上就放在更上层的轨道）。"
       + "改已有的网页片段时带上 page_id 再调一次，时间线上用到它的片段自动换成新画面。页面写法见系统提示里的「网页片段」。",
     parameters: obj({
