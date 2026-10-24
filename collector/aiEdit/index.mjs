@@ -85,6 +85,23 @@ const MAX_REFS = 10;
 // 引用的时刻在画面上的片段最多列这么多
 const MAX_MOMENT_CLIPS = 12;
 const MEDIA_KINDS = new Set(["video", "image", "audio"]);
+// 技能：装的时候填的 GitHub 地址或文件夹路径最长多少字、GitHub 的最多下载多久；AI 要跑技能命令时最多等用户点多久
+const MAX_SKILL_SOURCE_CHARS = 2_000;
+const SKILL_INSTALL_TIMEOUT_MS = 3 * 60_000;
+const COMMAND_TIMEOUT_MS = 15 * 60_000;
+// 跑技能命令前问用户，和生成视频前问要不要花钱是同一套（spend.mjs），只换掉给模型的话
+const COMMAND_TEXTS = {
+  denied: "用户没同意运行这条命令，命令没有执行。用户没再提就别再试这条，换别的做法或在回复里说明需要什么。",
+  timedOut: "等了 15 分钟没人点，命令没有执行。",
+  closed: "采集器关掉了，命令没有执行。",
+  deniedCode: "command_denied",
+  timeoutCode: "command_timeout",
+};
+
+/** 地址里的一段（技能 id、后台命令的 job_id）：页面 encodeURIComponent 过，解不开的原样交给技能管理器去报找不到。 */
+function pathPart(value) {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
 
 function sendJson(response, status, payload, headers = {}) {
   if (response.headersSent || response.destroyed) return;
@@ -454,7 +471,7 @@ function titleFrom(text) {
  * dataDirectory：采集器根数据目录；getCollector()：当前采集器（切换账号时为 null）；busyReason()：采集器正忙时的说明；
  * getExplorer()：探索（参考视频搜抖音用，切换账号时为 null）；localAi：本机的 Codex / Claude Code（collector/localAi.mjs）。
  * filmBrowser：把网页一帧帧画出来的浏览器（film/browser.mjs，桌面版是 Electron 的隐藏窗口）；getOrigin()：采集器自己的地址。
- * 测试可以注入 store / draftBox / probe / kindOf / fetchImpl。
+ * 测试可以注入 store / draftBox / probe / kindOf / fetchImpl / skills（技能管理器，同 skills.mjs 的 createSkills）。
  */
 export function createAiEdit({
   dataDirectory,
@@ -468,6 +485,7 @@ export function createAiEdit({
   store: injectedStore,
   probe: injectedProbe,
   kindOf: injectedKindOf,
+  skills: injectedSkills,
   fetchImpl = modelFetch,
   covers = createCoverIndex(),
   now = () => new Date(),
@@ -509,7 +527,12 @@ export function createAiEdit({
     // 素材导入完成或失败时叫醒各会话的长轮询，页面跟着刷新素材栏
     library.subscribe(() => { for (const session of sessions.sessions.values()) void sessions.touch(session, { quiet: true }); });
     const film = createFilmStudio({ root, library, provider: filmBrowser, getOrigin });
-    return { library, store, draftBox, sessions, looks: createLookDesk(), spends: createSpendDesk(), film };
+    // 用户装的技能：登记表 skills.json，GitHub 下的包在 skills/ 下，各技能的工作目录在 skill-work/ 下
+    const skills = injectedSkills ?? (await import("./skills.mjs")).createSkills({ root });
+    return {
+      library, store, draftBox, sessions, looks: createLookDesk(), spends: createSpendDesk(), film, skills,
+      commands: createSpendDesk({ timeoutMs: COMMAND_TIMEOUT_MS, texts: COMMAND_TEXTS }),
+    };
   };
   let ready = null;
   const load = () => {
@@ -649,6 +672,18 @@ export function createAiEdit({
     // 这一轮发了几次生图请求、问过几段视频；没等到做完就转到后台的视频（点了停止或前台等到点，
     // { name, taskId?, phase }，这一轮结尾按阶段告诉用户，见 generate.mjs 的 backgroundNote）
     const generated = { images: 0, videos: 0, background: [] };
+    // 要用户点的确认（花钱生成视频、跑技能命令）挂在这一轮的 streaming[key] 上（不存盘），页面长轮询看到后画卡片，用户点了交回来
+    const asking = (key) => ({
+      id: session.id,
+      live: () => Boolean(session.streaming),
+      get: () => session.streaming?.[key] ?? null,
+      set: (value) => {
+        if (!session.streaming) return;
+        if (value) session.streaming[key] = value;
+        else delete session.streaming[key];
+      },
+      touch: () => void sessions.touch(session, { quiet: true }),
+    });
     const runTool = createToolRunner({
       store, library, projectId: session.projectId, getCollector, signal,
       getExplorer, config, references, fetchImpl, pollMs, localAi, freeOnly: turn.freeOnly,
@@ -661,19 +696,12 @@ export function createAiEdit({
         touch: () => void sessions.touch(session, { quiet: true }),
       }, request, { signal }),
       offerLookFile: (file) => state.looks.offerFile(file),
-      // 生成视频前问用户要不要花钱：同样挂在这一轮上，页面画确认卡片，用户点了交回来
-      askSpend: (spec) => state.spends.ask({
-        id: session.id,
-        live: () => Boolean(session.streaming),
-        get: () => session.streaming?.spend ?? null,
-        set: (spend) => {
-          if (!session.streaming) return;
-          if (spend) session.streaming.spend = spend;
-          else delete session.streaming.spend;
-        },
-        touch: () => void sessions.touch(session, { quiet: true }),
-      }, spec, { signal }),
-      // 正在生成图片、视频时挂一句状态（页面把「AI 正在想…」换成它），null 摘掉
+      // 生成视频前问用户要不要花钱
+      askSpend: (spec) => state.spends.ask(asking("spend"), spec, { signal }),
+      // 技能：这一轮开跑时启用的那些（快照）和管理器；跑命令前问用户（技能设了不用问的除外），答复带着「以后不用问」
+      skills: { active: turn.skills ?? [], manager: state.skills },
+      askCommand: (spec) => state.commands.ask(asking("command"), spec, { signal }),
+      // 正在生成图片、视频、跑技能命令时挂一句状态（页面把「AI 正在想…」换成它），null 摘掉
       onGenerating: (text) => {
         if (!session.streaming) return;
         if (text) session.streaming.generating = text;
@@ -698,8 +726,8 @@ export function createAiEdit({
       // 本机 CLI 自己跑工具循环，工具经 MCP 回调同一个 execute（cliTurn.mjs）
       const converse = isLocalRuntime(config.runtime) ? runCliConversation : runConversation;
       const result = await converse({
-        // 生成工具只在配了 Key 时才给（本机 CLI 的 MCP 工具清单也走这里）
-        config, history: session.history, tools: toolsFor(turn.generation), signal, fetchImpl, onText, maxToolCalls: MAX_TOOL_CALLS,
+        // 生成工具只在配了 Key 时才给、技能工具只在有启用的技能时才给（本机 CLI 的 MCP 工具清单也走这里）
+        config, history: session.history, tools: toolsFor({ generation: turn.generation, skills: turn.skills }), signal, fetchImpl, onText, maxToolCalls: MAX_TOOL_CALLS,
         localAi, goal: () => session.goal,
         // 贴的图存在会话的附图目录里；模型看不了图、历史太长被裁这类事记进这一轮
         readAttachment: (attachment) => sessions.readAttachment(session, attachment),
@@ -712,7 +740,7 @@ export function createAiEdit({
         // 目标每次请求都读最新的：一轮做到一半改了，下一步就照新的来
         system: async () => buildSystemPrompt({
           project: await store.getProject(session.projectId), media: library.list(), goal: session.goal, freeOnly: turn.freeOnly,
-          generation: { image: Boolean(turn.generation?.image), video: turn.generation?.video ? turn.generation.video.provider ?? "seedance" : false },
+          generation: { image: Boolean(turn.generation?.image), video: turn.generation?.video ? turn.generation.video.provider ?? "seedance" : false }, skills: turn.skills,
         }),
         context: async () => buildContextMessage({ project: await store.getProject(session.projectId), library }),
         execute: async (call) => {
@@ -776,8 +804,11 @@ export function createAiEdit({
       running.delete(session.id);
       throw error;
     }
-    // freeOnly：剪辑页勾了「只看免费」，这一轮不许用会员效果；generation：生成图片、视频的配置（没配是 null）
-    const turn = { freeOnly, generation };
+    // freeOnly：剪辑页勾了「只看免费」，这一轮不许用会员效果；generation：生成图片、视频的配置（没配是 null）；
+    // skills：开跑时启用的技能，整轮用这一份（系统提示和工具清单一轮里不变，接口的前缀缓存才用得上）
+    let skills = [];
+    try { skills = await state.skills.enabled(); } catch (error) { console.error("AI 剪辑读技能登记表失败:", error); }
+    const turn = { freeOnly, generation, skills };
     try {
       // 每轮开跑前存一份，可以撤销这一轮或者退回到这句话之前
       const { checkpoint, revision } = await saveCheckpoint(session, "turn", `AI 处理“${leading(text, 12)}”之前`);
@@ -1036,6 +1067,60 @@ export function createAiEdit({
       const body = await readJson(request, BODY_BYTES);
       if (typeof body.allow !== "boolean") throw new AiEditError("invalid_request", "请求无效，请重试。");
       sendJson(response, 200, { answered: state.spends.answer(spendMatch[1], spendMatch[2], body.allow) });
+      return;
+    }
+
+    // 用户在「AI 想运行技能的命令」卡片上点了「运行」或「不运行」；remember：勾了「这个技能以后不用问」
+    const commandMatch = pathname.match(/^\/v1\/ai-edit\/sessions\/([^/]+)\/command\/([0-9a-f]{16})$/u);
+    if (commandMatch) {
+      if (method !== "POST") { notAllowed(); return; }
+      const body = await readJson(request, BODY_BYTES);
+      if (typeof body.allow !== "boolean") throw new AiEditError("invalid_request", "请求无效，请重试。");
+      sendJson(response, 200, { answered: state.commands.answer(commandMatch[1], commandMatch[2], body.allow, { remember: body.remember === true }) });
+      return;
+    }
+
+    // 设置里的「技能」：装（GitHub 地址或本机文件夹）、开关、删，看和停后台命令
+    if (pathname === "/v1/ai-edit/skills") {
+      if (method === "GET") { sendJson(response, 200, { skills: await state.skills.list(), jobs: await state.skills.jobs() }); return; }
+      if (method !== "POST") { notAllowed(); return; }
+      const body = await readJson(request, BODY_BYTES);
+      const source = typeof body.source === "string" ? body.source.trim() : "";
+      if (!source) throw new AiEditError("invalid_request", "填 GitHub 仓库地址，或者这台电脑上技能文件夹的路径。");
+      if (source.length > MAX_SKILL_SOURCE_CHARS) throw new AiEditError("invalid_request", "地址太长了。");
+      const signal = AbortSignal.timeout(SKILL_INSTALL_TIMEOUT_MS);
+      try {
+        sendJson(response, 201, await state.skills.install(source, { signal }));
+      } catch (error) {
+        if (signal.aborted) throw new AiEditError("install_timeout", "下载技能 3 分钟还没完成，检查网络后再试。", 504);
+        throw error;
+      }
+      return;
+    }
+    const jobMatch = pathname.match(/^\/v1\/ai-edit\/skills\/jobs\/([^/]+)\/stop$/u);
+    if (jobMatch) {
+      if (method !== "POST") { notAllowed(); return; }
+      await readJson(request, BODY_BYTES);
+      sendJson(response, 200, { job: await state.skills.job(pathPart(jobMatch[1]), { stop: true }) });
+      return;
+    }
+    const skillMatch = pathname.match(/^\/v1\/ai-edit\/skills\/([^/]+)$/u);
+    if (skillMatch) {
+      const id = pathPart(skillMatch[1]);
+      if (method === "DELETE") {
+        await state.skills.remove(id);
+        sendJson(response, 200, { removed: true });
+        return;
+      }
+      if (method !== "PATCH") { notAllowed(); return; }
+      const body = await readJson(request, BODY_BYTES);
+      const patch = {};
+      for (const key of ["enabled", "trustCommands"]) {
+        if (body[key] === undefined) continue;
+        if (typeof body[key] !== "boolean") throw new AiEditError("invalid_request", "请求无效，请重试。");
+        patch[key] = body[key];
+      }
+      sendJson(response, 200, { skill: await state.skills.update(id, patch) });
       return;
     }
 
@@ -1443,9 +1528,12 @@ export function createAiEdit({
       state.library.close();
       state.looks.close();
       state.spends.close();
+      state.commands.close();
       shutdown.abort();
       for (const run of running.values()) run.controller.abort();
       for (const job of outputs.values()) job.controller.abort();
+      // 技能的前台、后台命令连同子进程一起杀掉，不等它们退出
+      try { await state.skills.close(); } catch (error) { console.error("AI 剪辑关技能命令失败:", error); }
       state.sessions.wakeAll();
       await Promise.race([Promise.allSettled([...running.values(), ...outputs.values()].map((run) => run.promise)), delay(3_000)]);
       await filmBrowser?.close?.().catch(() => undefined);

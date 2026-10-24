@@ -86,4 +86,25 @@ describe("spend desk", () => {
     session.streaming = null;
     await expect(desk.ask(holder, SPEC)).rejects.toMatchObject({ code: "spend_unavailable" });
   });
+
+  it("asks about other things in their own words, and hands back what came with a yes", async () => {
+    const texts = { denied: "用户没同意运行这条命令。", timedOut: "没人点，命令没有执行。", closed: "采集器关掉了，命令没有执行。", deniedCode: "command_denied", timeoutCode: "command_timeout" };
+    const { desk, session, holder } = setup({ texts });
+    const command = { kind: "command", skill: "示例", skill_id: "demo", command: ["node", "-v"], cwd: "/x", background: false };
+    let asking = desk.ask(holder, command);
+    desk.answer(session.id, session.streaming.spend.id, true, { remember: true });
+    await expect(asking).resolves.toEqual({ remember: true });
+    asking = desk.ask(holder, command);
+    desk.answer(session.id, session.streaming.spend.id, false, { remember: true });
+    await expect(asking).rejects.toMatchObject({ code: "command_denied", message: "用户没同意运行这条命令。" });
+    asking = desk.ask(holder, command);
+    desk.close();
+    await expect(asking).rejects.toMatchObject({ code: "interrupted", message: "采集器关掉了，命令没有执行。" });
+
+    const late = setup({ texts, timeoutMs: 20 });
+    await expect(late.desk.ask(late.holder, command)).rejects.toMatchObject({ code: "command_timeout", message: "没人点，命令没有执行。" });
+    // 没换的照花钱的说
+    late.session.streaming = null;
+    await expect(late.desk.ask(late.holder, command)).rejects.toMatchObject({ code: "spend_unavailable", message: "这一轮已经结束了，没法再问用户。" });
+  });
 });

@@ -24,8 +24,9 @@ export function sessionSummary(session) {
   const { id, title, createdAt, updatedAt, status, projectId, draftBox } = session;
   return {
     id, title, createdAt, updatedAt, status, projectId, draftBox: draftBox ? { ...draftBox } : null,
-    // 这一轮挂着「要不要花钱生成视频」在等用户点：会话菜单里标出来，切到别的剪辑时也看得到
+    // 这一轮挂着「要不要花钱生成视频」「要不要运行技能命令」在等用户点：会话菜单里标出来，切到别的剪辑时也看得到
     awaitingSpend: Boolean(session.streaming?.spend),
+    awaitingCommand: Boolean(session.streaming?.command),
   };
 }
 
@@ -66,6 +67,8 @@ export function sessionDetail(session) {
       ...(session.streaming.look ? { look: { ...session.streaming.look } } : {}),
       // 生成视频前等用户确认要不要花钱时挂在这里，页面画确认卡片
       ...(session.streaming.spend ? { spend: { ...session.streaming.spend } } : {}),
+      // 技能要跑命令、等用户点「运行」时挂在这里，页面画确认卡片
+      ...(session.streaming.command ? { command: { ...session.streaming.command, command: [...session.streaming.command.command] } } : {}),
       // 正在生成图片、视频时的一句状态
       ...(session.streaming.generating ? { generating: session.streaming.generating } : {}),
     } : null,

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -126,6 +126,20 @@ describe("MediaLibrary", () => {
     await writeFile(path.join(media.root, `${id}.mp4.part`), "x");
     expect(await media.remove(id)).toBe(true);
     expect(await readdir(media.root)).not.toContain(`${id}.mp4.part`);
+  });
+
+  it("copies a file from disk into the library, marking where it came from", async () => {
+    const media = await library();
+    const outside = path.join(path.dirname(media.directory), "out");
+    await mkdir(outside);
+    const file = path.join(outside, "混音.mp4");
+    await writeFile(file, "z".repeat(64));
+    expect(await media.importFile(file)).toMatchObject({ name: "混音.mp4", kind: "video", status: "ready", source: { type: "local" } });
+    const made = await media.importFile(file, "成品.mp4", { source: { type: "skill", skill: "示例技能" } });
+    expect(made).toMatchObject({ name: "成品.mp4", source: { type: "skill", skill: "示例技能" } });
+    expect(await readFile(media.readyPath(made.id), "utf8")).toBe("z".repeat(64));
+    // 原文件不动
+    expect(await readFile(file, "utf8")).toBe("z".repeat(64));
   });
 
   it("checks the file key in constant time", async () => {

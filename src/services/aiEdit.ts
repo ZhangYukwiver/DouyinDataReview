@@ -1,5 +1,6 @@
 import { LocalCollectorError, collectorFetch, normalizeCollectorBaseUrl } from "./localCollector";
 import type { ExploreConnection } from "./explorer";
+import type { AiEditCommandAsk } from "./aiEditSkills";
 
 // AI 剪辑：对话、工程、素材库都在采集器（collector/aiEdit/），页面只负责发消息、长轮询会话、上传素材和展示。
 // 接口配置存在本机 localStorage，和解析库的配置完全分开，每次随消息带过去，采集器不保存 Key。
@@ -368,6 +369,8 @@ export interface AiEditSessionSummary {
   draftBox: AiEditDraftLink | null;
   /** 这一轮停下来等用户确认要不要花钱生成视频（老采集器没有这一项，当成没在等） */
   awaitingSpend?: boolean;
+  /** 这一轮停下来等用户确认要不要运行技能里的命令 */
+  awaitingCommand?: boolean;
 }
 
 export interface AiEditAction { name: string; summary: string; ok: boolean; error?: string }
@@ -406,8 +409,8 @@ export interface AiEditSession extends AiEditSessionSummary {
   error: { code: string; message: string } | null;
   messages: AiEditChatItem[];
   /** 正在进行的这一轮：已经吐出来的文字和已经做完的步骤；look 是要页面在浏览器里帮忙拆的视频，spend 是等用户点头的花钱生成 */
-  /** generating：正在生成图片、视频时的一句状态 */
-  streaming: { text: string; actions?: AiEditAction[]; look?: AiEditLookJob; spend?: AiEditSpendAsk; generating?: string } | null;
+  /** generating：正在生成图片、视频（或运行技能命令）时的一句状态；command 是等用户点头的技能命令 */
+  streaming: { text: string; actions?: AiEditAction[]; look?: AiEditLookJob; spend?: AiEditSpendAsk; command?: AiEditCommandAsk; generating?: string } | null;
   /** 能撤销的上一步（最后一份存档的说法和种类）；没有时为 null */
   undo?: { label: string; kind: AiEditStepKind } | null;
   /** 能重做的那一步（刚撤销掉的）；没有时为 null */
@@ -473,10 +476,11 @@ export interface AiEditMediaItem {
   createdAt: string;
   /**
    * page：AI 写的网页片段或导入工程里的网页（openfilm 的页面），page 是它的 HTML 在采集器 pages/ 下的路径；
-   * generated：AI 调生成服务做的图片或视频，provider 是哪家、prompt 是提示词前 200 字、key 是采集器认重复用的
+   * generated：AI 调生成服务做的图片或视频，provider 是哪家、prompt 是提示词前 200 字、key 是采集器认重复用的；
+   * skill：技能跑出来的文件，skill 是技能的名字
    */
   source: {
-    type: "douyin" | "local" | "page" | "generated"; url?: string; videoId?: string; title?: string; author?: string; cover?: string; page?: string; pageId?: string; transparent?: boolean; renderedAt?: number;
+    type: "douyin" | "local" | "page" | "generated" | "skill"; skill?: string; url?: string; videoId?: string; title?: string; author?: string; cover?: string; page?: string; pageId?: string; transparent?: boolean; renderedAt?: number;
     provider?: "openai" | "seedance"; model?: string; prompt?: string; key?: string;
   };
 }
@@ -520,7 +524,8 @@ function failure(status: number, value: any, fallback: string): LocalCollectorEr
         : fallback));
 }
 
-async function request(connection: ExploreConnection, path: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<any> {
+/** AI 剪辑的接口都走这里（技能那几个在 aiEditSkills.ts） */
+export async function request(connection: ExploreConnection, path: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<any> {
   const { timeoutMs = 20_000, signal, ...rest } = init;
   const timeout = AbortSignal.timeout(timeoutMs);
   let response: Response;

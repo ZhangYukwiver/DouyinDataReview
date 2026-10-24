@@ -182,8 +182,11 @@ const COMPACT_ENTRY_CHARS = 300;
 // 告诉模型细节怎么找回；不点名哪个工具，免得它每轮先把时间线再拉一遍。参考解析的缓存只在内存里，重启过就得重新解析
 const OMITTED = "较早的内容，细节已省略；还要用就用同样的参数再调一次（参考解析和节拍一般有缓存、马上返回，应用重启过就要重新解析，很慢，没必要别重调）；时间线和素材以工程现状和系统提示为准";
 const OMITTED_ARGUMENTS = "较早的参数，细节已省略";
-// 这几个工具的结果后面还用得上（链接、素材 id、拆解结论）：压缩和本机 CLI 转述时都留开头这么多字
-export const KEEP_RESULT = { search_douyin: 1_500, search_my_records: 1_500, import_douyin_video: 1_500, analyze_reference: 6_000 };
+// 这几个工具的结果后面还用得上（链接、素材 id、拆解结论、技能说明和命令输出）：压缩和本机 CLI 转述时都留开头这么多字
+export const KEEP_RESULT = {
+  search_douyin: 1_500, search_my_records: 1_500, import_douyin_video: 1_500, analyze_reference: 6_000,
+  read_skill: 6_000, run_skill_command: 2_000, skill_job: 1_500,
+};
 
 /** 长的工具结果只留成没成功和报错原因（KEEP_RESULT 里的工具再留开头），长的工具参数只留开头；短的不动（反复压也不会变）。 */
 function compactEntry(entry, name) {
