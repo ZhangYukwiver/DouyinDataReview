@@ -214,7 +214,7 @@ export function createLookDesk({ filePath = "/v1/ai-edit/look", texts = AI_EDIT_
         job.reject(error);
         throw error;
       }
-      if (result.error) job.reject(new AiEditError("look_failed", `页面没能拆开这个视频：${result.error}`, 422));
+      if (result.error) job.reject(new AiEditError("look_failed", `页面没能${job.kind === "squeeze" ? "压缩" : "拆开"}这个视频：${result.error}`, 422));
       else job.resolve(result);
     },
 

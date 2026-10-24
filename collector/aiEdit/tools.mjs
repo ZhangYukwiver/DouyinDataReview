@@ -697,7 +697,7 @@ const ANALYSIS_TIMEOUT_MS = 15 * 60_000;
 const ANALYSIS_CHARS = 12_000;
 // ponytail: 进程内缓存，重启就没了；要跨重启再落盘到 ai-edit/
 const REFERENCE_CACHE_SIZE = 50;
-const NO_VIDEO = "AI 剪辑配置的模型看不了视频，换一个支持视频输入的模型（比如方舟 doubao-seed）再试。";
+const megabytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 // 模型回答自己看不到视频（正常的拆解一定带 Markdown 表格）
 const LOOK_FOCUS = "上面不是原视频，是应用把参考视频拆出来的材料：镜头表、闪白位置、音乐节拍是程序测出来的，可以直接用；截图是镜头中间的一帧（镜头很多时只挑了一部分）。材料来源上面已经说明了，开头不用再写缺了原视频、音轨或台词，直接按①到⑤输出，听不到的项写「听不到」；如果你看不到截图，不要写拆解，只回答一行：NO_IMAGES。这次拆解要给剪辑照着复刻：第③部分的时间轴表按镜头表逐个镜头写（画面连续的相邻镜头可以合并成一行，但起止时间要和镜头表对上），写清每段多长、怎么切过来的（从截图和闪白位置推断硬切、闪白、推拉等）、截图里看得到的字幕样式和位置、哪些切点落在拍点上。听不到人声和歌词，不要编台词。";
 const REFERENCE_FOCUS = "如果你其实看不到视频画面（只拿到了文字信息），不要写拆解，只回答一行：NO_VIDEO。这次拆解还要给剪辑照着复刻：第③部分的时间轴表请按镜头切换细分，每行写清这一段多长、怎么切过来的（硬切还是叠化、推拉、闪白等转场）、字幕的样式和位置（大小、颜色、描边、出现方式）、配乐和音效在哪里卡点。";
@@ -762,9 +762,27 @@ async function downloadReference(ctx, url) {
   return { file, video: job.video };
 }
 
-/** 把整段视频连同拆解提示词发给 AI 剪辑配置的模型（请求格式同解析库）。 */
-async function watchVideo(ctx, file, video) {
-  if ((await stat(file)).size > ANALYSIS_BYTES) throw new AiEditError("video_too_large", "这个视频超过 45MB，模型接口收不下，换一个短一点或清晰度低一点的版本。");
+/**
+ * 把整段视频连同拆解提示词发给 AI 剪辑配置的模型（请求格式同解析库），超过 45MB 先让页面压一份小的。
+ * 发不成（压不了、接口拒收、模型说看不到）回 { reason }，由调用方改拆截图。
+ */
+async function watchVideo(ctx, { file, video, pageUrl }) {
+  const { size } = await stat(file);
+  let bytes;
+  if (size <= ANALYSIS_BYTES) {
+    bytes = await readFile(file);
+  } else {
+    const over = `视频有 ${megabytes(size)}，超过整段发送的 45MB 上限`;
+    if (!ctx.askLook) return { reason: over };
+    try {
+      ({ video: bytes } = await ctx.askLook({ kind: "squeeze", url: pageUrl ?? ctx.offerLookFile(file), name: video?.title, bytes: ANALYSIS_BYTES }));
+    } catch (error) {
+      // 浏览器编不了（没有 WebCodecs 之类）才退回截图；没有页面接手、停止这些照常报
+      if (error?.code !== "look_failed") throw error;
+      return { reason: `${over}，${error.message}` };
+    }
+    if (bytes.length > ANALYSIS_BYTES) return { reason: `${over}，页面压过以后还有 ${megabytes(bytes.length)}` };
+  }
   let status = 0;
   const fetchImpl = async (...args) => {
     const response = await (ctx.fetchImpl ?? modelFetch)(...args);
@@ -776,23 +794,23 @@ async function watchVideo(ctx, file, video) {
     markdown = await requestAnalysis({
       config: { ...ctx.config, focus: REFERENCE_FOCUS },
       video,
-      videoBase64: (await readFile(file)).toString("base64"),
+      videoBase64: bytes.toString("base64"),
       signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(ANALYSIS_TIMEOUT_MS)].filter(Boolean)),
       fetchImpl,
     });
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     if (error instanceof AnalysisError) {
-      // 收不了视频的模型一般回 400/415/422，或者流里报一句不认识视频
-      const noVideo = error.code === "provider_error" && videoRefused(status, error.message);
-      throw new AiEditError(noVideo ? "video_unsupported" : error.code, noVideo ? `${NO_VIDEO}（${error.message}）` : error.message, error.status);
+      // 收不了视频的模型一般回 400/415/422，或者流里报一句不认识视频；413 是嫌请求太大
+      if (error.code === "provider_error" && (status === 413 || videoRefused(status, error.message))) {
+        return { reason: `整段视频发过去被接口拒收（${status >= 400 ? `HTTP ${status}：` : ""}${error.message.slice(0, 200)}）` };
+      }
+      throw new AiEditError(error.code, error.message, error.status);
     }
     throw new AiEditError("analysis_failed", error?.name === "TimeoutError" ? "模型太久没看完这个视频，请稍后重试。" : "参考视频没解析成功，请稍后重试。");
   }
-  if (seesNoVideo(markdown)) {
-    throw new AiEditError("video_unsupported", NO_VIDEO);
-  }
-  return markdown;
+  if (seesNoVideo(markdown)) return { reason: "整段视频发过去了，模型回答说看不到画面" };
+  return { markdown };
 }
 
 
@@ -820,17 +838,13 @@ async function lookAtVideo(ctx, { file, video, pageUrl }) {
   return { markdown, look: measured };
 }
 
-/** 配置标了看不了视频就直接拆截图；标了能看或没测过就先整段发，模型说看不到再拆截图。 */
-async function watchReference(ctx, { file, video, pageUrl }) {
-  if (ctx.config?.videoInput !== false) {
-    try {
-      return { markdown: await watchVideo(ctx, file, video) };
-    } catch (error) {
-      // 模型看不了，或者视频太大发不过去（页面那边能解到 200MB）：都改拆截图
-      if (error?.code !== "video_unsupported" && error?.code !== "video_too_large") throw error;
-    }
-  }
-  return lookAtVideo(ctx, { file, video, pageUrl });
+/** 配置标了看不了视频就直接拆截图；标了能看或没测过先整段发，发不成再拆截图，原因记在 why 里写进结果。 */
+async function watchReference(ctx, source) {
+  const whole = ctx.config?.videoInput === false
+    ? { reason: isLocalRuntime(ctx.config?.runtime) ? "本机 Codex / Claude 看不了视频" : "设置里测出这个模型看不了视频" }
+    : await watchVideo(ctx, source);
+  if (!whole.reason) return whole;
+  return { ...(await lookAtVideo(ctx, source)), why: whole.reason };
 }
 
 async function analyzeReference(ctx, args) {
@@ -852,7 +866,7 @@ async function analyzeReference(ctx, args) {
   const cached = ctx.references?.get(key);
   // 截图版的结果记着是哪个模型写的：换成别的、不确定看不了视频的模型就重新看
   const by = isLocalRuntime(ctx.config?.runtime) ? `local:${ctx.config.runtime}|${ctx.config.model}` : `${ctx.config?.baseUrl}|${ctx.config?.model}`;
-  if (cached && !(cached.look && cached.by !== by && ctx.config?.videoInput !== false)) return referenceResult(cached.markdown, cached.video, cached.look);
+  if (cached && !(cached.look && cached.by !== by && ctx.config?.videoInput !== false)) return referenceResult(cached.markdown, cached.video, cached.look, cached.why);
   let file;
   let video;
   if (item) {
@@ -861,9 +875,9 @@ async function analyzeReference(ctx, args) {
   } else {
     ({ file, video } = await downloadReference(ctx, key));
   }
-  const { markdown, look } = await watchReference(ctx, { file, video, pageUrl: item ? `/v1/ai-edit/media/${item.id}/file` : null });
-  remember(ctx, key, { markdown, video, look, by });
-  return referenceResult(markdown, video, look);
+  const { markdown, look, why } = await watchReference(ctx, { file, video, pageUrl: item ? `/v1/ai-edit/media/${item.id}/file` : null });
+  remember(ctx, key, { markdown, video, look, why, by });
+  return referenceResult(markdown, video, look, why);
 }
 
 function remember(ctx, key, value) {
@@ -929,14 +943,14 @@ export async function probeVideoInput({ config, fetchImpl = modelFetch, signal }
   }
 }
 
-function referenceResult(markdown, video, look) {
+function referenceResult(markdown, video, look, why) {
   return {
     video: {
       ...(video?.title ? { title: video.title } : {}),
       ...(video?.author ? { author: video.author } : {}),
       ...(video?.durationSeconds ? { duration: video.durationSeconds } : {}),
     },
-    ...(look ? { seen_as: "模型看不了视频，这份拆解是按应用测出的镜头截图和节拍写的", measured: look } : {}),
+    ...(look ? { seen_as: `${why ?? "模型看不了视频"}，所以这份拆解是按应用测出的镜头截图和节拍写的`, measured: look } : {}),
     analysis: markdown.length > ANALYSIS_CHARS ? `${markdown.slice(0, ANALYSIS_CHARS)}\n…（后面略）` : markdown,
     how_to_use: "只当参考，不要把这条视频放进时间线。照着第③部分时间轴的分段、每段时长、转场、字幕样式和配乐卡点，用素材库里用户自己的素材复刻；剪映里的转场、字体、特效先用 search_catalog 查到准确名称再用。",
   };
