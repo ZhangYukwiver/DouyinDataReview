@@ -39,7 +39,7 @@
     "expo-file-system": "~57.0.2",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.2",
-    "fflate": "^0.8.2",
+    "fflate": "^0.8.3",
     "hls.js": "^1.7.3",
     "js-yaml": "^4.3.2",
     "lucide-react-native": "^1.30.0",
