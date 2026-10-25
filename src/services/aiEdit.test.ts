@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  DEFAULT_AI_EDIT_GENERATE_CONFIG, aiConfigReady, answerAiEditSpend, borrowArkKey, editAiEditClip, editAiEditClips, exportAiEditSession, generateConfigProblem, generationForRequest, getAiRuntimes, isArkUrl,
+  DEFAULT_AI_EDIT_GENERATE_CONFIG, aiConfigReady, sameAiEditConfig, answerAiEditSpend, borrowArkKey, editAiEditClip, editAiEditClips, exportAiEditSession, generateConfigProblem, generationForRequest, getAiRuntimes, isArkUrl,
   keepValidGenerateUrls, loadAiEditConfig, loadAiEditGenerateConfig, redoAiEdit, revertAiEdit, saveAiEditConfig, saveAiEditGenerateConfig, sendAiEditMessage, setAiEditGoal, undoAiEdit,
 } from "./aiEdit";
 
@@ -160,6 +160,15 @@ describe("local Codex / Claude Code settings", () => {
     expect(aiConfigReady({ ...api, apiKey: "", runtime: "claude" })).toBe(true);
     expect(aiConfigReady({ ...api, apiKey: "" })).toBe(false);
     expect(aiConfigReady({ ...api, runtime: "api" })).toBe(true);
+  });
+
+  it("tells whether the editing model settings changed, ignoring spaces and the video probe result", () => {
+    const stored = { baseUrl: "https://ark.example/api/v3", apiKey: "key", model: "seed", runtime: "api" as const };
+    expect(sameAiEditConfig({ ...stored, apiKey: " key ", videoInput: true, videoProbe: "x" }, stored)).toBe(true);
+    expect(sameAiEditConfig({ ...stored, runtime: undefined }, stored)).toBe(true);
+    expect(sameAiEditConfig({ ...stored, runtime: "codex" }, stored)).toBe(false);
+    expect(sameAiEditConfig({ ...stored, localModels: { codex: "gpt-5.5" } }, stored)).toBe(false);
+    expect(sameAiEditConfig({ ...stored, localModels: { codex: " gpt-5.5 " } }, { ...stored, localModels: { codex: "gpt-5.5" } })).toBe(true);
   });
 
   it("sends only the runtime and the local model, never the stored key", async () => {

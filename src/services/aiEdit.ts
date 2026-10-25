@@ -42,6 +42,20 @@ export function pickLocalModels(value: unknown): Partial<Record<LocalAiRuntime, 
 export const aiConfigReady = (config: Pick<AiEditConfig, "runtime" | "baseUrl" | "apiKey" | "model">): boolean =>
   isLocalAiRuntime(config.runtime) || Boolean(config.apiKey.trim() && config.model.trim() && config.baseUrl.trim());
 
+/** 剪辑模型存进去的样子：测视频的结果交给外面按地址和模型决定沿不沿用，字段去掉首尾空格。 */
+export function tidyAiEditConfig(draft: AiEditConfig): AiEditConfig {
+  const { videoInput: _input, videoProbe: _probe, localModels, ...rest } = draft;
+  const models = localModels ? Object.fromEntries(Object.entries(localModels).map(([key, model]) => [key, (model ?? "").trim()])) : undefined;
+  return { ...rest, runtime: aiRuntimeOf(draft.runtime), apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim(), ...(models ? { localModels: models } : {}) };
+}
+
+/** 两份剪辑模型设置存进去是不是一样（不管首尾空格和测视频的结果）。 */
+export function sameAiEditConfig(left: AiEditConfig, right: AiEditConfig): boolean {
+  const [a, b] = [tidyAiEditConfig(left), tidyAiEditConfig(right)];
+  return a.runtime === b.runtime && a.apiKey === b.apiKey && a.model === b.model && a.baseUrl === b.baseUrl
+    && JSON.stringify(a.localModels ?? {}) === JSON.stringify(b.localModels ?? {});
+}
+
 /** 随请求发给采集器的配置：本机 CLI 只发运行时和模型，存着的 Key 和地址不带过去。 */
 export function aiRequestConfig(config: AiEditConfig): Record<string, unknown> {
   const { runtime, localModels, videoProbe: _probe, ...api } = config;
