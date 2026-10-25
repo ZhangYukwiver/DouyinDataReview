@@ -305,7 +305,7 @@ function Privacy({ collector, onTogglePrivacy, privacy }: SettingsDialogProps) {
       <View style={styles.row}>
         <RowCopy
           detail={writesError ?? (writes === null ? "先在采集器页连上采集器，才能改这一项。"
-            : "打开后可以在工作台里点赞、收藏、关注、评论、分享和发私信，续火花也算。这些都是用你自己的抖音号发出去的，发得太多太快可能被抖音限制甚至封号，所以默认关着。")}
+            : "打开后可以在工作台里点赞、收藏、关注和评论。这些别人都看得到，用的是你自己的抖音号，做得太多太快可能被抖音限制甚至封号，所以默认关着。回私信、分享给朋友和续火花不受这一项限制。")}
           title="允许在抖音上操作"
         />
         <Toggle disabled={writes === null} label="允许在抖音上操作" onPress={toggleWrites} testID="settings-writes" value={writes === true} />

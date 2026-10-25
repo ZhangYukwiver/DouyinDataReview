@@ -17,7 +17,7 @@ import { createLocalAi } from "./localAi.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
-import { importedReadPermissions, parseReadPermissions, readPermissionForRequest, WRITE_REQUESTS, WRITES_DISABLED_MESSAGE } from "./readPermissions.mjs";
+import { importedReadPermissions, parseReadPermissions, PUBLIC_ACTIONS, readPermissionForRequest, WRITES_DISABLED_MESSAGE } from "./readPermissions.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
 import { DirectHistoryError } from "./directHistory.mjs";
@@ -250,7 +250,7 @@ export async function startCollectorServer({
   await chmod(dataDirectory, 0o700);
   const accounts = new AccountRegistry(dataDirectory);
   await accounts.load();
-  // 点赞、收藏、关注、评论、分享和发私信要先在设置里打开；所有账号共用这一个开关，默认关
+  // 点赞、收藏、关注、评论要先在设置里打开；所有账号共用这一个开关，默认关
   const writeSettingsFile = path.join(dataDirectory, "write-actions.json");
   let writesEnabled = await readFile(writeSettingsFile, "utf8").then((text) => JSON.parse(text).enabled === true).catch(() => false);
   // 每个账号一个采集器，各用自己目录里的登录态和记录；同一时间只开当前这一个
@@ -517,10 +517,6 @@ export async function startCollectorServer({
       try { collector.assertReadPermission(readPermission); }
       catch (error) { sendJson(response, error.status, { error: error.code, message: error.message }); return; }
     }
-    if (request.method === "POST" && WRITE_REQUESTS.has(url.pathname) && !writesEnabled) {
-      sendJson(response, 403, { error: "writes_disabled", message: WRITES_DISABLED_MESSAGE });
-      return;
-    }
 
     if (request.method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/chat/observe", "/v1/downloads"].includes(url.pathname)) {
       if (explorer.busy) {
@@ -736,6 +732,10 @@ export async function startCollectorServer({
         const body = await readJsonBody(request);
         if (rejectWhileSwitching(response)) return;
         const operation = url.pathname.split("/").at(-1);
+        if (operation === "interact" && PUBLIC_ACTIONS.has(body?.action) && !writesEnabled) {
+          sendJson(response, 403, { error: "writes_disabled", message: WRITES_DISABLED_MESSAGE });
+          return;
+        }
         if (operation === "close") {
           if (!Array.isArray(body.sessionIds)) { sendJson(response, 400, { error: "invalid_request" }); return; }
           await explorer.close(body.sessionIds);

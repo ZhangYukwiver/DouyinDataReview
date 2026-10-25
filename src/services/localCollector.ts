@@ -1204,7 +1204,7 @@ export async function startCollectorChatObservation(baseUrl: string, token: stri
   return parseStatus(value.status);
 }
 
-/** 「允许在抖音上操作」：点赞、收藏、关注、评论、分享和发私信的总开关，所有账号共用，默认关。不传 enabled 就只读。 */
+/** 「允许在抖音上操作」：点赞、收藏、关注、评论的总开关，所有账号共用，默认关；回私信、分享给朋友和续火花不受它管。不传 enabled 就只读。 */
 export async function collectorWrites(baseUrl: string, token: string, enabled?: boolean): Promise<boolean> {
   const value = await requestJson(baseUrl, "/v1/settings/writes",
     enabled === undefined ? {} : { method: "POST", body: JSON.stringify({ enabled }) }, token);

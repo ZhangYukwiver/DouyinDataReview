@@ -554,10 +554,6 @@ describe("collector server runtime", () => {
     });
     expect(unauthenticatedDownload.status).toBe(401);
 
-    // 互动默认关着会先回 403；打开后才轮到请求体校验
-    await fetch(`${runtime.baseUrl}/v1/settings/writes`, {
-      method: "POST", headers: { Authorization: `Bearer ${payload.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true }),
-    });
     for (const operation of ["read", "interact"]) {
       const unauthorized = await fetch(`${runtime.baseUrl}/v1/explore/${operation}`, { method: "POST" });
       expect(unauthorized.status).toBe(401);

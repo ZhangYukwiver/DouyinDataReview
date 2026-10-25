@@ -11,7 +11,7 @@ export interface SparkSendUpdate { state: SparkSendState; message?: string }
 // 一轮最多发 10 位：批量发私信最容易被抖音当成群发限制
 export const MAX_SPARK_BATCH = 10;
 // 和具体好友无关的问题：剩下的也会同样失败，或者不该再发，直接停下
-const STOP_CODES = new Set([CHAT_SEND_UNCONFIRMED, "not_receiving", "not_connected", "verification_required", "login_required", "browser_reconnect_required", "not_paired", "explore_unreachable", "writes_disabled"]);
+const STOP_CODES = new Set([CHAT_SEND_UNCONFIRMED, "not_receiving", "not_connected", "verification_required", "login_required", "browser_reconnect_required", "not_paired", "explore_unreachable"]);
 const STOPPED = "已停下，这位没发。";
 
 /** 分享名单里的 ID：私信会话 0:1:<一方>:<另一方> 取不是自己的那段（名单里有你自己，采集器那边也会排除）；群聊就是会话 ID 本身。 */
