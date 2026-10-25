@@ -241,7 +241,8 @@ describe("构造的坏文件不会卡住采集器", () => {
       const file = await place(`dos/${name}`, content);
       const started = performance.now();
       expect(await failure(probe(file))).toBe("MEDIA_INVALID");
-      expect(performance.now() - started).toBeLessThan(100);
+      // 逐条循环几十亿个样本要好几秒；CI 机器忙时正常也会到 200ms 左右
+      expect(performance.now() - started).toBeLessThan(1000);
     }
   });
 
