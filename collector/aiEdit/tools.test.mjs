@@ -348,14 +348,17 @@ describe("AI edit tools", () => {
       { id: "a", kind: "video", animations: [{ animation_type: "渐显", duration_us: null }, { animation_type: "渐隐" }, { animation_type: "三分割" }], transition: { transition_type: "叠化", duration_us: null } },
       { id: "t", kind: "text", animations: [{ animation_type: "向上滑动" }] },
       { id: "x", kind: "video", animations: [{ animation_type: "没有这个动画" }] },
+      { id: "o", kind: "video", animations: [{ animation_type: "放大" }, { animation_type: "放大", phase: "out" }] },
     ] }] };
-    const [a, t, x] = withPreviewHints(project).tracks[0].segments;
+    const [a, t, x, o] = withPreviewHints(project).tracks[0].segments;
     expect(a.animations.map((item) => item.phase)).toEqual(["in", "out", "group"]);
     expect(a.animations[0].default_us).toBe(500_000);
     expect(a.transition).toEqual({ transition_type: "叠化", duration_us: null, default_us: 500_000 });
     // 入场出场都有的名字和写草稿时一样按入场算；文字查文字的动画
     expect(t.animations[0]).toMatchObject({ phase: "in" });
     expect(x.animations[0]).toEqual({ animation_type: "没有这个动画" });
+    // 记了是出场的按出场查
+    expect(o.animations.map((item) => item.phase)).toEqual(["in", "out"]);
     expect(project.tracks[0].segments[0].animations[0]).not.toHaveProperty("phase");
     expect(withPreviewHints(null)).toBeNull();
   });
@@ -677,6 +680,11 @@ describe.runIf(["projectStore.mjs", "media.mjs"].every((name) => existsSync(path
       expect(twice.action.error).toBe("片段已经有同一种动画了，要先去掉");
       await refused("add_animation", { clip_id: first, animation_type: "三分割" }, "ANIMATION_CONFLICT");
       await ok("add_animation", { clip_id: first, animation_type: "渐隐" });
+      // 入场和出场同名的「放大」：写了 out 就是出场，不和入场撞；出场已经有了再加出场照样拦
+      await ok("add_animation", { clip_id: picture, animation_type: "放大" });
+      await ok("add_animation", { clip_id: picture, animation_type: "放大", phase: "out" });
+      await refused("add_animation", { clip_id: picture, animation_type: "缩小", phase: "out" }, "ANIMATION_EXISTS");
+      await refused("add_animation", { clip_id: picture, animation_type: "放大", phase: "loop" }, "ANIMATION_INVALID");
       await ok("add_animation", { clip_id: title, animation_type: "上弧" });
       await refused("add_animation", { clip_id: title, animation_type: (await ok("search_catalog", { kind: "text_intro", limit: 1 })).items[0].name }, "ANIMATION_ORDER");
       // 同类音效、视频上的音频特效

@@ -8,7 +8,7 @@ import { modelFetch } from "../systemProxy.mjs";
 import { isLocalRuntime } from "../localAi.mjs";
 import { AnalysisError, requestAnalysis } from "../videoAnalysis.mjs";
 import { normalizeDouyinVideoUrl } from "../videoDownloader.mjs";
-import { members } from "./catalog.mjs";
+import { animationEnums, members } from "./catalog.mjs";
 import { requestCompletion } from "./chat.mjs";
 import { EditError, invalid } from "./errors.mjs";
 import { IMAGES_PER_TURN, generateImage, generateVideo } from "./generate.mjs";
@@ -1082,7 +1082,9 @@ const VIP_ARGUMENTS = {
 /** 用户在剪辑页勾了「只看免费」：会员效果剪映导出时会拦，AI 一个都不能用。 */
 function checkFree(ctx, args) {
   if (!ctx.freeOnly) return;
-  for (const [key, enums] of Object.entries(VIP_ARGUMENTS)) {
+  for (const [key, entry] of Object.entries(VIP_ARGUMENTS)) {
+    // 同名的入场、出场动画会员不一定一样，写了哪一种就只看那一种
+    const enums = key === "animation_type" && args.phase ? [...animationEnums("video", args.phase), ...animationEnums("text", args.phase)] : entry;
     if (catalogMember(enums, args[key])?.member.meta.is_vip) {
       throw invalid("VIP_NOT_ALLOWED", `「${String(args[key]).slice(0, 40)}」要剪映会员才能导出，用户选了只用免费素材，用 search_catalog 换一个免费的。`);
     }
@@ -1204,11 +1206,11 @@ function checkMask(args) {
 
 async function checkAnimation(ctx, args) {
   const clip = await ctx.store.getSegment(ctx.projectId, args.clip_id);
-  const enums = clip?.kind === "text" ? TEXT_ANIMATION_ENUMS : VIDEO_ANIMATION_ENUMS;
-  const slot = ANIMATION_SLOTS[catalogMember(enums, args.animation_type)?.enumName];
+  const slotOf = (item) => ANIMATION_SLOTS[catalogMember(animationEnums(clip?.kind === "text" ? "text" : "video", item.phase), item.animation_type)?.enumName];
+  const slot = slotOf(args);
   // 片段类型或动画名称不对的，交给 ProjectStore 报
   if (!slot || !["video", "image", "text"].includes(clip?.kind)) return;
-  const slots = (clip.animations ?? []).map((item) => ANIMATION_SLOTS[catalogMember(enums, item.animation_type)?.enumName]);
+  const slots = (clip.animations ?? []).map(slotOf);
   const clear = "要换的话先用 clear_clip_feature 去掉 animations（会去掉这个片段的全部动画），再把要留的重新加上。";
   if (slots.includes(slot)) throw invalid("ANIMATION_EXISTS", `这个片段已经有${SLOT_NAMES[slot]}动画了，同一种只能有一个。${clear}`);
   if (clip.kind !== "text" && (slots.includes("group") || (slot === "group" && slots.length))) {
@@ -1821,14 +1823,19 @@ const TOOLS = [
   },
   {
     name: "add_animation",
-    description: "给视频/图片或文字片段加入场、出场或组合/循环动画（名称先用 search_catalog 查 video_intro/video_outro/video_group 或 text_intro/text_outro/text_loop）。每个片段的入场、出场、组合（文字是循环）各只能有一个；视频的组合动画不能和入场、出场同时用；文字要先加入场、出场，最后加循环。要换动画先用 clear_clip_feature 去掉 animations（会去掉全部动画）再加。",
-    parameters: obj({ clip_id: CLIP_ID, animation_type: str("动画名称"), duration: num("动画时长（秒），默认用动画自带的时长，不能超过片段", { exclusiveMinimum: 0 }) }, ["clip_id", "animation_type"]),
+    description: "给视频/图片或文字片段加入场、出场或组合/循环动画（名称先用 search_catalog 查 video_intro/video_outro/video_group 或 text_intro/text_outro/text_loop），phase 写查的是哪一种。每个片段的入场、出场、组合（文字是循环）各只能有一个；视频的组合动画不能和入场、出场同时用；文字要先加入场、出场，最后加循环。要换动画先用 clear_clip_feature 去掉 animations（会去掉全部动画）再加。",
+    parameters: obj({
+      clip_id: CLIP_ID,
+      animation_type: str("动画名称"),
+      phase: choice(["in", "out", "group", "loop"], "哪一种：in 入场、out 出场、group 组合（视频）、loop 循环（文字）。入场和出场有上百个同名的（放大、缩小……），不写按入场算，加出场动画一定写 out"),
+      duration: num("动画时长（秒），默认用动画自带的时长，不能超过片段", { exclusiveMinimum: 0 }),
+    }, ["clip_id", "animation_type"]),
     write: true,
     label: (args) => `加了动画${quoted(args.animation_type)}`,
     run: async (ctx, args) => {
       await checkAnimation(ctx, args);
       return ctx.store.addAnimation(ctx.projectId, args.clip_id, {
-        ...pick(args, ["animation_type"]),
+        ...pick(args, ["animation_type", "phase"]),
         ...(has(args, "duration") ? { duration_us: micros(args.duration) } : {}),
       });
     },

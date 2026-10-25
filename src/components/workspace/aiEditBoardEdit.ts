@@ -1,4 +1,4 @@
-import { MAX_BATCH_EDITS, type AiEditCatalogKind, type AiEditClipEdit, type EditMediaSegment, type EditProject, type EditSegment, type EditTimeRange, type EditTrack, type EditTransform } from "../../services/aiEdit";
+import { MAX_BATCH_EDITS, type AiEditCatalogKind, type AiEditClipEdit, type AiEditEditCall, type EditAnimation, type EditMediaSegment, type EditProject, type EditSegment, type EditTimeRange, type EditTrack, type EditTransform } from "../../services/aiEdit";
 import { clipLabel, IDENTITY_TRANSFORM, secondMark, US_PER_SECOND } from "./aiEditModel";
 
 // 看板上手动剪的纯计算：轨道上挪动、裁剪换算成时间（带吸附），⌘B 切哪段、新工程进来后选中怎么跟，
@@ -324,20 +324,21 @@ export function clipCallName(segment: EditSegment, mediaName?: string | null): s
   return short ? `${KIND_CALLS[segment.kind]}“${short}”` : KIND_CALLS[segment.kind];
 }
 
-// 左栏「剪映素材」：每种素材用哪个工具、套在哪种片段上
+// 左栏「剪映素材」：每种素材用哪个工具、套在哪种片段上；动画是入场、出场、组合（文字是循环）哪一种
 type CatalogTarget = "visual" | "text" | "audio";
-const CATALOG_EDITS: Record<AiEditCatalogKind, { tool: AiEditClipEdit; arg: string; on: CatalogTarget }> = {
+export type AnimationPhase = NonNullable<EditAnimation["phase"]>;
+const CATALOG_EDITS: Record<AiEditCatalogKind, { tool: AiEditClipEdit; arg: string; on: CatalogTarget; phase?: AnimationPhase }> = {
   transition: { tool: "add_transition", arg: "transition_type", on: "visual" },
   filter: { tool: "add_filter", arg: "filter_type", on: "visual" },
   video_effect: { tool: "add_effect", arg: "effect_type", on: "visual" },
-  video_intro: { tool: "add_animation", arg: "animation_type", on: "visual" },
-  video_outro: { tool: "add_animation", arg: "animation_type", on: "visual" },
-  video_group: { tool: "add_animation", arg: "animation_type", on: "visual" },
+  video_intro: { tool: "add_animation", arg: "animation_type", on: "visual", phase: "in" },
+  video_outro: { tool: "add_animation", arg: "animation_type", on: "visual", phase: "out" },
+  video_group: { tool: "add_animation", arg: "animation_type", on: "visual", phase: "group" },
   mask: { tool: "add_mask", arg: "mask_type", on: "visual" },
   mix_mode: { tool: "set_mix_mode", arg: "mode", on: "visual" },
-  text_intro: { tool: "add_animation", arg: "animation_type", on: "text" },
-  text_outro: { tool: "add_animation", arg: "animation_type", on: "text" },
-  text_loop: { tool: "add_animation", arg: "animation_type", on: "text" },
+  text_intro: { tool: "add_animation", arg: "animation_type", on: "text", phase: "in" },
+  text_outro: { tool: "add_animation", arg: "animation_type", on: "text", phase: "out" },
+  text_loop: { tool: "add_animation", arg: "animation_type", on: "text", phase: "loop" },
   font: { tool: "update_clip", arg: "font_family", on: "text" },
   audio_effect: { tool: "add_effect", arg: "effect_type", on: "audio" },
 };
@@ -348,10 +349,69 @@ const targetOf = (segment: EditSegment): CatalogTarget | null =>
 /** 这种剪映素材该套在哪种片段上（说法，给提示用）。 */
 export const catalogTargetName = (kind: AiEditCatalogKind) => TARGET_NAMES[CATALOG_EDITS[kind].on];
 
-/** 选中一段时点了素材：能套上就给出看板改动（素材名用目录里的成员名），这段放不了这种素材返回 null。 */
-export function catalogEdit(kind: AiEditCatalogKind, name: string, segment: EditSegment): { name: AiEditClipEdit; arguments: Record<string, unknown> } | null {
-  const edit = CATALOG_EDITS[kind];
-  return targetOf(segment) === edit.on ? { name: edit.tool, arguments: { clip_id: segment.id, [edit.arg]: name } } : null;
+const PHASE_ORDER: Record<AnimationPhase, number> = { in: 0, out: 1, group: 2, loop: 2 };
+/** 采集器按剪映目录标的是哪一种；没标的当入场 */
+export const phaseOf = (item: EditAnimation): AnimationPhase => item.phase ?? "in";
+
+/**
+ * 把这段的动画换成 list：只是在后面多加几个就直接加；不然先全去掉，再按入场、出场、组合/循环的顺序重新加
+ * （剪映要求文字的循环动画最后加），留下的动画带着原来的时长。都写上是哪一种：入场和出场有上百个同名的。
+ */
+export function animationEdits(segment: EditSegment, list: readonly EditAnimation[]): AiEditEditCall[] {
+  const existing = ("animations" in segment ? segment.animations : null) ?? [];
+  const ordered = [...list].sort((a, b) => PHASE_ORDER[phaseOf(a)] - PHASE_ORDER[phaseOf(b)]);
+  const add = (item: EditAnimation): AiEditEditCall => ({
+    name: "add_animation",
+    arguments: {
+      clip_id: segment.id, animation_type: item.animation_type, phase: phaseOf(item),
+      ...(item.duration_us ? { duration: Math.min(item.duration_us, segment.timeline.duration_us) / US_PER_SECOND } : {}),
+    },
+  });
+  if (existing.every((item, index) => ordered[index] === item)) return ordered.slice(existing.length).map(add);
+  return [{ name: "clear_clip_feature", arguments: { clip_id: segment.id, feature: "animations" } }, ...ordered.map(add)];
+}
+
+/**
+ * 选中一段时点了素材换成的看板改动（一批，一步撤销）。和剪映一样同一种直接换掉：入场换入场、出场换出场，视频的组合动画和入场出场互相顶掉；
+ * 滤镜、转场、音效、蒙版、混合模式、字体换成新的，原来的滤镜强度、转场时长照旧；画面特效是叠加的。
+ * 素材名用目录里的成员名。这段放不了这种素材返回 null，已经是这个了返回空的。
+ */
+export function catalogEdits(kind: AiEditCatalogKind, name: string, segment: EditSegment): AiEditEditCall[] | null {
+  const { tool, arg, on, phase } = CATALOG_EDITS[kind];
+  if (targetOf(segment) !== on) return null;
+  const clip_id = segment.id;
+  const add = (extra: Record<string, unknown> = {}): AiEditEditCall => ({ name: tool, arguments: { clip_id, [arg]: name, ...extra } });
+  const swap = (feature: string, had: boolean, extra: Record<string, unknown> = {}): AiEditEditCall[] =>
+    [...(had ? [{ name: "clear_clip_feature" as const, arguments: { clip_id, feature } }] : []), add(extra)];
+  if (phase) {
+    const animations = ("animations" in segment ? segment.animations : null) ?? [];
+    if (animations.some((item) => item.animation_type === name && phaseOf(item) === phase)) return [];
+    const clash = (item: EditAnimation) => phaseOf(item) === phase || (on === "visual" && (phase === "group" || phaseOf(item) === "group"));
+    return animationEdits(segment, [...animations.filter((item) => !clash(item)), { animation_type: name, phase }]);
+  }
+  if (segment.kind === "text") return segment.font_family === name ? [] : [add()];
+  // 走到这里只剩视频、图片、音频（上面按 targetOf 挡过）
+  const media = segment as EditMediaSegment;
+  switch (kind) {
+    case "transition": {
+      const old = media.transition;
+      return old?.transition_type === name ? [] : [add(old?.duration_us ? { duration: old.duration_us / US_PER_SECOND } : {})];
+    }
+    case "filter": {
+      const filters = media.filters ?? [];
+      if (filters.length === 1 && filters[0]!.filter_type === name) return [];
+      const intensity = filters[0]?.intensity;
+      return swap("filters", filters.length > 0, intensity === undefined ? {} : { intensity });
+    }
+    case "mask": return media.mask?.mask_type === name ? [] : swap("mask", Boolean(media.mask));
+    case "mix_mode": return media.mix_mode?.mode === name ? [] : swap("mix_mode", Boolean(media.mix_mode));
+    default: {
+      const effects = media.effects ?? [];
+      if (effects.some((item) => item.effect_type === name)) return [];
+      // ponytail: 音效不分哪一类（场景音、音色、声音成曲）整个换掉，剪映里同一类只能有一个；要叠不同类的音效交给 AI
+      return swap("effects", kind === "audio_effect" && effects.length > 0);
+    }
+  }
 }
 
 /** 输入框上方的框选提示。 */

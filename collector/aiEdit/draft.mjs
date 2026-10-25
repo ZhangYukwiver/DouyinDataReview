@@ -13,7 +13,7 @@ import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { link, lstat, mkdir, open, rename, rm, stat, unlink, copyFile } from "node:fs/promises";
 import path from "node:path";
 
-import { members } from "./catalog.mjs";
+import { animationEnums, members } from "./catalog.mjs";
 import { EditError, invalid } from "./errors.mjs";
 import { dumps, loads, PyFloat, pyFloat } from "./draft/pyjson.mjs";
 import {
@@ -293,9 +293,7 @@ function applyFeatures(ids, instance, segment) {
     }
     if (present(mixMode)) instance.setMixMode(ids, resolveMember(["MixModeType"], mixMode.mode).meta);
     for (const item of segment.animations ?? []) {
-      const member = resolveMember(
-        ["IntroType", "OutroType", "GroupAnimationType"], item.animation_type, `Unknown animation: ${item.animation_type}`,
-      );
+      const member = resolveMember(animationEnums("video", item.phase), item.animation_type, `Unknown animation: ${item.animation_type}`);
       instance.addAnimation(ids, member, item.duration_us ?? null);
     }
   } else if (instance instanceof AudioSegment) {
@@ -307,9 +305,7 @@ function applyFeatures(ids, instance, segment) {
     if (present(segment.bubble)) instance.addBubble(ids, segment.bubble.effect_id, segment.bubble.resource_id);
     if (present(segment.text_effect_id)) instance.addEffect(ids, segment.text_effect_id);
     for (const item of segment.animations ?? []) {
-      const member = resolveMember(
-        ["TextIntro", "TextOutro", "TextLoopAnim"], item.animation_type, `Unknown text animation: ${item.animation_type}`,
-      );
+      const member = resolveMember(animationEnums("text", item.phase), item.animation_type, `Unknown text animation: ${item.animation_type}`);
       instance.addAnimation(ids, member, item.duration_us ?? null);
     }
   }

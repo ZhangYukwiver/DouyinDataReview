@@ -1,8 +1,8 @@
 import type {
-  AiEditEditCall, AiEditHistoryStep, EditCanvas, EditMediaSegment, EditProject, EditSegment, EditStickerSegment, EditTextSegment, EditTransform,
+  AiEditCatalogKind, AiEditEditCall, AiEditHistoryStep, EditCanvas, EditMediaSegment, EditProject, EditSegment, EditStickerSegment, EditTextSegment, EditTransform,
 } from "../../services/aiEdit";
-import { fullTransform, MIN_CLIP_US, pyRound, undoKind } from "./aiEditBoardEdit";
-import { findSegment, US_PER_SECOND } from "./aiEditModel";
+import { animationEdits, fullTransform, MIN_CLIP_US, phaseOf, pyRound, undoKind, type AnimationPhase } from "./aiEditBoardEdit";
+import { DEFAULT_FEATURE_US, findSegment, US_PER_SECOND } from "./aiEditModel";
 
 // 详情卡里能拖、能输的数值框（规格 1B）：列哪些字段、能改到多少、打进去的字怎么读、拖一下走几步、改完换成哪个看板改动；
 // 还有多选卡片的一句话说明和操作历史面板的纯计算（D4、D10）。
@@ -204,7 +204,7 @@ export function scrubValue(start: number, dx: number, step: number, mods?: StepM
 
 // ---------- 详情卡列哪些字段 ----------
 
-export type FieldKey = "start" | "duration" | "source_start" | "speed" | "x" | "y" | "scale" | "rotation" | "alpha";
+export type FieldKey = "start" | "duration" | "source_start" | "speed" | "x" | "y" | "scale" | "rotation" | "alpha" | "transition" | "filter" | `anim_${AnimationPhase}`;
 
 export interface InspectField {
   key: FieldKey;
@@ -236,6 +236,8 @@ export interface InspectField {
   hint: string;
   /** 只有开始时间有：打的值跳出了现在这个空当，看挪到别处放不放得下；放得下为 null，放不下是原因 */
   elsewhere?: (value: number) => string | null;
+  /** 调的是套着的剪映效果（转场、动画多长，滤镜多强）：改完把这个效果试播一遍 */
+  preview?: AiEditCatalogKind;
 }
 
 export interface InspectContext {
@@ -268,6 +270,12 @@ const seconds = (us: number) => us / US_PER_SECOND;
 const hasSource = (segment: EditSegment): segment is EditMediaSegment => segment.kind === "video" || segment.kind === "audio";
 const hasTransform = (segment: EditSegment): segment is EditMediaSegment | EditTextSegment | EditStickerSegment =>
   segment.kind === "video" || segment.kind === "image" || segment.kind === "text" || segment.kind === "sticker";
+const animationsOf = (segment: EditSegment) => ("animations" in segment ? segment.animations : null) ?? [];
+const filtersOf = (segment: EditSegment) => ("filters" in segment ? segment.filters : null) ?? [];
+/** 转场、动画实际多长：没写时长的按剪映目录里的默认 */
+const spanUs = (item: { duration_us?: number | null; default_us?: number | null }) => item.duration_us || item.default_us || DEFAULT_FEATURE_US;
+const PHASE_NAMES: Record<AnimationPhase, string> = { in: "入场", out: "出场", group: "组合", loop: "循环" };
+const PHASE_PREVIEW: Record<AnimationPhase, AiEditCatalogKind> = { in: "video_intro", out: "video_outro", group: "video_group", loop: "text_loop" };
 
 /** 片段最短能缩到多短：0.1 秒，也不能短过最后一个关键帧和淡入淡出加起来的长度（采集器会拒）。 */
 export function shortestUs(segment: EditSegment): number {
@@ -348,6 +356,23 @@ export function inspectFields(segment: EditSegment, ctx: InspectContext): Inspec
       { ...plain("alpha"), label: "不透明度", name: "不透明度", value: Math.round(transform.alpha * 100), min: 0, max: 100, digits: 0, unit: "%", ctx: { percent: "self" }, hint: "0 是完全透明，100 是不透明" },
     );
   }
+  // 套着的剪映效果：转场、各个动画多长（不能长过这段），第一个滤镜多强
+  const span = (us: number) => ({ ...time, value: seconds(us), min: seconds(Math.min(MIN_CLIP_US, us)), max: seconds(Math.max(duration, us)) });
+  if ("transition" in segment && segment.transition) {
+    fields.push({ key: "transition", label: "转场时长", name: "转场时长", ...span(spanUs(segment.transition)), preview: "transition" });
+  }
+  for (const item of animationsOf(segment)) {
+    const phase = phaseOf(item);
+    if (fields.some((field) => field.key === `anim_${phase}`)) continue;
+    fields.push({ key: `anim_${phase}`, label: `${PHASE_NAMES[phase]}时长`, name: `${PHASE_NAMES[phase]}动画时长`, ...span(spanUs(item)), preview: PHASE_PREVIEW[phase] });
+  }
+  const filter = filtersOf(segment)[0];
+  if (filter) {
+    fields.push({
+      key: "filter", label: "滤镜强度", name: "滤镜强度", value: Math.round(filter.intensity ?? 100), min: 0, max: 100, step: 1, time: false, digits: 0, unit: "%",
+      ctx: { percent: "self" }, disabled: null, hint: "0 到 100，100 是滤镜本来的样子", preview: "filter",
+    });
+  }
   return fields;
 }
 
@@ -392,8 +417,11 @@ export function transformWith(base: EditTransform, key: FieldKey, value: number,
   return next;
 }
 
-/** 数值框改完换成的看板改动；值没变、或者这类片段没有这一项为 null。开始时间走 move_clip，其余走 update_clip。 */
-export function fieldEdit(segment: EditSegment, key: FieldKey, value: number, canvas: Pick<EditCanvas, "width" | "height">): AiEditEditCall | null {
+/**
+ * 数值框改完换成的看板改动；值没变、或者这类片段没有这一项为 null。开始时间走 move_clip，其余走 update_clip；
+ * 剪映效果的时长、强度是一批：转场照原样再加一次，滤镜、动画全去掉再按原来的顺序加回来（剪映要求文字的循环动画最后加）。
+ */
+export function fieldEdit(segment: EditSegment, key: FieldKey, value: number, canvas: Pick<EditCanvas, "width" | "height">): AiEditEditCall | AiEditEditCall[] | null {
   const us = Math.round(value * US_PER_SECOND);
   const clip_id = segment.id;
   switch (key) {
@@ -405,6 +433,25 @@ export function fieldEdit(segment: EditSegment, key: FieldKey, value: number, ca
       return !hasSource(segment) || us === segment.source.start_us ? null : { name: "update_clip", arguments: { clip_id, source_start: seconds(us) } };
     case "speed":
       return !hasSource(segment) || Math.abs(value - (segment.speed > 0 ? segment.speed : 1)) < 1e-6 ? null : { name: "update_clip", arguments: { clip_id, speed: value } };
+    case "transition": {
+      const transition = "transition" in segment ? segment.transition : null;
+      return !transition || us === spanUs(transition) ? null
+        : [{ name: "add_transition", arguments: { clip_id, transition_type: transition.transition_type, duration: seconds(us) } }];
+    }
+    case "filter": {
+      const filters = filtersOf(segment);
+      const strength = Math.round(clamp(value, 0, 100));
+      if (!filters.length || strength === Math.round(filters[0]!.intensity ?? 100)) return null;
+      return [{ name: "clear_clip_feature", arguments: { clip_id, feature: "filters" } }, ...filters.map((item, index): AiEditEditCall => ({
+        name: "add_filter", arguments: { clip_id, filter_type: item.filter_type, intensity: index ? item.intensity ?? 100 : strength },
+      }))];
+    }
+    case "anim_in": case "anim_out": case "anim_group": case "anim_loop": {
+      const animations = animationsOf(segment);
+      const target = animations.find((item) => `anim_${phaseOf(item)}` === key);
+      if (!target || us === spanUs(target)) return null;
+      return animationEdits(segment, animations.map((item) => (item === target ? { ...item, duration_us: us } : item)));
+    }
     default: {
       if (!hasTransform(segment)) return null;
       const base = fullTransform(segment.transform);
@@ -418,16 +465,17 @@ export function fieldEdit(segment: EditSegment, key: FieldKey, value: number, ca
  * 按工程里这段现在的样子换成看板改动：数值框提交前先 flush 了别处攒着的微调，位置、缩放这几项发的是整个 transform，
  * 按 flush 之前的样子算会把刚挪的位置写回去。这段不见了、值没变为 null。
  */
-export function fieldEditNow(project: Pick<EditProject, "tracks" | "canvas"> | null | undefined, clipId: string, key: FieldKey, value: number, canvas: Pick<EditCanvas, "width" | "height">): AiEditEditCall | null {
+export function fieldEditNow(project: Pick<EditProject, "tracks" | "canvas"> | null | undefined, clipId: string, key: FieldKey, value: number, canvas: Pick<EditCanvas, "width" | "height">): AiEditEditCall | AiEditEditCall[] | null {
   const found = findSegment(project, clipId);
   return found ? fieldEdit(found.segment, key, value, project?.canvas ?? canvas) : null;
 }
 
 // 详情里和数值框重复的说明行：有了框就不再写一遍（音量、裁剪、效果、关键帧这些照旧留着）
-const COVERED_ROWS: Record<FieldKey, readonly string[]> = {
+// 剪映效果那几行（转场、动画、滤镜）留着：名字和去掉的 × 在那
+const COVERED_ROWS: Partial<Record<FieldKey, readonly string[]>> = {
   start: ["时间线上"], duration: ["时长"], source_start: ["截取"], speed: ["速度"], x: ["位置"], y: ["位置"], scale: ["缩放"], rotation: ["旋转"], alpha: ["不透明度"],
 };
-export const coveredRows = (fields: readonly Pick<InspectField, "key">[]): Set<string> => new Set(fields.flatMap((field) => COVERED_ROWS[field.key]));
+export const coveredRows = (fields: readonly Pick<InspectField, "key">[]): Set<string> => new Set(fields.flatMap((field) => COVERED_ROWS[field.key] ?? []));
 
 // ---------- 多选卡片 ----------
 

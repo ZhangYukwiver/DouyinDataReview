@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { link, mkdir, open, readdir, readFile, realpath, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { members } from "./catalog.mjs";
+import { animationEnums, members } from "./catalog.mjs";
 import { EditError, invalid } from "./errors.mjs";
 import { renameRetrying } from "./rename.mjs";
 
@@ -393,7 +393,8 @@ const TransitionCreate = model([["transition_type", Label, REQUIRED], ["duration
 const FadeCreate = model([["in_duration_us", TimeUs, 0], ["out_duration_us", TimeUs, 0]], {
   after: (fade) => (fade.in_duration_us === 0 && fade.out_duration_us === 0 ? "fade duration must be positive" : null),
 });
-const AnimationCreate = model([["animation_type", Label, REQUIRED], ["duration_us", nullable(DurationUs), null]]);
+// phase：入场 in、出场 out、组合 group（视频）、循环 loop（文字）；入场和出场有很多同名的，记下来写草稿时才不会认错
+const AnimationCreate = model([["animation_type", Label, REQUIRED], ["duration_us", nullable(DurationUs), null], ["phase", nullable(literal(["in", "out", "group", "loop"])), null]]);
 const StickerSegmentCreate = model([["resource_id", Label, REQUIRED], ["timeline", TimeRange, REQUIRED], ["transform", nullable(ClipTransform), null]]);
 const MarkerCreate = model([["time_us", TimeUs, REQUIRED], ["label", Label, REQUIRED], ["color", Color6, "#FFFFFF"]]);
 const SegmentMove = model([["start_us", TimeUs, REQUIRED]]);
@@ -655,8 +656,6 @@ function requireMember(enumName, raw) {
 
 const VIDEO_EFFECTS = ["VideoSceneEffectType", "VideoCharacterEffectType"];
 const AUDIO_EFFECTS = ["AudioSceneEffectType", "ToneEffectType", "SpeechToSongType"];
-const TEXT_ANIMATIONS = ["TextIntro", "TextOutro", "TextLoopAnim"];
-const VIDEO_ANIMATIONS = ["IntroType", "OutroType", "GroupAnimationType"];
 const CLEARABLE = new Set([
   "effects", "filters", "animations", "transition", "fade", "mask", "chroma", "background_filling",
   "mix_mode", "crop", "border", "background", "shadow", "bubble", "text_effect",
@@ -1390,13 +1389,13 @@ export class ProjectStore {
       item = { filter_type: value.filter_type, intensity: value.intensity };
     } else {
       if (kind === "audio") throw invalid("SEGMENT_FIELD_MISMATCH", "Animations require a visual clip");
-      if (!findMember(kind === "text" ? TEXT_ANIMATIONS : VIDEO_ANIMATIONS, value.animation_type)) {
+      if (!findMember(animationEnums(kind === "text" ? "text" : "video", value.phase), value.animation_type)) {
         throw invalid("ANIMATION_INVALID", "Unknown animation for this clip type");
       }
       if (value.duration_us !== null && value.duration_us > current.timeline.duration_us) {
         throw invalid("ANIMATION_INVALID", "Animation exceeds clip duration");
       }
-      item = { animation_type: value.animation_type, duration_us: value.duration_us };
+      item = { animation_type: value.animation_type, duration_us: value.duration_us, ...(value.phase ? { phase: value.phase } : {}) };
     }
     return this.#replaceSegment(project, track.id, segmentId, { ...current, [feature]: [...(current[feature] ?? []), item] });
   }

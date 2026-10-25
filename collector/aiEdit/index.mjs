@@ -56,11 +56,11 @@ const BOARD_EDITS = new Map([
   ["add_marker", new Set(["time", "label", "color"])],
   ["remove_marker", new Set(["time"])],
   ["add_subtitle_line", new Set(["track_id", "start", "duration", "text"])],
-  // 左栏「剪映素材」：选中一段点一下就套上；属性卡里的效果能去掉
-  ["add_transition", new Set(["clip_id", "transition_type"])],
-  ["add_filter", new Set(["clip_id", "filter_type"])],
+  // 左栏「剪映素材」：选中一段点一下就套上（同一种的先去掉再加）；属性卡里的效果能去掉，转场、动画时长和滤镜强度能改
+  ["add_transition", new Set(["clip_id", "transition_type", "duration"])],
+  ["add_filter", new Set(["clip_id", "filter_type", "intensity"])],
   ["add_effect", new Set(["clip_id", "effect_type"])],
-  ["add_animation", new Set(["clip_id", "animation_type"])],
+  ["add_animation", new Set(["clip_id", "animation_type", "phase", "duration"])],
   ["add_mask", new Set(["clip_id", "mask_type"])],
   ["set_mix_mode", new Set(["clip_id", "mode"])],
   ["clear_clip_feature", new Set(["clip_id", "feature"])],
@@ -70,6 +70,7 @@ const FEATURE_EDITS = {
   add_transition: ["transition_type", "转场"], add_filter: ["filter_type", "滤镜"], add_effect: ["effect_type", "特效"],
   add_animation: ["animation_type", "动画"], add_mask: ["mask_type", "蒙版"], set_mix_mode: ["mode", "混合模式"],
 };
+const ANIMATION_KINDS = { in: "入场动画", out: "出场动画", group: "组合动画", loop: "循环动画" };
 const FEATURE_LABELS = {
   transition: "转场", effects: "特效", filters: "滤镜", animations: "动画", fade: "淡入淡出", mask: "蒙版", chroma: "抠像",
   background_filling: "背景填充", mix_mode: "混合模式", crop: "裁剪", border: "描边", background: "文字背景", shadow: "阴影", bubble: "气泡", text_effect: "花字",
@@ -374,11 +375,14 @@ function describeEdit(name, args, before, after, result) {
   const ref = `${label}（clip_id ${args.clip_id}）`;
   if (name === "delete_clip") return { label: `删掉${label}`, note: `删掉了${ref}` };
   if (Object.hasOwn(FEATURE_EDITS, name)) {
-    const [key, kind] = FEATURE_EDITS[name];
+    const [key, plain] = FEATURE_EDITS[name];
+    const kind = (name === "add_animation" && ANIMATION_KINDS[args.phase]) || plain;
     const shown = `${kind}「${displayName(args[key])}」`;
+    // 看板上改转场、动画时长和滤镜强度，是带着新的值再加一次
+    const detail = args.duration !== undefined ? `，时长 ${seconds(micros(args.duration))} 秒` : args.intensity !== undefined ? `，强度 ${args.intensity}` : "";
     return name === "set_mix_mode"
       ? { label: `把${label}设成${shown}`, note: `把${ref}设成了${shown}` }
-      : { label: `给${label}加${shown}`, note: `给${ref}加了${shown}` };
+      : { label: `给${label}加${shown}`, note: `给${ref}加了${shown}${detail}` };
   }
   if (name === "clear_clip_feature") {
     const kind = FEATURE_LABELS[args.feature] ?? "效果";

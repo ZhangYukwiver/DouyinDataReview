@@ -564,7 +564,7 @@ export interface FeatureLook { opacity: number; transform: string; filter: strin
 
 interface Pose { opacity: number; x: number; y: number; scale: number; rotate: number; blur: number; bright: number }
 
-const DEFAULT_FEATURE_US = 500_000;
+export const DEFAULT_FEATURE_US = 500_000;
 const ease = (p: number) => 1 - (1 - Math.min(1, Math.max(0, p))) ** 2;
 
 /** 离开静止位置 k（0–1）时的样子。dir 1 是进来（入场、转场的后一段），-1 是出去；wobble（-1..1）给抖动用。认不出方式的按淡入淡出带一点缩放。 */

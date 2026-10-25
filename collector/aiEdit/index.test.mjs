@@ -957,7 +957,7 @@ describe("AI edit board edits", () => {
     expect(retitled.body.session.undo).toEqual({ label: "改文字“周末去海边”", kind: "edit" });
 
     // 只放开看板上的几种改动、update_clip 也只放开几项
-    for (const [name, args] of [["update_clip", { clip_id: clip, volume: 0.5 }], ["add_fade", { clip_id: clip, fade_in: 1 }], ["add_transition", { clip_id: clip, transition_type: "叠化", duration: 2 }], ["export_to_jianying", {}], ["move_clip", "x"]]) {
+    for (const [name, args] of [["update_clip", { clip_id: clip, volume: 0.5 }], ["add_fade", { clip_id: clip, fade_in: 1 }], ["add_effect", { clip_id: clip, effect_type: "_1998", params: [50] }], ["export_to_jianying", {}], ["move_clip", "x"]]) {
       expect(await edit(name, args)).toEqual({ status: 422, body: { error: "edit_not_allowed", message: "这个改动不能在看板上做。" } });
     }
     const split = await edit("split_clip", { clip_id: clip, offset: 0.4 });
@@ -1027,6 +1027,24 @@ describe("AI edit board edits", () => {
     expect(segmentOf(cleared, clip).transition ?? null).toBeNull();
     expect(cleared.body.session.undo.label).toBe("去掉视频“海边.mp4”的转场");
     expect(segmentOf(cleared, clip).effects).toHaveLength(1);
+
+    // 换掉、调时长和强度：看板发一批（先去掉再加），撤销按钮上是看板起的名字；出场「放大」和入场同名，带着 phase 不会认成入场
+    const batch = (edits, label) => call(`/v1/ai-edit/sessions/${session.id}/edit`, { method: "POST", body: { edits: edits.map(([name, args]) => ({ name, arguments: args })), label } });
+    expect((await edit("add_animation", { clip_id: clip, animation_type: "放大", phase: "in" })).status).toBe(200);
+    const outro = await edit("add_animation", { clip_id: clip, animation_type: "放大", phase: "out", duration: 0.3 });
+    expect(segmentOf(outro, clip).animations).toMatchObject([{ animation_type: "放大", phase: "in" }, { animation_type: "放大", phase: "out", duration_us: 300_000 }]);
+    expect(outro.body.session.undo.label).toBe("给视频“海边.mp4”加出场动画「放大」");
+    const swapped = await batch([
+      ["clear_clip_feature", { clip_id: clip, feature: "animations" }],
+      ["add_animation", { clip_id: clip, animation_type: "渐显", phase: "in" }],
+      ["add_animation", { clip_id: clip, animation_type: "放大", phase: "out", duration: 0.4 }],
+    ], "给视频“海边.mp4”加上入场动画「渐显」");
+    expect(segmentOf(swapped, clip).animations).toMatchObject([{ animation_type: "渐显", phase: "in" }, { animation_type: "放大", phase: "out", duration_us: 400_000 }]);
+    expect(swapped.body.session.undo.label).toBe("给视频“海边.mp4”加上入场动画「渐显」");
+    const strength = await batch([["clear_clip_feature", { clip_id: clip, feature: "filters" }], ["add_filter", { clip_id: clip, filter_type: "冷白", intensity: 40 }]], "改视频“海边.mp4”的滤镜强度");
+    expect(segmentOf(strength, clip).filters).toEqual([{ filter_type: "冷白", intensity: 40 }]);
+    const longer = await edit("add_transition", { clip_id: clip, transition_type: "叠化扭曲", duration: 0.8 });
+    expect(segmentOf(longer, clip).transition).toMatchObject({ transition_type: "叠化扭曲", duration_us: 800_000 });
   });
 
   it("adds, renames and moves markers and adds a subtitle line from the timeline toolbar, with a named batch", async () => {
