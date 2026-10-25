@@ -515,7 +515,9 @@ function VideoShare({ record, connection, onClose }: { record: PersonalVideoReco
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === "AbortError") return;
       const expired = cause instanceof LocalCollectorError && cause.code === "session_expired";
-      setSent(({ [person.id]: _, ...rest }) => expired ? rest : { ...rest, [person.id]: "unknown" });
+      // 开关没开：采集器没发出去，这位还能再点
+      const blocked = cause instanceof LocalCollectorError && cause.code === "writes_disabled";
+      setSent(({ [person.id]: _, ...rest }) => expired || blocked ? rest : { ...rest, [person.id]: "unknown" });
       setNotice(expired ? "朋友列表过期了，已重新载入，请再点一次。" : cause instanceof Error ? cause.message : "没收到结果，可能已经分享出去了，先去聊天里看看。");
       if (expired) setAttempt((value) => value + 1);
     }

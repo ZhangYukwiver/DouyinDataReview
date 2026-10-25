@@ -306,7 +306,6 @@ const blocks: string[] = [
   rule(sel("c-avatar"), `background-color:${RAIL}!important;border-color:transparent!important`),
   rule(sel("c-avatar", " > div[dir]"), `color:${TEXT2}!important;font-weight:500!important;letter-spacing:0!important`),
   rule(`${sel("c-avatar", " > svg")},${sel("c-avatar", " > svg *")}`, "stroke:#52525B!important"),
-  rule(sel("c-online"), `border-color:${WHITE}!important;box-shadow:none!important`),
   // 详情
   rule(sel("c-dhead"), `min-height:64px!important;background-color:${WHITE}!important;${line("bottom")}`),
   rule(sel("c-dhead", ' + [data-ws~="stamp-bar"]'), "margin:12px 20px 0!important"),

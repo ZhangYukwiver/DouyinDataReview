@@ -106,6 +106,22 @@ describe("browser login HTTP handshake", () => {
     expect((await call("/v1/records")).status).toBe(200);
     expect((await call("/v1/chat/observe/stop", "POST")).status).toBe(200);
   });
+  it("keeps writes on Douyin off until the shared setting turns them on, and remembers it across restarts", async () => {
+    const { call, dataDirectory } = await fixture();
+    expect(await call("/v1/settings/writes")).toEqual({ status: 200, body: { enabled: false } });
+    for (const route of ["/v1/explore/interact", "/v1/chat/send"])
+      expect(await call(route, "POST", {})).toMatchObject({ status: 403, body: { error: "writes_disabled" } });
+    expect((await call("/v1/settings/writes", "POST", { enabled: "true" })).status).toBe(400);
+    expect(await call("/v1/settings/writes", "POST", { enabled: true })).toEqual({ status: 200, body: { enabled: true } });
+    for (const route of ["/v1/explore/interact", "/v1/chat/send"])
+      expect((await call(route, "POST", {})).body.error).not.toBe("writes_disabled");
+    const restarted = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath });
+    cleanups.push(() => restarted.close());
+    const { token } = await fetch(`${restarted.baseUrl}/v1/pair`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: restarted.getPairingCode() }) }).then(response => response.json());
+    expect(await fetch(`${restarted.baseUrl}/v1/settings/writes`, { headers: { Authorization: `Bearer ${token}` } }).then(response => response.json()))
+      .toEqual({ enabled: true });
+  });
   it.each([null, {}, { videos: false, chat: false }, { videos: "true", chat: false }])("rejects invalid permission selection without consuming the confirmation: %j", async readPermissions => {
     const { call, bootstrap, readRecords } = await fixture();
     const candidate = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;
