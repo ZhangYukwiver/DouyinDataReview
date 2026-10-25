@@ -639,7 +639,8 @@ export function createAiEdit({
       if (old) {
         const oldPath = library.filePath(old);
         for (const segment of segments.filter((item) => item.path === oldPath)) await store.updateSegment(session.projectId, segment.id, { path: target });
-        if (!(await mediaInUse(old))) await library.remove(old.id).catch(() => undefined);
+        // Windows 的剪映草稿直接引用素材库里的文件：导出过的草稿还用着就留下（同删素材的规矩），重新导入剪映后再删
+        if (!(await mediaInUse(old)) && !(await library.draftUsing(old))) await library.remove(old.id).catch(() => undefined);
       }
       const used = segments.filter((item) => item.path === target || (old && item.path === library.filePath(old)));
       const longer = used.filter((item) => item.source && item.source.start_us + item.source.duration_us > result.duration * 1_000_000 + 1_000);
@@ -1155,6 +1156,8 @@ export function createAiEdit({
         await job?.promise;
         await sessions.remove(id);
         try { await store.deleteProject(session.projectId); } catch { /* 工程已经没了 */ }
+        // 出过的片子和导出的工程包（工程包里带着全部素材的副本）跟着删
+        for (const folder of [id, `${id}-film`]) await rm(path.join(root, "renders", folder), { recursive: true, force: true }).catch(() => undefined);
         sendJson(response, 200, { ok: true });
         return;
       }
