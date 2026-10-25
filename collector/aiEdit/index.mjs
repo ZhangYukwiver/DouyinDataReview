@@ -14,7 +14,7 @@ import { EditError } from "./errors.mjs";
 import { createFilmStudio } from "./film/studio.mjs";
 import { backgroundNote, parseGenerateConfig } from "./generate.mjs";
 import { AiEditError, MediaLibrary, isMediaId } from "./library.mjs";
-import { displayName } from "./catalog.mjs";
+import { displayName, withPreviewHints } from "./catalog.mjs";
 import { createCoverIndex } from "./jianyingCovers.mjs";
 import { createLookDesk } from "./look.mjs";
 import { SessionStore, isSessionId, revertTarget, sessionDetail } from "./sessions.mjs";
@@ -543,7 +543,8 @@ export function createAiEdit({
   const sessionState = async (session) => {
     let project = null;
     try { project = await state.store.getProject(session.projectId); } catch { /* 工程文件丢了就只回会话 */ }
-    return { session: sessionDetail(session), project };
+    // 看板预览近似画剪映的动画、转场要知道动画是哪一类、默认多长：按剪映目录补上（不存进工程）
+    return { session: sessionDetail(session), project: withPreviewHints(project) };
   };
 
   const requireSession = (id) => {

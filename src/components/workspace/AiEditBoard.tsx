@@ -3,10 +3,10 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View, type LayoutChange
 import { Download, FolderInput, X } from "lucide-react-native";
 import {
   editAiEditClip, editAiEditClips, redoAiEdit, setAiEditCanvas, undoAiEdit,
-  type AiEditDraftBoxStatus, type AiEditExportMode, type AiEditMediaItem, type AiEditSession, type EditCanvas, type EditProject, type EditSegment,
+  type AiEditCatalogKind, type AiEditDraftBoxStatus, type AiEditExportMode, type AiEditMediaItem, type AiEditSession, type EditCanvas, type EditProject, type EditSegment,
 } from "../../services/aiEdit";
 import {
-  cutPoints, draftBoxReasonText, findSegment, formatDuration, mediaIdFromPath, nextCut, projectDuration, stepFrame, US_PER_SECOND, type ExportNote,
+  cutPoints, draftBoxReasonText, featurePreviewRange, findSegment, formatDuration, mediaIdFromPath, nextCut, projectDuration, stepFrame, US_PER_SECOND, type ExportNote,
 } from "./aiEditModel";
 import { clipCallName, selectableIds, settleSelection, splitOffset, splitTarget, tooManyEditsText, undoKind, type PendingSelect, type Picked } from "./aiEditBoardEdit";
 import {
@@ -383,14 +383,19 @@ export function Board(props: BoardProps) {
   });
 
   // ---------- 给各区域的 context ----------
-  const playbackApi = useMemo<BoardPlayback>(() => ({ playing: playback.playing, timeRef: playback.timeRef, toggle: playback.toggle, seek: playback.seek, pause: playback.pause }),
-    [playback.playing, playback.timeRef, playback.toggle, playback.seek, playback.pause]);
+  const playbackApi = useMemo<BoardPlayback>(() => ({ playing: playback.playing, timeRef: playback.timeRef, toggle: playback.toggle, seek: playback.seek, pause: playback.pause, playRange: playback.playRange }),
+    [playback.playing, playback.timeRef, playback.toggle, playback.seek, playback.pause, playback.playRange]);
+  const previewFeature = useCallback((segmentId: string, kind: AiEditCatalogKind) => {
+    const found = findSegment(latest.current.project, segmentId);
+    const range = found ? featurePreviewRange(kind, found.segment, found.track.segments) : null;
+    if (range) playback.playRange(range.from, range.to);
+  }, [playback.playRange]);
   const value = useMemo<BoardContextValue>(() => ({
     session, project, canvas, frameUs, duration, mediaById, mediaUrl, filmUrl, running, editable, notEditableReason, playback: playbackApi, selection, selected, splitHint, callName,
-    expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushHeld: flushPending, selectAll, refer, revealSeq, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
+    expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushHeld: flushPending, previewFeature, selectAll, refer, revealSeq, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
     lastPointerArea,
   }), [session, project, canvas, frameUs, duration, mediaById, mediaUrl, filmUrl, running, editable, notEditableReason, playbackApi, selection, selected, splitHint, callName,
-    expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushPending, selectAll, refer, revealSeq, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
+    expectSelect, runEdit, runEdits, toast, undo, redo, split, removeSelected, flushPending, previewFeature, selectAll, refer, revealSeq, regionMode, startRegionSelect, stopRegionSelect, region, setRegion,
     lastPointerArea]);
 
   const [height, setHeight] = useState(0);
@@ -577,7 +582,9 @@ function usePlayback(duration: number, projectId: string | null, frameUs: number
   const timeRef = useRef(0);
   const setTime = useCallback((next: number) => { timeRef.current = next; setTimeState(next); }, []);
   const anchor = useRef({ origin: 0, at: 0 });
-  useEffect(() => { setPlaying(false); setTime(0); }, [projectId, setTime]);
+  // 试播一段时放到哪停（null 是放到结尾）
+  const stopAt = useRef<number | null>(null);
+  useEffect(() => { stopAt.current = null; setPlaying(false); setTime(0); }, [projectId, setTime]);
   useEffect(() => { if (time > duration) setTime(duration); }, [duration, time, setTime]);
   useEffect(() => {
     if (!playing) return undefined;
@@ -585,28 +592,39 @@ function usePlayback(duration: number, projectId: string | null, frameUs: number
     anchor.current = { origin: timeRef.current, at: performance.now() };
     const tick = (now: number) => {
       const next = anchor.current.origin + Math.max(0, now - anchor.current.at) * 1000;
-      if (next >= duration) { setTime(duration); setPlaying(false); return; }
+      const limit = Math.min(duration, stopAt.current ?? duration);
+      // 试播停下时播放头落在整帧上（同暂停）；放到结尾就停在结尾
+      if (next >= limit) { setTime(stopAt.current === null ? limit : Math.min(duration, Math.round(limit / frameUs) * frameUs)); stopAt.current = null; setPlaying(false); return; }
       setTime(next);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [playing, duration, setTime]);
+  }, [playing, duration, frameUs, setTime]);
   // 停着的播放头落在整帧上：切开、裁到播放头、粘贴、吸附都拿它当时间点，不在帧上的话导进剪映会差半帧
   const onFrame = useCallback((us: number) => Math.min(duration, Math.round(Math.round(us / frameUs) * frameUs)), [duration, frameUs]);
   const seek = useCallback((us: number) => {
+    stopAt.current = null;
     const next = onFrame(Math.min(Math.max(0, us), duration));
     anchor.current = { origin: next, at: performance.now() };
     setTime(next);
   }, [duration, onFrame, setTime]);
   const toggle = useCallback(() => {
+    stopAt.current = null;
     if (playing) { setPlaying(false); setTime(onFrame(timeRef.current)); return; }
     if (duration <= 0) return;
     if (timeRef.current >= duration) setTime(0);
     setPlaying(true);
   }, [playing, duration, onFrame, setTime]);
-  const pause = useCallback(() => { setPlaying(false); setTime(onFrame(timeRef.current)); }, [onFrame, setTime]);
-  return { time, playing, timeRef, toggle, seek, pause };
+  const pause = useCallback(() => { stopAt.current = null; setPlaying(false); setTime(onFrame(timeRef.current)); }, [onFrame, setTime]);
+  const playRange = useCallback((fromUs: number, toUs: number) => {
+    if (duration <= 0 || !(toUs > fromUs)) return;
+    seek(fromUs);
+    stopAt.current = Math.min(duration, toUs);
+    // 已经在放的话 tick 按新的起点接着走；没在放就开始放
+    setPlaying(true);
+  }, [duration, seek]);
+  return { time, playing, timeRef, toggle, seek, pause, playRange };
 }
 
 const styles = StyleSheet.create({

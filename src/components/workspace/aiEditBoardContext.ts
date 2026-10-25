@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useSyncExternalStore, type MutableRefObject } from "react";
 import type {
-  AiEditClipEdit, AiEditEditCall, AiEditMediaItem, AiEditSession, AiEditSessionState, EditCanvas, EditProject, EditSegment, EditTrack,
+  AiEditCatalogKind, AiEditClipEdit, AiEditEditCall, AiEditMediaItem, AiEditSession, AiEditSessionState, EditCanvas, EditProject, EditSegment, EditTrack,
 } from "../../services/aiEdit";
 import type { ExploreConnection } from "../../services/explorer";
 import { BOARD_KEYS, type BoardAction } from "./aiEditKeymap";
@@ -56,6 +56,8 @@ export interface BoardPlayback {
   /** 跳到某处（夹在 0 到总时长之间），不改播放状态 */
   seek: (us: number) => void;
   pause: () => void;
+  /** 从 from 放到 to 停下（剪映素材加上后试播那一段）；暂停、拖播放头、切工程都会打断它 */
+  playRange: (fromUs: number, toUs: number) => void;
 }
 
 export interface BoardContextValue {
@@ -105,6 +107,8 @@ export interface BoardContextValue {
   removeSelected: () => Promise<boolean>;
   /** 把各区域攒着没发的改动（键盘微调）立刻发出去，等它们都回来再 resolve；自己发改动之前先调（C7） */
   flushHeld: () => Promise<void>;
+  /** 刚加上的剪映效果在这一段上试播一遍（按工程里最新的片段算范围，放不了就不动） */
+  previewFeature: (segmentId: string, kind: AiEditCatalogKind) => void;
   /** 选中所有轨道上的片段（字幕轨除外） */
   selectAll: () => void;
   /** 引用到对话：加到左栏输入框上方，随下一句话发给 AI */

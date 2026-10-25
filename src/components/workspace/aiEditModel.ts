@@ -1,5 +1,5 @@
 import type {
-  EditCanvas, EditFit, EditKeyframe, EditMediaSegment, EditProject, EditSegment, EditTextSegment, EditTimeRange, EditTrack, EditTransform,
+  AiEditCatalogKind, EditCanvas, EditFit, EditKeyframe, EditMediaSegment, EditProject, EditSegment, EditTextSegment, EditTimeRange, EditTrack, EditTransform,
 } from "../../services/aiEdit";
 
 // AI 剪辑看板的纯计算：时长、某一时刻该画哪些片段、素材摆放、刻度与时间格式。只管怎么画，手动改动的换算在 aiEditBoardEdit.ts。
@@ -554,6 +554,145 @@ export function clipExtras(segment: EditSegment, reach: TransitionReach = "next"
 function round(value: number, digits: number): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
+}
+
+// ---------- 剪映效果的近似样子 ----------
+// 转场、动画、滤镜、特效是剪映自己画的，看板画不出原样：按名字里的关键词近似成透明度、位移、缩放、旋转和颜色，
+// 加上了看得出来、大概什么样（以剪映里为准）。
+
+export interface FeatureLook { opacity: number; transform: string; filter: string }
+
+interface Pose { opacity: number; x: number; y: number; scale: number; rotate: number; blur: number; bright: number }
+
+const DEFAULT_FEATURE_US = 500_000;
+const ease = (p: number) => 1 - (1 - Math.min(1, Math.max(0, p))) ** 2;
+
+/** 离开静止位置 k（0–1）时的样子。dir 1 是进来（入场、转场的后一段），-1 是出去；wobble（-1..1）给抖动用。认不出方式的按淡入淡出带一点缩放。 */
+function pose(name: string, k: number, dir: 1 | -1, wobble: number, into: Pose) {
+  if (k <= 0) return;
+  let known = false;
+  const has = (pattern: RegExp) => { const hit = pattern.test(name); known ||= hit; return hit; };
+  if (has(/渐显|渐隐|淡|溶解|叠化|透明|消散/u)) into.opacity *= 1 - k;
+  if (has(/放大|拉近|推近|变大/u)) into.scale *= 1 - dir * 0.35 * k;
+  if (has(/缩小|拉远|变小/u)) into.scale *= 1 + dir * 0.35 * k;
+  if (has(/向上|上移|上滑|上升|升起/u)) into.y += dir * 0.3 * k;
+  if (has(/向下|下移|下滑|下降|下落|掉落/u)) into.y -= dir * 0.3 * k;
+  if (has(/向左|左移|左滑/u)) into.x += dir * 0.3 * k;
+  if (has(/向右|右移|右滑/u)) into.x -= dir * 0.3 * k;
+  if (has(/旋转|转圈|翻转|翻页|滚/u)) into.rotate -= dir * 90 * k;
+  if (has(/抖|震|晃|摇|弹|跳/u)) { if (/上下/u.test(name)) into.y += 0.05 * k * wobble; else into.x += 0.05 * k * wobble; }
+  if (has(/模糊|虚化|失焦/u)) into.blur += 12 * k;
+  if (has(/闪白|闪光|曝光|白场/u)) into.bright += 1.5 * k;
+  if (has(/闪黑|黑场|变暗/u)) into.bright -= k;
+  if (!known) { into.opacity *= 1 - k; into.scale *= 1 - dir * 0.08 * k; }
+}
+
+/** 剪映滤镜按名字近似成 CSS filter，s 是强度（0–1）；认不出来的给一点饱和和对比，看得出套了滤镜。 */
+const FILTER_LOOKS: Array<[RegExp, (s: number) => string]> = [
+  [/黑白|默片|灰|单色/u, (s) => `grayscale(${s})`],
+  [/复古|胶片|怀旧|老|旧|港|年代|\d{4}/u, (s) => `sepia(${0.45 * s}) contrast(${1 + 0.05 * s})`],
+  [/暖|日落|夕阳|金|黄|秋|橙|焦糖/u, (s) => `sepia(${0.25 * s}) saturate(${1 + 0.25 * s})`],
+  [/冷|蓝|冬|雪|青/u, (s) => `saturate(${1 - 0.15 * s}) hue-rotate(${12 * s}deg) brightness(${1 + 0.03 * s})`],
+  [/暗|夜|黑金|低调/u, (s) => `brightness(${1 - 0.15 * s}) contrast(${1 + 0.15 * s})`],
+  [/粉|樱|奶|柔|甜|梦|白皙/u, (s) => `brightness(${1 + 0.06 * s}) saturate(${1 - 0.15 * s})`],
+  [/鲜|艳|浓|亮丽|绚/u, (s) => `saturate(${1 + 0.4 * s}) contrast(${1 + 0.05 * s})`],
+  [/清晰|锐|质感|高清/u, (s) => `contrast(${1 + 0.15 * s})`],
+  [/绿|森|抹茶/u, (s) => `hue-rotate(${-12 * s}deg) saturate(${1 + 0.1 * s})`],
+];
+const filterLook = (name: string, s: number) =>
+  (FILTER_LOOKS.find(([pattern]) => pattern.test(name))?.[1] ?? ((v: number) => `saturate(${1 + 0.15 * v}) contrast(${1 + 0.05 * v})`))(s);
+
+/** 能近似的特效（模糊、闪、抖、黑白、复古、负片）；往画面上叠东西的（爱心、彩带、粒子）画不出来，只在「此刻生效」那行写名字。 */
+function effectLook(name: string, seconds: number, into: Pose, filters: string[]) {
+  if (/模糊|虚化|柔焦/u.test(name)) into.blur += 6;
+  if (/闪白|闪光|曝光|频闪|闪烁/u.test(name)) into.bright += 0.6 * Math.max(0, Math.sin(seconds * Math.PI * 4));
+  if (/抖|震|晃|摇/u.test(name)) into.x += 0.02 * Math.sin(seconds * Math.PI * 16);
+  if (/黑白|褪色/u.test(name)) filters.push("grayscale(1)");
+  if (/老电影|胶片|复古|录像|VHS|DV|怀旧/iu.test(name)) filters.push("sepia(0.5) contrast(1.1)");
+  if (/负片|反色/u.test(name)) filters.push("invert(1)");
+}
+
+function lookOf(into: Pose, filters: string[]): FeatureLook {
+  const x = round(into.x * 100, 2);
+  const y = round(into.y * 100, 2);
+  const transform = [
+    x || y ? `translate(${x}%,${y}%)` : "",
+    into.scale !== 1 ? `scale(${round(into.scale, 4)})` : "",
+    into.rotate ? `rotate(${round(into.rotate, 2)}deg)` : "",
+  ].filter(Boolean).join(" ");
+  if (into.blur > 0) filters.push(`blur(${round(into.blur, 2)}px)`);
+  if (into.bright !== 1) filters.push(`brightness(${round(Math.max(0, into.bright), 3)})`);
+  return { opacity: Math.min(1, Math.max(0, into.opacity)), transform, filter: filters.join(" ") };
+}
+
+const touching = (before: EditSegment, after: EditSegment) => Math.abs(end(before.timeline) - after.timeline.start_us) <= ADJACENT_US;
+const transitionUs = (owner: EditMediaSegment) => owner.transition?.duration_us || owner.transition?.default_us || DEFAULT_FEATURE_US;
+
+/**
+ * 片段此刻（offsetUs 是片段里的时间）近似的样子：入场 / 出场 / 组合动画、滤镜、特效，转场是自己的在结尾半段出去、
+ * 上一段的在开头半段进来（同一轨道上紧挨着才有，siblings 是这条轨道的片段）。和剪映一样不改片段本身的位置大小。
+ */
+export function featureLook(segment: EditSegment, offsetUs: number, siblings: readonly EditSegment[] = []): FeatureLook {
+  const into: Pose = { opacity: 1, x: 0, y: 0, scale: 1, rotate: 0, blur: 0, bright: 1 };
+  const filters: string[] = [];
+  const length = segment.timeline.duration_us;
+  const seconds = offsetUs / US_PER_SECOND;
+  const wobble = Math.sin(seconds * Math.PI * 12);
+  for (const item of "animations" in segment ? segment.animations ?? [] : []) {
+    const name = featureName(item.animation_type);
+    const span = Math.min(length, item.duration_us || item.default_us || DEFAULT_FEATURE_US);
+    if (item.phase === "group" || item.phase === "loop") pose(name, 0.15 * (1 - Math.cos((seconds * Math.PI * 2) / 1.6)), 1, wobble, into);
+    else if (item.phase === "out") pose(name, ease((offsetUs - (length - span)) / span), -1, wobble, into);
+    else pose(name, 1 - ease(offsetUs / span), 1, wobble, into);
+  }
+  if ("transition" in segment && segment.transition && siblings.some((other) => other.id !== segment.id && touching(segment, other))) {
+    const half = transitionUs(segment) / 2;
+    pose(featureName(segment.transition.transition_type), ease((offsetUs - (length - half)) / half), -1, wobble, into);
+  }
+  const prev = siblings.find((other) => other.id !== segment.id && touching(other, segment));
+  if (prev && "transition" in prev && prev.transition) {
+    const half = transitionUs(prev) / 2;
+    pose(featureName(prev.transition.transition_type), 1 - ease(offsetUs / half), 1, wobble, into);
+  }
+  if ("filters" in segment) for (const item of segment.filters ?? []) filters.push(filterLook(featureName(item.filter_type), (item.intensity ?? 100) / 100));
+  if ("effects" in segment) for (const item of segment.effects ?? []) effectLook(featureName(item.effect_type), seconds, into, filters);
+  return lookOf(into, filters);
+}
+
+const PREVIEW_PAD_US = 300_000;
+
+/**
+ * 剪映素材刚加到片段上时试播的那一段（整条时间线上的微秒）：入场放开头、出场放结尾、转场放接缝前后，
+ * 其余（滤镜、特效、组合动画、蒙版、字体……）放片段开头两秒。片段上没有对应的转场时为 null。
+ */
+export function featurePreviewRange(kind: AiEditCatalogKind, segment: EditSegment, siblings: readonly EditSegment[] = []): { from: number; to: number } | null {
+  const start = segment.timeline.start_us;
+  const stop = end(segment.timeline);
+  const animations = "animations" in segment ? segment.animations ?? [] : [];
+  const span = (phase: "in" | "out") => {
+    const item = [...animations].reverse().find((entry) => (entry.phase ?? "in") === phase);
+    return Math.min(segment.timeline.duration_us, item?.duration_us || item?.default_us || DEFAULT_FEATURE_US);
+  };
+  if (kind === "transition") {
+    if (!("transition" in segment) || !segment.transition) return null;
+    const half = transitionUs(segment) / 2;
+    const next = siblings.find((other) => other.id !== segment.id && touching(segment, other));
+    return { from: Math.max(start, stop - half - PREVIEW_PAD_US), to: next ? Math.min(end(next.timeline), stop + half + PREVIEW_PAD_US) : stop };
+  }
+  if (kind === "video_intro" || kind === "text_intro") return { from: start, to: Math.min(stop, start + span("in") + PREVIEW_PAD_US) };
+  if (kind === "video_outro" || kind === "text_outro") return { from: Math.max(start, stop - span("out") - PREVIEW_PAD_US), to: stop };
+  return { from: start, to: Math.min(stop, start + 2 * US_PER_SECOND) };
+}
+
+/** 轨道上的滤镜、特效片段（盖在下面所有画面上）此刻近似成的 CSS filter；没有时为空串。 */
+export function overlayFilter(overlays: readonly EditSegment[], timeUs: number): string {
+  const into: Pose = { opacity: 1, x: 0, y: 0, scale: 1, rotate: 0, blur: 0, bright: 1 };
+  const filters: string[] = [];
+  for (const segment of overlays) {
+    if (segment.kind === "track_filter") filters.push(filterLook(featureName(segment.filter_type), (segment.intensity ?? 100) / 100));
+    else if (segment.kind === "track_effect") effectLook(featureName(segment.effect_type), (timeUs - segment.timeline.start_us) / US_PER_SECOND, into, filters);
+  }
+  return lookOf(into, filters).filter;
 }
 
 // ---------- 片段详情卡片 ----------
