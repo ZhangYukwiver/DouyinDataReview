@@ -1228,7 +1228,7 @@ function readCatalogFree(): boolean {
 // 剪映左上角转场、滤镜、特效那几栏：列出能写进剪映草稿的内置效果，带剪映缓存里的预览图（在剪映里打开过那一栏才有）。
 // 时间线上选中了一段、这种素材又放得下：点一下直接套上（看板改动，能撤销）；没选或放不了就把名字写进对话框交给 AI
 function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text: string) => void }) {
-  const { selected, runEdit, flushHeld, callName, toast } = useBoard();
+  const { selected, runEdit, flushHeld, callName, toast, previewFeature } = useBoard();
   const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
   const [kind, setKind] = useState<AiEditCatalogKind>("transition");
   const [query, setQuery] = useState("");
@@ -1256,7 +1256,10 @@ function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text
     const edit = target ? catalogEdit(kind, item.name, target) : null;
     if (!target || !edit) { onPick(`${label}「${name}」`); return; }
     await flushHeld();
-    if (await runEdit(edit.name, edit.arguments)) toast(kind === "font" ? `${callName(target)}换上了字体「${name}」` : `给${callName(target)}加上了${label}「${name}」`);
+    if (!(await runEdit(edit.name, edit.arguments))) return;
+    toast(kind === "font" ? `${callName(target)}换上了字体「${name}」` : `给${callName(target)}加上了${label}「${name}」`);
+    // 和剪映一样，加上就把这一段试播一遍，马上看得到效果（看板里是近似的样子）
+    previewFeature(target.id, kind);
   };
   const withCover = found ? found.items.filter((item) => item.cover).length : 0;
   const footer = !found || failed ? null

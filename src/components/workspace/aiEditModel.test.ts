@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { EditMediaSegment, EditProject, EditTextSegment, EditTrack } from "../../services/aiEdit";
+import type { EditMediaSegment, EditProject, EditSegment, EditTextSegment, EditTrack } from "../../services/aiEdit";
 import {
   activeFrame, blendMode, clipDetail, clipExtras, colorName, cutPoints, draftBoxReasonText, clipLabel, clipPosition, colorFilter, cropClipPath, cssTransform, effectiveTransform, fadeGain,
-  featureName, filmstripCount, filmstripTimes, findSegment, fitBox, formatClock, formatDuration, formatTick, hasScaleKeyframes, IDENTITY_TRANSFORM, keyframeValue, layerBox, layerRect, maskCss, mediaIdFromPath,
-  mediaThumbView, mediaVolume, nextCut, nextSegmentAfter, pickTickStep, playbackRate, projectDuration, rgba, rulerTicks, secondMark, segmentAt, sourceTimeUs, spokenDuration, textCss,
+  featureLook, featureName, featurePreviewRange, filmstripCount, filmstripTimes, findSegment, fitBox, formatClock, formatDuration, formatTick, hasScaleKeyframes, IDENTITY_TRANSFORM, keyframeValue, layerBox, layerRect, maskCss, mediaIdFromPath,
+  mediaThumbView, mediaVolume, nextCut, nextSegmentAfter, overlayFilter, pickTickStep, playbackRate, projectDuration, rgba, rulerTicks, secondMark, segmentAt, sourceTimeUs, spokenDuration, textCss,
   stepFrame, textFontPx, timeAtX, trackLabel, transitionReach, visibleExportNote,
 } from "./aiEditModel";
 import catalogJson from "../../../collector/aiEdit/catalog.json";
@@ -384,6 +384,59 @@ describe("剪映效果名", () => {
     }))).toEqual(["转场 3D空间", "特效 彩虹-情人节", "滤镜 1980", "动画 2024"]);
     expect(featureName("叠化")).toBe("叠化");
     expect(featureName(null)).toBe("");
+  });
+});
+
+describe("剪映效果的近似样子", () => {
+  it("fades a clip in and out with its intro and outro animations and leaves it alone in between", () => {
+    const clip = media("a", 0, 3 * S, { animations: [{ animation_type: "渐显", phase: "in", duration_us: S }, { animation_type: "渐隐", phase: "out", default_us: S / 2 }] });
+    expect(featureLook(clip, 0).opacity).toBe(0);
+    expect(featureLook(clip, S / 2).opacity).toBeGreaterThan(0);
+    expect(featureLook(clip, S / 2).opacity).toBeLessThan(1);
+    expect(featureLook(clip, 1.5 * S)).toEqual({ opacity: 1, transform: "", filter: "" });
+    expect(featureLook(clip, 3 * S).opacity).toBe(0);
+  });
+
+  it("moves and scales by the words in the name, and still shows something for a name it does not know", () => {
+    expect(featureLook(media("a", 0, 3 * S, { animations: [{ animation_type: "向上滑动", phase: "in" }] }), 0).transform).toBe("translate(0%,30%)");
+    expect(featureLook(media("a", 0, 3 * S, { animations: [{ animation_type: "动感放大", phase: "in" }] }), 0).transform).toBe("scale(0.65)");
+    expect(featureLook(media("a", 0, 3 * S, { animations: [{ animation_type: "Kira游动", phase: "in" }] }), 0).opacity).toBe(0);
+    // 组合动画整段里来回动
+    const group = media("a", 0, 3 * S, { animations: [{ animation_type: "三分割", phase: "group" }] });
+    expect(featureLook(group, 0.8 * S)).not.toEqual({ opacity: 1, transform: "", filter: "" });
+  });
+
+  it("plays a transition at the end of its clip and the start of the next one, only when the two touch", () => {
+    const a = media("a", 0, 2 * S, { transition: { transition_type: "叠化", duration_us: S } });
+    const b = media("b", 2 * S, 2 * S);
+    expect(featureLook(a, 2 * S - 1, [a, b]).opacity).toBeLessThan(0.01);
+    expect(featureLook(a, S, [a, b]).opacity).toBe(1);
+    expect(featureLook(b, 0, [a, b]).opacity).toBe(0);
+    expect(featureLook(b, S, [a, b]).opacity).toBe(1);
+    const apart = media("c", 3 * S, 2 * S);
+    expect(featureLook(a, 2 * S - 1, [a, apart]).opacity).toBe(1);
+  });
+
+  it("picks the stretch to play right after an effect is added: the start, the end, around the cut, or the first two seconds", () => {
+    const a = media("a", S, 4 * S, { animations: [{ animation_type: "渐显", phase: "in", default_us: S / 2 }, { animation_type: "渐隐", phase: "out", duration_us: S }], transition: { transition_type: "叠化", duration_us: null, default_us: S } });
+    const b = media("b", 5 * S, 3 * S);
+    expect(featurePreviewRange("video_intro", a)).toEqual({ from: S, to: 1.8 * S });
+    expect(featurePreviewRange("video_outro", a)).toEqual({ from: 3.7 * S, to: 5 * S });
+    expect(featurePreviewRange("transition", a, [a, b])).toEqual({ from: 4.2 * S, to: 5.8 * S });
+    // 后面接不上的转场只放到这段结尾；没有转场就不放
+    expect(featurePreviewRange("transition", a, [a])).toEqual({ from: 4.2 * S, to: 5 * S });
+    expect(featurePreviewRange("transition", b, [a, b])).toBeNull();
+    expect(featurePreviewRange("filter", a)).toEqual({ from: S, to: 3 * S });
+    expect(featurePreviewRange("filter", media("c", 0, S))).toEqual({ from: 0, to: S });
+  });
+
+  it("tints by the filter's name and strength, and approximates only the effects it can", () => {
+    expect(featureLook(media("a", 0, S, { filters: [{ filter_type: "黑白", intensity: 50 }] }), 0).filter).toBe("grayscale(0.5)");
+    expect(featureLook(media("a", 0, S, { filters: [{ filter_type: "清新" }] }), 0).filter).not.toBe("");
+    expect(featureLook(media("a", 0, S, { effects: [{ effect_type: "模糊" }] }), 0).filter).toBe("blur(6px)");
+    expect(featureLook(media("a", 0, S, { effects: [{ effect_type: "爱心" }] }), 0).filter).toBe("");
+    const filter = { id: "f", kind: "track_filter", filter_type: "复古", intensity: 100, timeline: { start_us: 0, duration_us: S } } as EditSegment;
+    expect(overlayFilter([filter], 0)).toBe("sepia(0.45) contrast(1.05)");
   });
 });
 

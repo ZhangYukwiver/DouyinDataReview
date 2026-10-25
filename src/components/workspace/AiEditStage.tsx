@@ -3,8 +3,8 @@ import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from "react
 import { Pause, Play, Quote, RotateCcw, Scissors, SquareDashed, Sticker, Trash2, Type } from "lucide-react-native";
 import { pageOf, type AiEditMediaItem, type EditCanvas, type EditMediaSegment, type EditSegment, type EditTextSegment, type EditTrack, type EditTransform } from "../../services/aiEdit";
 import {
-  activeFrame, blendMode, clipLabel, colorFilter, cropClipPath, cssTransform, effectiveTransform, featureName, findSegment, formatClock, hasScaleKeyframes,
-  layerBox, layerRect, maskCss, mediaIdFromPath, mediaVolume, nextSegmentAfter, playbackRate, rgba, sourceTimeUs, textCss, US_PER_SECOND,
+  activeFrame, blendMode, clipLabel, colorFilter, cropClipPath, cssTransform, effectiveTransform, featureLook, featureName, findSegment, formatClock, hasScaleKeyframes,
+  layerBox, layerRect, maskCss, mediaIdFromPath, mediaVolume, nextSegmentAfter, overlayFilter, playbackRate, rgba, sourceTimeUs, textCss, US_PER_SECOND,
   type MaskSpec, type Size,
 } from "./aiEditModel";
 import { dragRect, fullTransform, layersInRect, regionBox, SNAP_PX, splitOffset, type Rect } from "./aiEditBoardEdit";
@@ -692,7 +692,7 @@ export function Stage() {
 
   return <View {...areaProps("stage")} style={styles.stageBox} onLayout={(event: LayoutChangeEvent) => setBox({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}>
     {scale > 0 ? <div style={{ position: "relative", width: stage.width, height: stage.height }}>
-      <div ref={stageRef} aria-label="画面预览" style={{ position: "absolute", inset: 0, overflow: "hidden", backgroundColor: color.black, isolation: "isolate", borderRadius: 2 }}>
+      <div ref={stageRef} aria-label="画面预览" style={{ position: "absolute", inset: 0, overflow: "hidden", backgroundColor: color.black, isolation: "isolate", borderRadius: 2, filter: overlayFilter(frame.overlays.map((layer) => layer.segment), shownTime) || undefined }}>
         {layers.map(({ layer, active }) => <Layer key={layer.segment.id} layer={layer} active={active} canvas={canvas} stage={stage}
           time={shownTime} playing={playback.playing} mediaById={mediaById} mediaUrl={mediaUrl} filmUrl={filmUrl} onNatural={bumpSizes}
           override={overrideOf(layer.segment.id)}
@@ -822,7 +822,7 @@ export function PlayerBar() {
     </Pressable>
     <View style={[styles.controlsSide, styles.controlsEnd]}>
       <Text numberOfLines={1} style={[kit.muted, { flexShrink: 1, minWidth: 0, textAlign: "right" }]}>
-        {regionMode ? "在画面上按住拖出一个框，发消息时 AI 只改框里的东西" : names.length ? `此刻生效：${names.join("、")}` : ""}
+        {regionMode ? "在画面上按住拖出一个框，发消息时 AI 只改框里的东西" : names.length ? `此刻生效（近似预览）：${names.join("、")}` : ""}
       </Text>
       {/* 只画图标（版式角色仍用 small：square 会被风格放大到 32–40）：选中片段弹出详情卡时这半边只剩 90 左右，带字的两个按钮会往左压到播放钮上 */}
       <WebTitle title={regionMode ? "框选（再点一下取消）" : "框选：在画面上框一块，让 AI 只改那里"}>
@@ -934,11 +934,14 @@ function Layer({ layer, active, canvas, stage, time, playing, mediaById, mediaUr
   const box = layerBox(stage, material, fit, segment.keyframes);
   const rect = layerRect(stage, box, transform);
   const mask = maskCss(segment.mask as MaskSpec | null | undefined, { width: rect.width, height: rect.height }, material);
+  // 剪映的转场、动画、滤镜、特效：近似画出来（看得出加上了），以剪映为准
+  const look = featureLook(segment, offset, track.segments);
+  const turned = cssTransform(rect);
   const style: React.CSSProperties = {
     position: "absolute", left: rect.left, top: rect.top, width: rect.width, height: rect.height,
     objectFit: material || (fit === "stretch" && !hasScaleKeyframes(segment.keyframes)) ? "fill" : fit === "cover" && !hasScaleKeyframes(segment.keyframes) ? "cover" : "contain",
-    transform: cssTransform(rect), opacity: active ? rect.opacity : 0,
-    filter: colorFilter(segment.keyframes, offset) || undefined,
+    transform: [look.transform, turned === "none" ? "" : turned].filter(Boolean).join(" ") || "none", opacity: active ? rect.opacity * look.opacity : 0,
+    filter: [colorFilter(segment.keyframes, offset), look.filter].filter(Boolean).join(" ") || undefined,
     mixBlendMode: (blendMode(segment.mix_mode?.mode) ?? undefined) as React.CSSProperties["mixBlendMode"],
     clipPath: cropClipPath(segment.crop) ?? undefined,
     pointerEvents: "none",
@@ -949,7 +952,7 @@ function Layer({ layer, active, canvas, stage, time, playing, mediaById, mediaUr
   </div> : null;
   if (pageUrl && item?.width && item.height) {
     return <PageLayer url={pageUrl} layerId={segment.id} active={active} seconds={sourceTimeUs(segment as EditMediaSegment, time) / US_PER_SECOND}
-      page={{ width: item.width, height: item.height }} style={{ ...style, opacity: active ? rect.opacity : 0 }} rect={rect} />;
+      page={{ width: item.width, height: item.height }} style={{ ...style, opacity: active ? rect.opacity * look.opacity : 0 }} rect={rect} />;
   }
   if (!url) return active ? <>{fill}<div data-layer-id={segment.id} style={{ ...style, objectFit: undefined, opacity: rect.opacity, backgroundColor: alpha(color.white, 0.08), border: `1px solid ${alpha(color.white, 0.18)}`, display: "flex", alignItems: "center", justifyContent: "center", color: alpha(color.white, 0.6), fontSize: 11, fontFamily: font.body, textAlign: "center", padding: 6, boxSizing: "border-box" }}>
     {item?.status === "importing" ? "素材还在导入" : clipLabel(segment, item ? mediaTitle(item) : null)}
@@ -973,7 +976,7 @@ function PageLayer({ url, layerId, active, seconds, page, style, rect }: {
   useEffect(() => {
     if (loaded && active) ref.current?.contentWindow?.postMessage({ film: "frame", t: Math.max(0, seconds) }, origin);
   }, [loaded, active, seconds, origin]);
-  const { objectFit: _fit, filter: _filter, ...box } = style;
+  const { objectFit: _fit, ...box } = style;
   return <div data-layer-id={layerId} style={{ ...box, overflow: "hidden" }}>
     <iframe ref={ref} src={url} title="网页片段" tabIndex={-1} scrolling="no" sandbox="allow-scripts allow-same-origin" onLoad={() => setLoaded(true)}
       style={{ position: "absolute", left: 0, top: 0, width: page.width, height: page.height, border: 0, background: "transparent", pointerEvents: "none",
@@ -1072,6 +1075,7 @@ function TextLayer({ segment, canvas, stage, offset, editing, onEditDone }: {
     else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); finish(event.currentTarget, true); }
   };
   const transform = effectiveTransform(segment, offset);
+  const look = featureLook(segment, offset);
   const css = textCss(segment, canvas, stage) as React.CSSProperties;
   const flipX = transform.flip_horizontal ? -1 : 1;
   const flipY = transform.flip_vertical ? -1 : 1;
@@ -1093,8 +1097,9 @@ function TextLayer({ segment, canvas, stage, offset, editing, onEditDone }: {
       left: stage.width / 2 + transform.transform_x * stage.width / 2,
       top: stage.height / 2 - transform.transform_y * stage.height / 2,
       width: "max-content",
-      transform: `translate(-50%,-50%) rotate(${transform.rotation}deg) scale(${transform.scale_x * flipX},${transform.scale_y * flipY})`,
-      opacity: Math.min(1, Math.max(0, transform.alpha)),
+      transform: `translate(-50%,-50%) ${look.transform} rotate(${transform.rotation}deg) scale(${transform.scale_x * flipX},${transform.scale_y * flipY})`,
+      opacity: Math.min(1, Math.max(0, transform.alpha)) * look.opacity,
+      filter: look.filter || undefined,
       fontFamily: font.body,
       pointerEvents: editing ? "auto" : "none",
       ...css,

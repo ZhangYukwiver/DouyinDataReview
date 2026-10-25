@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { EditError, invalid } from "./errors.mjs";
+import { withPreviewHints } from "./catalog.mjs";
 import { compactHistory, KEEP_RESULT } from "./chat.mjs";
 import { AiEditError, MediaLibrary } from "./library.mjs";
 import { TOOL_DEFINITIONS, TOOL_NAMES, buildContextMessage, buildSystemPrompt, clipLabel, createToolRunner, describeToolError, micros, probeVideoInput, searchCatalog, timelineSummary, toolsFor, trackLabel } from "./tools.mjs";
@@ -340,6 +341,23 @@ describe("AI edit tools", () => {
       expect(result).toMatchObject({ ok: false, code: "invalid_url", message: expect.stringMatching(/抖音/u) });
       expect(action.error).toBe(result.message);
     }
+  });
+
+  it("tells the board which kind each animation is and how long it and the transition last by default", () => {
+    const project = { tracks: [{ id: "v", segments: [
+      { id: "a", kind: "video", animations: [{ animation_type: "渐显", duration_us: null }, { animation_type: "渐隐" }, { animation_type: "三分割" }], transition: { transition_type: "叠化", duration_us: null } },
+      { id: "t", kind: "text", animations: [{ animation_type: "向上滑动" }] },
+      { id: "x", kind: "video", animations: [{ animation_type: "没有这个动画" }] },
+    ] }] };
+    const [a, t, x] = withPreviewHints(project).tracks[0].segments;
+    expect(a.animations.map((item) => item.phase)).toEqual(["in", "out", "group"]);
+    expect(a.animations[0].default_us).toBe(500_000);
+    expect(a.transition).toEqual({ transition_type: "叠化", duration_us: null, default_us: 500_000 });
+    // 入场出场都有的名字和写草稿时一样按入场算；文字查文字的动画
+    expect(t.animations[0]).toMatchObject({ phase: "in" });
+    expect(x.animations[0]).toEqual({ animation_type: "没有这个动画" });
+    expect(project.tracks[0].segments[0].animations[0]).not.toHaveProperty("phase");
+    expect(withPreviewHints(null)).toBeNull();
   });
 
   it("finds Jianying names in the catalog", async () => {

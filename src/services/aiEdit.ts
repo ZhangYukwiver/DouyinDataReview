@@ -273,6 +273,9 @@ export interface EditKeyframe { property: string; offset_us: number; value: numb
 
 interface EditSegmentBase { id: string; timeline: EditTimeRange; keyframes?: EditKeyframe[] }
 
+/** phase、default_us 是采集器给看板预览补的（按剪映目录查）：入场 in、出场 out、组合 group、文字循环 loop，没写时长时按的默认时长 */
+export interface EditAnimation { animation_type: string; duration_us?: number | null; phase?: "in" | "out" | "group" | "loop"; default_us?: number | null }
+
 export interface EditMediaSegment extends EditSegmentBase {
   kind: "video" | "image" | "audio";
   path: string;
@@ -286,8 +289,8 @@ export interface EditMediaSegment extends EditSegmentBase {
   material_name?: string | null;
   effects?: Array<{ effect_type: string; params?: number[] | null }>;
   filters?: Array<{ filter_type: string; intensity?: number }>;
-  animations?: Array<{ animation_type: string; duration_us?: number | null }>;
-  transition?: { transition_type: string; duration_us: number | null } | null;
+  animations?: EditAnimation[];
+  transition?: { transition_type: string; duration_us: number | null; default_us?: number | null } | null;
   fade?: { in_duration_us: number; out_duration_us: number } | null;
   mask?: { mask_type: string; [key: string]: unknown } | null;
   chroma?: { color: string; [key: string]: unknown } | null;
@@ -324,7 +327,7 @@ export interface EditTextSegment extends EditSegmentBase {
   shadow?: EditTextShadow | null;
   bubble?: { effect_id: string; resource_id: string } | null;
   text_effect_id?: string | null;
-  animations?: Array<{ animation_type: string; duration_us?: number | null }>;
+  animations?: EditAnimation[];
 }
 
 export interface EditStickerSegment extends EditSegmentBase { kind: "sticker"; resource_id: string; transform?: EditTransform | null }

@@ -31,6 +31,46 @@ export function displayName(raw) {
   return String(raw ?? "");
 }
 
+const ANIMATION_PHASES = { IntroType: "in", OutroType: "out", GroupAnimationType: "group", TextIntro: "in", TextOutro: "out", TextLoopAnim: "loop" };
+
+function lookup(enumNames, raw) {
+  for (const enumName of enumNames) {
+    const list = members(enumName);
+    const found = list.find((member) => member.name === raw) ?? list.find((member) => (member.meta.name ?? member.meta.title) === raw);
+    if (found) return { enumName, meta: found.meta };
+  }
+  return null;
+}
+
+/**
+ * 给看板预览补上剪映目录里的信息（不存进工程）：动画是入场 / 出场 / 组合（文字是循环）哪一种、默认多长，转场默认多长。
+ * 查法和写草稿时一样（几类按顺序找，先认成员名）；查不到的原样。
+ */
+export function withPreviewHints(project) {
+  if (!project?.tracks) return project;
+  return {
+    ...project,
+    tracks: project.tracks.map((track) => ({
+      ...track,
+      segments: (track.segments ?? []).map((segment) => {
+        let next = segment;
+        if (segment.animations?.length) {
+          const enums = segment.kind === "text" ? ["TextIntro", "TextOutro", "TextLoopAnim"] : ["IntroType", "OutroType", "GroupAnimationType"];
+          next = { ...next, animations: segment.animations.map((item) => {
+            const found = lookup(enums, item.animation_type);
+            return found ? { ...item, phase: ANIMATION_PHASES[found.enumName], default_us: found.meta.duration ?? null } : item;
+          }) };
+        }
+        if (segment.transition) {
+          const found = lookup(["TransitionType"], segment.transition.transition_type);
+          if (found?.meta.default_duration) next = { ...next, transition: { ...segment.transition, default_us: found.meta.default_duration } };
+        }
+        return next;
+      }),
+    })),
+  };
+}
+
 /**
  * 对应原仓库 draft.py 的 _enum_member：先按成员名找（如「叠化」「_1980」）。
  * ponytail: 另外接受目录里的显示名（meta.name / meta.title），方便模型直接用看到的中文名；
