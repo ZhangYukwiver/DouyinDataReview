@@ -430,9 +430,8 @@ async function hasVisibleLoginControl(page) {
 }
 
 export class DouyinCollector {
-  constructor({ dataDirectory, signerDirectory, store, account = null, onAccountIdentity = null }) {
+  constructor({ dataDirectory, store, account = null, onAccountIdentity = null }) {
     this.dataDirectory = dataDirectory;
-    this.signerDirectory = signerDirectory;
     this.store = store;
     this.context = null;
     this.contextHeadless = null;
@@ -735,7 +734,7 @@ export class DouyinCollector {
       if (this.directApi && !sameDirectSession(this.directApi.session, session)) {
         await this.directApi.close(); this.directApi = null;
       }
-      this.directApi ??= new DirectApiClient(session, { dataDirectory: this.dataDirectory, directory: this.signerDirectory,
+      this.directApi ??= new DirectApiClient(session, { dataDirectory: this.dataDirectory,
         onSessionError: error => this.externalSessionError(error) });
       this.directApi.replaceSession(session);
       try {
@@ -792,7 +791,7 @@ export class DouyinCollector {
               const session = await this.cacheDirectSession(context, page, identity, { updateApi: false });
               // Export with the browser's current Cookie jar, independently
               // of a previously created HTTP context.
-              const exporter = new DirectApiClient(session, { dataDirectory: api.dataDirectory, directory: api.directory,
+              const exporter = new DirectApiClient(session, { dataDirectory: api.dataDirectory,
                 requestFactory: api.requestFactory, signer: api.signer });
               try {
                 const security = await completeDirectCredentialExport(exporter, material);
@@ -1573,7 +1572,6 @@ export class DouyinCollector {
       context,
       currentUserAgent,
       dataDirectory: this.dataDirectory,
-      directory: this.signerDirectory,
       cursor,
       completedOnly,
     });

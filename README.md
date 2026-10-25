@@ -165,7 +165,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 远程调试授权覆盖整个浏览器实例；工作台只读取抖音域 Cookie，并仅在自己创建的抖音标签页初始化凭据，不清理日常浏览器缓存、不修改原有标签页。断开连接、切换账号或退出应用会清理这些标签页并断开调试连接，浏览器进程继续保留，调试开关由本人关闭。接口读取和实时接收使用已导入的凭据，重启后会复用本机缓存并核对平台返回的账号；短期令牌过期本身不会要求重新导入。凭据缺失或不完整、平台拒绝登录、账号不一致或要求验证时，工作台才提示重新连接并导入。凭据有效期由抖音控制，不保证固定时长。
 
-> 安装包只含应用代码、Web 页面和已校验的签名器，不含本地记录、登录状态或浏览器配置。采集记录保存在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录，改名后继续沿用，升级不会覆盖。旧版 macOS 应用名为「内容数据工作台」，替换时移除旧应用即可。
+> 安装包只含应用代码和 Web 页面，不含本地记录、登录状态或浏览器配置。采集记录保存在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录，改名后继续沿用，升级不会覆盖。旧版 macOS 应用名为「内容数据工作台」，替换时移除旧应用即可。
 >
 > 桌面版启动后会检查 GitHub Release。Windows 可在「设置」里下载并「重启并安装」，采集进行中不会自动重启；macOS 使用设置里的下载入口，手动替换应用。
 
@@ -182,7 +182,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 - 代码请求登录会话：`.local-data/direct-session.json`，从本人确认连接的日常浏览器导出，按账号隔离并以仅当前用户可读写的权限保存；不包含在安装包中
 - 浏览器来源：每个账号目录中的 `external-browser.json` 只记录来源（`app` 表示应用内扫码登录，或浏览器类型），不包含连接地址或凭据；重启后复用该账号已导入的有效凭据，失效时才要求重新连接，不会自动改用另一个浏览器的登录态
-- 直接读取模板保存在 `.local-data/direct-history-template.json`，只含浏览器标识和白名单查询参数，不含 Cookie。签名器位于 `.local-data/direct-signer/`，所有账号共用，桌面安装包已内置校验版本。
+- 直接读取模板保存在 `.local-data/direct-history-template.json`，只含浏览器标识和白名单查询参数，不含 Cookie。
 - `.local-data/records.json` 保存归一化记录；新增账号各自保存在 `.local-data/accounts/<12 位编号>/`，账号列表在 `.local-data/accounts.json`。
 - 桌面版应用内登录的网页登录状态在应用数据目录的 `Partitions/douyin-login/`，所有账号共用一份，不包含在安装包中。
 - 应用内登录碰到身份验证时，验证框的页面结构会去掉脚本、连续数字打码后存成采集器数据目录下的 `diagnostics/verify-*.html`，只在本机，首屏的短信验证码是按页面上的文字找选项、输入框和按钮的，认不出来时退回窗口；这些文件用来对照真实结构调整。
@@ -296,14 +296,10 @@ git clone https://github.com/ZhangYukwiver/DouyinDataReview.git
 cd DouyinDataReview
 npm install
 
-# 2. 安装并离线校验固定版本的签名器（接口读取需要）
-npm run direct:setup
-npm run direct:check
-
-# 3. 启动采集器（终端 A）
+# 2. 启动采集器（终端 A）
 npm run collector
 
-# 4. 启动 Web 页面（终端 B），然后打开 http://localhost:8081 点「连接采集器」
+# 3. 启动 Web 页面（终端 B），然后打开 http://localhost:8081 点「连接采集器」
 npm run web
 ```
 
@@ -422,11 +418,10 @@ Collection is limited to records currently returned by Douyin's private APIs and
 
 ## 致谢
 
-1. **[mafqla/douyin-api](https://github.com/mafqla/douyin-api)** — 固定版本签名器
-2. **[Expo](https://github.com/expo/expo)** / **[React Native](https://github.com/facebook/react-native)** / **[react-native-web](https://github.com/necolas/react-native-web)** — 工作台页面与原生端
-3. **[Electron](https://github.com/electron/electron)** / **[electron-builder](https://github.com/electron-userland/electron-builder)** — 桌面壳与安装包
-4. **[Playwright](https://github.com/microsoft/playwright)** — 连接已授权的浏览器 CDP，并提供 HTTP 请求会话
-5. **[lucide](https://github.com/lucide-icons/lucide)** — 图标
+1. **[Expo](https://github.com/expo/expo)** / **[React Native](https://github.com/facebook/react-native)** / **[react-native-web](https://github.com/necolas/react-native-web)** — 工作台页面与原生端
+2. **[Electron](https://github.com/electron/electron)** / **[electron-builder](https://github.com/electron-userland/electron-builder)** — 桌面壳与安装包
+3. **[Playwright](https://github.com/microsoft/playwright)** — 连接已授权的浏览器 CDP，并提供 HTTP 请求会话
+4. **[lucide](https://github.com/lucide-icons/lucide)** — 图标
 
 没有这些项目，这个工具做不出来，谢谢他们。
 

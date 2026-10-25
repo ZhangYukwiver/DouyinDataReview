@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { DouyinExplorer, ExploreError, validateExploreRequest, ingestExploreResponse, ingestExploreReplies, normalizeExploreComment } from "./explorer.mjs";
+import { DouyinExplorer, ExploreError, validateExploreRequest, ingestExploreResponse, normalizeExploreComment } from "./explorer.mjs";
 import { directWrite } from "./directWrites.mjs";
 
 const ROUTES = { users: "/aweme/v1/web/discover/search/", videos: "/aweme/v1/web/search/item/",
@@ -16,7 +16,6 @@ export class DirectExplorer extends DouyinExplorer {
     if (input?.kind === "sharees") return this.readDirectSharees(input, signal);
     const validated = validateExploreRequest(input);
     signal?.throwIfAborted();
-    if (validated.kind === "replies") return this.readDirectReplies({ ...validated, sessionId: input.sessionId }, signal);
     const previous = input.sessionId ? this.sessions.get(input.sessionId) : null;
     if (input.sessionId && (!previous || !previous.direct || previous.kind !== validated.kind || previous.id !== validated.id || previous.query !== validated.query))
       throw new ExploreError("session_expired", "此页面已过期，请重新搜索或打开。", 410);
@@ -87,30 +86,6 @@ export class DirectExplorer extends DouyinExplorer {
     if (this.sessions.size > 6) this.sessions.delete(this.sessions.keys().next().value);
     return this.snapshot(session);
   }
-  async readDirectReplies({ sessionId, id, commentId }, signal) {
-    const session = this.sessions.get(sessionId);
-    if (!session?.direct || session.kind !== "comments" || session.id !== id || !session.items.has(commentId))
-      throw new ExploreError("session_expired", "请从已加载的评论展开回复。", 410);
-    session.replyThreads ??= new Map();
-    const previous = session.replyThreads.get(commentId);
-    const thread = previous ? { ...previous, items: new Map(previous.items), cursors: new Set(previous.cursors) }
-      : { items: new Map(), hasMore: null, received: false, revision: 0, cursor: "0", cursors: new Set() };
-    const snapshot = () => ({ sessionId, kind: "replies", commentId, items: [...thread.items.values()], profile: null, video: null, hasMore: thread.hasMore, limited: thread.items.size >= 500 });
-    if (thread.hasMore === false || thread.items.size >= 500) return snapshot();
-    if (thread.cursors.has(thread.cursor)) throw new ExploreError("pagination_stalled", "回复分页游标重复。");
-    const api = await this.getApi({ signal });
-    const payload = await api.request("/aweme/v1/web/comment/list/reply/", { query: { item_id: id, comment_id: commentId,
-      cut_version: "1", cursor: thread.cursor, count: "3", item_type: "0" }, referer: `https://www.douyin.com/video/${id}`, signal });
-    const more = hasMore(payload.has_more), next = String(payload.cursor ?? "");
-    if (more === null || (more && (!/^\d{1,20}$/u.test(next) || next === thread.cursor))) throw new ExploreError("pagination_stalled", "回复接口未返回有效分页。");
-    const staged = { ...session, replyThreads: new Map(session.replyThreads) }; staged.replyThreads.set(commentId, thread);
-    ingestExploreReplies(staged, commentId, payload);
-    if (thread.error) throw thread.error;
-    signal?.throwIfAborted();
-    thread.cursors.add(thread.cursor); thread.cursor = next; thread.hasMore = more;
-    session.replyThreads.set(commentId, thread);
-    return snapshot();
-  }
   async interact(input) {
     const session = this.sessions.get(input?.sessionId);
     if (!/^[\w-]{16,80}$/u.test(input?.requestId ?? "") || !["like", "collect", "follow", "comment", "share"].includes(input?.action))
@@ -128,7 +103,7 @@ export class DirectExplorer extends DouyinExplorer {
     if (input.action === "comment" ? !content || content.length > 500 || (input.replyTo != null && !/^\d{5,30}$/u.test(input.replyTo))
       : input.action === "share" ? !session.shareTargets?.has(input.targetId) : typeof input.desired !== "boolean")
       throw new ExploreError("invalid_request", "评论或目标状态无效。", 400);
-    if (input.replyTo && !session.items.has(input.replyTo) && ![...(session.replyThreads?.values() || [])].some(t=>t.items.has(input.replyTo)))
+    if (input.replyTo && !session.items.has(input.replyTo))
       throw new ExploreError("comment_unavailable", "请从已加载的评论选择回复对象。");
     if (this.actions.size >= 1_000) throw new ExploreError("action_limit", "本次会话操作数量已达上限，请重启采集器。");
     const action = { fingerprint, result: { outcome: "unknown", message: "操作结果尚未确认，请查看抖音后再决定是否重试。" } };

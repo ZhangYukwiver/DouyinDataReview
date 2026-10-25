@@ -240,7 +240,6 @@ export async function startCollectorServer({
   port = DEFAULT_PORT,
   origins = [],
   dataDirectory = path.join(projectDirectory, ".local-data"),
-  signerDirectory,
   browserSources = browserDirectories(),
   browserConnector = connectExternalBrowser,
   // 网页片段逐帧渲染用的浏览器：桌面版传 Electron 的隐藏窗口，单独跑时用本机 Chrome / Edge
@@ -260,7 +259,6 @@ export async function startCollectorServer({
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const next = new DouyinCollector({
       dataDirectory: directory,
-      signerDirectory,
       store: new CollectorStore(directory),
       account: { id: account.id, nickname: account.nickname, avatar: account.avatar, uid: account.uid },
       onAccountIdentity: (identity) => accounts.updateIdentity(account.id, identity).catch(() => undefined),
