@@ -714,8 +714,8 @@ export async function answerAiEditSpend(connection: ExploreConnection, sessionId
 
 export type AiEditCatalogKind = "transition" | "filter" | "video_effect" | "video_intro" | "video_outro" | "video_group"
   | "text_intro" | "text_outro" | "text_loop" | "font" | "audio_effect" | "mask" | "mix_mode";
-/** cover：剪映缓存里的预览图（在剪映里打开过那一栏素材才有） */
-export interface AiEditCatalogItem { name: string; display?: string; vip?: boolean; default_duration?: number; cover?: string }
+/** cover：剪映缓存里的预览图（在剪映里打开过那一栏素材才有）；preview：动画类的动图，鼠标移上去才播 */
+export interface AiEditCatalogItem { name: string; display?: string; vip?: boolean; default_duration?: number; cover?: string; preview?: string }
 
 /** 剪映内置的转场、滤镜、特效、动画、字体……就是 AI 能写进草稿的那份目录；free 只要不用会员的。 */
 export async function searchAiEditCatalog(connection: ExploreConnection, kind: AiEditCatalogKind, query: string, free: boolean): Promise<{ total: number; items: AiEditCatalogItem[] }> {

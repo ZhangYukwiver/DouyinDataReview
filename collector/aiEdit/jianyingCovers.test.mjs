@@ -9,7 +9,7 @@ import { createCoverIndex, ressdkRoot } from "./jianyingCovers.mjs";
 const made = [];
 afterEach(async () => { await Promise.all(made.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))); });
 
-const item = (id, url) => ({ id, effect_id: id, effect_type: 9, title: "叠化", cover_url: { small: url, static_img: url }, extra: "{}" });
+const item = (id, small, still = small) => ({ id, effect_id: id, effect_type: 9, title: "叠化", cover_url: { small, static_img: still }, extra: "{}" });
 
 async function cache(rows) {
   const root = await mkdtemp(path.join(tmpdir(), "jy-ressdk-"));
@@ -25,12 +25,17 @@ async function cache(rows) {
 describe("Jianying cover index", () => {
   it("finds covers by resource id or effect id from Jianying's panel cache and rereads when it changes", async () => {
     const { root, db } = await cache([
-      JSON.stringify({ data: { effect_item_list: [item("7049979667406656014", "https://p3.byteimg.com/a.png?x-expires=1&x-signature=x%3D")] } }),
+      JSON.stringify({ data: { effect_item_list: [
+        item("7049979667406656014", "https://p3.byteimg.com/a.png?x-expires=1&x-signature=x%3D"),
+        // 动画：small 是整段 GIF，static_img 是第一帧
+        item("6798320778182922760", "https://p3.byteimg.com/in.gif", "https://p3.byteimg.com/in.png"),
+      ] } }),
       "不是 JSON",
     ]);
     const index = createCoverIndex({ root });
     let cover = await index.lookup();
-    expect(cover({ resource_id: "7049979667406656014", effect_id: "1" })).toBe("https://p3.byteimg.com/a.png?x-expires=1&x-signature=x%3D");
+    expect(cover({ resource_id: "7049979667406656014", effect_id: "1" })).toEqual({ cover: "https://p3.byteimg.com/a.png?x-expires=1&x-signature=x%3D" });
+    expect(cover({ resource_id: "6798320778182922760" })).toEqual({ cover: "https://p3.byteimg.com/in.png", preview: "https://p3.byteimg.com/in.gif" });
     expect(cover({ resource_id: "9", effect_id: "9" })).toBeNull();
     // 剪映又打开了一个面板：库变了就重读（先用上一份，后台读完下次查就有）
     // 接口原文里斜杠可能转义成 \/
@@ -39,7 +44,7 @@ describe("Jianying cover index", () => {
     await index.lookup();
     await new Promise((resolve) => setTimeout(resolve, 50));
     cover = await index.lookup();
-    expect(cover({ resource_id: "6724845717472416269", effect_id: "322577" })).toBe("https://p3.byteimg.com/b.png");
+    expect(cover({ resource_id: "6724845717472416269", effect_id: "322577" })).toEqual({ cover: "https://p3.byteimg.com/b.png" });
   });
 
   it("has nothing when Jianying never cached a panel", async () => {

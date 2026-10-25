@@ -27,8 +27,19 @@ const mtime = (file) => { try { return statSync(file).mtimeMs; } catch { return 
 
 // 素材对象里 effect_id 在前、cover_url 紧跟在后（中间没有嵌套对象）。整段 JSON.parse 两个库要一秒多，正则只要零点一秒，
 // 抠到的和完整解析一样（10-23 本机 Mac 剪映 11.6 对过：目录 4541 条里都是 1427 条有图）
-const COVER = /"effect_id":"(\d+)"[^{}]*?"cover_url":\{[^{}]*?"(?:small|static_img)":"(https:[^"]+)"/gu;
-const unescape = (url) => url.replace(/\\\//gu, "/").replace(/\\u0026/gu, "&");
+const COVER = /"effect_id":"(\d+)"[^{}]*?"cover_url":(\{[^{}]*\})/gu;
+
+// 动画类的 small 是整段 GIF（三五百 KB，一栏一百多张），static_img 是第一帧 PNG（几十 KB）：平时显示静态图，GIF 留给鼠标移上去时播
+function coverOf(text) {
+  try {
+    const { small, static_img: still } = JSON.parse(text);
+    const cover = still || small;
+    if (typeof cover !== "string" || !cover.startsWith("https:")) return null;
+    return typeof small === "string" && small.startsWith("https:") && small !== cover ? { cover, preview: small } : { cover };
+  } catch {
+    return null;
+  }
+}
 
 async function readDatabase(file, covers) {
   // node:sqlite 是 Node 22.5+ 的内置模块（Electron 43 带的是 24）；没有就当没缓存
@@ -37,7 +48,11 @@ async function readDatabase(file, covers) {
   try {
     // 采集器在 Electron 主进程里跑：一行一行读，每行之间让出去，别一口气卡住界面（最大的一行六七兆）
     for (const { response_body: body } of db.prepare("SELECT response_body FROM http_cache").iterate()) {
-      if (typeof body === "string") for (const [, id, url] of body.matchAll(COVER)) covers.set(id, unescape(url));
+      if (typeof body !== "string") continue;
+      for (const [, id, text] of body.matchAll(COVER)) {
+        const found = coverOf(text);
+        if (found) covers.set(id, found);
+      }
       await nextTurn();
     }
   } finally {
@@ -67,7 +82,7 @@ export function createCoverIndex({ root = ressdkRoot() } = {}) {
     return loading;
   };
   return {
-    /** 拿一份当前的对照表：(资源 id) → 图片地址 */
+    /** 拿一份当前的对照表：(资源 id) → { cover: 静态图, preview?: 动图 } */
     async lookup() {
       const files = root ? databases(root) : [];
       const next = files.map((file) => `${file}:${mtime(file)}:${mtime(`${file}-wal`)}`).join("|");

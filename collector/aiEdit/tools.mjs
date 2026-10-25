@@ -607,14 +607,16 @@ function captionsToSrt(captions) {
   }).join("\n\n");
 }
 
-// 模型查一次最多 50 条；剪辑页左栏「剪映素材」翻得多，传更大的上限，再带上 cover（按资源 id 找剪映缓存里的预览图）
+// 模型查一次最多 50 条；剪辑页左栏「剪映素材」一次全列，传更大的上限，再带上 cover（按资源 id 找剪映缓存里的预览图：{ cover, preview? }）
 export function searchCatalog({ kind, query = "", limit = 20, free = false }, { maxLimit = 50, cover = null } = {}) {
   const config = Object.hasOwn(CATALOG_KINDS, kind) ? CATALOG_KINDS[kind] : null;
   if (!config) throw new AiEditError("arguments_invalid", `kind 只能是 ${Object.keys(CATALOG_KINDS).join("、")}。`);
   const key = (value) => String(value ?? "").replace(/[\s_]+/gu, "").toLowerCase();
   const wanted = key(query);
-  const found = config.enums.flatMap((enumName) => members(enumName)).filter((member) => (!free || !member.meta.is_vip) && (!wanted
-    || key(member.name).includes(wanted) || key(member.meta.name ?? member.meta.title).includes(wanted)));
+  // 场景特效和人物特效有 9 个同名的，按名字套用只认第一个，后面的列出来也用不上
+  const seen = new Set();
+  const found = config.enums.flatMap((enumName) => members(enumName)).filter((member) => !seen.has(member.name) && seen.add(member.name)
+    && (!free || !member.meta.is_vip) && (!wanted || key(member.name).includes(wanted) || key(member.meta.name ?? member.meta.title).includes(wanted)));
   const size = Math.min(maxLimit, Math.max(1, Number.isInteger(limit) ? limit : 20));
   return {
     kind: config.label,
@@ -628,7 +630,7 @@ export function searchCatalog({ kind, query = "", limit = 20, free = false }, { 
         ...(member.meta.params?.length ? { params: member.meta.params.map((param) => param.name) } : {}),
         ...(member.meta.default_duration ? { default_duration: seconds(member.meta.default_duration) } : {}),
         ...(member.meta.duration ? { default_duration: seconds(member.meta.duration) } : {}),
-        ...(cover?.(member.meta) ? { cover: cover(member.meta) } : {}),
+        ...cover?.(member.meta),
       };
     }),
     ...(found.length > size ? { note: "结果太多，只列了前面一部分，换个更具体的关键词再查。" } : {}),
