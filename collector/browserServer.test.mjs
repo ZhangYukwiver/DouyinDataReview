@@ -106,15 +106,17 @@ describe("browser login HTTP handshake", () => {
     expect((await call("/v1/records")).status).toBe(200);
     expect((await call("/v1/chat/observe/stop", "POST")).status).toBe(200);
   });
-  it("keeps writes on Douyin off until the shared setting turns them on, and remembers it across restarts", async () => {
+  it("keeps public actions on Douyin off until the shared setting turns them on, and remembers it across restarts", async () => {
     const { call, dataDirectory } = await fixture();
     expect(await call("/v1/settings/writes")).toEqual({ status: 200, body: { enabled: false } });
-    for (const route of ["/v1/explore/interact", "/v1/chat/send"])
-      expect(await call(route, "POST", {})).toMatchObject({ status: 403, body: { error: "writes_disabled" } });
+    for (const action of ["like", "collect", "follow", "comment"])
+      expect(await call("/v1/explore/interact", "POST", { action })).toMatchObject({ status: 403, body: { error: "writes_disabled" } });
+    // 私信、分享给朋友和续火花不受开关限制
+    expect((await call("/v1/explore/interact", "POST", { action: "share" })).body.error).not.toBe("writes_disabled");
+    expect((await call("/v1/chat/send", "POST", {})).body.error).not.toBe("writes_disabled");
     expect((await call("/v1/settings/writes", "POST", { enabled: "true" })).status).toBe(400);
     expect(await call("/v1/settings/writes", "POST", { enabled: true })).toEqual({ status: 200, body: { enabled: true } });
-    for (const route of ["/v1/explore/interact", "/v1/chat/send"])
-      expect((await call(route, "POST", {})).body.error).not.toBe("writes_disabled");
+    expect((await call("/v1/explore/interact", "POST", { action: "like" })).body.error).not.toBe("writes_disabled");
     const restarted = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath });
     cleanups.push(() => restarted.close());
     const { token } = await fetch(`${restarted.baseUrl}/v1/pair`, { method: "POST", headers: { "Content-Type": "application/json" },

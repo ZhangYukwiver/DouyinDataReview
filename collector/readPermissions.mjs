@@ -22,6 +22,6 @@ export function readPermissionForRequest(method, pathname) {
   return null;
 }
 
-// 会在抖音上留下动作的请求：探索里的点赞、收藏、关注、评论、分享，聊天和续火花的发消息
-export const WRITE_REQUESTS = new Set(["/v1/explore/interact", "/v1/chat/send"]);
-export const WRITES_DISABLED_MESSAGE = "在抖音上点赞、评论、关注、分享和发私信默认是关着的，到「设置 → 隐私」打开「允许在抖音上操作」再试。";
+// 别人看得到的动作要先在设置里打开；私信、分享给朋友和续火花不受这一项限制
+export const PUBLIC_ACTIONS = new Set(["like", "collect", "follow", "comment"]);
+export const WRITES_DISABLED_MESSAGE = "在抖音上点赞、收藏、关注和评论默认是关着的，到「设置 → 隐私」打开「允许在抖音上操作」再试。";
