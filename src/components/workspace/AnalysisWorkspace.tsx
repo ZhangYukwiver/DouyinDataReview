@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { ArrowUpRight, Copy, RefreshCw, Settings2, Sparkles, Trash2 } from "lucide-react-native";
 import type { ExploreConnection } from "../../services/explorer";
-import { aiConfigReady, aiRuntimeOf, isLocalAiRuntime, probeAiEditVideo, videoProbeKey } from "../../services/aiEdit";
+import { aiConfigReady, aiRuntimeOf, isLocalAiRuntime, loadAiEditConfig, probeAiEditVideo, videoProbeKey } from "../../services/aiEdit";
 import {
-  analysisLookUrl, answerAnalysisLook, deleteAnalysis, listAnalyses, loadAnalysisConfig, saveAnalysisConfig, startAnalysis,
+  analysisInUse, analysisLookUrl, answerAnalysisLook, deleteAnalysis, listAnalyses, loadAnalysisConfig, saveAnalysisConfig, startAnalysis,
   type AnalysisConfig, type VideoAnalysis,
 } from "../../services/videoAnalysis";
 import { dropLookJobs, runLookJob } from "./aiEditLook";
@@ -29,7 +29,7 @@ const probeTried = new Set<string>();
 
 type Probe = { key: string; running: boolean; error?: string };
 
-function videoInputNote(config: AnalysisConfig, probe: Probe): string {
+export function videoInputNote(config: AnalysisConfig, probe: Probe): string {
   if (probe.running) return "正在测这个模型能不能直接看视频……";
   const known = config.videoInput === true ? "这个模型能直接看视频，画面和声音都能用上。"
     : config.videoInput === false ? "这个模型看不了视频。解析时应用会先把视频拆成镜头截图和音乐节拍再交给它，听不到台词和旁白，这时要开着应用。"
@@ -37,6 +37,55 @@ function videoInputNote(config: AnalysisConfig, probe: Probe): string {
   if (probe.error) return known ? `这次没测出来（${probe.error}），先沿用上次的结果：${known}` : `没测出这个模型能不能直接看视频（${probe.error}）。解析时会先整段发给它，看不了再拆成截图。`;
   return known ?? "还没测过这个模型能不能直接看视频。";
 }
+
+/**
+ * 「解析视频」这份配置（解析库和 AI 剪辑设置的「服务商」共用，存在 dy2.analysisConfig）：读写、测模型能不能看视频。
+ * save 收的是草稿：去掉首尾空格；接口地址和模型没变就沿用测过的结果，变了会自动重测。
+ */
+export function useAnalysisService(connection: ExploreConnection | null) {
+  const [config, setConfig] = useState<AnalysisConfig>(loadAnalysisConfig);
+  const [probe, setProbe] = useState<Probe>({ key: "", running: false });
+  const configRef = useRef(config);
+  configRef.current = config;
+  // 每个接口地址+模型测一次能不能看视频（保存时、以前存的没测过时）
+  const probeVideo = useCallback(async (target: AnalysisConfig) => {
+    const key = videoProbeKey(target);
+    const attempt = `${key}|${target.apiKey}`;
+    if (!connection || probing.has(attempt)) return;
+    probing.add(attempt);
+    setProbe({ key, running: true });
+    const settle = (next: Probe) => setProbe((current) => (current.key === key ? next : current));
+    try {
+      const { videoInput } = await probeAiEditVideo(connection, target);
+      const stored = loadAnalysisConfig();
+      if (videoProbeKey(stored) === key) saveAnalysisConfig({ ...stored, videoInput, videoProbe: key });
+      setConfig((current) => (videoProbeKey(current) === key ? { ...current, videoInput, videoProbe: key } : current));
+      settle({ key, running: false });
+    } catch (reason) {
+      settle({ key, running: false, error: reason instanceof Error ? reason.message : "没测出来，请稍后重试。" });
+    } finally {
+      probing.delete(attempt);
+    }
+  }, [connection]);
+  useEffect(() => {
+    const attempt = `${videoProbeKey(config)}|${config.apiKey}`;
+    // 本机的 Codex / Claude Code 都看不了视频，不用测
+    if (!connection || isLocalAiRuntime(config.runtime) || !config.apiKey.trim() || typeof config.videoInput === "boolean" || probeTried.has(attempt)) return;
+    probeTried.add(attempt);
+    void probeVideo(config);
+  }, [connection, config, probeVideo]);
+  const save = useCallback((draft: AnalysisConfig) => {
+    const runtime = aiRuntimeOf(draft.runtime);
+    const models = draft.localModels ? Object.fromEntries(Object.entries(draft.localModels).map(([key, model]) => [key, (model ?? "").trim()])) : undefined;
+    const saved = { ...draft, runtime, apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim(), ...(models ? { localModels: models } : {}) };
+    const current = configRef.current;
+    const next = videoProbeKey(saved) === current.videoProbe ? { ...saved, videoInput: current.videoInput, videoProbe: current.videoProbe } : { ...saved, videoInput: undefined, videoProbe: undefined };
+    saveAnalysisConfig(next);
+    setConfig(next);
+  }, []);
+  return { config, save, probe: probe.key === videoProbeKey(config) ? probe : { key: "", running: false }, retest: () => void probeVideo(configRef.current) };
+}
+export type AnalysisService = ReturnType<typeof useAnalysisService>;
 
 export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: Props) {
   const { width } = useWindowDimensions();
@@ -46,11 +95,11 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [link, setLink] = useState("");
-  const [config, setConfig] = useState<AnalysisConfig>(loadAnalysisConfig);
-  const [editing, setEditing] = useState(() => !aiConfigReady(loadAnalysisConfig()));
+  const service = useAnalysisService(connection);
+  // 「解析视频」没单独连、AI 剪辑的剪辑模型也没配好时一进来就开着设置
+  const [editing, setEditing] = useState(() => !analysisInUse());
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
-  const [probe, setProbe] = useState<Probe>({ key: "", running: false });
 
   const refresh = useCallback(async () => {
     if (!connection) return;
@@ -82,36 +131,6 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
     }
   }, [connection, items]);
 
-  // 每个接口地址+模型测一次能不能看视频（保存时、以前存的没测过时）
-  const configRef = useRef(config);
-  configRef.current = config;
-  const probeVideo = useCallback(async (target: AnalysisConfig) => {
-    const key = videoProbeKey(target);
-    const attempt = `${key}|${target.apiKey}`;
-    if (!connection || probing.has(attempt)) return;
-    probing.add(attempt);
-    setProbe({ key, running: true });
-    const settle = (next: Probe) => setProbe((current) => (current.key === key ? next : current));
-    try {
-      const { videoInput } = await probeAiEditVideo(connection, target);
-      const stored = loadAnalysisConfig();
-      if (videoProbeKey(stored) === key) saveAnalysisConfig({ ...stored, videoInput, videoProbe: key });
-      setConfig((current) => (videoProbeKey(current) === key ? { ...current, videoInput, videoProbe: key } : current));
-      settle({ key, running: false });
-    } catch (reason) {
-      settle({ key, running: false, error: reason instanceof Error ? reason.message : "没测出来，请稍后重试。" });
-    } finally {
-      probing.delete(attempt);
-    }
-  }, [connection]);
-  useEffect(() => {
-    const attempt = `${videoProbeKey(config)}|${config.apiKey}`;
-    // 本机的 Codex / Claude Code 都看不了视频，不用测
-    if (!connection || isLocalAiRuntime(config.runtime) || !config.apiKey.trim() || typeof config.videoInput === "boolean" || probeTried.has(attempt)) return;
-    probeTried.add(attempt);
-    void probeVideo(config);
-  }, [connection, config, probeVideo]);
-
   const shown = useMemo(() => {
     const words = query.trim().toLocaleLowerCase();
     if (!words) return items;
@@ -122,7 +141,9 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
 
   const start = async (url: string) => {
     if (!connection || !url.trim()) return;
-    if (!aiConfigReady(config)) { setEditing(true); setError("先在 AI 设置里填好 Key 和模型再解析。"); return; }
+    // 现读：AI 剪辑设置里可能刚改过同一份
+    const config = analysisInUse();
+    if (!config) { setEditing(true); setError("先在 AI 设置里填好 Key 和模型再解析。"); return; }
     const problem = await runtimeProblem(connection, config.runtime);
     if (problem) { setEditing(true); setError(problem); return; }
     setStarting(true);
@@ -154,20 +175,7 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
       <SmallButton label={starting ? "提交中…" : "解析"} disabled={starting || !link.trim()} onPress={() => void start(link)}><Sparkles size={14} color={color.text} /></SmallButton>
       <SmallButton label="AI 设置" onPress={() => setEditing((value) => !value)}><Settings2 size={14} color={color.text} /></SmallButton>
     </View>
-    {editing ? <ConfigPanel
-      connection={connection}
-      config={config}
-      probe={probe.key === videoProbeKey(config) ? probe : { key: "", running: false }}
-      onRetest={() => void probeVideo(configRef.current)}
-      onSave={(saved) => {
-        // 接口地址和模型没变就沿用测过的结果，变了会自动重测；面板留着显示测的结果
-        const next = videoProbeKey(saved) === config.videoProbe ? { ...saved, videoInput: config.videoInput, videoProbe: config.videoProbe } : { ...saved, videoInput: undefined, videoProbe: undefined };
-        saveAnalysisConfig(next);
-        setConfig(next);
-        setError(null);
-      }}
-      onClose={aiConfigReady(config) ? () => setEditing(false) : undefined}
-    /> : null}
+    {editing ? <ConfigPanel connection={connection} service={service} onSaved={() => setError(null)} onClose={analysisInUse() ? () => setEditing(false) : undefined} /> : null}
     {error ? <ErrorLine text={error} onRetry={() => { setError(null); void refresh(); }} /> : null}
 
     {!loaded ? <ActivityIndicator color={color.cyan} /> : items.length === 0 ? <Empty lines={["解析库还是空的。", "粘贴一条抖音视频链接，或者在观看历史、喜欢、收藏的卡片上点「解析」。"]} /> : <View style={[styles.columns, narrow && styles.columnsNarrow]}>
@@ -191,14 +199,13 @@ export function AnalysisWorkspace({ connection, onOpenRecord, onOpenSettings }: 
   </ScrollView>;
 }
 
-function ConfigPanel({ connection, config, probe, onSave, onRetest, onClose }: {
+function ConfigPanel({ connection, service, onSaved, onClose }: {
   connection: ExploreConnection | null;
-  config: AnalysisConfig;
-  probe: Probe;
-  onSave: (config: AnalysisConfig) => void;
-  onRetest: () => void;
+  service: AnalysisService;
+  onSaved: () => void;
   onClose?: () => void;
 }) {
+  const { config, probe } = service;
   const [draft, setDraft] = useState(config);
   // 保存后面板留着显示测的结果，按钮上闪一下「已保存」
   const [saved, setSaved] = useState(false);
@@ -214,13 +221,17 @@ function ConfigPanel({ connection, config, probe, onSave, onRetest, onClose }: {
   const runtime = aiRuntimeOf(draft.runtime);
   const local = isLocalAiRuntime(runtime);
   const save = () => {
-    const models = draft.localModels ? Object.fromEntries(Object.entries(draft.localModels).map(([key, model]) => [key, (model ?? "").trim()])) : undefined;
-    onSave({ ...draft, runtime, apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim(), ...(models ? { localModels: models } : {}) });
+    service.save(draft);
+    onSaved();
     setSaved(true);
   };
-  return <Panel title="AI 设置" subtitle={local
+  // 没单独填、AI 剪辑配好了剪辑模型：现在解析用的就是它
+  const edit = aiConfigReady(config) ? null : loadAiEditConfig();
+  const borrowed = edit && aiConfigReady(edit) ? (isLocalAiRuntime(edit.runtime) ? RUNTIME_LABELS[edit.runtime] : edit.model) : null;
+  return <Panel title="AI 设置" subtitle={`${local
     ? `用这台电脑上登录好的 ${RUNTIME_LABELS[runtime]} 来解析，走你自己的订阅，不用填 Key。`
-    : "填写解析用大模型的接口地址、模型名称和 API Key。模型最好能直接看视频（看不了的会改成看截图和节拍），Key 只存在这台电脑上。"}>
+    : "填写解析用大模型的接口地址、模型名称和 API Key。模型最好能直接看视频（看不了的会改成看截图和节拍），Key 只存在这台电脑上。"}这就是 AI 剪辑设置「服务商」里的「解析视频」，AI 剪辑看参考视频也用它，在哪边改都一样。${borrowed
+    ? `现在这里没填，解析用的是 AI 剪辑的剪辑模型（${borrowed}）。` : ""}`}>
     <AiRuntimeField connection={connection} value={runtime} onChange={(next) => setDraft((current) => ({ ...current, runtime: next }))} />
     {local ? <View style={styles.field}>
       <Text style={styles.label}>模型（选填）</Text>
@@ -239,7 +250,7 @@ function ConfigPanel({ connection, config, probe, onSave, onRetest, onClose }: {
     {local ? <Text style={kit.muted}>{`${RUNTIME_LABELS[runtime]} 看不了视频：解析时应用会先把视频拆成镜头截图和音乐节拍再交给它，听不到台词和旁白，这时要开着应用。`}</Text>
       : !isLocalAiRuntime(config.runtime) && config.apiKey ? <View style={styles.probeRow}>
         <Text style={[kit.muted, { flex: 1 }]}>{videoInputNote(config, probe)}</Text>
-        {probe.running ? <ActivityIndicator size="small" color={color.cyan} /> : <SmallButton label="重新测" onPress={onRetest} />}
+        {probe.running ? <ActivityIndicator size="small" color={color.cyan} /> : <SmallButton label="重新测" onPress={service.retest} />}
       </View> : null}
   </Panel>;
 }

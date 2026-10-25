@@ -3,7 +3,7 @@ import type { ExploreConnection } from "./explorer";
 import type { AiEditCommandAsk } from "./aiEditSkills";
 
 // AI 剪辑：对话、工程、素材库都在采集器（collector/aiEdit/），页面只负责发消息、长轮询会话、上传素材和展示。
-// 接口配置存在本机 localStorage，和解析库的配置完全分开，每次随消息带过去，采集器不保存 Key。
+// 接口配置存在本机 localStorage，每次随消息带过去，采集器不保存 Key。剪辑模型单独存；看视频用的「解析视频」服务就是解析库那份配置。
 
 /** 用哪个 AI：接口（自己填地址和 Key），或者这台电脑上登录好的 Codex / Claude Code（走用户自己的订阅）。 */
 export type AiRuntime = "api" | "codex" | "claude";
@@ -579,13 +579,16 @@ export interface AiEditMessageExtras {
   freeOnly?: boolean;
   /** 生成图片和视频的接口（generationForRequest 算好的）：和 config 平级，本机 CLI 模式下也带得过去；没配就不带 */
   generation?: AiEditGenerationRequest;
+  /** 「解析视频」服务（解析库那份配置）：单独连了才带，采集器看参考视频、转写字幕用它；不带就用剪辑模型 */
+  analysis?: AiEditConfig | null;
 }
 
 export async function sendAiEditMessage(connection: ExploreConnection, id: string, text: string, config: AiEditConfig, extras: AiEditMessageExtras = {}): Promise<AiEditSession> {
-  const { region, refs, attachments, freeOnly, generation } = extras;
+  const { region, refs, attachments, freeOnly, generation, analysis } = extras;
   // 本机 CLI 只带运行时和模型，存着的 Key 和地址不发
   const body = {
     text, config: aiRequestConfig(config),
+    ...(analysis ? { analysis: aiRequestConfig(analysis) } : {}),
     ...(region ? { region } : {}),
     ...(refs?.length ? { refs } : {}),
     ...(attachments?.length ? { attachments } : {}),

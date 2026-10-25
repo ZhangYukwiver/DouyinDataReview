@@ -10,6 +10,10 @@
   Page custom analysisPageShow analysisPageLeave
 
   Function analysisPageShow
+    ; 应用内更新带界面跑安装包（--updated --force-run），不跳过的话这页照样弹出来、默认不勾，选了也不算数
+    ${if} ${isUpdated}
+      Abort
+    ${endif}
     !insertmacro MUI_HEADER_TEXT "可选功能" "现在不装的话，以后也可以在设置里安装。"
     nsDialogs::Create 1018
     Pop $0
