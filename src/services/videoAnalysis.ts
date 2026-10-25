@@ -1,9 +1,10 @@
-import { type AiEditLookJob, type AiRuntime, type LocalAiRuntime, aiRequestConfig, aiRuntimeOf, isLocalAiRuntime, pickLocalModels, videoProbeKey } from "./aiEdit";
+import { type AiEditLookJob, type AiRuntime, type LocalAiRuntime, aiConfigReady, aiRequestConfig, aiRuntimeOf, isLocalAiRuntime, loadAiEditConfig, pickLocalModels, videoProbeKey } from "./aiEdit";
 import { LocalCollectorError, collectorFetch, normalizeCollectorBaseUrl } from "./localCollector";
 import type { ExploreConnection } from "./explorer";
 
 // 解析库：工作台把视频链接和接口配置交给采集器，采集器下载视频、调用 AI、存结果（collector/videoAnalysis.mjs）。
-// 接口配置存在本机 localStorage，每次随请求带过去，采集器不保存 Key。
+// 接口配置存在本机 localStorage，每次随请求带过去，采集器不保存 Key。这份配置就是 AI 剪辑设置「服务商」里的「解析视频」：
+// AI 剪辑看参考视频、转写字幕也用它；两边都没单独连时用 AI 剪辑的剪辑模型。
 
 export interface AnalysisConfig {
   /** 没有就是接口；也可以用这台电脑上登录好的 Codex / Claude Code */
@@ -69,6 +70,14 @@ export function loadAnalysisConfig(): AnalysisConfig {
 }
 export function saveAnalysisConfig(config: AnalysisConfig) {
   try { globalThis.localStorage?.setItem(CONFIG_KEY, JSON.stringify(config)); } catch { /* 存不了就只管这一次 */ }
+}
+
+/** 解析时实际用的那份：「解析视频」单独连了就用它，没连用 AI 剪辑的剪辑模型（创作方向还是解析库填的）；都没配好是 null。 */
+export function analysisInUse(): AnalysisConfig | null {
+  const own = loadAnalysisConfig();
+  if (aiConfigReady(own)) return own;
+  const edit = loadAiEditConfig();
+  return aiConfigReady(edit) ? { ...edit, direction: own.direction } : null;
 }
 
 async function request(connection: ExploreConnection, path: string, init: RequestInit = {}): Promise<any> {

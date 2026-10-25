@@ -404,14 +404,17 @@ function AiEditWorkspaceImpl({ connection, records, onOpenSettings }: Props) {
       const framed = region && target.id === currentId ? region : null;
       const refs = outgoing?.refs ?? [];
       const files = outgoing?.files ?? [];
+      // 「解析视频」和借方舟 Key 都要读解析库那份配置：可能刚在别的页面改过，每次发的时候现读
+      const analysis = loadAnalysisConfig();
       const next = await sendAiEditMessage(conn, target.id, text, config, {
         region: framed && { time_us: framed.time_us, x: framed.x, y: framed.y, width: framed.width, height: framed.height, clip_ids: framed.clip_ids },
         // 片尾之后的时刻不发（小条上写着），发了后端会整条拒收
         refs: sendableRefs(refs, target.project).map(refRequest),
         attachments: attachmentRequests(files),
         freeOnly: readCatalogFree(),
-        // 视频的 Key 留空、勾了借 Key 时借方舟的 Key：解析库的设置可能刚在别的页面改过，每次发的时候现读
-        generation: generationForRequest(generate, config, loadAnalysisConfig()),
+        // 视频的 Key 留空、勾了借 Key 时借方舟的 Key
+        generation: generationForRequest(generate, config, analysis),
+        analysis: aiConfigReady(analysis) ? analysis : null,
       });
       setInput("");
       if (framed) setRegionDraft((current) => (current?.sessionId === target.id ? null : current));

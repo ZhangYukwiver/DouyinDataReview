@@ -6,7 +6,7 @@ import { AnalysisError, TRUNCATED_NOTE, requestAnalysis } from "../videoAnalysis
 import { AiEditError } from "./library.mjs";
 import { CANT_SEE_VIDEO, videoRefused } from "./look.mjs";
 
-// 转写字幕：视频素材整段发给 AI 剪辑配置的模型（和解析参考视频同一条路），让它按句写出台词和起止时间，
+// 转写字幕：视频素材整段发给解析视频用的模型（和解析参考视频同一条路），让它按句写出台词和起止时间，
 // 再按片段在时间线上的位置和倍速换成字幕时间。时间是模型听出来的，精度零点几秒，比专门的语音识别粗；
 // 只看画面、听不到声音的模型转写不了。
 
@@ -22,7 +22,7 @@ const MAX_TEXT = 60;
 // 秒数比较的浮点余量
 const EPSILON = 1e-6;
 
-export const MODEL_HINT = "AI 剪辑设置里换成能看视频、听得到音轨的模型，比如方舟 doubao-seed-2-1-lite";
+export const MODEL_HINT = "到 AI 剪辑设置的「服务商」里给「解析视频」连一个能看视频、听得到音轨的模型，比如方舟 doubao-seed-2-1-lite";
 
 export function transcribePrompt(seconds) {
   return [
@@ -71,7 +71,7 @@ export function parseTranscript(answer, seconds = 0) {
     .map((row) => row.trim().replace(/^(?:[-*•·]\s*|\d{1,3}(?:\.\s+|[、)）]\s*)(?=\[?\d))/u, ""));
   const hearsNothing = rows.some((row) => isMark(row, "NO_AUDIO"));
   if (hearsNothing || rows.some((row) => isMark(row, "NO_VIDEO"))) {
-    throw new AiEditError("video_unsupported", `AI 剪辑配置的模型${hearsNothing ? "听不到视频里的声音" : "看不到视频"}，转写不了字幕：${MODEL_HINT}。`, 422);
+    throw new AiEditError("video_unsupported", `解析视频用的模型${hearsNothing ? "听不到视频里的声音" : "看不到视频"}，转写不了字幕：${MODEL_HINT}。`, 422);
   }
   if (rows.some((row) => isMark(row, "NO_SPEECH"))) return [];
   const lines = [];
@@ -102,7 +102,7 @@ export function parseTranscript(answer, seconds = 0) {
   // 一行写了两句（台词里还夹着时间和箭头）也算没按格式写
   missed += clean.filter((line) => ARROW.test(line.text)).length;
   if (!clean.length && rows.some((row) => CANT_HEAR.test(row) || CANT_SEE_VIDEO.test(row))) {
-    throw new AiEditError("video_unsupported", `AI 剪辑配置的模型说它听不到视频里的声音，转写不了字幕：${MODEL_HINT}。`, 422);
+    throw new AiEditError("video_unsupported", `解析视频用的模型说它听不到视频里的声音，转写不了字幕：${MODEL_HINT}。`, 422);
   }
   if (!clean.length || missed) throw new AiEditError("transcribe_unreadable", "模型有台词没按格式写出时间，再试一次；一直这样就换个模型。", 502);
   const heard = clean.filter((line) => !UNCLEAR.test(line.text));
@@ -117,7 +117,7 @@ export async function transcribeMedia(ctx, item) {
   if (isLocalRuntime(ctx.config?.runtime)) {
     throw new AiEditError("video_unsupported", `本机 Codex / Claude 听不了视频里的声音，转写不了字幕：${MODEL_HINT}（接口模式）。`, 422);
   }
-  if (ctx.config?.videoInput === false) throw new AiEditError("video_unsupported", `AI 剪辑配置的模型看不了视频，转写不了字幕：${MODEL_HINT}。`, 422);
+  if (ctx.config?.videoInput === false) throw new AiEditError("video_unsupported", `解析视频用的模型看不了视频，转写不了字幕：${MODEL_HINT}。`, 422);
   const file = ctx.library.readyPath(item.id);
   const { size } = await stat(file);
   let bytes;
@@ -152,7 +152,7 @@ export async function transcribeMedia(ctx, item) {
     if (error?.name === "AbortError") throw error;
     if (error instanceof AnalysisError) {
       const refused = error.code === "provider_error" && videoRefused(status, error.message);
-      throw new AiEditError(refused ? "video_unsupported" : error.code, refused ? `AI 剪辑配置的模型看不了视频，转写不了字幕（${error.message}）：${MODEL_HINT}。` : error.message, error.status);
+      throw new AiEditError(refused ? "video_unsupported" : error.code, refused ? `解析视频用的模型看不了视频，转写不了字幕（${error.message}）：${MODEL_HINT}。` : error.message, error.status);
     }
     throw new AiEditError("transcribe_failed", error?.name === "TimeoutError" ? "模型太久没转写完，稍后重试。" : "台词没转写成功，稍后重试。");
   } finally {

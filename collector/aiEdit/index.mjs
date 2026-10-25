@@ -687,6 +687,8 @@ export function createAiEdit({
     const runTool = createToolRunner({
       store, library, projectId: session.projectId, getCollector, signal,
       getExplorer, config, references, fetchImpl, pollMs, localAi, freeOnly: turn.freeOnly,
+      // 看视频用的配置（「解析视频」服务）；null 是用剪辑模型
+      analysis: turn.analysis ?? null,
       // 活儿挂在这一轮上（streaming 不存盘），页面长轮询看到后接手
       askLook: (request) => state.looks.ask({
         id: session.id,
@@ -789,8 +791,8 @@ export function createAiEdit({
     await sessions.touch(session, { persist: true });
   };
 
-  /** region、refs、attachments、generation 是 parseRegion、parseRefs、parseAttachments、parseGenerateConfig 校验过的。 */
-  const startTurn = async (session, text, config, { region = null, refs = [], attachments = [], freeOnly = false, generation = null } = {}) => {
+  /** region、refs、attachments、generation、analysis 是 parseRegion、parseRefs、parseAttachments、parseGenerateConfig、parseEditConfig 校验过的。 */
+  const startTurn = async (session, text, config, { region = null, refs = [], attachments = [], freeOnly = false, generation = null, analysis = null } = {}) => {
     const { store, sessions } = state;
     const controller = new AbortController();
     const run = { controller, promise: null };
@@ -808,7 +810,7 @@ export function createAiEdit({
     // skills：开跑时启用的技能，整轮用这一份（系统提示和工具清单一轮里不变，接口的前缀缓存才用得上）
     let skills = [];
     try { skills = await state.skills.enabled(); } catch (error) { console.error("AI 剪辑读技能登记表失败:", error); }
-    const turn = { freeOnly, generation, skills };
+    const turn = { freeOnly, generation, skills, analysis };
     try {
       // 每轮开跑前存一份，可以撤销这一轮或者退回到这句话之前
       const { checkpoint, revision } = await saveCheckpoint(session, "turn", `AI 处理“${leading(text, 12)}”之前`);
@@ -1163,6 +1165,8 @@ export function createAiEdit({
         if (!text) throw new AiEditError("invalid_request", "先输入想怎么剪。");
         if (text.length > MAX_MESSAGE_CHARS) throw new AiEditError("message_too_long", "这条消息太长了，分几次说。");
         const config = parseEditConfig(body.config);
+        // 「解析视频」服务（看参考视频、转写字幕用，和解析库同一份）：页面单独连了才带，没带就用剪辑模型来看
+        const analysis = body.analysis == null ? null : parseEditConfig(body.analysis);
         // 生成图片、视频的配置和 config 平级：本机 Codex / Claude 模式下 config 只带运行时和模型
         const generation = parseGenerateConfig(body.generation);
         const given = (value) => value !== undefined && value !== null;
@@ -1174,7 +1178,7 @@ export function createAiEdit({
         if (exporting.has(id)) throw new AiEditError("session_busy", "正在导入剪映，请稍等。", 409);
         if (editing.has(id)) throw new AiEditError("session_busy", "看板上的改动还没做完，请稍等。", 409);
         if (outputs.has(id)) throw new AiEditError("session_busy", "正在导出或导入工程，等它做完再说。", 409);
-        await startTurn(session, text, config, { region, refs, attachments, freeOnly: body.freeOnly === true, generation });
+        await startTurn(session, text, config, { region, refs, attachments, freeOnly: body.freeOnly === true, generation, analysis });
         sendJson(response, 202, { session: sessionDetail(session) });
         return;
       }
