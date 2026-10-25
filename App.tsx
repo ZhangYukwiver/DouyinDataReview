@@ -109,8 +109,7 @@ import { buildDataExport, type DataExportSelection } from "./src/services/export
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 import { AnalysisWorkspace } from "./src/components/workspace/AnalysisWorkspace";
 import { AiEditWorkspace } from "./src/components/workspace/AiEditWorkspace";
-import { aiConfigReady } from "./src/services/aiEdit";
-import { loadAnalysisConfig, startAnalysis } from "./src/services/videoAnalysis";
+import { analysisInUse, startAnalysis } from "./src/services/videoAnalysis";
 // @ts-expect-error react-native-web 没给内部模块出类型
 import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
 
@@ -1601,8 +1600,8 @@ function AppContent() {
     const url = record.url?.trim();
     if (!url) return false;
     if (!collectorToken) { openSettings(); return false; }
-    const config = loadAnalysisConfig();
-    if (!aiConfigReady(config)) { setDashboardView("analysis"); return false; }
+    const config = analysisInUse();
+    if (!config) { setDashboardView("analysis"); return false; }
     try {
       await startAnalysis({ baseUrl: collectorUrl, token: collectorToken }, url, config);
     } catch (error) {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadAnalysisConfig, parseMarkdown, startAnalysis } from "./videoAnalysis";
+import { analysisInUse, loadAnalysisConfig, parseMarkdown, startAnalysis } from "./videoAnalysis";
 
 describe("parseMarkdown", () => {
   it("reads the shapes the analysis answer uses", () => {
@@ -62,5 +62,20 @@ describe("analysis with a local Codex / Claude Code", () => {
     }));
     await startAnalysis({ baseUrl: "http://127.0.0.1:4765", token: "t" }, "https://www.douyin.com/video/1", config);
     expect(bodies).toEqual([{ url: "https://www.douyin.com/video/1", config: { runtime: "claude", model: "opus", direction: "美食" } }]);
+  });
+});
+
+describe("analysisInUse", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("uses the separately connected service, otherwise the AI edit model with this direction", () => {
+    const saved = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
+    expect(analysisInUse()).toBeNull();
+    saved.set("dy2.aiEditConfig", JSON.stringify({ baseUrl: "https://ark.example.com/api/v3", apiKey: "edit", model: "edit-model" }));
+    saved.set("dy2.analysisConfig", JSON.stringify({ apiKey: "", direction: "美食" }));
+    expect(analysisInUse()).toMatchObject({ apiKey: "edit", model: "edit-model", direction: "美食" });
+    saved.set("dy2.analysisConfig", JSON.stringify({ apiKey: "watch", direction: "美食" }));
+    expect(analysisInUse()).toMatchObject({ apiKey: "watch", model: "doubao-seed-2-1-lite-260915" });
   });
 });

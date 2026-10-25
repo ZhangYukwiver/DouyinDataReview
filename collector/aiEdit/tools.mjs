@@ -65,7 +65,7 @@ import { MODEL_HINT, mergeCaptions, placeLines, transcribeMedia } from "./transc
 // 生成素材（generate.mjs，用户在设置里开启了才发给模型：填了 Key，视频也可以勾选借用已填的方舟 Key）：generate_image 走 OpenAI 兼容的图片接口，
 // generate_video 走用户选的那家视频服务（方舟 Seedance、即梦、小云雀、LibTV），要用户在页面上点「生成」确认（spend.mjs）才建任务。
 // 另外几个不碰工程的工具：list_media、search_my_records、import_douyin_video、search_catalog，
-// 以及参考视频用的 search_douyin（探索的抖音搜索）和 analyze_reference（用 AI 剪辑自己的模型看视频，提示词借用解析库的）。
+// 以及参考视频用的 search_douyin（探索的抖音搜索）和 analyze_reference（用「解析视频」服务看视频，没连就用剪辑模型；提示词借用解析库的）。
 // 技能（用户自己装的 SKILL.md 文件夹，skills.mjs；有启用的才发给模型）：read_skill、write_skill_file 读写技能和工作目录里的文件，
 // run_skill_command 照说明跑命令（先要用户在页面上点「运行」，用户设了不用问的除外）、skill_job 管后台命令，
 // import_skill_file 把产出放进素材库、give_media_to_skill 把素材交给技能。
@@ -687,8 +687,11 @@ function findRecord(ctx, url) {
   return null;
 }
 
-// ---------- 参考视频：搜抖音（探索的 DirectExplorer）、看视频（AI 剪辑自己的模型 + 解析库的提示词和请求格式） ----------
-// 不碰解析库：不用它的接口配置，结果也不写进解析库，只在 AI 剪辑进程里缓存。
+// ---------- 参考视频：搜抖音（探索的 DirectExplorer）、看视频（「解析视频」服务 + 解析库的提示词和请求格式） ----------
+// 结果不写进解析库，只在 AI 剪辑进程里缓存。
+
+/** 看视频（解析参考视频、转写字幕）用「解析视频」服务，和解析库同一份配置；页面没单独连就还是剪辑模型。 */
+const watching = (ctx) => (ctx.analysis ? { ...ctx, config: ctx.analysis } : ctx);
 
 // ponytail: 方舟请求体上限 64MB，视频 base64 后要放得下；抖音链接下的是最低一档清晰度
 const ANALYSIS_BYTES = 45 * 1024 * 1024;
@@ -763,7 +766,7 @@ async function downloadReference(ctx, url) {
 }
 
 /**
- * 把整段视频连同拆解提示词发给 AI 剪辑配置的模型（请求格式同解析库），超过 45MB 先让页面压一份小的。
+ * 把整段视频连同拆解提示词发给看视频用的模型（请求格式同解析库），超过 45MB 先让页面压一份小的。
  * 发不成（压不了、接口拒收、模型说看不到）回 { reason }，由调用方改拆截图。
  */
 async function watchVideo(ctx, { file, video, pageUrl }) {
@@ -834,7 +837,7 @@ async function lookAtVideo(ctx, { file, video, pageUrl }) {
     if (error instanceof AnalysisError) throw new AiEditError(error.code, error.message, error.status);
     throw new AiEditError("analysis_failed", error?.name === "TimeoutError" ? "模型太久没看完这些截图，请稍后重试。" : "参考视频没解析成功，请稍后重试。");
   }
-  if (seesNoImages(markdown)) throw new AiEditError("images_unsupported", "AI 剪辑配置的模型连截图也没看到，换一个能看图片的模型再试。");
+  if (seesNoImages(markdown)) throw new AiEditError("images_unsupported", "解析视频用的模型连截图也没看到，换一个能看图片的模型再试。");
   return { markdown, look: measured };
 }
 
@@ -1447,7 +1450,7 @@ const TOOLS = [
       url: str("抖音视频链接"),
     }),
     label: (args, ctx) => `解析了参考视频${quoted(args.media_id ? ctx.library.get(args.media_id)?.name : "", 16)}`,
-    run: async (ctx, args) => analyzeReference(ctx, args),
+    run: async (ctx, args) => analyzeReference(watching(ctx), args),
   },
   {
     name: "detect_beats",
@@ -1987,7 +1990,7 @@ const TOOLS = [
   },
   {
     name: "transcribe_subtitles",
-    description: "把时间线上视频片段里人说的话转写成字幕：AI 剪辑配置的模型听一遍声音，按句写出台词和起止时间，按片段在时间线上的位置和倍速建成一组新字幕（画面下方，和 add_subtitles 一样）。"
+    description: "把时间线上视频片段里人说的话转写成字幕：解析视频用的模型听一遍声音，按句写出台词和起止时间，按片段在时间线上的位置和倍速建成一组新字幕（画面下方，和 add_subtitles 一样）。"
       + "整条片子要配的片段一次传完（同一个素材切成多少段都只听一次），结果是一组字幕；剪辑改过要重新转写同一批片段时，先用 remove_subtitles 删掉之前转写的那组。"
       + "同一个素材转写过会记住；用户说转写不对、漏了句、明明有人说话却没转出来时 fresh 填 true 重听。"
       + "模型要能看视频、听得到音轨（比如方舟 doubao-seed-2-1-lite）；时间是模型听出来的，可能差零点几秒。要改字或样式用 update_clip。",
@@ -1997,7 +2000,7 @@ const TOOLS = [
     }, ["clip_ids"]),
     write: true,
     label: (args) => `把${Array.isArray(args.clip_ids) && args.clip_ids.length > 1 ? ` ${args.clip_ids.length} 段视频` : "视频"}里的台词转写成字幕`,
-    run: async (ctx, args) => transcribeClips(ctx, args),
+    run: async (ctx, args) => transcribeClips(watching(ctx), args),
   },
   {
     name: "add_subtitle_line",

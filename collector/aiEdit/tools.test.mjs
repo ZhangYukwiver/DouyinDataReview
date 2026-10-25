@@ -1113,6 +1113,26 @@ describe("reference videos", () => {
     }
   });
 
+  it("watches with the separately connected video analysis service instead of the edit model", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "ai-edit-reference-"));
+    try {
+      const file = path.join(directory, "v.mp4");
+      await writeFile(file, "fake-mp4");
+      const collector = {
+        startVideoDownload: () => ({ id: "job", status: "complete" }),
+        getVideoDownloadJob: () => ({ id: "job", status: "complete", video: { title: "热门转场" } }),
+        getVideoDownloadFilePath: () => file,
+      };
+      const sent = [];
+      const analysis = { ...EDIT, apiKey: "watch-key", model: "doubao-seed-watch" };
+      const { run } = runnerWith({ getCollector: () => collector, config: EDIT, analysis, references: new Map(), fetchImpl: answering("③ 0–2 秒｜硬切", sent), pollMs: 1 });
+      expect((await run("analyze_reference", { url: LINK })).result.ok).toBe(true);
+      expect(sent[0].model).toBe("doubao-seed-watch");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   // 远端真实碰到的：中转站把视频丢了，模型照样写了一份全是「未知」的拆解（带表格）
   const dimensions = (cells, evidence) => cells.map((cell, index) => `| ${index + 1}. 维度${index + 1} | ${cell} | ${evidence} | 待验证 |`).join("\n");
   const BLIND_REPLY = `目前只有页面文字信息和互动数，没有视频文件或可读取链接。\n\n② 维度分析\n\n| 维度 | 具体发现 | 证据 | 启示 |\n|---|---|---|---|\n${dimensions(["时长 30 秒，点赞 20182", "未知", "未知", "未知", "未知", "未知", "未知", "未知", "未知", "未知"], "页面提供信息")}`;

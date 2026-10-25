@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { Bot, Check, ChevronRight, Plug, Plus, Puzzle, Sparkles, X, type LucideIcon } from "lucide-react-native";
 import type { ExploreConnection } from "../../services/explorer";
@@ -6,8 +6,9 @@ import {
   aiConfigReady, aiRuntimeOf, borrowArkKey, generateConfigProblem, generateKey, isArkUrl, isLocalAiRuntime, keepValidGenerateUrls, DEFAULT_AI_EDIT_GENERATE_CONFIG, GENERATE_SLOTS, LOCAL_CLI, VIDEO_PROVIDER_SLOT,
   type AiEditConfig, type AiEditGenerateConfig, type AiEditGenerateSlot, type AiEditVideoProvider,
 } from "../../services/aiEdit";
-import { loadAnalysisConfig } from "../../services/videoAnalysis";
+import { DEFAULT_ANALYSIS_CONFIG } from "../../services/videoAnalysis";
 import { AiRuntimeField, RUNTIME_LABELS } from "./AiRuntimeField";
+import { useAnalysisService, videoInputNote as analysisInputNote, type AnalysisService } from "./AnalysisWorkspace";
 import { SkillsPanel } from "./AiEditSkills";
 import { Expand, webPointer } from "./aiEditShared";
 import { kit, SmallButton } from "./CreatorKit";
@@ -15,14 +16,14 @@ import { ws } from "./motion";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 
 // AI 剪辑的设置窗口，照 openfilm 的设置排：左边分页导航，右边一页是标题 + 几组、组里一行一行用发丝线隔开，
-// 每行左边是名字和一句说明、右边是按钮。剪辑模型一页（用哪个 AI 来剪），服务商一页（生成图片、视频的几家，各自连上自己的 Key 或本机命令行），
+// 每行左边是名字和一句说明、右边是按钮。剪辑模型一页（用哪个 AI 来剪），服务商一页（解析视频，和生成图片、视频的几家，各自连上自己的 Key 或本机命令行），
 // 生成素材一页（图片、视频各用连上的哪家）。服务商那一行点「连接」才在下面展开填 Key，接口地址和模型再收进「高级选项」。
 
 export type AiEditSettingsSection = "model" | "providers" | "generate" | "skills";
 
 const SECTIONS: Array<{ key: AiEditSettingsSection; title: string; icon: LucideIcon; note: string }> = [
-  { key: "model", title: "剪辑模型", icon: Bot, note: "AI 剪辑用哪个模型来听你的话、改时间线。和解析库的设置分开存。" },
-  { key: "providers", title: "服务商", icon: Plug, note: "生成图片和视频的服务。用你自己的 Key 或这台电脑上登录好的命令行，按各家的价格另外计费，钱直接付给服务商；Key 只存在这台电脑上。" },
+  { key: "model", title: "剪辑模型", icon: Bot, note: "AI 剪辑用哪个模型来听你的话、改时间线。看参考视频可以在「服务商」里另外连一个「解析视频」，不连就也用它。" },
+  { key: "providers", title: "服务商", icon: Plug, note: "解析视频、生成图片和视频的服务。用你自己的 Key 或这台电脑上登录好的命令行，按各家的价格另外计费，钱直接付给服务商；Key 只存在这台电脑上。" },
   { key: "generate", title: "生成素材", icon: Sparkles, note: "AI 剪辑时缺画面，可以自己生成图片和视频放进素材库。这里选各用连上的哪一家；每次生成视频前都会先问你。" },
   { key: "skills", title: "技能", icon: Puzzle, note: "技能是别人写好的一套做法，就是一个带 SKILL.md 的文件夹。装上以后，你的要求用得上它时，AI 会照着它的说明做，比如写一段配乐、做一张字卡；要在这台电脑上运行命令时会先问你。" },
 ];
@@ -95,7 +96,9 @@ function Window({ section, onSection, onClose, connection, config, probe, onSave
   const { width, height } = useWindowDimensions();
   // 服务商的改动整个窗口共用一份草稿：每家点「保存」存自己那一项，没点保存就关窗的，关窗时替用户存上（填错的地址退回原来的）
   const [draft, setDraft] = useState(generate);
-  const ai = { config, analysis: useMemo(() => loadAnalysisConfig(), []) };
+  // 「解析视频」就是解析库那份配置，这里改了解析库也跟着用
+  const analysis = useAnalysisService(connection);
+  const ai = { config, analysis: analysis.config };
   const latest = useRef({ draft, generate, ai, onSaveGenerate, onGenerateNote });
   latest.current = { draft, generate, ai, onSaveGenerate, onGenerateNote };
   useEffect(() => () => {
@@ -144,7 +147,7 @@ function Window({ section, onSection, onClose, connection, config, probe, onSave
           {shown.key === "model"
             ? <ModelPage connection={connection} config={config} probe={probe} onSave={onSave} onRetest={onRetest} />
             : shown.key === "providers"
-              ? <ProvidersPage draft={draft} stored={generate} ai={ai} onDraft={setDraft} onStore={store} />
+              ? <ProvidersPage draft={draft} stored={generate} ai={ai} onDraft={setDraft} onStore={store} connection={connection} analysis={analysis} />
               : shown.key === "generate"
                 ? <GeneratePage stored={generate} ai={ai} onStore={store} onConnect={() => onSection("providers")} />
                 : <SkillsPanel connection={connection} />}
@@ -154,7 +157,7 @@ function Window({ section, onSection, onClose, connection, config, probe, onSave
   </View>;
 }
 
-type AiKeys = { config: AiEditConfig; analysis: ReturnType<typeof loadAnalysisConfig> };
+type AiKeys = { config: AiEditConfig; analysis: AnalysisService["config"] };
 const keyOf = (config: AiEditGenerateConfig, slot: AiEditGenerateSlot, ai: AiKeys) => generateKey(config, slot, ai.config, ai.analysis);
 
 /** 连上一类里的第一家时顺手用上它（照 openfilm：连上服务商就补上还空着的那类）；那一类已经有连上的就不动用户的选择 */
@@ -230,12 +233,16 @@ function ModelPage({ connection, config, probe, onSave, onRetest }: Pick<AiEditS
 
 // ---------- 服务商 ----------
 
-function ProvidersPage({ draft, stored, ai, onDraft, onStore }: {
+function ProvidersPage({ draft, stored, ai, onDraft, onStore, connection, analysis }: {
   draft: AiEditGenerateConfig; stored: AiEditGenerateConfig; ai: AiKeys;
   onDraft: React.Dispatch<React.SetStateAction<AiEditGenerateConfig>>; onStore: (next: AiEditGenerateConfig) => void;
+  connection: ExploreConnection | null; analysis: AnalysisService;
 }) {
   const row = (provider: Provider) => <ProviderRow key={provider.slot} provider={provider} draft={draft} stored={stored} ai={ai} onDraft={onDraft} onStore={onStore} />;
   return <>
+    <Group title="解析视频" footnote="解析库和 AI 剪辑看参考视频、转写字幕都用这一个，在哪边改都一样。不单独连的话，就用剪辑模型来看。">
+      <AnalysisRow connection={connection} service={analysis} edit={ai.config} />
+    </Group>
     <Group title="生成图片">{IMAGE_PROVIDERS.map(row)}</Group>
     <Group title="生成视频" footnote="连上几家都行，在「生成素材」里选这次用哪家。">{VIDEO_PROVIDERS.map(row)}</Group>
   </>;
@@ -319,6 +326,71 @@ function ProviderRow({ provider, draft, stored, ai, onDraft, onStore }: {
         <View style={styles.insetActions}>
           <SmallButton label="取消" onPress={reset} />
           <SmallButton label="保存" disabled={!filled} onPress={save} />
+        </View>
+      </View>
+    </Expand>
+  </View>;
+}
+
+/** 「解析视频」：和服务商一样一行，展开是运行方式 + Key，模型和接口地址收进「高级选项」；断开后回到用剪辑模型 */
+function AnalysisRow({ connection, service, edit }: { connection: ExploreConnection | null; service: AnalysisService; edit: AiEditConfig }) {
+  const { config, probe } = service;
+  const connected = aiConfigReady(config);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(config);
+  const [more, setMore] = useState(() => (["model", "baseUrl"] as const).some((key) => config[key].trim() !== DEFAULT_ANALYSIS_CONFIG[key]));
+  const runtime = aiRuntimeOf(draft.runtime);
+  const local = isLocalAiRuntime(runtime);
+  const set = (key: FieldKey, text: string) => setDraft((current) => ({ ...current, [key]: text }));
+  const start = () => { setDraft(config); setOpen(true); };
+  const save = () => { service.save({ ...draft, runtime }); setOpen(false); };
+  const disconnect = () => service.save({ ...config, runtime: "api", apiKey: "" });
+  const status = connected
+    ? isLocalAiRuntime(config.runtime) ? `已连接 · 用本机 ${RUNTIME_LABELS[config.runtime]}` : `已连接 •••• ${config.apiKey.trim().slice(-4)}`
+    : aiConfigReady(edit) ? "没单独连 · 用剪辑模型" : null;
+  const detail = connected && !isLocalAiRuntime(config.runtime) ? analysisInputNote(config, probe)
+    : "看懂视频：分段时间轴、转场、字幕和配乐卡点。最好用能直接看视频、听得到声音的模型，比如方舟 doubao-seed-2-1-lite。";
+  return <View style={styles.row} testID="ai-provider-analysis">
+    <View style={styles.rowHead}>
+      <View style={styles.mark}><Text style={styles.markText}>解</Text></View>
+      <View style={styles.copy}>
+        <View style={styles.titleLine}>
+          <Text style={styles.rowTitle}>解析模型</Text>
+          {status ? <View style={styles.status}>
+            {connected ? <View style={styles.dot} /> : null}
+            <Text style={styles.statusText}>{status}</Text>
+          </View> : null}
+        </View>
+        <Text style={styles.detail}>{detail}</Text>
+      </View>
+      {open ? null : <View style={styles.rowControl}>
+        {connected && !isLocalAiRuntime(config.runtime) ? probe.running ? <ActivityIndicator size="small" color={color.cyan} /> : <SmallButton label="重新测" onPress={service.retest} /> : null}
+        {connected ? <>
+          <SmallButton label="修改" onPress={start} />
+          <SmallButton label="断开" onPress={disconnect} />
+        </> : <SmallButton label="连接" onPress={start}><Plus size={13} color={color.text} /></SmallButton>}
+      </View>}
+    </View>
+    <Expand open={open}>
+      <View style={styles.inset}>
+        <AiRuntimeField connection={connection} value={runtime} onChange={(next) => setDraft((current) => ({ ...current, runtime: next }))} />
+        {local
+          ? <Input label="模型（选填）" value={draft.localModels?.[runtime] ?? ""} placeholder={`留空就用 ${RUNTIME_LABELS[runtime]} 自己的默认模型`}
+              onChange={(text) => setDraft((current) => ({ ...current, localModels: { ...current.localModels, [runtime]: text } }))} />
+          : <>
+            <Input label="API Key" value={draft.apiKey} secret placeholder="从大模型服务商获取 API Key" onChange={(text) => set("apiKey", text)} />
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: more }} onPress={() => setMore((was) => !was)} style={[styles.moreToggle, webPointer]}>
+              <View style={{ transform: [{ rotate: more ? "90deg" : "0deg" }] }}><ChevronRight size={14} color={color.textMuted} /></View>
+              <Text style={styles.moreText}>高级选项</Text>
+            </Pressable>
+            <Expand open={more} gap={10}>
+              <Input label="模型" value={draft.model} placeholder={DEFAULT_ANALYSIS_CONFIG.model} onChange={(text) => set("model", text)} />
+              <Input label="接口地址" value={draft.baseUrl} placeholder={DEFAULT_ANALYSIS_CONFIG.baseUrl} onChange={(text) => set("baseUrl", text)} />
+            </Expand>
+          </>}
+        <View style={styles.insetActions}>
+          <SmallButton label="取消" onPress={() => setOpen(false)} />
+          <SmallButton label="保存" disabled={!aiConfigReady({ ...draft, runtime })} onPress={save} />
         </View>
       </View>
     </Expand>
