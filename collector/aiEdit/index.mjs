@@ -1037,12 +1037,13 @@ export function createAiEdit({
       return;
     }
 
-    // 剪辑页左栏「剪映素材」：和 AI 用 search_catalog 查的是同一份目录，另外带上剪映缓存里的预览图
+    // 剪辑页左栏「剪映素材」：和 AI 用 search_catalog 查的是同一份目录，另外带上剪映缓存里的预览图。
+    // 一栏全列（最多的特效 1337 个），图片在页面里懒加载
     if (pathname === "/v1/ai-edit/catalog") {
       if (method !== "GET") { notAllowed(); return; }
       const params = url.searchParams;
       const cover = await covers.lookup().catch(() => null);
-      sendJson(response, 200, searchCatalog({ kind: params.get("kind"), query: params.get("q") ?? "", limit: 200, free: params.get("free") === "1" }, { maxLimit: 200, cover }));
+      sendJson(response, 200, searchCatalog({ kind: params.get("kind"), query: params.get("q") ?? "", limit: 2000, free: params.get("free") === "1" }, { maxLimit: 2000, cover }));
       return;
     }
 

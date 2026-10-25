@@ -1258,9 +1258,10 @@ function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text
     await flushHeld();
     if (await runEdit(edit.name, edit.arguments)) toast(kind === "font" ? `${callName(target)}换上了字体「${name}」` : `给${callName(target)}加上了${label}「${name}」`);
   };
+  const withCover = found ? found.items.filter((item) => item.cover).length : 0;
   const footer = !found || failed ? null
     : found.total > found.items.length ? `${label}一共有 ${found.total} 个，这里先列前 ${found.items.length} 个，搜名字能找得更快。`
-      : found.items.length && !found.items.some((item) => item.cover) ? `${label}还没有预览图：在剪映里打开过对应的素材面板，这里才会有图。`
+      : found.items.length && withCover * 2 < found.items.length ? `${label}${withCover ? "大多" : ""}还没有预览图：在剪映里把「${label}」那一栏的素材翻一遍，这里就有图了。`
         : free ? "勾着「只看免费」时，AI 也不会用会员效果。" : null;
   return <View style={styles.shelf}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.catalogKinds}>
@@ -1284,20 +1285,30 @@ function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text
       : found.items.length ? <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.shelfGrid}>
         {found.items.map((item) => {
           const name = item.display ?? item.name;
-          const cover = item.cover && !broken.has(item.cover) ? item.cover : null;
-          return <Pressable key={item.name} accessibilityRole="button" accessibilityLabel={target && fits ? `把${label}「${name}」加到${callName(target)}上` : `把${label}「${name}」写进对话框`}
-            onPress={() => void pick(item)} style={[styles.catalogTile, webPointer]}>
-            {/* 剪映的预览图是给深色面板画的（字体是透明底白字），垫一块深色底 */}
-            {cover ? <Image source={{ uri: cover }} resizeMode="contain" onError={() => setBroken((set) => new Set(set).add(cover))} style={styles.catalogCover} /> : null}
-            <Text numberOfLines={2} style={styles.catalogName}>{name}</Text>
-            {item.vip ? <Text style={styles.vipTag}>会员</Text> : null}
-          </Pressable>;
+          return <CatalogTile key={item.name} item={item} name={name} broken={broken} onBroken={(url) => setBroken((set) => new Set(set).add(url))}
+            label={target && fits ? `把${label}「${name}」加到${callName(target)}上` : `把${label}「${name}」写进对话框`} onPress={() => void pick(item)} />;
         })}
       </ScrollView>
       : <Text style={[kit.muted, styles.shelfEmpty]}>{query.trim() ? `没找到叫这个的${label}，换个词试试。` : `剪映里没有免费的${label}，关掉「只看免费」能看到会员的。`}</Text>}
     {footer ? <Text style={[kit.muted, styles.shelfEmpty]}>{footer}</Text> : null}
   </View>;
 }
+
+// 一栏上千个、动画的动图三五百 KB：图片懒加载，平时只显示第一帧，鼠标移上去才播动图（剪映自己也是这样）
+function CatalogTile({ item, name, label, broken, onBroken, onPress }: {
+  item: AiEditCatalogItem; name: string; label: string; broken: ReadonlySet<string>; onBroken: (url: string) => void; onPress: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const cover = item.cover && !broken.has(item.cover) ? item.cover : null;
+  const src = hover && item.preview && !broken.has(item.preview) ? item.preview : cover;
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} onHoverIn={() => setHover(true)} onHoverOut={() => setHover(false)} style={[styles.catalogTile, webPointer]}>
+    {/* 剪映的预览图是给深色面板画的（字体是透明底白字），垫一块深色底 */}
+    {src ? <img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" draggable={false} onError={() => onBroken(src)} style={catalogCover} /> : null}
+    <Text numberOfLines={2} style={styles.catalogName}>{name}</Text>
+    {item.vip ? <Text style={styles.vipTag}>会员</Text> : null}
+  </Pressable>;
+}
+const catalogCover: React.CSSProperties = { display: "block", width: "100%", height: 54, marginBottom: 4, borderRadius: radius.small, backgroundColor: "#1F1F22", objectFit: "contain" };
 
 /** 用户气泡上方附的图：素材删了读不出来就画个图标 */
 function SentImage({ url, name }: { url: string | null; name: string }) {
@@ -1573,7 +1584,6 @@ const styles = StyleSheet.create({
   catalogSearch: { minHeight: 30, paddingVertical: 5, fontSize: 12 },
   catalogTile: { width: "47%", minHeight: 44, justifyContent: "center", paddingHorizontal: 8, paddingVertical: 6, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   catalogName: { color: color.text, fontFamily: font.body, fontSize: 11.5, lineHeight: 16 },
-  catalogCover: { width: "100%", height: 54, marginBottom: 4, borderRadius: radius.small, backgroundColor: "#1F1F22" },
   vipTag: { position: "absolute", top: 2, right: 3, color: color.accent, fontFamily: font.body, fontSize: 9, fontWeight: "700" },
   card: { width: "47%", gap: 2, position: "relative" },
   thumb: { width: "100%", aspectRatio: 16 / 10, overflow: "hidden", borderRadius: radius.small, position: "relative" },

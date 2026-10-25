@@ -359,6 +359,10 @@ describe("AI edit tools", () => {
     expect(free.items.some((item) => item.vip)).toBe(false);
     expect(free.total).toBeLessThan(searchCatalog({ kind: "transition" }).total);
     expect(() => searchCatalog({ kind: "constructor" })).toThrow(AiEditError);
+    // 一栏全列；场景特效和人物特效里同名的只列一次（按名字套用只认第一个）
+    const effectNames = searchCatalog({ kind: "video_effect", limit: 2000 }, { maxLimit: 2000 }).items.map((item) => item.name);
+    expect(effectNames.length).toBeGreaterThan(1000);
+    expect(new Set(effectNames).size).toBe(effectNames.length);
   });
 
   it("searches the user's own records by keyword and source", async () => {
