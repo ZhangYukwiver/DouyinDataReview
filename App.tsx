@@ -1948,6 +1948,7 @@ function AppContent() {
         onToggleAiVideo={toggleAiVideo}
         privacy={privacy}
         onTogglePrivacy={() => setPrivacy((value) => !value)}
+        collector={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null}
         connected={collectorToken !== null}
         accounts={collectorAccounts}
         activeAccountName={accountName}

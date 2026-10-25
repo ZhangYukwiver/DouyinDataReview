@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Clapperboard, Download, Heart, MessageCircle, Play, Search, UserRound, Users, X } from "lucide-react-native";
 import { closeExplore, interactExplore, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo } from "../../services/explorer";
-import { loadCollectorVideo } from "../../services/localCollector";
+import { loadCollectorVideo, LocalCollectorError } from "../../services/localCollector";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
 import { DarenCard } from "./DarenCard";
@@ -188,7 +188,10 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
         }
       }
     } catch (cause) {
-      if (current === generation.current) { setPending((values) => [...values, key]); setError(cause instanceof Error ? cause.message : "操作结果待核验，请查看抖音原页。"); }
+      if (current !== generation.current) return;
+      // 开关没开时采集器在发出去之前就拦下了，不用核验
+      if (!(cause instanceof LocalCollectorError && cause.code === "writes_disabled")) setPending((values) => [...values, key]);
+      setError(cause instanceof Error ? cause.message : "操作结果待核验，请查看抖音原页。");
     } finally { setSending(false); locked.current = false; }
   }
   function moreButton(data: ExplorePage | null, input: ExploreQuery, target: "results" | "profile" | "comments") {

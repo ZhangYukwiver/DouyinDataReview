@@ -295,7 +295,6 @@ async function startDesktopRuntime() {
   const collector = await startCollectorServer({
     port: 0,
     dataDirectory: path.join(app.getPath("userData"), "collector"),
-    signerDirectory: app.isPackaged ? path.join(process.resourcesPath, "direct-signer") : undefined,
     // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
     browserSources: [{ id: "app", label: "应用内登录", inApp: true }, ...browserDirectories()],
     browserConnector: (source, options) => (source.inApp ? connectInApp(source, options) : connectExternalBrowser(source)),

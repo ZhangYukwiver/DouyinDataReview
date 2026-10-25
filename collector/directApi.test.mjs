@@ -239,14 +239,11 @@ describe("direct HTTP signing and account session", () => {
     collector.runDirectRecords.mockRejectedValue(new DirectHistoryError("browser_reconnect_required", "expired"));
     await expect(collector.runSync(1)).rejects.toMatchObject({ code: "browser_reconnect_required" }); expect(collector.ensureBrowser).not.toHaveBeenCalled();
   });
-  it("signs replies without UIFID/fingerprint fields, appending fingerprints after the signature", async () => {
-    const signer = vi.fn(async (url) => { expect([...url.searchParams.keys()]).not.toContain("uifid"); expect(url.searchParams.has("fp")).toBe(false);
-      return `${url}&a_bogus=${"A".repeat(80)}`; });
-    const { api, context } = client(() => ({ status_code: 0, comments: [], has_more: 0 }), { signer });
-    await api.request("/aweme/v1/web/comment/list/reply/", { query: { item_id: "12345", comment_id: "67890", count: "3" } });
-    const url = new URL(context.fetch.mock.calls[0][0]); const names = [...url.searchParams.keys()];
-    expect(names.indexOf("fp")).toBeGreaterThan(names.indexOf("a_bogus")); expect(url.searchParams.get("verifyFp")).toBe("verify-id");
-    expect(url.searchParams.has("x-secsdk-web-signature")).toBe(false); await api.close();
+  it("no longer requests comment replies: the in-house signature cannot sign them", async () => {
+    const { api, context } = client(() => ({ status_code: 0, comments: [], has_more: 0 }));
+    await expect(api.request("/aweme/v1/web/comment/list/reply/", { query: { item_id: "12345", comment_id: "67890" } })).rejects.toMatchObject({ code: "unsafe_url" });
+    await expect(signDirectApiUrl("https://www.douyin.com/aweme/v1/web/comment/list/reply/?item_id=12345", { userAgent })).rejects.toMatchObject({ code: "unsafe_url" });
+    expect(context.fetch).not.toHaveBeenCalled(); await api.close();
   });
 });
 

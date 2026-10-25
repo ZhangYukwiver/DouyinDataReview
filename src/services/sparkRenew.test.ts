@@ -36,10 +36,15 @@ describe("renewing sparks", () => {
     vi.mocked(sendChatMessage).mockImplementation(async () => { controller.abort(); return sent; });
     expect(Object.values(finalStates(await run(friends, undefined, controller.signal)))).toEqual(["sent", "skipped", "skipped"]);
   });
-  it("stops the batch when imported credentials need reconnecting", async () => {
-    vi.mocked(sendChatMessage).mockRejectedValueOnce(new LocalCollectorError("browser_reconnect_required", "重新导入凭据"));
+  it.each(["browser_reconnect_required", "writes_disabled"])("stops the batch on %s", async (code) => {
+    vi.mocked(sendChatMessage).mockRejectedValueOnce(new LocalCollectorError(code, "停下"));
     expect(Object.values(finalStates(await run()))).toEqual(["failed", "skipped", "skipped"]);
     expect(sendChatMessage).toHaveBeenCalledTimes(1);
+  });
+  it("sends to at most 10 in one run", async () => {
+    vi.mocked(sendChatMessage).mockResolvedValue(sent);
+    const many = Array.from({ length: 12 }, (_, index) => `0:1:${me}:${1_000_000 + index}`);
+    expect((await run(many)).filter(([, update]) => update.state === "sent")).toHaveLength(10);
   });
   it("shares a video to the friend's own id and skips friends missing from the share list", async () => {
     const share = vi.fn().mockResolvedValue({ outcome: "confirmed", message: "已分享" });

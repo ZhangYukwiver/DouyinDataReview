@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, readFile, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
@@ -17,7 +17,7 @@ import { createLocalAi } from "./localAi.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
-import { importedReadPermissions, parseReadPermissions, readPermissionForRequest } from "./readPermissions.mjs";
+import { importedReadPermissions, parseReadPermissions, readPermissionForRequest, WRITE_REQUESTS, WRITES_DISABLED_MESSAGE } from "./readPermissions.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
 import { ChatSendError } from "./chatSender.mjs";
 import { DirectHistoryError } from "./directHistory.mjs";
@@ -240,7 +240,6 @@ export async function startCollectorServer({
   port = DEFAULT_PORT,
   origins = [],
   dataDirectory = path.join(projectDirectory, ".local-data"),
-  signerDirectory,
   browserSources = browserDirectories(),
   browserConnector = connectExternalBrowser,
   // 网页片段逐帧渲染用的浏览器：桌面版传 Electron 的隐藏窗口，单独跑时用本机 Chrome / Edge
@@ -251,13 +250,15 @@ export async function startCollectorServer({
   await chmod(dataDirectory, 0o700);
   const accounts = new AccountRegistry(dataDirectory);
   await accounts.load();
+  // 点赞、收藏、关注、评论、分享和发私信要先在设置里打开；所有账号共用这一个开关，默认关
+  const writeSettingsFile = path.join(dataDirectory, "write-actions.json");
+  let writesEnabled = await readFile(writeSettingsFile, "utf8").then((text) => JSON.parse(text).enabled === true).catch(() => false);
   // 每个账号一个采集器，各用自己目录里的登录态和记录；同一时间只开当前这一个
   const openCollector = async (account) => {
     const directory = accounts.directory(account);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const next = new DouyinCollector({
       dataDirectory: directory,
-      signerDirectory,
       store: new CollectorStore(directory),
       account: { id: account.id, nickname: account.nickname, avatar: account.avatar, uid: account.uid },
       onAccountIdentity: (identity) => accounts.updateIdentity(account.id, identity).catch(() => undefined),
@@ -507,12 +508,18 @@ export async function startCollectorServer({
     const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (["/v1/records", "/v1/folders"].includes(url.pathname) && !accountWork));
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
     const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
-    if (!readable && !loginWait && rejectWhileSwitching(response)) return;
+    // 操作开关存在根目录、所有账号共用，换号时也能读改
+    const accountFree = url.pathname === "/v1/settings/writes";
+    if (!readable && !loginWait && !accountFree && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
     if (readPermission) {
       try { collector.assertReadPermission(readPermission); }
       catch (error) { sendJson(response, error.status, { error: error.code, message: error.message }); return; }
+    }
+    if (request.method === "POST" && WRITE_REQUESTS.has(url.pathname) && !writesEnabled) {
+      sendJson(response, 403, { error: "writes_disabled", message: WRITES_DISABLED_MESSAGE });
+      return;
     }
 
     if (request.method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/chat/observe", "/v1/downloads"].includes(url.pathname)) {
@@ -865,6 +872,22 @@ export async function startCollectorServer({
           message: known ? error.message : malformed ? "请求无效，请重试。" : id || request.method === "POST" ? "直播间没打开，请稍后重试。" : "没读到关注的人的直播，请稍后重试。",
         });
       }
+    } else if (url.pathname === "/v1/settings/writes" && ["GET", "POST"].includes(request.method)) {
+      if (request.method === "POST") {
+        let body;
+        try { body = await readJsonBody(request); } catch { body = null; }
+        if (typeof body?.enabled !== "boolean") { sendJson(response, 400, { error: "invalid_request" }); return; }
+        const temporary = `${writeSettingsFile}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temporary, JSON.stringify({ enabled: body.enabled }), { mode: 0o600 });
+          await rename(temporary, writeSettingsFile);
+        } catch {
+          sendJson(response, 500, { error: "settings_save_failed", message: "设置没存上，请稍后再试。" });
+          return;
+        }
+        writesEnabled = body.enabled;
+      }
+      sendJson(response, 200, { enabled: writesEnabled });
     } else if (request.method === "GET" && url.pathname === "/v1/status") {
       const requestedRevision = url.searchParams.get("afterRevision");
       if (requestedRevision === null) sendJson(response, 200, collector.getStatus());

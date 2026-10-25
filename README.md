@@ -48,10 +48,10 @@
 | --- | --- | --- |
 | 抖音数据采集与导出 | 完整或增量读取观看历史、喜欢和收藏，保存好友聊天记录，导出 JSON；支持导入本应用备份和抖音官方个人信息下载的 JSON / ZIP | 在线采集需要导入本人登录凭据；官方档案可离线导入；群聊正文不写入备份 |
 | 多账号与后台补读 | 各账号分别保存登录会话和个人记录；前台自动补读，桌面版关闭窗口后留在托盘或菜单栏，每 3 小时补读一次，可选开机后台运行 | 凭据需保持有效；在设置中控制自动补读 |
-| 内容库与视频下载 | 按标题、作者、话题、音乐搜索本地记录；应用内播放、读评论、发评论和转发；单条下载或多选打包 ZIP，图文作品下载全部图片 | 在线播放、评论和下载需要网络及有效会话；观看过的直播单独展示 |
-| 实时聊天与续火花 | 接收新消息，回复好友与群聊，查看在线状态和官方火花天数；给勾选对象一键发送续火花消息 | 发送由用户主动触发；发送成功不代表火花天数增加，以抖音官方状态为准 |
+| 内容库与视频下载 | 按标题、作者、话题、音乐搜索本地记录；应用内播放、读评论、发评论和转发；单条下载或多选打包 ZIP，图文作品下载全部图片 | 在线播放、评论和下载需要网络及有效会话；发评论和转发要先在「设置 → 隐私」打开「允许在抖音上操作」；观看过的直播单独展示 |
+| 实时聊天与续火花 | 接收新消息，回复好友与群聊，查看官方火花天数；给勾选对象一键发送续火花消息 | 回复和续火花要先在「设置 → 隐私」打开「允许在抖音上操作」（默认关），一次最多发 10 位；发送由用户主动触发；发送成功不代表火花天数增加，以抖音官方状态为准 |
 | 创作者中心 | 查看本人账号的数据总览、作品数据、粉丝数据与画像，以及作品流量、观众和评论分析 | 读取抖音创作者中心接口，按当前账号权限返回数据；只读 |
-| 内容探索与抖音指数 | 搜索用户和作品，点赞、收藏、关注、评论；下载用户主页作品；查看实时热点、飙升热点，以及达人指标、逐日趋势、近 30 天作品和粉丝画像 | 复用当前账号会话；达人指标与画像来自官方接口，显示范围受接口权限影响 |
+| 内容探索与抖音指数 | 搜索用户和作品，点赞、收藏、关注、评论；下载用户主页作品；查看实时热点、飙升热点，以及达人指标、逐日趋势、近 30 天作品和粉丝画像 | 复用当前账号会话；点赞、收藏、关注、评论要先在「设置 → 隐私」打开「允许在抖音上操作」；达人指标与画像来自官方接口，显示范围受接口权限影响 |
 | AI 视频工作台 · 解析（可选） | 拆解视频选题、开头钩子、内容结构、画面声音和可复用拍法，并说明每段画面为什么这样拍（场景、人物站位、对话、动作的用意）；解析结果保存到可搜索的解析库 | 和 AI 剪辑同属可选的「AI 视频工作台」，安装时或在设置中安装、移除；自备 OpenAI 兼容接口、模型和 API Key（和 AI 剪辑设置「服务商」里的「解析视频」是同一份，没单独填时直接用 AI 剪辑的剪辑模型）；支持视频输入时发送选中视频，否则发送本机提取的镜头截图和音乐节拍，此时听不到台词；也可以直接用这台电脑上登录好的 Codex 或 Claude Code（走自己的订阅，看不了视频，改看应用拆出的截图和节拍） |
 | AI 视频工作台 · 剪辑（可选） | 页面照剪辑软件排：左边和 AI 对话、翻素材，中间是播放器，右边是属性面板，底下是整条时间线，AI 剪的每一步都实时出现在上面；AI 按你的要求剪切拼接、配字幕和文字（视频里有人说话的，AI 能听一遍把台词转写成字幕；要用接口模式下能看视频、听得到声音的模型，比如方舟 doubao-seed-2-1-lite，本机 Codex、Claude Code 和只看画面的模型转写不了），加特效、滤镜、转场、动画、关键帧和背景音乐，做好后一键导入剪映草稿箱继续精修。素材里没有的画面，AI 还能现做：图片用 OpenAI 兼容的图片接口生成，视频片段可以用火山方舟 Seedance、即梦、小云雀或 LibTV 生成，做好直接进素材库；生成视频前会先在页面上问你，你点了「生成」才开始，开始以后就停不下来了：点了停止或等太久，视频也会在后台做完放进素材库、照常扣费（应用要开着）。时间线和画面上也能自己动手：拖动、裁剪、切开、复制、跨轨道挪片段，在画面上直接挪位置、缩放、旋转、改字；时间线工具栏配了分割刀、标记、主轨磁吸（主轨上删、挪、裁时后面的自动跟上）、吸附、联动（字幕、画中画跟着主轨片段走）、预览轴（鼠标划过时间线，画面跟着看）和字幕显示开关，也能直接往字幕里补一句；每一步都能撤销重做，也能退回到某句话之前；在画面上框一块，让 AI 只改框里的东西；片段、某一刻和素材可以直接引用到对话，截图能贴进对话给看得了图的模型看，AI 回复里提到的片段和时间点一点就跳过去；再次导入前会检查剪映里那份草稿有没有被打开或改过，由你选另存一份还是覆盖。剪映内置做不出的画面（标题字卡、动态大字、数据图表、倒计时），AI 可以写成网页片段，看板上实时预览，导入剪映时自动渲成视频（带透明的叠在画面上）；不经剪映也能直接导出 MP4，或者导出、导入网页工程（film.html 打成的 zip）。还能装技能（带 SKILL.md 的技能包，填 GitHub 地址或选本机文件夹）：AI 照技能里的说明读写技能文件、在这台电脑上跑命令，把做出来的音频、图片、视频放进素材库；每条命令先在页面上问你，点了「运行」才跑，也可以给某个技能勾上以后不用问 | 自备支持工具调用的 OpenAI 兼容接口（默认火山方舟），或者用这台电脑上登录好的 Codex、Claude Code，和视频解析分开配置；素材来自内容库或本机文件；生成图片和视频都要在 AI 剪辑设置的「服务商」里连上：图片填 OpenAI 兼容图片接口的 Key；视频连方舟（填 Key 或勾选借用已经填的方舟 Key，Seedance 要先在方舟控制台开通）、即梦、小云雀或 LibTV（这三家都用这台电脑上登录好的官方命令行：dreamina、pippit-tool-cli、libtv，不填 Key），再在「生成素材」里选用哪家；图片接口和方舟地址能换成中转站，都按服务商计费；导入前需退出剪映，macOS 版剪映 11.6 已实测 |
 | 直播观看与弹幕 | 查看正在直播的关注列表，在应用内观看直播；调整弹幕透明度、字号、速度、区域和屏蔽词 | 只观看和接收，不发弹幕、不送礼物、不点赞 |
@@ -165,7 +165,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 远程调试授权覆盖整个浏览器实例；工作台只读取抖音域 Cookie，并仅在自己创建的抖音标签页初始化凭据，不清理日常浏览器缓存、不修改原有标签页。断开连接、切换账号或退出应用会清理这些标签页并断开调试连接，浏览器进程继续保留，调试开关由本人关闭。接口读取和实时接收使用已导入的凭据，重启后会复用本机缓存并核对平台返回的账号；短期令牌过期本身不会要求重新导入。凭据缺失或不完整、平台拒绝登录、账号不一致或要求验证时，工作台才提示重新连接并导入。凭据有效期由抖音控制，不保证固定时长。
 
-> 安装包只含应用代码、Web 页面和已校验的签名器，不含本地记录、登录状态或浏览器配置。采集记录保存在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录，改名后继续沿用，升级不会覆盖。旧版 macOS 应用名为「内容数据工作台」，替换时移除旧应用即可。
+> 安装包只含应用代码和 Web 页面，不含本地记录、登录状态或浏览器配置。采集记录保存在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录，改名后继续沿用，升级不会覆盖。旧版 macOS 应用名为「内容数据工作台」，替换时移除旧应用即可。
 >
 > 桌面版启动后会检查 GitHub Release。Windows 可在「设置」里下载并「重启并安装」，采集进行中不会自动重启；macOS 使用设置里的下载入口，手动替换应用。
 
@@ -182,7 +182,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 - 代码请求登录会话：`.local-data/direct-session.json`，从本人确认连接的日常浏览器导出，按账号隔离并以仅当前用户可读写的权限保存；不包含在安装包中
 - 浏览器来源：每个账号目录中的 `external-browser.json` 只记录来源（`app` 表示应用内扫码登录，或浏览器类型），不包含连接地址或凭据；重启后复用该账号已导入的有效凭据，失效时才要求重新连接，不会自动改用另一个浏览器的登录态
-- 直接读取模板保存在 `.local-data/direct-history-template.json`，只含浏览器标识和白名单查询参数，不含 Cookie。签名器位于 `.local-data/direct-signer/`，所有账号共用，桌面安装包已内置校验版本。
+- 直接读取模板保存在 `.local-data/direct-history-template.json`，只含浏览器标识和白名单查询参数，不含 Cookie。
 - `.local-data/records.json` 保存归一化记录；新增账号各自保存在 `.local-data/accounts/<12 位编号>/`，账号列表在 `.local-data/accounts.json`。
 - 桌面版应用内登录的网页登录状态在应用数据目录的 `Partitions/douyin-login/`，所有账号共用一份，不包含在安装包中。
 - 应用内登录碰到身份验证时，验证框的页面结构会去掉脚本、连续数字打码后存成采集器数据目录下的 `diagnostics/verify-*.html`，只在本机，首屏的短信验证码是按页面上的文字找选项、输入框和按钮的，认不出来时退回窗口；这些文件用来对照真实结构调整。
@@ -296,14 +296,10 @@ git clone https://github.com/ZhangYukwiver/DouyinDataReview.git
 cd DouyinDataReview
 npm install
 
-# 2. 安装并离线校验固定版本的签名器（接口读取需要）
-npm run direct:setup
-npm run direct:check
-
-# 3. 启动采集器（终端 A）
+# 2. 启动采集器（终端 A）
 npm run collector
 
-# 4. 启动 Web 页面（终端 B），然后打开 http://localhost:8081 点「连接采集器」
+# 3. 启动 Web 页面（终端 B），然后打开 http://localhost:8081 点「连接采集器」
 npm run web
 ```
 
@@ -390,7 +386,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 - Export personal records as JSON, restore app backups, or import Douyin's official JSON / ZIP personal data archive.
 - Keep separate account sessions and records, receive chats in real time, reply to friends and groups, and view official chat streak status. Sending a message does not guarantee a streak increase.
 - Search saved content, play videos, download individual videos or image posts, and batch-download videos as ZIP files.
-- Search Douyin users and posts, interact on request, and view hot lists, Creator Center stats and Douyin Index metrics through the current account's access.
+- Search Douyin users and posts, interact on request (likes, follows, comments, shares and messages stay off until you turn on "允许在抖音上操作" in Settings → Privacy), and view hot lists, Creator Center stats and Douyin Index metrics through the current account's access.
 - Watch live streams with configurable live comments; live comments are received only.
 - Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports. Optional AI video analysis uses an OpenAI-compatible endpoint you configure, or the Codex CLI / Claude Code already signed in on your computer; models without video input use locally extracted frames and beat information.
 - Optional AI editing uses a separately configured endpoint or a local Codex CLI / Claude Code to edit a local timeline and export a Jianying draft; provider charges may apply.
@@ -422,11 +418,10 @@ Collection is limited to records currently returned by Douyin's private APIs and
 
 ## 致谢
 
-1. **[mafqla/douyin-api](https://github.com/mafqla/douyin-api)** — 固定版本签名器
-2. **[Expo](https://github.com/expo/expo)** / **[React Native](https://github.com/facebook/react-native)** / **[react-native-web](https://github.com/necolas/react-native-web)** — 工作台页面与原生端
-3. **[Electron](https://github.com/electron/electron)** / **[electron-builder](https://github.com/electron-userland/electron-builder)** — 桌面壳与安装包
-4. **[Playwright](https://github.com/microsoft/playwright)** — 连接已授权的浏览器 CDP，并提供 HTTP 请求会话
-5. **[lucide](https://github.com/lucide-icons/lucide)** — 图标
+1. **[Expo](https://github.com/expo/expo)** / **[React Native](https://github.com/facebook/react-native)** / **[react-native-web](https://github.com/necolas/react-native-web)** — 工作台页面与原生端
+2. **[Electron](https://github.com/electron/electron)** / **[electron-builder](https://github.com/electron-userland/electron-builder)** — 桌面壳与安装包
+3. **[Playwright](https://github.com/microsoft/playwright)** — 连接已授权的浏览器 CDP，并提供 HTTP 请求会话
+4. **[lucide](https://github.com/lucide-icons/lucide)** — 图标
 
 没有这些项目，这个工具做不出来，谢谢他们。
 

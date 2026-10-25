@@ -1,8 +1,5 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { request as playwrightRequest } from "playwright-core";
 import { nativeSignedUrl } from "./nativeSignature.mjs";
@@ -11,13 +8,8 @@ export const DIRECT_HISTORY_ENDPOINT = "https://www.douyin.com/aweme/v1/web/hist
 export const DIRECT_LIKED_ENDPOINT = "https://www-hj.douyin.com/aweme/v1/web/aweme/favorite/";
 export const DIRECT_FAVORITE_ENDPOINT = "https://www-hj.douyin.com/aweme/v1/web/aweme/listcollection/";
 const DIRECT_SELF_ENDPOINT = "https://www.douyin.com/aweme/v1/web/user/profile/self/";
+// 已存的观看历史模板里记着这个值，加载时要对得上；签名早已不用它，改了会让大家的模板全部失效
 export const DIRECT_SIGNER_COMMIT = "42987a1aa0c88c4d7f00d106ea2bc87dc01b0edf";
-export const DIRECT_SIGNER_FILES = Object.freeze({
-  LICENSE: "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
-  "lib/runtime/bdms/index.js": "5c3b712aa5ee9b88aa438843512ed10d21564ef2acad3158baf68b37d639b29f",
-  "lib/runtime/bdms/env.js": "ae95d680b2dfdd95b93f36dd74864e834e10f875df7f9ec69ad362b85194c3cd",
-  "lib/runtime/bdms/bdms.js": "393b30953e215c3c006cd44c179c1e0cd2375a458bea268eb17bf1401096469b",
-});
 
 // Scroll every visible list surface. The profile page can put the record grid
 // in a smaller nested container, so choosing only the largest half-viewport
@@ -101,13 +93,6 @@ export function scrollHiddenListPage() {
   return { candidateCount: surfaces.length, movedCount };
 }
 
-const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
-const defaultSignerDirectory = path.resolve(moduleDirectory, "..", ".local-data", "direct-signer");
-const asarPathMarker = `${path.sep}app.asar${path.sep}`;
-const signerRunnerPath = path.join(moduleDirectory, "directSignerRunner.cjs").replace(
-  asarPathMarker,
-  `${path.sep}app.asar.unpacked${path.sep}`,
-);
 const templateFileName = "direct-history-template.json";
 const DIRECT_HISTORY_ORIGIN = "https://www.douyin.com";
 const DIRECT_HISTORY_TEMPLATE_ORIGINS = new Set([
@@ -146,12 +131,9 @@ const REQUIRED_TEMPLATE_PARAMETERS = new Set([
   "count", "max_cursor", "verifyFp", "fp", "uifid", "aid", "device_platform", "webid",
 ]);
 const MAX_RESPONSE_BYTES = 24 * 1024 * 1024;
-const MAX_SIGNER_OUTPUT_BYTES = 64 * 1024;
-const SIGNER_TIMEOUT_MS = 8_000;
 const DIRECT_LIST_REQUEST_TIMEOUT_MS = 30_000;
 // 一页喜欢/收藏本身就要传 1–2 MB；再隔 300ms，大约每秒一页，比抖音页面自己滚动加载（约每秒两页）还慢
 const DIRECT_LIST_PAGE_INTERVAL_MS = 300;
-const MACOS_SIGNER_PROFILE = "(version 1) (allow default) (deny network*) (deny file-write*)";
 
 export class DirectHistoryError extends Error {
   constructor(code, message) {
@@ -171,58 +153,8 @@ function settleWithin(operation, timeoutMs, onTimeout) {
   return Promise.race([task, deadline]).finally(() => clearTimeout(timeout));
 }
 
-export function directSignerProcessConfiguration({
-  platform = process.platform,
-  executablePath = process.execPath,
-  runtimeDirectory,
-  runnerPath = signerRunnerPath,
-} = {}) {
-  if (!runtimeDirectory || !runnerPath || !executablePath) {
-    throw new DirectHistoryError("signer_failed", "直接读取签名器缺少运行路径。");
-  }
-  if (platform !== "darwin" && platform !== "win32") {
-    throw new DirectHistoryError("unsupported_platform", "直接读取目前仅支持 Windows 和 macOS。");
-  }
-  const resolvedRuntimeDirectory = path.resolve(runtimeDirectory);
-  const resolvedRunnerPath = path.resolve(runnerPath);
-  const nodeArguments = [
-    "--permission",
-    `--allow-fs-read=${resolvedRuntimeDirectory}`,
-    `--allow-fs-read=${resolvedRunnerPath}`,
-    resolvedRunnerPath,
-    resolvedRuntimeDirectory,
-  ];
-  const env = {
-    LANG: "C",
-    LC_ALL: "C",
-    TZ: "UTC",
-    ELECTRON_RUN_AS_NODE: "1",
-    ...(platform === "win32" && process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-  };
-  return {
-    command: platform === "darwin" ? "/usr/bin/sandbox-exec" : executablePath,
-    args: platform === "darwin"
-      ? ["-p", MACOS_SIGNER_PROFILE, executablePath, ...nodeArguments]
-      : nodeArguments,
-    options: {
-      cwd: resolvedRuntimeDirectory,
-      env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    },
-  };
-}
-
-function signerDirectory(value) {
-  return path.resolve(value || process.env.DOUYIN_DIRECT_SIGNER_DIR || defaultSignerDirectory);
-}
-
 function templatePath(dataDirectory) {
   return path.join(path.resolve(dataDirectory), templateFileName);
-}
-
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 function safeTemplateString(value, limit = 300) {
@@ -310,25 +242,6 @@ function validHistoryUrl(value, allowSignature = false, { canonicalHost = false 
 // direct replay path intentionally stays on the canonical www host.
 export function validateDirectHistoryUrl(value, { allowSignature = false, canonicalHost = false } = {}) {
   return validHistoryUrl(value, allowSignature, { canonicalHost });
-}
-
-export async function verifyDirectSigner(directory) {
-  const root = signerDirectory(directory);
-  for (const [relativePath, expectedHash] of Object.entries(DIRECT_SIGNER_FILES)) {
-    let content;
-    try {
-      content = await readFile(path.join(root, relativePath));
-    } catch {
-      throw new DirectHistoryError(
-        "signer_missing",
-        "直接读取签名器缺失，请重新安装应用；开发环境请运行 npm run direct:setup。",
-      );
-    }
-    if (sha256(content) !== expectedHash) {
-      throw new DirectHistoryError("signer_tampered", "直接读取签名器校验失败，已拒绝执行。");
-    }
-  }
-  return realpath(path.join(root, "lib", "runtime"));
 }
 
 export async function captureDirectHistoryTemplate(dataDirectory, request, browserUserAgent = null) {
@@ -446,10 +359,12 @@ export function buildUnsignedHistoryUrl(cookies, template) {
   return { session, url };
 }
 
-export async function signDirectHistoryUrl(unsignedUrl, { directory, uifid = "", userAgent } = {}) {
+export async function signDirectHistoryUrl(unsignedUrl, { userAgent } = {}) {
   const url = validateDirectHistoryUrl(unsignedUrl, { canonicalHost: true });
   if (!url) throw new DirectHistoryError("unsafe_url", "直接读取只允许固定的抖音观看历史接口。");
-  return signRequestUrl(url, { directory, uifid, userAgent });
+  const validatedUserAgent = validateUserAgent(userAgent);
+  if (!validatedUserAgent) throw new DirectHistoryError("template_invalid", "直接读取模板缺少有效浏览器标识。");
+  return new URL(nativeSignedUrl(url, { userAgent: validatedUserAgent }));
 }
 
 export const DIRECT_API_PATHS = new Set([
@@ -459,7 +374,7 @@ export const DIRECT_API_PATHS = new Set([
   "/aweme/v1/web/aweme/detail/", "/aweme/v1/web/aweme/post/",
   "/aweme/v1/web/aweme/favorite/", "/aweme/v1/web/aweme/listcollection/",
   "/aweme/v1/web/collects/list/", "/aweme/v1/web/collects/video/list/",
-  "/aweme/v1/web/comment/list/", "/aweme/v1/web/comment/list/reply/",
+  "/aweme/v1/web/comment/list/",
   "/aweme/v1/web/discover/search/", "/aweme/v1/web/search/item/",
   "/aweme/v1/web/commit/item/digg/", "/aweme/v1/web/aweme/collect/",
   "/aweme/v1/web/comment/publish", "/aweme/v1/web/comment/delete/", "/aweme/v1/web/commit/follow/user/",
@@ -485,61 +400,7 @@ export async function signDirectApiUrl(unsignedUrl, options = {}) {
     throw new DirectHistoryError("invalid_request", "直接请求方法或请求体无效。");
   }
   if (!validateUserAgent(options.userAgent)) throw new DirectHistoryError("template_invalid", "直接请求缺少有效浏览器标识。");
-  // Reply endpoints validate the current SDK signature more strictly. Reuse the
-  // packaged, sandboxed JavaScript runtime; this does not start a browser.
-  if (url.pathname === "/aweme/v1/web/comment/list/reply/") return signRequestUrl(url, { ...options, uifid: "" });
   return nativeSignedUrl(url, options);
-}
-
-async function signRequestUrl(url, { directory, uifid = "", userAgent, method = "GET", body = "" } = {}) {
-  const validatedUserAgent = validateUserAgent(userAgent);
-  if (!validatedUserAgent) throw new DirectHistoryError("template_invalid", "直接读取模板缺少有效浏览器标识。");
-  const runtimeDirectory = await verifyDirectSigner(directory);
-  const processConfiguration = directSignerProcessConfiguration({ runtimeDirectory });
-  const payload = JSON.stringify({ url: url.toString(), method, body, uifid, userAgent: validatedUserAgent });
-  const signature = await new Promise((resolve, reject) => {
-    const child = spawn(
-      processConfiguration.command,
-      processConfiguration.args,
-      processConfiguration.options,
-    );
-    let stdout = Buffer.alloc(0);
-    let totalOutput = 0;
-    let outputTooLarge = false;
-    const capture = (chunk, keep) => {
-      totalOutput += chunk.length;
-      if (totalOutput > MAX_SIGNER_OUTPUT_BYTES) {
-        outputTooLarge = true;
-        child.kill("SIGKILL");
-      } else if (keep) stdout = Buffer.concat([stdout, chunk]);
-    };
-    child.stdout.on("data", (chunk) => capture(chunk, true));
-    child.stderr.on("data", (chunk) => capture(chunk, false));
-    child.stdin.on("error", () => undefined);
-    child.once("error", () => reject(new DirectHistoryError("signer_failed", "直接读取签名器无法启动。")));
-    const timer = setTimeout(() => child.kill("SIGKILL"), SIGNER_TIMEOUT_MS);
-    child.once("close", (code) => {
-      clearTimeout(timer);
-      if (outputTooLarge) return reject(new DirectHistoryError("signer_output_too_large", "直接读取签名器输出异常，已停止执行。"));
-      if (code !== 0) return reject(new DirectHistoryError("signer_failed", "直接读取签名器执行失败。"));
-      const marker = "__SIGN_RESULT__";
-      const output = stdout.toString("utf8");
-      const index = output.lastIndexOf(marker);
-      const line = index === -1 ? "" : output.slice(index + marker.length).split(/\r?\n/u, 1)[0];
-      try {
-        const parsed = JSON.parse(line);
-        if (!parsed.ok || typeof parsed.a_bogus !== "string" || !/^[A-Za-z0-9+/_=-]{64,512}$/u.test(parsed.a_bogus)) {
-          throw new Error("invalid_signature");
-        }
-        resolve(parsed.a_bogus);
-      } catch {
-        reject(new DirectHistoryError("signer_invalid_output", "直接读取签名器没有返回有效结果。"));
-      }
-    });
-    child.stdin.end(payload);
-  });
-  url.searchParams.append("a_bogus", signature);
-  return url;
 }
 
 function directItems(payload, label = "记录") {
@@ -596,7 +457,6 @@ export async function fetchDirectHistoryPage({
   context,
   currentUserAgent,
   dataDirectory,
-  directory,
   cursor = "0",
   completedOnly = false,
   requestFactory = playwrightRequest,
@@ -636,11 +496,7 @@ export async function fetchDirectHistoryPage({
     }
   }
   const userAgent = template.headers["user-agent"];
-  const signedUrl = await signer(unsignedUrl, {
-    directory,
-    uifid: sessionValue(cookies, "UIFID"),
-    userAgent,
-  });
+  const signedUrl = await signer(unsignedUrl, { userAgent });
   if (!validateDirectHistoryUrl(signedUrl, { allowSignature: true, canonicalHost: true })?.searchParams.has("a_bogus")) {
     throw new DirectHistoryError("unsafe_url", "签名结果偏离固定观看历史接口，已拒绝发送。");
   }
@@ -806,32 +662,4 @@ export async function collectDirectRecordPages(page, type, onPage, { dataDirecto
     cursor = next;
     await new Promise((resolve) => setTimeout(resolve, DIRECT_LIST_PAGE_INTERVAL_MS));
   }
-}
-
-async function checkSigner() {
-  const onWindows = process.platform === "win32";
-  const userAgent = onWindows
-    ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    : "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-  const url = new URL(DIRECT_HISTORY_ENDPOINT);
-  for (const [name, value] of BUSINESS_PARAMETERS) url.searchParams.append(name, value);
-  url.searchParams.append("device_platform", "webapp");
-  url.searchParams.append("aid", "6383");
-  url.searchParams.append("screen_width", "1920");
-  url.searchParams.append("screen_height", "1080");
-  url.searchParams.append("browser_language", "zh-CN");
-  url.searchParams.append("browser_platform", onWindows ? "Win32" : "MacIntel");
-  url.searchParams.append("cpu_core_num", "8");
-  url.searchParams.append("device_memory", "8");
-  url.searchParams.append("webid", "1234567890123456789");
-  const signed = await signDirectHistoryUrl(url, { uifid: "offline-check-uifid", userAgent });
-  if (!signed.searchParams.has("a_bogus")) throw new Error("signer_check_failed");
-  console.log("DIRECT_SIGNER_OK");
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.argv[2] === "--check-signer") {
-  checkSigner().catch((error) => {
-    console.error(error instanceof DirectHistoryError ? error.message : "直接读取签名器检查失败。");
-    process.exitCode = 1;
-  });
 }

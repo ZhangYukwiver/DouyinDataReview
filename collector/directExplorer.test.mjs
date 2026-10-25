@@ -51,15 +51,11 @@ describe("code-based exploration", () => {
     await expect(value.read({ kind: "detail", id: "1234567890" })).rejects.toMatchObject({ code: "schema_changed" });
     expect(value.sessions.size).toBe(1);
   });
-  it("loads replies for the selected parent and rejects comments from another thread", async () => {
-    const commentId = "1234567890";
-    const { value } = explorer(async (pathname) => pathname.endsWith("/reply/")
-      ? { status_code: 0, comments: [{ cid: "2345678901", text: "回复", reply_id: commentId, aweme_id: id }], has_more: 0 }
-      : { status_code: 0, comments: [{ cid: commentId, text: "评论" }], has_more: 0 });
+  it("does not expand comment replies any more", async () => {
+    const { value, api } = explorer(async () => ({ status_code: 0, comments: [{ cid: "1234567890", text: "评论" }], has_more: 0 }));
     const comments = await value.read({ kind: "comments", id });
-    const replies = await value.read({ kind: "replies", id, commentId, sessionId: comments.sessionId });
-    expect(replies.items[0]).toMatchObject({ id: "2345678901", parentId: commentId });
-    await expect(value.read({ kind: "replies", id, commentId: "3456789012", sessionId: comments.sessionId })).rejects.toMatchObject({ code: "session_expired" });
+    await expect(value.read({ kind: "replies", id, commentId: "1234567890", sessionId: comments.sessionId })).rejects.toMatchObject({ code: "invalid_request" });
+    expect(api.request).toHaveBeenCalledTimes(1);
   });
   it("does not commit a response after the caller has cancelled", async () => {
     let resolve;

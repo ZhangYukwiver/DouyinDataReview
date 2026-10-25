@@ -76,36 +76,17 @@ describe("comment session lifecycle", () => {
     session.close();
   });
 
-  it("serializes different reply threads and deduplicates the same pending thread", async () => {
-    const first = { ...page, kind: "replies" as const, commentId: "111111111" };
-    const second = { ...first, commentId: "222222222" };
-    let resolve!: (value: ExplorePage) => void;
-    vi.mocked(readExplore).mockResolvedValueOnce(page).mockImplementationOnce(() => new Promise((done) => { resolve = done; })).mockResolvedValueOnce(second);
-    const session = createVideoCommentsSession(connection, record);
-    await session.read();
-    const pending = session.readReplies(first.commentId);
-    expect(session.readReplies(first.commentId)).toBe(pending);
-    const queued = session.readReplies(second.commentId);
-    expect(readExplore).toHaveBeenCalledTimes(2);
-    resolve(first);
-    expect(await pending).toBe(first);
-    expect(await queued).toBe(second);
-    expect(readExplore).toHaveBeenLastCalledWith(connection, { kind: "replies", id: "123456789", sessionId: "owned-comments", commentId: second.commentId });
-    session.close();
-    expect(closeExplore).toHaveBeenCalledExactlyOnceWith(connection, ["owned-comments"]);
-  });
-
-  it("closes the comment tab after a late reply and cancels another queued thread", async () => {
+  it("closes the comment tab when the next page arrives after the player closed", async () => {
     let resolve!: (value: ExplorePage) => void;
     vi.mocked(readExplore).mockResolvedValueOnce(page).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
     const session = createVideoCommentsSession(connection, record);
     await session.read();
-    const pending = session.readReplies("111111111");
-    const queued = session.readReplies("222222222");
-    const cancelled = [expect(pending).rejects.toMatchObject({ name: "AbortError" }), expect(queued).rejects.toMatchObject({ name: "AbortError" })];
+    const more = session.read();
+    expect(session.read()).toBe(more);
+    const cancelled = expect(more).rejects.toMatchObject({ name: "AbortError" });
     session.close();
-    resolve({ ...page, kind: "replies", commentId: "111111111" });
-    await Promise.all(cancelled);
+    resolve(page);
+    await cancelled;
     expect(readExplore).toHaveBeenCalledTimes(2);
     expect(closeExplore).toHaveBeenCalledExactlyOnceWith(connection, ["owned-comments"]);
   });

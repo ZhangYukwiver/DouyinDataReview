@@ -5,7 +5,7 @@ import { Check, Download, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon }
 
 import { getDesktopOpenAtLogin, setDesktopOpenAtLogin, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
-import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type CollectorAccounts } from "../../services/localCollector";
+import { collectorAccountName, collectorWrites, findTwinAccount, formatAccountAddedDay, type CollectorAccounts } from "../../services/localCollector";
 import { ease, revealFrom, ws } from "./motion";
 import { RELEASE_NOTES } from "./releaseNotes";
 import { appUpdateAction } from "./setupModel";
@@ -31,6 +31,8 @@ export interface SettingsDialogProps {
   onToggleAiVideo: () => void;
   privacy: boolean;
   onTogglePrivacy: () => void;
+  /** 连上的采集器：「允许在抖音上操作」存在采集器那边 */
+  collector?: { baseUrl: string; token: string } | null;
   connected: boolean;
   accounts: CollectorAccounts | null;
   /** 当前账号的显示名（采集器状态里的昵称优先） */
@@ -272,12 +274,43 @@ function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openA
   );
 }
 
-function Privacy({ onTogglePrivacy, privacy }: SettingsDialogProps) {
+function Privacy({ collector, onTogglePrivacy, privacy }: SettingsDialogProps) {
+  // null：还没读到（没连采集器，或者老版本采集器没有这个开关）
+  const [writes, setWrites] = useState<boolean | null>(null);
+  const [writesError, setWritesError] = useState<string | null>(null);
+  const baseUrl = collector?.baseUrl, token = collector?.token;
+  useEffect(() => {
+    setWrites(null);
+    if (!baseUrl || !token) return;
+    let live = true;
+    collectorWrites(baseUrl, token).then((value) => { if (live) setWrites(value); }, () => undefined);
+    return () => { live = false; };
+  }, [baseUrl, token]);
+  const toggleWrites = () => {
+    if (!baseUrl || !token || writes === null) return;
+    const next = !writes;
+    setWrites(next);
+    setWritesError(null);
+    collectorWrites(baseUrl, token, next).then(setWrites, (error: unknown) => {
+      setWrites(!next);
+      setWritesError(error instanceof Error ? error.message : "设置没存上，请稍后再试。");
+    });
+  };
   return (
-    <View style={styles.row}>
-      <RowCopy detail="隐藏封面、标题和聊天内容，视频和直播也先不放，适合截图或给别人看。" title="隐私模式" />
-      <Toggle label="隐私模式" onPress={onTogglePrivacy} testID="settings-privacy" value={privacy} />
-    </View>
+    <>
+      <View style={styles.row}>
+        <RowCopy detail="隐藏封面、标题和聊天内容，视频和直播也先不放，适合截图或给别人看。" title="隐私模式" />
+        <Toggle label="隐私模式" onPress={onTogglePrivacy} testID="settings-privacy" value={privacy} />
+      </View>
+      <View style={styles.row}>
+        <RowCopy
+          detail={writesError ?? (writes === null ? "先在采集器页连上采集器，才能改这一项。"
+            : "打开后可以在工作台里点赞、收藏、关注、评论、分享和发私信，续火花也算。这些都是用你自己的抖音号发出去的，发得太多太快可能被抖音限制甚至封号，所以默认关着。")}
+          title="允许在抖音上操作"
+        />
+        <Toggle disabled={writes === null} label="允许在抖音上操作" onPress={toggleWrites} testID="settings-writes" value={writes === true} />
+      </View>
+    </>
   );
 }
 

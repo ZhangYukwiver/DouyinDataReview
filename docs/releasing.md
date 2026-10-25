@@ -1,8 +1,8 @@
 # 桌面版发布
 
-所有 PR、`main` 更新和 `v*` 标签均由 `.github/workflows/desktop-release.yml` 在干净的 GitHub 托管环境中构建 Windows x64 NSIS 安装器及 macOS Apple Silicon DMG/ZIP。每个平台执行 Node.js 24、`npm ci`、类型检查、全部测试、Web 构建、签名器安装与桌面打包。PR 的安装器和自动更新元数据可从 Actions artifacts 下载，保留 14 天。
+所有 PR、`main` 更新和 `v*` 标签均由 `.github/workflows/desktop-release.yml` 在干净的 GitHub 托管环境中构建 Windows x64 NSIS 安装器及 macOS Apple Silicon DMG/ZIP。每个平台执行 Node.js 24、`npm ci`、类型检查、全部测试、Web 构建与桌面打包。PR 的安装器和自动更新元数据可从 Actions artifacts 下载，保留 14 天。
 
-打包后执行 `scripts/verify-release-package.mjs` 检查真实 `app.asar`，确认当前采集器源码和 Web 构建完整进入安装包、前端包含自动恢复同步的逻辑、签名运行器和 Playwright 已拆包、内置签名器通过逐文件 SHA-256 校验。它还检查资源目录和 ASAR，拒绝浏览器配置、Cookies、记录、直接读取模板、`.env` 等私人运行数据路径；上传范围只包括安装器和公开的自动更新元数据。发布任务不读取开发者电脑的数据。
+打包后执行 `scripts/verify-release-package.mjs` 检查真实 `app.asar`，确认当前采集器源码和 Web 构建完整进入安装包、前端包含自动恢复同步的逻辑、Playwright 已拆包，资源目录里没有多余文件。它还检查资源目录和 ASAR，拒绝浏览器配置、Cookies、记录、直接读取模板、`.env` 等私人运行数据路径；上传范围只包括安装器和公开的自动更新元数据。发布任务不读取开发者电脑的数据。
 
 macOS 构建在测试后显式重装 arm64 Electron，并用 `lipo` 同时检查构建输入和输出，避免 `electronDist` 将 Intel Electron 装入 Apple Silicon 安装包。macOS 目前沿用仓库中的 ad-hoc 签名，没有 Apple 公证；Windows 没有配置发行者证书。
 
@@ -15,7 +15,7 @@ macOS 构建在测试后显式重装 arm64 Electron，并用 `lipo` 同时检查
 
 发布仅使用标签任务的临时 `contents: write` 权限；普通构建为只读。Actions 依赖固定到提交 SHA。若构建失败，不会创建公开 Release。若上传阶段失败并留下草稿，检查草稿资源后删除该草稿并重跑失败任务；不要移动已公开发布的版本标签。
 
-本地可在 `npm run build:web`、`npm run direct:setup`、`npx electron-builder --win nsis --x64 --publish never` 后检查 Windows 资源：
+本地可在 `npm run build:web`、`npx electron-builder --win nsis --x64 --publish never` 后检查 Windows 资源：
 
 ```sh
 node scripts/verify-release-package.mjs release/win-unpacked/resources

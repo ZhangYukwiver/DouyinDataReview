@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { DouyinExplorer, ingestExploreReplies, ingestExploreResponse, isExploreApiUrl, normalizeExploreComment, normalizeExploreUser, normalizeExploreVideo, normalizeSharee, validateExploreRequest } from "./explorer.mjs";
+import { DouyinExplorer, ingestExploreResponse, isExploreApiUrl, normalizeExploreComment, normalizeExploreUser, normalizeExploreVideo, normalizeSharee, validateExploreRequest } from "./explorer.mjs";
 
 const author = { sec_uid: "test-public-author", nickname: "离线测试作者", follower_count: 0, follow_status: 0 };
 const aweme = (id) => ({ aweme_id: id, desc: "离线测试作品", author, create_time: 1788912000, user_digged: 0, collect_status: 1, statistics: { digg_count: 0 } });
@@ -214,50 +214,13 @@ describe("explore data boundaries and pagination", () => {
   });
 });
 
-describe("comment reply threads", () => {
-  const workId = "123456789";
-  const parentId = "222222222";
-  const reply = (id, parent = parentId) => ({ cid: id, text: "公开回复", reply_id: parent, aweme_id: workId, user: author });
-  function replySession() {
-    return { ...session("comments"), key: "comments-session", id: workId, items: new Map([[parentId, { id: parentId }], ["333333333", { id: "333333333" }]]),
-      replyThreads: new Map([parentId, "333333333"].map((id) => [id, { items: new Map(), received: false, revision: 0, hasMore: null }])) };
-  }
-  it("requires both an existing page and a concrete parent identifier", () => {
-    for (const input of [{ kind: "replies", id: workId, commentId: parentId },
-      { kind: "replies", id: workId, commentId: '12345"]', sessionId: "comments-session" }]) expect(() => validateExploreRequest(input)).toThrow();
-    expect(validateExploreRequest({ kind: "replies", id: workId, commentId: parentId, sessionId: "comments-session" })).toMatchObject({ kind: "replies", commentId: parentId });
-  });
+describe("comment replies", () => {
   it("preserves the parent and the person being replied to", () => {
-    expect(normalizeExploreComment({ ...reply("444444444"), reply_to_username: "上一位读者" })).toMatchObject({ parentId, replyToName: "上一位读者" });
+    const reply = { cid: "444444444", text: "公开回复", reply_id: "222222222", aweme_id: "123456789", user: author, reply_to_username: "上一位读者" };
+    expect(normalizeExploreComment(reply)).toMatchObject({ parentId: "222222222", replyToName: "上一位读者" });
   });
-  it("merges reply pages without changing the parent list or another thread", () => {
-    const state = replySession();
-    ingestExploreReplies(state, parentId, { status_code: 0, comments: [reply("444444444")], has_more: 1 });
-    ingestExploreReplies(state, parentId, { status_code: 0, comments: [reply("444444444"), reply("555555555"), reply("666666666", "333333333"), null], has_more: 0 });
-    expect([...state.replyThreads.get(parentId).items.keys()]).toEqual(["444444444", "555555555"]);
-    expect(state.replyThreads.get(parentId).hasMore).toBe(false);
-    expect(state.replyThreads.get("333333333").items.size).toBe(0);
-    expect(state.items.size).toBe(2);
-    expect(state.revision).toBe(0);
-  });
-  it("retains loaded replies after a failed page and accepts an explicit empty end", () => {
-    const state = replySession();
-    ingestExploreReplies(state, parentId, { status_code: 0, comments: [reply("444444444")], has_more: 1 });
-    ingestExploreReplies(state, parentId, null);
-    expect(state.replyThreads.get(parentId).error.code).toBe("platform_error");
-    expect(state.replyThreads.get(parentId).items.size).toBe(1);
-    ingestExploreReplies(state, parentId, { status_code: 0, status_msg: "blocked" });
-    expect(state.replyThreads.get(parentId).error.code).toBe("platform_error");
-    ingestExploreReplies(state, parentId, { status_code: 0, comments: null, has_more: 0 });
-    expect(state.replyThreads.get(parentId)).toMatchObject({ error: null, hasMore: false, received: true });
-  });
-  it("rejects stale or mismatched pages before any browser action", async () => {
-    const explorer = new DouyinExplorer(vi.fn());
-    explorer.sessions.set("comments-session", { ...replySession(), page: { isClosed: () => false } });
-    const input = { kind: "replies", id: workId, commentId: parentId, sessionId: "comments-session" };
-    await expect(explorer.read({ ...input, sessionId: "expired" })).rejects.toMatchObject({ code: "session_expired" });
-    await expect(explorer.read({ ...input, id: "987654321" })).rejects.toMatchObject({ code: "session_expired" });
-    await expect(explorer.read({ ...input, commentId: "999999999" })).rejects.toMatchObject({ code: "comment_unavailable" });
+  it("are no longer read: only the top-level comment list is", () => {
+    expect(() => validateExploreRequest({ kind: "replies", id: "123456789", commentId: "987654321", sessionId: "s" })).toThrow(expect.objectContaining({ code: "invalid_request" }));
   });
 });
 

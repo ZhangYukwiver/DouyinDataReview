@@ -17,7 +17,7 @@ export function parseDirectJson(response) {
 }
 
 export async function signDirectRequest(api, url, { body = "", method = "GET", append = {} } = {}) {
-  const signed = await api.signer(url, { directory: api.directory, userAgent: api.currentUserAgent, uifid: api.cookie("UIFID"), method, body });
+  const signed = await api.signer(url, { userAgent: api.currentUserAgent, uifid: api.cookie("UIFID"), method, body });
   const checked = new URL(signed);
   if (checked.origin !== url.origin || checked.pathname !== url.pathname || checked.hash || checked.username || checked.password
     || !/^[A-Za-z0-9+/_=-]{64,512}$/u.test(checked.searchParams.get("a_bogus") || ""))

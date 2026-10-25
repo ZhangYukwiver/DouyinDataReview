@@ -257,7 +257,6 @@ const blocks: string[] = [
   rule(sel("c-name"), `font-family:${SERIF}!important;font-weight:400!important;font-size:15px!important;letter-spacing:.01em!important`),
   rule(sel("c-avatar"), "border:1px solid rgba(254,255,252,.32)!important;box-shadow:inset 0 0 14px rgba(254,255,252,.08)"),
   rule(sel("c-avatar", " div[dir]"), `font-family:${SERIF}!important;font-weight:400!important`),
-  rule(sel("c-online"), `background-color:${AMBER}!important;border-color:${DEEP}!important`),
   rule(sel("c-dhead"), "background-color:transparent!important;border-bottom-color:rgba(254,255,252,.1)!important;min-height:84px!important"),
   rule(sel("c-dtitle"), serif(26, 1.15)),
   rule(sel("c-ro"), `${pill("rgba(134,198,230,.45)")};padding:0 10px!important;height:26px!important`),

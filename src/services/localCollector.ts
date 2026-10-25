@@ -968,7 +968,7 @@ async function requestJson(
           ? "自动获取配对码仅支持当前电脑，请输入采集器显示的配对码。"
         : errorCode === "not_paired"
           ? "连接已过期，请重新配对。"
-          : (["download_start_failed", "import_busy", "import_failed", "collector_busy"].includes(errorCode) || errorCode.startsWith("account_") || errorCode.startsWith("browser_")) && serverMessage
+          : (["download_start_failed", "import_busy", "import_failed", "collector_busy", "settings_save_failed"].includes(errorCode) || errorCode.startsWith("account_") || errorCode.startsWith("browser_")) && serverMessage
             ? serverMessage
           : errorCode === "collector_busy"
             ? "采集器正在忙，等它做完再试。"
@@ -1202,6 +1202,14 @@ export async function startCollectorChatObservation(baseUrl: string, token: stri
   const value = await requestJson(baseUrl, "/v1/chat/observe", { method: "POST" }, token);
   if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务未返回聊天读取状态。");
   return parseStatus(value.status);
+}
+
+/** 「允许在抖音上操作」：点赞、收藏、关注、评论、分享和发私信的总开关，所有账号共用，默认关。不传 enabled 就只读。 */
+export async function collectorWrites(baseUrl: string, token: string, enabled?: boolean): Promise<boolean> {
+  const value = await requestJson(baseUrl, "/v1/settings/writes",
+    enabled === undefined ? {} : { method: "POST", body: JSON.stringify({ enabled }) }, token);
+  if (!isObject(value) || typeof value.enabled !== "boolean") throw new LocalCollectorError("invalid_response", "采集服务没返回操作开关。");
+  return value.enabled;
 }
 
 export async function stopCollectorChatObservation(baseUrl: string, token: string): Promise<CollectorStatus> {

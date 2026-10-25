@@ -365,7 +365,7 @@ const VideoComments = memo(function VideoComments({ record, connection, ready, o
       {threads.map((comment) => <article className="rv-comment" key={posted.has(comment.id) ? `mine:${comment.id}` : `${page!.sessionId}:${comment.id}`} data-comment-id={comment.id}>
         <CommentRow comment={comment} onReply={reply} />
         {mine.filter((item) => item.parentId === comment.id).map((item) => <article className="rv-reply rv-replies" key={item.id} data-reply-id={item.id}><CommentRow comment={item} onReply={reply} /></article>)}
-        {comment.replies > 0 && sessionRef.current ? <CommentReplies comment={comment} session={sessionRef.current} hidden={posted} onReply={reply} onRefresh={() => setSessionVersion((value) => value + 1)} /> : null}
+        {comment.replies > 0 ? <div className="rv-replies"><p className="rv-reply-notice">{count(comment.replies)} 条回复，到抖音原页查看</p></div> : null}
       </article>)}
       {page && !threads.length && !loading && !error ? <p className="rv-comment-notice">暂时没有评论</p> : null}
       {page?.limited ? <p className="rv-comment-notice">已展示 500 条，可在原页继续查看。</p> : page && page.hasMore !== false ?
@@ -385,44 +385,6 @@ function CommentRow({ comment, onReply }: { comment: ExploreComment; onReply?: (
       <div className="rv-comment-meta"><small>{date(comment.publishedAt)}</small>
         {onReply ? <button className="rv-reply-action" aria-label={`回复 ${comment.name}`} onClick={() => onReply(comment)}>回复</button> : null}</div></div>
     <div className="rv-comment-likes" aria-label={`${count(comment.likes)} 个赞`}><Heart color="#929298" size={15} /><span>{count(comment.likes)}</span></div>
-  </div>;
-}
-
-function CommentReplies({ comment, session, hidden, onReply, onRefresh }: {
-  comment: ExploreComment; session: ReturnType<typeof createVideoCommentsSession>; hidden: Set<string>;
-  onReply?: (comment: ExploreComment) => void; onRefresh: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [page, setPage] = useState<ExplorePage | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const [error, setError] = useState<{ message: string; refresh: boolean } | null>(null);
-  useEffect(() => {
-    if (!attempt) return;
-    let current = true;
-    setLoading(true); setError(null);
-    void session.readReplies(comment.id).then((next) => { if (current) setPage(next); }).catch((cause) => {
-      if (current) setError({ message: cause instanceof Error ? cause.message : "回复读取失败，请稍后重试。",
-        refresh: cause instanceof LocalCollectorError && ["session_expired", "comment_unavailable"].includes(cause.code) });
-    }).finally(() => { if (current) setLoading(false); });
-    return () => { current = false; };
-  }, [session, comment.id, attempt]);
-  return <div className="rv-replies">
-    <button className="rv-reply-toggle" aria-expanded={expanded} aria-controls={`rv-replies-${comment.id}`} onClick={() => {
-      setExpanded(!expanded);
-      if (!expanded && !page && !loading) setAttempt((value) => value + 1);
-    }}>
-      {expanded ? <ChevronUp size={14} color="#b6b6c0" /> : <ChevronDown size={14} color="#b6b6c0" />}
-      {expanded ? "收起回复" : `展开 ${count(comment.replies)} 条回复`}
-    </button>
-    <div id={`rv-replies-${comment.id}`} hidden={!expanded}>
-      {(page?.items as ExploreComment[] | undefined)?.filter((reply) => !hidden.has(reply.id)).map((reply) => <article className="rv-reply" key={reply.id} data-reply-id={reply.id}><CommentRow comment={reply} onReply={onReply} /></article>)}
-      {loading ? <p className="rv-reply-notice" role="status">正在读取回复…</p> : null}
-      {error ? <div className="rv-reply-notice" role="alert"><p>{error.message}</p><button className="rv-reply-toggle" onClick={error.refresh ? onRefresh : () => setAttempt((value) => value + 1)}>{error.refresh ? "刷新评论" : "重试回复"}</button></div> : null}
-      {page && !page.items.length && !loading && !error ? <p className="rv-reply-notice">暂时没有可展示的回复</p> : null}
-      {page?.limited ? <p className="rv-reply-notice">已展示 500 条回复，可在原页继续查看。</p> : page && page.hasMore !== false ?
-        <button className="rv-reply-toggle" disabled={loading} onClick={() => setAttempt((value) => value + 1)}>加载更多回复</button> : null}
-    </div>
   </div>;
 }
 
@@ -515,7 +477,9 @@ function VideoShare({ record, connection, onClose }: { record: PersonalVideoReco
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === "AbortError") return;
       const expired = cause instanceof LocalCollectorError && cause.code === "session_expired";
-      setSent(({ [person.id]: _, ...rest }) => expired ? rest : { ...rest, [person.id]: "unknown" });
+      // 开关没开：采集器没发出去，这位还能再点
+      const blocked = cause instanceof LocalCollectorError && cause.code === "writes_disabled";
+      setSent(({ [person.id]: _, ...rest }) => expired || blocked ? rest : { ...rest, [person.id]: "unknown" });
       setNotice(expired ? "朋友列表过期了，已重新载入，请再点一次。" : cause instanceof Error ? cause.message : "没收到结果，可能已经分享出去了，先去聊天里看看。");
       if (expired) setAttempt((value) => value + 1);
     }

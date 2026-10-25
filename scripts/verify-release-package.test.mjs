@@ -52,12 +52,10 @@ describe("release privacy boundary", () => {
     "collector/directHistory.mjs",
     "collector/douyinCollector.mjs",
     "collector/accounts.mjs",
-    "app.asar.unpacked/collector/directSignerRunner.cjs",
     "node_modules/playwright-core/lib/server/cookieStore.js",
     "node_modules/ws/wrapper.mjs",
     "node_modules/electron-updater/out/AppUpdater.js",
     "node_modules/builder-util-runtime/out/index.js",
-    "direct-signer/lib/runtime/bdms/env.js",
     "dist/_expo/static/js/web/AppEntry-example.js",
   ])("allows shipped application code: %s", (name) => {
     expect(() => assertPublicPackagePath(name)).not.toThrow();

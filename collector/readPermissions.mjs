@@ -21,3 +21,7 @@ export function readPermissionForRequest(method, pathname) {
     || (method === "GET" && (pathname === "/v1/live/following" || /^\/v1\/live\/rooms\/[0-9a-f-]{36}$/u.test(pathname)))) return "videos";
   return null;
 }
+
+// 会在抖音上留下动作的请求：探索里的点赞、收藏、关注、评论、分享，聊天和续火花的发消息
+export const WRITE_REQUESTS = new Set(["/v1/explore/interact", "/v1/chat/send"]);
+export const WRITES_DISABLED_MESSAGE = "在抖音上点赞、评论、关注、分享和发私信默认是关着的，到「设置 → 隐私」打开「允许在抖音上操作」再试。";

@@ -233,7 +233,6 @@ const blocks: string[] = [
   rule(sel("c-avatar"), `background-color:${INK}!important;border:2px solid ${INK}!important`),
   rule(sel("c-avatar", " div[dir]"), `color:${PAPER}!important;font-family:${CJK}!important;font-weight:900!important`),
   rule(sel("c-avatar", " > svg"), `stroke:${PAPER}!important`),
-  rule(sel("c-online"), `background-color:${SIG}!important;border-color:${INK}!important`),
   rule(sel("c-dhead"), `border-bottom:3px solid ${INK}!important;background-color:${PAPER}!important;min-height:88px!important`),
   rule(sel("c-dtitle"), heavy(26, 1.1)),
   rule(sel("c-bubble in"), `background-color:${WHITE}!important;border:2px solid ${INK}!important`),
