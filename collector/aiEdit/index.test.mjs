@@ -89,6 +89,13 @@ function memoryStore() {
       for (const track of project.tracks) track.segments = track.segments.filter((segment) => segment.id !== segmentId);
       return save(project);
     },
+    async updateSegment(id, segmentId, patch) {
+      const project = get(id);
+      const segment = project.tracks.flatMap((track) => track.segments).find((item) => item.id === segmentId);
+      if (!segment) throw invalid("SEGMENT_NOT_FOUND", "Segment does not exist");
+      Object.assign(segment, patch);
+      return save(project);
+    },
     async mediaInfos(project) {
       return [...new Set(project.tracks.flatMap((track) => track.segments.map((segment) => segment.path)))].map((item) => ({ path: item }));
     },
@@ -102,6 +109,32 @@ function fakeDraftBox(overrides = {}) {
     createDraft: vi.fn(async ({ draftName }) => ({ draftId: `0000000${++counter}-AAAA-BBBB-CCCC-DDDDDDDDDDDD`, draftName, path: `/drafts/${draftName}` })),
     repairDraft: vi.fn(async ({ project, draftId }) => ({ draftId, draftName: project.name, path: `/drafts/${project.name}` })),
     ...overrides,
+  };
+}
+
+/** 只说 CDP 的假渲染浏览器：页面一开就加载完，window.film 时长 0.1 秒（3 帧），截图回几个字节，编码页每帧回一个关键帧。 */
+function fakeFilmBrowser() {
+  const value = (expression) => {
+    if (expression.startsWith("Boolean(window.film")) return true;
+    if (expression.includes("a.ready")) return { duration: 0.1, width: 64, height: 36, sounds: [] };
+    if (expression.includes("enc.frame")) return [{ data: Buffer.from("frame").toString("base64"), key: true, ts: 0 }];
+    if (expression.includes("enc.finish")) return { chunks: [], description: Buffer.from("avcC").toString("base64") };
+    return null;
+  };
+  return {
+    async newTarget() {
+      const listeners = new Map();
+      return {
+        on: (method, listener) => listeners.set(method, [...(listeners.get(method) ?? []), listener]),
+        send: async (method, params) => {
+          if (method === "Page.navigate") setTimeout(() => { for (const listener of listeners.get("Page.loadEventFired") ?? []) listener({}); });
+          if (method === "Page.captureScreenshot") return { data: Buffer.from("fake screenshot bytes").toString("base64") };
+          if (method === "Runtime.evaluate") return { result: { value: value(params.expression) } };
+          return {};
+        },
+        close: async () => undefined,
+      };
+    },
   };
 }
 
@@ -260,7 +293,7 @@ describe("AI edit help from the open page", () => {
 
 describe("AI edit sessions", () => {
   it("creates, lists, long-polls and deletes sessions together with their projects", async () => {
-    const { call, store, base } = await start();
+    const { call, store, base, directory } = await start();
     expect((await fetch(`${base}/v1/ai-edit/sessions`)).status).toBe(401);
     const created = await call("/v1/ai-edit/sessions", { method: "POST", body: {} });
     expect(created.status).toBe(201);
@@ -283,10 +316,19 @@ describe("AI edit sessions", () => {
     expect((await call(`/v1/ai-edit/sessions/${session.id}?afterRevision=x`)).status).toBe(400);
     expect((await call(`/v1/ai-edit/sessions/${"0".repeat(31)}g`)).status).toBe(404);
 
+    // 出过的片子和导出的工程包跟着删，别的剪辑的不动
+    const renders = path.join(directory, "ai-edit", "renders");
+    for (const folder of [session.id, `${session.id}-film`, wide.body.session.id]) {
+      await mkdir(path.join(renders, folder), { recursive: true });
+      await writeFile(path.join(renders, folder, "成片.mp4"), "x");
+    }
     expect((await call(`/v1/ai-edit/sessions/${session.id}`, { method: "DELETE" })).body).toEqual({ ok: true });
     expect((await polling).status).toBe(404);
     expect(store.projects.has(project.id)).toBe(false);
     expect((await call(`/v1/ai-edit/sessions/${session.id}`)).status).toBe(404);
+    expect(existsSync(path.join(renders, session.id))).toBe(false);
+    expect(existsSync(path.join(renders, `${session.id}-film`))).toBe(false);
+    expect(existsSync(path.join(renders, wide.body.session.id, "成片.mp4"))).toBe(true);
   }, 20_000);
 
   it("lets the user set and change the goal, which every model request carries in its system prompt", async () => {
@@ -675,6 +717,45 @@ describe("AI edit export to Jianying", () => {
     // 用户在剪映里删了那份草稿之后才能删素材
     await rm(draftDirectory, { recursive: true, force: true });
     expect(await call(`/v1/ai-edit/media/${item.id}`, { method: "DELETE" })).toEqual({ status: 200, body: { ok: true } });
+  }, 20_000);
+
+  it("keeps a rewritten page's old render while an exported Windows draft still points to it", async () => {
+    const draftDirectory = await temporaryDirectory("ai-edit-windows-draft-");
+    const draftBox = fakeDraftBox({
+      profile: { cloneMaterials: false },
+      createDraft: vi.fn(async ({ draftName }) => ({ draftId: "00000001-AAAA-BBBB-CCCC-DDDDDDDDDDDD", draftName, path: draftDirectory })),
+    });
+    const html = "<script>window.film = { duration: 0.1, frame() {} };</script>";
+    const requests = [];
+    let pageId = null;
+    // 第一轮写一页不透明的（.mp4），第二轮把同一页改成透明的（换成新的 .mov 素材）
+    const fetchImpl = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push(body);
+      if (requests.length === 1) return toolReply([{ name: "write_page", args: { title: "标题", html, duration: 0.1 } }]);
+      if (requests.length === 3) return toolReply([{ name: "write_page", args: { page_id: pageId, title: "标题", html, transparent: true } }]);
+      pageId ??= lastToolResult(body).page_id;
+      return textReply("好了");
+    };
+    const { call, store, directory, waitIdle } = await start({ draftBox, fetchImpl, filmBrowser: fakeFilmBrowser(), getOrigin: () => "http://127.0.0.1:9" });
+    const { session, project } = (await call("/v1/ai-edit/sessions", { method: "POST", body: { title: "网页片段" } })).body;
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "做个标题", config: CONFIG } });
+    await waitIdle(session.id);
+    const first = lastToolResult(requests[1]);
+    expect(first).toMatchObject({ page_id: pageId, transparent: false });
+    const oldPath = await mediaPath(directory, `${first.media_id}.mp4`);
+    const withTrack = await store.createTrack(project.id, { track_type: "video" });
+    await store.addMediaSegment(project.id, withTrack.tracks[0].id, { path: oldPath, timeline: { start_us: 0, duration_us: 100_000 } });
+    expect((await call(`/v1/ai-edit/sessions/${session.id}/export`, { method: "POST", body: {} })).status).toBe(200);
+
+    await call(`/v1/ai-edit/sessions/${session.id}/messages`, { method: "POST", body: { text: "改成透明的叠在视频上", config: CONFIG } });
+    await waitIdle(session.id);
+    const second = lastToolResult(requests[3]);
+    expect(second).toMatchObject({ page_id: pageId, transparent: true });
+    // 时间线换成了新画面；剪映草稿还没重新导入、直接指着旧文件：旧素材和文件都得留着
+    expect((await store.getProject(project.id)).tracks[0].segments[0].path).toBe(await mediaPath(directory, `${second.media_id}.mov`));
+    expect(existsSync(oldPath)).toBe(true);
+    expect(await call(`/v1/ai-edit/media/${first.media_id}`, { method: "DELETE" })).toMatchObject({ status: 409, body: { error: "media_in_draft" } });
   }, 20_000);
 
   it("does not hold media for Mac drafts, which carry their own copy", async () => {

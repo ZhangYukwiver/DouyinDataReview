@@ -182,7 +182,9 @@ export async function openTab(provider, url, { width = 1920, height = 1080, back
       },
       async capture({ format = "jpeg", quality = 92 } = {}) {
         const { data } = await inTime(target.send("Page.captureScreenshot", {
-          format, ...(format === "jpeg" ? { quality } : {}), clip: { x: 0, y: 0, width: size.width, height: size.height, scale: 1 }, fromSurface: true, optimizeForSpeed: true,
+          format, ...(format === "jpeg" ? { quality } : {}), clip: { x: 0, y: 0, width: size.width, height: size.height, scale: 1 }, fromSurface: true,
+          // 透明片段的 PNG 原样装进 MOV，按体积压（同一页 25MB→11MB，渲染慢约 16%）；JPEG 照旧按速度
+          optimizeForSpeed: format !== "png",
         }), CAPTURE_MS, "截图超过 30 秒没回来");
         return Buffer.from(data, "base64");
       },

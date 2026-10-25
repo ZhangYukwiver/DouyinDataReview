@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { chromeProvider, findBrowser } from "../collector/aiEdit/film/browser.mjs";
 import { browserDirectories, connectExternalBrowser } from "../collector/browserConnection.mjs";
 import { startCollectorServer } from "../collector/server.mjs";
 import { electronFilmProvider } from "./filmWindow.mjs";
@@ -298,8 +299,9 @@ async function startDesktopRuntime() {
     // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
     browserSources: [{ id: "app", label: "应用内登录", inApp: true }, ...browserDirectories()],
     browserConnector: (source, options) => (source.inApp ? connectInApp(source, options) : connectExternalBrowser(source)),
-    // AI 剪辑的网页片段、本机出片用应用自己的隐藏窗口画
-    filmBrowser: electronFilmProvider({ BrowserWindow }),
+    // AI 剪辑的网页片段、本机出片：Windows 用系统自带的 Edge（或 Chrome）无头画，应用的离屏窗口在 Windows 上画 canvas 会随机截到空白帧；
+    // Mac 和找不到浏览器时用应用自己的离屏窗口
+    filmBrowser: process.platform === "win32" && findBrowser() ? chromeProvider() : electronFilmProvider({ BrowserWindow }),
   });
   try {
     const rootDirectory = path.join(projectDirectory, "dist");
