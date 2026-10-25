@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { EditMediaSegment, EditProject, EditSegment, EditTextSegment, EditTrack } from "../../services/aiEdit";
 import {
-  catalogEdit, catalogTargetName, clipCallName, dragMoveStart, dragRect, draggedTransform, dragTrim, expectedClip, fullTransform, hasMotionKeyframes, intersects, keepSelection, layersInRect, MIN_CLIP_US, pyRound,
+  catalogEdits, catalogTargetName, clipCallName, dragMoveStart, dragRect, draggedTransform, dragTrim, expectedClip, fullTransform, hasMotionKeyframes, intersects, keepSelection, layersInRect, MIN_CLIP_US, pyRound,
   regionBox, regionCaption, regionHint, resizeRatio, selectableIds, settleSelection, snapTime, splitOffset, splitTarget, tapPick, tooManyEditsText, trimArgs, undoKind,
 } from "./aiEditBoardEdit";
 import { IDENTITY_TRANSFORM, timeAtX } from "./aiEditModel";
@@ -282,15 +282,46 @@ describe("剪映素材套到片段上", () => {
     const clip = video("v1", 0, 2 * S);
     const title = { id: "t1", kind: "text", text: "标题", timeline: { start_us: 0, duration_us: S } } as EditTextSegment;
     const sound = { ...video("a1", 0, S), kind: "audio" } as EditMediaSegment;
-    expect(catalogEdit("transition", "叠化", clip)).toEqual({ name: "add_transition", arguments: { clip_id: "v1", transition_type: "叠化" } });
-    expect(catalogEdit("video_intro", "渐显", { ...clip, kind: "image" })).toEqual({ name: "add_animation", arguments: { clip_id: "v1", animation_type: "渐显" } });
-    expect(catalogEdit("font", "A1明朝", title)).toEqual({ name: "update_clip", arguments: { clip_id: "t1", font_family: "A1明朝" } });
-    expect(catalogEdit("text_loop", "心跳", title)?.name).toBe("add_animation");
-    expect(catalogEdit("audio_effect", "_8bit", sound)).toEqual({ name: "add_effect", arguments: { clip_id: "a1", effect_type: "_8bit" } });
+    expect(catalogEdits("transition", "叠化", clip)).toEqual([{ name: "add_transition", arguments: { clip_id: "v1", transition_type: "叠化" } }]);
+    expect(catalogEdits("video_intro", "渐显", { ...clip, kind: "image" })).toEqual([{ name: "add_animation", arguments: { clip_id: "v1", animation_type: "渐显", phase: "in" } }]);
+    expect(catalogEdits("font", "A1明朝", title)).toEqual([{ name: "update_clip", arguments: { clip_id: "t1", font_family: "A1明朝" } }]);
+    expect(catalogEdits("text_loop", "心跳", title)).toEqual([{ name: "add_animation", arguments: { clip_id: "t1", animation_type: "心跳", phase: "loop" } }]);
+    expect(catalogEdits("audio_effect", "_8bit", sound)).toEqual([{ name: "add_effect", arguments: { clip_id: "a1", effect_type: "_8bit" } }]);
     // 放不了的：文字上加转场、视频上加文字动画、音频上加画面特效
-    expect(catalogEdit("transition", "叠化", title)).toBeNull();
-    expect(catalogEdit("text_intro", "打字机", clip)).toBeNull();
-    expect(catalogEdit("video_effect", "_1998", sound)).toBeNull();
+    expect(catalogEdits("transition", "叠化", title)).toBeNull();
+    expect(catalogEdits("text_intro", "打字机", clip)).toBeNull();
+    expect(catalogEdits("video_effect", "_1998", sound)).toBeNull();
     expect(catalogTargetName("mask")).toBe("视频或图片片段");
+  });
+
+  it("同一种的直接换掉，一批发出去一步撤销；已经是这个了就不发", () => {
+    const clear = (clip_id: string, feature: string) => ({ name: "clear_clip_feature", arguments: { clip_id, feature } });
+    const anim = (clip_id: string, animation_type: string, phase: string, duration?: number) =>
+      ({ name: "add_animation", arguments: { clip_id, animation_type, phase, ...(duration ? { duration } : {}) } });
+    const clip = video("v1", 0, 2 * S, {
+      animations: [{ animation_type: "渐显", phase: "in", duration_us: 800_000 }, { animation_type: "渐隐", phase: "out" }],
+      transition: { transition_type: "叠化", duration_us: 700_000 }, filters: [{ filter_type: "冷白", intensity: 60 }],
+    });
+    // 入场换入场，出场留着；新的入场用自己默认的时长
+    expect(catalogEdits("video_intro", "放大", clip)).toEqual([clear("v1", "animations"), anim("v1", "放大", "in"), anim("v1", "渐隐", "out")]);
+    // 出场「放大」和入场同名：带着 phase 发，留下的入场带着原来的时长
+    expect(catalogEdits("video_outro", "放大", clip)).toEqual([clear("v1", "animations"), anim("v1", "渐显", "in", 0.8), anim("v1", "放大", "out")]);
+    // 组合动画顶掉入场和出场；只有入场时加出场就直接加
+    expect(catalogEdits("video_group", "摇摆", clip)).toEqual([clear("v1", "animations"), anim("v1", "摇摆", "group")]);
+    expect(catalogEdits("video_outro", "缩小", video("v2", 0, S, { animations: [{ animation_type: "渐显", phase: "in" }] }))).toEqual([anim("v2", "缩小", "out")]);
+    expect(catalogEdits("video_intro", "渐显", clip)).toEqual([]);
+    // 转场照原来的时长换；滤镜换掉、强度照旧；蒙版、混合模式先去掉旧的
+    expect(catalogEdits("transition", "闪白", clip)).toEqual([{ name: "add_transition", arguments: { clip_id: "v1", transition_type: "闪白", duration: 0.7 } }]);
+    expect(catalogEdits("transition", "叠化", clip)).toEqual([]);
+    expect(catalogEdits("filter", "暖食", clip)).toEqual([clear("v1", "filters"), { name: "add_filter", arguments: { clip_id: "v1", filter_type: "暖食", intensity: 60 } }]);
+    expect(catalogEdits("mask", "圆形", { ...clip, mask: { mask_type: "线性" } })).toEqual([clear("v1", "mask"), { name: "add_mask", arguments: { clip_id: "v1", mask_type: "圆形" } }]);
+    expect(catalogEdits("mix_mode", "滤色", { ...clip, mix_mode: { mode: "滤色" } })).toEqual([]);
+    // 画面特效叠加，音效换掉
+    expect(catalogEdits("video_effect", "_1998", { ...clip, effects: [{ effect_type: "下雪" }] })).toEqual([{ name: "add_effect", arguments: { clip_id: "v1", effect_type: "_1998" } }]);
+    const sound = { ...video("a1", 0, S), kind: "audio", effects: [{ effect_type: "_8bit" }] } as EditMediaSegment;
+    expect(catalogEdits("audio_effect", "回音", sound)).toEqual([clear("a1", "effects"), { name: "add_effect", arguments: { clip_id: "a1", effect_type: "回音" } }]);
+    // 文字已经有循环动画时加入场：全去掉，入场在前、循环最后
+    const title = { id: "t1", kind: "text", text: "标题", timeline: { start_us: 0, duration_us: S }, animations: [{ animation_type: "心跳", phase: "loop" }] } as EditTextSegment;
+    expect(catalogEdits("text_intro", "打字机", title)).toEqual([clear("t1", "animations"), anim("t1", "打字机", "in"), anim("t1", "心跳", "loop")]);
   });
 });

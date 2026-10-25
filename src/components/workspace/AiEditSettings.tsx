@@ -3,8 +3,8 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, Text
 import { Bot, Check, ChevronRight, Plug, Plus, Puzzle, Sparkles, X, type LucideIcon } from "lucide-react-native";
 import type { ExploreConnection } from "../../services/explorer";
 import {
-  aiConfigReady, aiRuntimeOf, borrowArkKey, generateConfigProblem, generateKey, isArkUrl, isLocalAiRuntime, keepValidGenerateUrls, DEFAULT_AI_EDIT_GENERATE_CONFIG, GENERATE_SLOTS, LOCAL_CLI, VIDEO_PROVIDER_SLOT,
-  type AiEditConfig, type AiEditGenerateConfig, type AiEditGenerateSlot, type AiEditVideoProvider,
+  aiConfigReady, aiRuntimeOf, borrowArkKey, sameAiEditConfig, tidyAiEditConfig, generateConfigProblem, generateKey, isArkUrl, isLocalAiRuntime, keepValidGenerateUrls, DEFAULT_AI_EDIT_GENERATE_CONFIG, GENERATE_SLOTS, LOCAL_CLI, VIDEO_PROVIDER_SLOT,
+  type AiEditConfig, type AiEditGenerateConfig, type AiEditGenerateSlot, type AiEditVideoProvider, type AiRuntime,
 } from "../../services/aiEdit";
 import { DEFAULT_ANALYSIS_CONFIG } from "../../services/videoAnalysis";
 import { AiRuntimeField, RUNTIME_LABELS } from "./AiRuntimeField";
@@ -183,6 +183,13 @@ function videoInputNote(config: AiEditConfig, probe: { running: boolean; error?:
 
 function ModelPage({ connection, config, probe, onSave, onRetest }: Pick<AiEditSettingsProps, "connection" | "config" | "probe" | "onSave" | "onRetest">) {
   const [draft, setDraft] = useState(config);
+  // 改了没点保存就关窗或换页：能用的替用户存上（同服务商那页），不然发消息时还在用原来的
+  const latest = useRef({ draft, config, onSave });
+  latest.current = { draft, config, onSave };
+  useEffect(() => () => {
+    const { draft: left, config: stored, onSave: store } = latest.current;
+    if (aiConfigReady(left) && !sameAiEditConfig(left, stored)) store(tidyAiEditConfig(left));
+  }, []);
   // 保存后页面留着显示测的结果，按钮上闪一下「已保存」
   const [saved, setSaved] = useState(false);
   useEffect(() => {
@@ -193,12 +200,13 @@ function ModelPage({ connection, config, probe, onSave, onRetest }: Pick<AiEditS
   const runtime = aiRuntimeOf(draft.runtime);
   const local = isLocalAiRuntime(runtime);
   const ready = aiConfigReady({ ...draft, runtime });
-  const save = () => {
-    // 测视频的结果交给外面按地址和模型决定沿不沿用；本机模型名也要去掉首尾空格
-    const { videoInput: _input, videoProbe: _probe, localModels, ...rest } = draft;
-    const models = localModels ? Object.fromEntries(Object.entries(localModels).map(([key, model]) => [key, (model ?? "").trim()])) : undefined;
-    onSave({ ...rest, runtime, apiKey: draft.apiKey.trim(), model: draft.model.trim(), baseUrl: draft.baseUrl.trim(), ...(models ? { localModels: models } : {}) });
-    setSaved(true);
+  const commit = (value: AiEditConfig) => { onSave(tidyAiEditConfig(value)); setSaved(true); };
+  const save = () => commit(draft);
+  // 运行方式一选就生效：本机的 Codex、Claude Code 不用再填别的；切回接口时 Key、模型、地址都在才存，没填全还得点保存
+  const pickRuntime = (next: AiRuntime) => {
+    const value = { ...draft, runtime: next };
+    setDraft(value);
+    if (aiConfigReady(value)) commit(value);
   };
   const field = (key: "apiKey" | "model" | "baseUrl", label: string, props: Omit<Partial<React.ComponentProps<typeof TextInput>>, "onChange"> = {}) => <Input label={label}
     value={draft[key]} onChange={(text) => setDraft((current) => ({ ...current, [key]: text }))} {...props} />;
@@ -207,7 +215,7 @@ function ModelPage({ connection, config, probe, onSave, onRetest }: Pick<AiEditS
       <Row title="运行方式" detail={local
         ? `用这台电脑上登录好的 ${RUNTIME_LABELS[runtime]} 来剪，走你自己的订阅，不用填 Key。它看不了视频，解析参考视频时应用会先把视频拆成镜头截图和音乐节拍再交给它，这时要开着应用。`
         : "接口：填一个能调用工具的大模型接口（比如火山方舟的 doubao-seed）。"}>
-        <AiRuntimeField connection={connection} value={runtime} onChange={(next) => setDraft((current) => ({ ...current, runtime: next }))} />
+        <AiRuntimeField connection={connection} value={runtime} onChange={pickRuntime} />
       </Row>
     </Group>
     <Group title={local ? RUNTIME_LABELS[runtime] : "接口"}>

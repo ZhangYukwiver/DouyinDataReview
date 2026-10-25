@@ -267,6 +267,14 @@ describe("fixed bugs", () => {
     expect([sideways.material.width, sideways.material.height]).toEqual([1280, 720]);
   });
 
+  it("writes an outro that shares its name with an intro (放大) as an outro when the project says so", async () => {
+    const { options } = await prepare(byName("fit-portrait"));
+    const segment = options.project.tracks.flatMap((track) => track.segments).find((item) => item.kind === "video");
+    segment.animations = [{ animation_type: "放大", duration_us: null }, { animation_type: "放大", duration_us: null, phase: "out" }];
+    const content = JSON.parse(serializeDraft(options));
+    expect(content.materials.material_animations.flatMap((group) => group.animations).map((item) => item.type)).toEqual(["in", "out"]);
+  });
+
   it("lists each material once and every clip points at it", async () => {
     const scenario = byName("same-material");
     const { options } = await prepare(scenario);

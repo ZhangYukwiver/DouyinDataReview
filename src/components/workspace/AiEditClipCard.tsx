@@ -35,7 +35,7 @@ export const ClipCard = memo(function ClipCard({ width, projectNow }: { width: n
 const ICON_ONLY_BELOW = 270;
 
 function ClipBody({ projectNow, iconOnly }: { projectNow: () => EditProject | null; iconOnly: boolean }) {
-  const { selected, mediaById, canvas, project, notEditableReason, splitHint, split, removeSelected, runEdit, flushHeld, toast, selection, refer } = useBoard();
+  const { selected, mediaById, canvas, project, notEditableReason, splitHint, split, removeSelected, runEdit, runEdits, flushHeld, toast, selection, refer, callName, previewFeature } = useBoard();
   const item = useMemo(() => {
     const segment = selected?.segment;
     return segment && "path" in segment ? mediaById.get(mediaIdFromPath(segment.path) ?? "") : undefined;
@@ -57,7 +57,11 @@ function ClipBody({ projectNow, iconOnly }: { projectNow: () => EditProject | nu
     await flushHeld();
     const edit = fieldEditNow(projectNow(), segment.id, field.key, value, canvas);
     if (!edit) return false;
-    return runEdit(edit.name, edit.arguments);
+    if (!Array.isArray(edit)) return runEdit(edit.name, edit.arguments);
+    // 剪映效果的时长、强度：一批改动按字段起名，改完和刚套上时一样试播一遍
+    const ok = await runEdits(edit, `改${callName(segment)}的${field.name}`);
+    if (ok && field.preview) previewFeature(segment.id, field.preview);
+    return ok;
   };
   const saveText = async (text: string) => {
     await flushHeld();
@@ -207,12 +211,13 @@ type CommitField = (field: InspectField, value: number) => Promise<boolean>;
 const SHIFT = IS_MAC ? "⇧" : "Shift";
 const ALT = IS_MAC ? "⌥" : "Alt";
 const TIME_KEYS = new Set(["start", "duration", "source_start", "speed"]);
+const fieldGroup = (field: InspectField) => (TIME_KEYS.has(field.key) ? 0 : field.preview ? 2 : 1);
 
 function FieldList({ fields, version, blocked, onCommit, onRefuse }: {
   fields: readonly InspectField[]; version: number; blocked: string | null; onCommit: CommitField; onRefuse: (text: string) => void;
 }) {
   const common = { version, blocked, onCommit, onRefuse };
-  // 位置的 X、Y 并成一行；时间几项和画面几项之间空开一点
+  // 位置的 X、Y 并成一行；时间、画面、剪映效果几组之间空开一点
   const rows: InspectField[][] = [];
   for (const field of fields) {
     const last = rows.at(-1);
@@ -221,7 +226,7 @@ function FieldList({ fields, version, blocked, onCommit, onRefuse }: {
   }
   return <div style={fieldStyles.list}>
     {rows.map((row, index) => {
-      const gap = index > 0 && TIME_KEYS.has(rows[index - 1]![0]!.key) && !TIME_KEYS.has(row[0]!.key);
+      const gap = index > 0 && fieldGroup(rows[index - 1]![0]!) !== fieldGroup(row[0]!);
       return <div key={row[0]!.key} style={{ ...fieldStyles.row, ...(gap ? { marginTop: 6 } : null) }}>
         {row.length > 1
           ? <><span style={fieldStyles.label}>{row[0]!.label}</span>{row.map((field) => <MarkedField key={field.key} field={field} {...common} />)}</>

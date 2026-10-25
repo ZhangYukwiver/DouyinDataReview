@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { EditMediaSegment, EditProject, EditTextSegment, EditTrackEffectSegment } from "../../services/aiEdit";
+import type { AiEditEditCall, EditMediaSegment, EditProject, EditTextSegment, EditTrackEffectSegment } from "../../services/aiEdit";
 import { clipDetail } from "./aiEditModel";
 import {
   applyFieldInput, coveredRows, IN_FLIGHT_REASON, lastingReason, fieldEdit, fieldEditNow, fitsTrack, formatField, historyConfirmText, historyPanelPosition, historyStepText, inspectFields, keyedReason,
@@ -202,8 +202,38 @@ describe("改完换成哪个看板改动", () => {
     expect(fieldEdit(text("t", 0, S), "speed", 2, canvas)).toBeNull();
   });
 
+  it("套着的剪映效果：转场、动画时长和滤镜强度有框，改了是一批（动画全去掉再按原来的顺序加回来）", () => {
+    const fancy = video("f", 0, 4 * S, {
+      transition: { transition_type: "叠化", duration_us: 500_000 },
+      filters: [{ filter_type: "冷白", intensity: 80 }],
+      animations: [{ animation_type: "渐显", phase: "in", default_us: 500_000 }, { animation_type: "放大", phase: "out", duration_us: 800_000 }],
+    });
+    const fields = inspectFields(fancy, { canvas, siblings: [] });
+    expect(field(fields, "transition")).toMatchObject({ label: "转场时长", value: 0.5, max: 4, preview: "transition" });
+    expect(field(fields, "anim_in")).toMatchObject({ label: "入场时长", value: 0.5, preview: "video_intro" });
+    expect(field(fields, "anim_out")).toMatchObject({ label: "出场时长", value: 0.8, preview: "video_outro" });
+    expect(field(fields, "filter")).toMatchObject({ label: "滤镜强度", value: 80, min: 0, max: 100, preview: "filter" });
+    // 名字和去掉的 × 在说明行里，留着
+    expect(coveredRows(fields)).toEqual(new Set(["时间线上", "时长", "截取", "速度", "位置", "缩放", "旋转", "不透明度"]));
+
+    expect(fieldEdit(fancy, "transition", 1, canvas)).toEqual([{ name: "add_transition", arguments: { clip_id: "f", transition_type: "叠化", duration: 1 } }]);
+    expect(fieldEdit(fancy, "transition", 0.5, canvas)).toBeNull();
+    expect(fieldEdit(fancy, "filter", 50, canvas)).toEqual([
+      { name: "clear_clip_feature", arguments: { clip_id: "f", feature: "filters" } },
+      { name: "add_filter", arguments: { clip_id: "f", filter_type: "冷白", intensity: 50 } },
+    ]);
+    expect(fieldEdit(fancy, "anim_in", 1.2, canvas)).toEqual([
+      { name: "clear_clip_feature", arguments: { clip_id: "f", feature: "animations" } },
+      { name: "add_animation", arguments: { clip_id: "f", animation_type: "渐显", phase: "in", duration: 1.2 } },
+      { name: "add_animation", arguments: { clip_id: "f", animation_type: "放大", phase: "out", duration: 0.8 } },
+    ]);
+    // 没写时长的按目录默认算：打的正好是默认值、这段没有这种动画，都不发
+    expect(fieldEdit(fancy, "anim_in", 0.5, canvas)).toBeNull();
+    expect(fieldEdit(video("p", 0, S), "anim_in", 1, canvas)).toBeNull();
+  });
+
   it("位置大小发完整的 transform，换回半个画布为单位、往上为正", () => {
-    const edit = fieldEdit(clip, "y", 480, canvas);
+    const edit = fieldEdit(clip, "y", 480, canvas) as AiEditEditCall | null;
     expect(edit?.name).toBe("update_clip");
     expect(edit?.arguments.transform).toEqual({ scale_x: 1, scale_y: 1, transform_x: 0, transform_y: 0.5, rotation: 0, alpha: 1, flip_horizontal: false, flip_vertical: false });
     expect(fieldEdit(clip, "x", 0, canvas)).toBeNull();
@@ -223,7 +253,7 @@ describe("改完换成哪个看板改动", () => {
       canvas, tracks: [{ id: "v1", track_type: "video", name: "v1", mute: false, segments: [video("a", 0, 2 * S, { transform })] }],
     });
     // 详情卡渲染时这段还在原位；方向键挪过以后，改缩放带上的是挪过的位置
-    const edit = fieldEditNow(fresh(moved), "a", "scale", 150, canvas);
+    const edit = fieldEditNow(fresh(moved), "a", "scale", 150, canvas) as AiEditEditCall | null;
     expect(edit?.arguments.transform).toMatchObject({ transform_x: 0.1, transform_y: -0.05, scale_x: 1.5, scale_y: 1.5 });
     // 打的值正好是挪过以后的值：不发
     expect(fieldEditNow(fresh(moved), "a", "x", 54, canvas)).toBeNull();

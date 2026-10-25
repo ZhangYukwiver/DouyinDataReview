@@ -14,7 +14,7 @@ import { searchRecords } from "../../services/recordSearch";
 import { loadAnalysisConfig } from "../../services/videoAnalysis";
 import { answerAiEditCommand, SKILL_TOOLS } from "../../services/aiEditSkills";
 import { mediaIdFromPath, mediaThumbView, spokenDuration, US_PER_SECOND, visibleExportNote, type ExportNote } from "./aiEditModel";
-import { catalogEdit, catalogTargetName, clipCallName, regionCaption, regionHint } from "./aiEditBoardEdit";
+import { catalogEdits, catalogTargetName, clipCallName, regionCaption, regionHint } from "./aiEditBoardEdit";
 import { IN_FLIGHT_REASON } from "./aiEditInspect";
 import { useBoard, type BoardJump, type EditOutcome, type EditPerformer } from "./aiEditBoardContext";
 import {
@@ -1228,7 +1228,7 @@ function readCatalogFree(): boolean {
 // 剪映左上角转场、滤镜、特效那几栏：列出能写进剪映草稿的内置效果，带剪映缓存里的预览图（在剪映里打开过那一栏才有）。
 // 时间线上选中了一段、这种素材又放得下：点一下直接套上（看板改动，能撤销）；没选或放不了就把名字写进对话框交给 AI
 function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text: string) => void }) {
-  const { selected, runEdit, flushHeld, callName, toast, previewFeature } = useBoard();
+  const { selected, runEdits, flushHeld, callName, toast, previewFeature } = useBoard();
   const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
   const [kind, setKind] = useState<AiEditCatalogKind>("transition");
   const [query, setQuery] = useState("");
@@ -1247,17 +1247,20 @@ function CatalogShelf({ conn, onPick }: { conn: ExploreConnection; onPick: (text
   }, [conn, kind, query, free]);
   const label = CATALOG_KINDS.find((item) => item.value === kind)?.label ?? "";
   const target = selected?.segment ?? null;
-  const fits = Boolean(target && catalogEdit(kind, "", target));
+  const fits = Boolean(target && catalogEdits(kind, "", target));
   const hint = !target ? "在时间线上选中一段，点素材就直接加到那段上；没选的时候点了会写进对话框，交给 AI 去加。"
-    : fits ? `点一下就加到${callName(target)}上，加错了可以撤销。`
+    : fits ? `点一下就加到${callName(target)}上，同一种的会换掉原来的，加错了可以撤销。`
       : `${label}只能加在${catalogTargetName(kind)}上，选中的${callName(target)}放不了，点了会写进对话框。`;
   const pick = async (item: AiEditCatalogItem) => {
     const name = item.display ?? item.name;
-    const edit = target ? catalogEdit(kind, item.name, target) : null;
-    if (!target || !edit) { onPick(`${label}「${name}」`); return; }
-    await flushHeld();
-    if (!(await runEdit(edit.name, edit.arguments))) return;
-    toast(kind === "font" ? `${callName(target)}换上了字体「${name}」` : `给${callName(target)}加上了${label}「${name}」`);
+    const edits = target ? catalogEdits(kind, item.name, target) : null;
+    if (!target || !edits) { onPick(`${label}「${name}」`); return; }
+    const [verb, what] = kind === "font" ? ["换上", `字体「${name}」`] : ["加上", `${label}「${name}」`];
+    if (edits.length) {
+      await flushHeld();
+      if (!(await runEdits(edits, `给${callName(target)}${verb}${what}`))) return;
+    }
+    toast(edits.length ? `给${callName(target)}${verb}了${what}` : `${callName(target)}已经用着${what}了`);
     // 和剪映一样，加上就把这一段试播一遍，马上看得到效果（看板里是近似的样子）
     previewFeature(target.id, kind);
   };
