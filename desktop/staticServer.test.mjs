@@ -52,7 +52,7 @@ describe("desktop static server", () => {
     ["desktop", "/annual/2025", startStaticServer],
     ["source", "/", startSourceStaticServer],
     ["source", "/annual/2025", startSourceStaticServer],
-  ])("allows collector media, images and video blobs for %s at %s", async (_entry, pathname, startServer) => {
+  ])("allows collector media and video blobs, but no collector images or frames, for %s at %s", async (_entry, pathname, startServer) => {
     const runtime = await startServer({ rootDirectory: await fixture() });
     runtimes.push(runtime);
 
@@ -61,10 +61,9 @@ describe("desktop static server", () => {
     expect(directives.find(([name]) => name === "media-src")).toEqual([
       "media-src", "'self'", "https:", "blob:", "http://127.0.0.1:*", "http://localhost:*",
     ]);
-    // AI 剪辑素材库的图片和缩略图直接从采集器取（素材文件地址靠 key，不带 Bearer）
-    expect(directives.find(([name]) => name === "img-src")).toEqual([
-      "img-src", "'self'", "data:", "https:", "http://127.0.0.1:*", "http://localhost:*",
-    ]);
+    // 图片都是抖音的 https 地址或 data:；页面只嵌同源的内容年志
+    expect(directives.find(([name]) => name === "img-src")).toEqual(["img-src", "'self'", "data:", "https:"]);
+    expect(directives.find(([name]) => name === "frame-src")).toEqual(["frame-src", "'self'"]);
     // HLS 播放器以 XHR 读直播清单和分片；只放行抖音直播 CDN。
     expect(directives.find(([name]) => name === "connect-src")).toEqual([
       "connect-src", "'self'", "http://127.0.0.1:*", "http://localhost:*", "https://douyincdn.com", "https://*.douyincdn.com",

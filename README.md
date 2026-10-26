@@ -24,7 +24,7 @@
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/">国内下载（加速线路）</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/#demo">在线看示例报告</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
 
-**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它通过本人登录账号的会话读取抖音观看历史、喜欢、收藏和好友聊天记录，在本机保存为 JSON，并生成持续报告与抖音年度报告（Douyin Wrapped）。工作台还提供视频下载、实时聊天、内容搜索、创作者中心、热点榜和直播观看；可选 AI 视频解析与 AI 剪辑可使用你配置的大模型接口，或本机已登录的 Codex / Claude Code。
+**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它通过本人登录账号的会话读取抖音观看历史、喜欢、收藏和好友聊天记录，在本机保存为 JSON，并生成持续报告与抖音年度报告（Douyin Wrapped）。工作台还提供视频下载、实时聊天、内容搜索、创作者中心、热点榜和直播观看。AI 视频工作台已经拆成独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)，内容库和探索页里可以一键送过去。
 
 适合备份个人抖音记录、管理收藏内容、查看创作者数据，以及制作自己的年度回顾。项目面向抖音（Douyin，中国版），不支持国际版 TikTok；提供 Windows x64 和 macOS Apple Silicon 安装包。它是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。
 
@@ -32,10 +32,10 @@
 | --- | --- |
 | 如何导出数据 | 首屏扫码并确认读取权限，在「设置 → 数据」勾选导出 JSON；聊天默认不勾选，备份不含群聊正文 |
 | 是否能取回全部历史 | 只能读取本人账号当前可访问的接口记录；不保证完整历史，也不会补造报告中的缺失数据 |
-| 是否必须用 AI | 本地统计与年度报告不需要 AI；可选解析和剪辑通过自配接口或本机 CLI 访问 AI 服务，使用自己的订阅或服务商计费 |
+| 是否必须用 AI | 不需要。本地统计与年度报告都在本机计算；AI 解析和剪辑已拆到独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab) |
 | 是否能离线导入 | 支持本应用备份与抖音官方 JSON / ZIP 档案；官方档案导入关闭后需重新选择文件 |
 
-[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)提供完整步骤、数据覆盖范围和 AI 数据流；供检索工具读取的[项目事实与文档索引](llms.txt)与下载页问答同步维护。
+[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)提供完整步骤和数据覆盖范围；供检索工具读取的[项目事实与文档索引](llms.txt)与下载页问答同步维护。
 
 **阅读导航：** [主要功能](#主要功能) · [实现方式](#实现方式) · [快速开始](#快速开始) · [本地数据与接口](#本地数据与接口) · [常见问题](#常见问题) · [面向开发者](#面向开发者)
 
@@ -52,12 +52,12 @@
 | 实时聊天与续火花 | 接收新消息，回复好友与群聊，查看官方火花天数；给勾选对象一键发送续火花消息 | 续火花一次最多发 10 位；发送由用户主动触发；发送成功不代表火花天数增加，以抖音官方状态为准 |
 | 创作者中心 | 查看本人账号的数据总览、作品数据、粉丝数据与画像，以及作品流量、观众和评论分析 | 读取抖音创作者中心接口，按当前账号权限返回数据；只读 |
 | 内容探索与抖音指数 | 搜索用户和作品，点赞、收藏、关注、评论；下载用户主页作品；查看实时热点、飙升热点，以及达人指标、逐日趋势、近 30 天作品和粉丝画像 | 复用当前账号会话；点赞、收藏、关注、评论要先在「设置 → 隐私」打开「允许在抖音上操作」；达人指标与画像来自官方接口，显示范围受接口权限影响 |
-| AI 视频工作台 · 解析（可选） | 拆解视频选题、开头钩子、内容结构、画面声音和可复用拍法，并说明每段画面为什么这样拍（场景、人物站位、对话、动作的用意）；解析结果保存到可搜索的解析库 | 和 AI 剪辑同属可选的「AI 视频工作台」，安装时或在设置中安装、移除；自备 OpenAI 兼容接口、模型和 API Key（和 AI 剪辑设置「服务商」里的「解析视频」是同一份，没单独填时直接用 AI 剪辑的剪辑模型）；支持视频输入时发送选中视频，否则发送本机提取的镜头截图和音乐节拍，此时听不到台词；也可以直接用这台电脑上登录好的 Codex 或 Claude Code（走自己的订阅，看不了视频，改看应用拆出的截图和节拍） |
-| AI 视频工作台 · 剪辑（可选） | 页面照剪辑软件排：左边和 AI 对话、翻素材，中间是播放器，右边是属性面板，底下是整条时间线，AI 剪的每一步都实时出现在上面；AI 按你的要求剪切拼接、配字幕和文字（视频里有人说话的，AI 能听一遍把台词转写成字幕；要用接口模式下能看视频、听得到声音的模型，比如方舟 doubao-seed-2-1-lite，本机 Codex、Claude Code 和只看画面的模型转写不了），加特效、滤镜、转场、动画、关键帧和背景音乐，做好后一键导入剪映草稿箱继续精修。左栏「剪映素材」能翻剪映内置的转场、滤镜、特效、动画和字体，选中片段点一下就加上，并马上把那一段试播一遍；看板按名字近似画出转场、动画、滤镜和一部分特效，让人看得出加上了、大概什么样，导入剪映后是剪映原本的效果。素材里没有的画面，AI 还能现做：图片用 OpenAI 兼容的图片接口生成，视频片段可以用火山方舟 Seedance、即梦、小云雀或 LibTV 生成，做好直接进素材库；生成视频前会先在页面上问你，你点了「生成」才开始，开始以后就停不下来了：点了停止或等太久，视频也会在后台做完放进素材库、照常扣费（应用要开着）。时间线和画面上也能自己动手：拖动、裁剪、切开、复制、跨轨道挪片段，在画面上直接挪位置、缩放、旋转、改字；时间线工具栏配了分割刀、标记、主轨磁吸（主轨上删、挪、裁时后面的自动跟上）、吸附、联动（字幕、画中画跟着主轨片段走）、预览轴（鼠标划过时间线，画面跟着看）和字幕显示开关，也能直接往字幕里补一句；每一步都能撤销重做，也能退回到某句话之前；在画面上框一块，让 AI 只改框里的东西；片段、某一刻和素材可以直接引用到对话，截图能贴进对话给看得了图的模型看，AI 回复里提到的片段和时间点一点就跳过去；再次导入前会检查剪映里那份草稿有没有被打开或改过，由你选另存一份还是覆盖。剪映内置做不出的画面（标题字卡、动态大字、数据图表、倒计时），AI 可以写成网页片段，看板上实时预览，导入剪映时自动渲成视频（带透明的叠在画面上）；不经剪映也能直接导出 MP4，或者导出、导入网页工程（film.html 打成的 zip）。还能装技能（带 SKILL.md 的技能包，填 GitHub 地址或选本机文件夹）：AI 照技能里的说明读写技能文件、在这台电脑上跑命令，把做出来的音频、图片、视频放进素材库；每条命令先在页面上问你，点了「运行」才跑，也可以给某个技能勾上以后不用问 | 自备支持工具调用的 OpenAI 兼容接口（默认火山方舟），或者用这台电脑上登录好的 Codex、Claude Code，和视频解析分开配置；素材来自内容库或本机文件；生成图片和视频都要在 AI 剪辑设置的「服务商」里连上：图片填 OpenAI 兼容图片接口的 Key；视频连方舟（填 Key 或勾选借用已经填的方舟 Key，Seedance 要先在方舟控制台开通）、即梦、小云雀或 LibTV（这三家都用这台电脑上登录好的官方命令行：dreamina、pippit-tool-cli、libtv，不填 Key），再在「生成素材」里选用哪家；图片接口和方舟地址能换成中转站，都按服务商计费；导入前需退出剪映，macOS 版剪映 11.6 已实测 |
 | 直播观看与弹幕 | 查看正在直播的关注列表，在应用内观看直播；调整弹幕透明度、字号、速度、区域和屏蔽词 | 只观看和接收，不发弹幕、不送礼物、不点赞 |
 | 持续报告与抖音年度报告 | 比较最近 30 天与上一时段，样本不足时回退到 90 天；年度回顾提供内容年志、档案馆、海报，可导出独立 HTML 和 1080 × 1440 PNG 分享图 | 基于本机已保存的记录生成；展示数据覆盖情况，不补造缺失记录 |
 
-界面默认使用白底细线的极简风格。「设置」集中管理界面风格、自动补读、隐私模式、账号、数据导出与清除、可选功能和应用更新。
+AI 视频工作台已经拆成独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)，内容库/探索页里可以一键送过去：点视频上的「送去」按钮，视频下好后直接进拆片工坊的素材库（需要桌面版，图文作品送不了）。
+
+界面默认使用白底细线的极简风格。「设置」集中管理界面风格、自动补读、隐私模式、账号、数据导出与清除和应用更新。
 
 ## 实现方式
 
@@ -83,17 +83,11 @@ DouyinDataReview 由 **React / React Native / Expo 工作台、Node.js 本地采
 | 聊天与直播 | HTTP 获取历史与房间信息；`ws` 接收 WebSocket 推送，解析二进制协议；直播弹幕仅在内存保留最近 300 条 | [聊天客户端](collector/directChat.mjs)、[直播客户端](collector/directLive.mjs)、[协议解析](collector/directProto.mjs) |
 | 创作者与达人数据 | 通过当前账号会话读取创作者中心和抖音指数接口，整理指标与图表 | [创作者中心](collector/creatorCenter.mjs)、[抖音指数服务](src/services/douyinIndex.ts) |
 | 视频播放与下载 | HTTP 获取作品详情和媒体地址，由本地接口提供播放与下载；批量视频通过 `fflate` 打包 ZIP | [媒体下载](collector/videoDownloader.mjs)、[批量打包](src/services/batchVideoDownload.ts) |
-| AI 视频解析 | 读取选中视频，以视频、公开作品资料和提示词请求用户配置的 OpenAI 兼容接口，结果存入本地 `analyses.json` | [解析服务](collector/videoAnalysis.mjs)、[前端调用](src/services/videoAnalysis.ts) |
-| AI 剪辑 | 采集器带着工具定义请求用户配置的 OpenAI 兼容接口，按模型的工具调用编辑时间线；选本机 Codex / Claude Code 时，采集器起一个不落盘、关掉自带命令行和文件工具的 CLI 进程，剪辑工具经一个只在本机、每轮随机密钥的 MCP 端点交给它；工程编辑、剪映草稿生成和草稿箱写入移植自 [JianYingAPI](https://github.com/ZhangYukwiver/JianYingAPI) 与 pyJianYingDraft（Apache-2.0），用 Node 实现，不需要 Python 和 ffprobe。网页片段、film.html 的读写和播放用的是一个第三方开源项目（MIT，许可证见 `collector/licenses/`）的 film-doc、timeline 和宿主约定；逐帧渲染在 macOS 桌面版里用应用自己的离屏窗口，Windows 桌面版和单独跑采集器时用本机 Edge / Chrome 的无头模式（Windows 上的离屏窗口画 canvas 会随机截到空白帧），编码和混音用浏览器自带的 WebCodecs，装进 MP4 / MOV 也是自己写的，不带 ffmpeg。生成图片走 OpenAI 兼容的图片接口，生成视频走选用的那家（方舟 Seedance 的接口，或本机的即梦、小云雀、LibTV 命令行）的异步任务（先建任务，再等它做完），结果都下载进素材库 | [剪辑服务](collector/aiEdit/)、[网页片段与 film.html](collector/aiEdit/film/)、[剪辑页面](src/components/workspace/AiEditWorkspace.tsx)、[剪辑看板](src/components/workspace/AiEditBoard.tsx) |
 | 报告与档案导入 | TypeScript 计算年度与持续报告，标注日期来源和覆盖率；解析本应用备份及官方 JSON / ZIP；年度页面导出 HTML 与 PNG | [年度统计](src/domain/annualReport.ts)、[持续报告](src/domain/livingReport.ts)、[档案解析](src/domain/personalArchiveParser.ts)、[汇总快照](src/services/storyData.ts)、[报告导出](prototype/story-export.js) |
 
 ### 数据来源与功能边界
 
 个人记录来自本人账号可访问的抖音接口，或本人导入的官方档案；创作者指标、达人指标和火花状态来自对应平台接口。报告只能反映已采集的数据：缺失日期、缺失字段和样本不足会影响统计，应用不会把采集时间当成真实观看时间。
-
-AI 剪辑对话时，你的消息、素材清单（名称、时长、尺寸，从内容库添加的还带作者）和当前时间线会发送到 AI 剪辑配置的接口；你在看板上手动做的改动、撤销和退回，以及在画面上框选的范围和框里的片段、你引用的片段、时刻和素材，会附在你的下一句话前面一起发送；素材文件本身不上传，例外是贴进对话的图片（发一份长边不超过 1024 的压缩预览，只带最近两条贴图消息里的，模型看不了图时只发图片名）、让 AI 解析参考视频、让 AI 转写字幕和让 AI 生成图片、视频（都见下）。对话太长时，较早几轮的工具细节会压缩或省略，被省略的那几轮里你说过的话（每条前 200 字，合计不超过 3000 字）仍会附上一起发送。AI 在内容库里找视频时，会把匹配到的作品标题、作者、话题、时长和链接，连同你点赞、收藏或观看它的日期、它在哪个列表里，一起发给该接口；不带关键词找时，发的是最近的最多 30 条。这些结果会留在这次剪辑的对话记录里，后面几轮对话也会再发送。让 AI 参考抖音上的同款时，搜索词会用你的抖音登录发给抖音，搜到的作品标题、作者、点赞数、时长和链接发给 AI 剪辑的接口；解析参考视频时，视频文件（抖音链接下最低一档清晰度，素材库里的视频直接用原文件）发到「解析视频」的接口（和 AI 解析是同一份设置，没单独设置时就是 AI 剪辑配置的接口）；让 AI 把时间线上视频里的台词转写成字幕时，那条素材的视频文件同样发到这个接口（超过 45MB 的先在本机压一份小的）；保存接口设置时会先发一段 3 秒的测试小视频，看这个模型能不能直接看视频。看不了的话，改由开着的应用页面在本机浏览器里把视频拆成镜头截图、镜头表和音乐节拍，只把这些发给该接口；让 AI 测配乐节拍时，同样只在本机浏览器里解码，不上传。参考视频的解析结果不进解析库。装了技能时，启用的技能的名字和说明、AI 读到的技能文件内容和技能命令的输出也会发到 AI 剪辑配置的接口；技能命令在这台电脑上运行，联不联网、往哪里发由技能自己决定，所以每条命令都先问你。让 AI 生成图片或视频时，AI 写的画面说明和拿来当参考的素材图片会发给你在 AI 剪辑设置里开启的生成服务：图片发到你配置的图片接口（默认 OpenAI），视频发到你在「生成素材」里选的那家（火山方舟 Seedance，或经这台电脑上登录好的命令行发给即梦、小云雀、LibTV），图片接口和方舟可以是中转站；视频做好后服务商给的是一个临时链接，应用拿到就立刻下载进素材库。生成服务的 Key 和其他 AI 设置一样存在这台设备的浏览器配置里，随请求交给本机采集器、只在请求里使用，采集器不写进剪辑记录。AI 写的网页片段只在本机渲染，网页里可以从 jsDelivr、cdnjs、unpkg、esm.sh 引脚本库，从 Google Fonts 引字体，渲染和预览时会请求这些地址；网页不能往别处发请求。
-
-AI 视频解析与本地报告是两个独立功能。解析时，选中视频、公开作品资料和提示词会发送到用户配置的 AI 服务；如果配置的模型看不了视频（保存设置时用一段 3 秒的测试小视频测出来），改由开着的应用页面在本机浏览器里把视频拆成镜头截图和音乐节拍，只发这些，这时听不到台词和旁白。抖音 Cookie 和整份个人记录不发送给该服务。AI 的拆解属于模型生成内容，需要结合原视频判断。
 
 ## 年度回顾
 
@@ -197,8 +191,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 - 记录与账号：`/v1/status`、`/v1/records*`、`/v1/accounts*`；支持按账号操作，切换冲突时返回 `409`。
 - 聊天与探索：`/v1/chat/*`、`/v1/explore/*`；聊天通过 HTTP 整理历史、WebSocket 实时接收，发消息和转发走 IM 接口，其他探索操作走 HTTP；发送由用户触发并校验回执，结果不明时不自动重发。
 - 创作者与直播：`/v1/creator/read`、`/v1/live/*`；按需通过 HTTP 查询，直播弹幕通过 WebSocket 接收，正在直播的关注列表缓存 30 秒；群聊、火花和直播数据不写入记录文件。
-- 视频与解析：`/v1/downloads*`、`/v1/analyses*`；下载和播放由用户触发。解析时最低清晰度视频及提示词会发送到你配置的解析用大模型接口，结果存入 `analyses.json`，API Key 不落盘；选本机 Codex / Claude Code 时，截图和提示词由本机 CLI 用你自己的订阅发给 OpenAI 或 Anthropic。播放地址使用独立密钥。
-- AI 剪辑：`/v1/ai-edit/*`；对话、剪辑工程和素材库保存在数据目录的 `ai-edit/` 下，不分账号；每轮 AI 开剪前和每次手动改动前的工程存档在 `ai-edit/checkpoints/` 下，每个剪辑最多留 50 份，删剪辑时一起删；贴进对话的图片预览在 `ai-edit/attachments/` 下，同样随剪辑删除；网页片段和导入的网页工程在 `ai-edit/pages/` 下，导出的 MP4 和工程包在 `ai-edit/renders/` 下。AI 生成的图片和视频跟其他素材一样存在 `ai-edit/media/` 下，生成视频要等你在页面上点「生成」，AI 自己批准不了。装的技能登记在 `ai-edit/skills.json`，从 GitHub 装的技能包解压在 `ai-edit/skills/` 下（本机文件夹原地登记、不复制，删技能时也不动它），各技能的工作目录在 `ai-edit/skill-work/` 下，删技能时保留；技能接口是 GET、POST `/v1/ai-edit/skills`（列出、安装）、PATCH、DELETE `/v1/ai-edit/skills/<id>`（开关、删除）和 POST `/v1/ai-edit/skills/jobs/<job_id>/stop`（停后台命令），技能的每条命令要你在页面上点「运行」（POST `/v1/ai-edit/sessions/<id>/command/<确认 id>`），AI 自己批准不了。采集器不把 API Key（包括生成图片、视频用的 Key）写进数据目录，素材文件地址使用独立密钥；导入剪映草稿箱前需要先退出剪映。`/v1/ai-edit/runtimes` 只检查本机 Codex / Claude Code 装没装、登没登录，不花额度。
+- 视频下载：`/v1/downloads*`；下载和播放由用户触发，播放地址使用独立密钥。桌面版的「送去拆片工坊」不走接口：主进程把下好的视频复制进拆片工坊的收件箱。
 - 浏览器凭据：`/v1/browser/sources`、`/v1/browser/connect`、`/v1/browser/confirm`、DELETE `/v1/browser/pending`、`/v1/browser/disconnect`；桌面版的来源列表第一项是 `app`（应用内扫码登录），`connect` 传 `{"browser":"app"}` 会在后台打开抖音网页（再加 `"fresh":true` 先清掉后台网页的登录状态，用来换号），等待期间 `/v1/browser/login-qrcode` 返回登录二维码（data URL）和码上的提示，POST `/v1/browser/login-window` 把后台网页窗口显示出来做验证，从源码单独跑采集器时没有这一项；仅本机可用，未登录时等待最多五分钟，取消请求会释放连接；登录后预览账号，本人确认才导出凭据并自动断开，成功后新账号启动一次完整读取、已有账号只读新增；待确认连接两分钟后释放，断开连接保留有效凭据及接口任务。
 
 代码请求复用当前账号导入的登录会话。导入时一次性导出 Cookie、请求参数、签名密钥和设备凭据，之后记录、聊天、互动、创作者中心和直播都走 HTTP 或 WebSocket。直播弹幕只在内存保留最近 300 条。重启恢复缓存后先核对平台返回的账号，不仅凭短期令牌过期判断登录失效；凭据缺失或不完整、平台拒绝登录、账号不一致或要求验证时，提示本人在登录窗口或所选浏览器中完成登录或验证并重新导入，不启动后台浏览器。
@@ -242,7 +235,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 
 ### 收费吗？数据会传到哪里？
 
-应用免费，源码以 MIT 许可开源；可选 AI 接口由你自行配置，服务商可能收费。个人记录保存和报告统计在本机完成，在线采集会请求抖音。可选的「AI 视频工作台」里，AI 解析会把选中视频、公开资料和提示词发给解析接口；模型不支持视频或选用本机 CLI 时，改发本机提取的镜头截图和音乐节拍等输入。AI 剪辑会发送对话、素材清单、时间线和工具检索到的记录摘要，解析参考视频时还可能发送视频或截图。生成图片、视频要你在 AI 剪辑设置里连上服务商（填 Key，方舟也可以勾选借用已经填的 Key，即梦、小云雀、LibTV 用本机命令行），之后 AI 生成时，画面说明和当参考的素材图片会发给你配置的图片接口（默认 OpenAI）和你选的视频服务（火山方舟 Seedance、即梦、小云雀或 LibTV，方舟也可以是中转站），按服务商计费，每次生成视频前都会先问你。接口模式保存 AI 设置会发送 3 秒测试小视频检查模型能力。抖音 Cookie 和整份个人记录不作为 AI 输入发送。API Key 保存在当前设备的浏览器配置里，采集器只在请求中使用。选本机 Codex 或 Claude Code 时，内容由这台电脑上的 CLI 用你自己的订阅发出，应用以不留 CLI 会话记录的方式调用它，也不加载你给 CLI 配的规则文件、插件和 MCP；应用内剪辑对话仍保存在本机。完整说明见[数据来源与功能边界](#数据来源与功能边界)及[隐私与 AI 指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html#privacy)。
+应用免费，源码以 MIT 许可开源。个人记录保存和报告统计在本机完成，在线采集只请求抖音，应用本身不连任何 AI 服务。AI 解析和剪辑已拆到独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)：只有你点「送去」按钮送过去的那条视频（文件和标题、作者、链接、时长）会交给它，之后怎么用、发到哪里由拆片工坊自己说明。完整说明见[数据来源与功能边界](#数据来源与功能边界)。
 
 ### 会被封号吗？
 
@@ -388,8 +381,8 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 - Search saved content, play videos, download individual videos or image posts, and batch-download videos as ZIP files.
 - Search Douyin users and posts, interact on request (likes, favorites, follows and comments stay off until you turn on "允许在抖音上操作" in Settings → Privacy), and view hot lists, Creator Center stats and Douyin Index metrics through the current account's access.
 - Watch live streams with configurable live comments; live comments are received only.
-- Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports. Optional AI video analysis uses an OpenAI-compatible endpoint you configure, or the Codex CLI / Claude Code already signed in on your computer; models without video input use locally extracted frames and beat information.
-- Optional AI editing uses a separately configured endpoint or a local Codex CLI / Claude Code to edit a local timeline and export a Jianying draft; provider charges may apply.
+- Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports.
+- The AI video workbench now lives in a separate app, [ReelLab](https://github.com/ZhangYukwiver/ReelLab); on the desktop app, the "送去" (send) button on a video in the library or the explore page sends it over in one click.
 
 ### How it works
 
@@ -402,7 +395,7 @@ Collection is limited to records currently returned by Douyin's private APIs and
 - **Is there a Douyin Wrapped?** DouyinDataReview builds a Wrapped-style year-in-review from your own records on your computer, any time you want; you can [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) in the browser without installing anything.
 - **How do I export my Douyin watch history?** Connect the collector and import credentials in Settings → Account with video reading selected. After the full read finishes, click 导出数据 (Export data) in Settings → Data. Select watch history, likes, favorites and/or chats. Only selected data is saved to JSON; chats are unchecked by default. Exported files can be imported again.
 - **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from Douyin's 个人信息下载 (personal data download) to generate a report without signing in.
-- **Is it free and private?** The app is free and MIT-licensed; optional AI providers may charge for requests. Records are stored and reports computed locally. AI analysis sends the selected video, public metadata and a prompt, or locally extracted frames and beat information if the model cannot accept video or you use a local CLI. AI editing sends the conversation, media list, timeline and summaries retrieved by its tools, and may send reference videos or frames for analysis. Image and video generation stay off until you turn them on in the AI editing settings: enter an image key, and for video connect Seedance on Volcano Engine Ark (a key, or reuse the Ark key you already set), Jimeng, Xiaoyunque or LibTV (through its command-line tool signed in on this computer), then pick one. The AI's description of the shot and any library images it uses as references then go to the image endpoint (OpenAI by default, or a relay) or the video service you picked, which bills you directly; the app asks you before generating each video. Saving AI settings in API mode sends a short test video. Douyin cookies and complete personal records are not sent as AI inputs. API keys stay in this device's browser configuration and are used by the collector only for requests. With a local Codex CLI or Claude Code, the CLI sends the content using your own subscription; the app runs it without saving a CLI session and without loading your CLI rules, plugins or MCP servers. Editing conversations remain stored in the app. See the [AI data flow](https://zhangyukwiver.github.io/DouyinDataReview/guide.html#privacy).
+- **Is it free and private?** The app is free and MIT-licensed. Records are stored and reports computed locally, collection only talks to Douyin, and the app itself calls no AI service. AI analysis and editing moved to the separate [ReelLab](https://github.com/ZhangYukwiver/ReelLab) app: only a video you send with the "送去" (send) button (the file plus its title, author, link and duration) is handed to it, and ReelLab documents what happens next.
 
 ## 交流与反馈
 

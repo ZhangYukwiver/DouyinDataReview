@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- geo:meta:start -->
 <title>如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南</title>
-<meta name="description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。">
+<meta name="description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://zhangyukwiver.github.io/DouyinDataReview/guide.html">
 <link rel="alternate" type="text/plain" href="https://zhangyukwiver.github.io/DouyinDataReview/llms.txt" title="项目事实与文档索引">
@@ -13,13 +13,13 @@
 <meta property="og:locale" content="zh_CN">
 <meta property="og:site_name" content="DouyinDataReview">
 <meta property="og:title" content="如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南">
-<meta property="og:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。">
+<meta property="og:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。">
 <meta property="og:url" content="https://zhangyukwiver.github.io/DouyinDataReview/guide.html">
 <meta property="og:image" content="https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg">
 <meta property="og:image:alt" content="DouyinDataReview 持续报告界面，使用合成示例数据">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南">
-<meta name="twitter:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。">
+<meta name="twitter:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。">
 <meta name="twitter:image" content="https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg">
 <script type="application/ld+json">
 {
@@ -36,9 +36,9 @@
         "name": "ZhangYukwiver",
         "url": "https://github.com/ZhangYukwiver"
       },
-      "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及可选 AI 视频解析和剪辑会发送哪些信息。",
+      "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-10-24",
+      "dateModified": "2026-10-26",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -101,8 +101,8 @@ html{scroll-padding-top:24px}
 <a href="./">DouyinDataReview 下载与项目介绍</a>
 <h1>抖音数据导出与年度报告使用指南</h1>
 <p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏和好友聊天记录保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
-<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-10-23">2026 年 10 月 23 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
-<nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#coverage">数据范围</a><a href="#privacy">隐私与 AI</a><a href="#sources">源码依据</a></nav>
+<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-10-26">2026 年 10 月 26 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
+<nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#coverage">数据范围</a><a href="#privacy">数据去向</a><a href="#sources">源码依据</a></nav>
 
 <h2 id="export">如何导出抖音观看历史和聊天记录？</h2>
 <p>先在桌面版首屏扫码并导入本人登录凭据，读取所需记录，再到「设置 → 数据」选择导出内容。输出为 JSON；导出只使用已保存的数据，不会额外向抖音读取。</p>
@@ -145,33 +145,28 @@ html{scroll-padding-top:24px}
 </div>
 <p>采集依赖抖音未公开承诺的私有接口，可能失效或触发账号风控。本项目与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。仅用于本人账号和个人数据管理；不能承诺账号不会受到平台限制。</p>
 
-<h2 id="privacy">数据会传到哪里？AI 视频解析和剪辑有什么区别？</h2>
-<p><strong>个人记录保存和年度报告计算在本机完成，均不依赖 AI 接口。</strong>在线采集和互动需要请求抖音。可选的「AI 视频工作台」支持自行配置接口，或使用这台电脑上已安装并登录的 Codex CLI / Claude Code；解析与剪辑分别配置，使用自己的订阅或服务商计费。本机 CLI 仍会联网把输入发送到相应 AI 服务，使用本机提取的截图与音乐节拍处理视频。</p>
-<div class="table-wrap" role="region" aria-label="AI 数据流表，可横向滚动" tabindex="0">
+<h2 id="privacy">数据会传到哪里？</h2>
+<p><strong>个人记录保存和年度报告计算在本机完成，应用本身不调用任何 AI 服务。</strong>在线采集和互动需要请求抖音。AI 视频解析与剪辑已经拆成独立应用<a href="https://github.com/ZhangYukwiver/ReelLab">拆片工坊（ReelLab）</a>，在桌面版的内容库或探索页点视频上的「送去」按钮，就把那条视频交给它。</p>
+<div class="table-wrap" role="region" aria-label="数据流表，可横向滚动" tabindex="0">
 <table>
   <caption>使用不同功能时发送的数据</caption>
   <thead><tr><th scope="col">功能</th><th scope="col">目的地与输入</th><th scope="col">补充说明</th></tr></thead>
   <tbody>
     <tr><th scope="row">采集与互动</th><td>向抖音请求本人可访问的记录；主动发送的消息、点赞、评论等提交至抖音</td><td>使用已导入的账号会话；未开启的读取类型不能继续联网读取</td></tr>
-    <tr><th scope="row">本地报告</th><td>不需要发送原始记录到 AI 服务；统计在电脑完成</td><td>记录和汇总保存在当前设备；公开分享报告会暴露其中显示的内容</td></tr>
-    <tr><th scope="row">AI 视频解析</th><td>通过接口向 AI 服务发送选中视频、公开作品资料、提示词；模型不支持视频或选用本机 CLI 时，改发本机提取的镜头截图和音乐节拍等输入</td><td>截图模式听不到台词或旁白；解析结果属于模型生成内容</td></tr>
-    <tr><th scope="row">AI 剪辑对话</th><td>向所选 AI 服务发送对话、素材清单、当前时间线；检索本地内容库时还发送匹配作品的标题、作者、话题、时长、链接、观看／点赞／收藏日期及来源列表</td><td>普通剪辑不上传素材文件本身；检索摘要会进入对话，后续轮次也可能再次发送</td></tr>
-    <tr><th scope="row">剪辑参考视频、转写字幕</th><td>接口支持视频输入时发送该视频（转写字幕只发整段视频，模型看不了视频或选用本机 CLI 时不转写）；模型不支持视频或选用本机 CLI 时，发送本机提取的镜头截图、镜头表、音乐节拍等输入</td><td>让 AI 搜抖音同款时，搜索词发往抖音，搜索结果的公开资料发送给所选 AI 服务</td></tr>
-    <tr><th scope="row">AI 生成图片／视频</th><td>需在 AI 剪辑设置的「服务商」里连上：图片填 OpenAI 兼容图片接口的 Key；视频连火山方舟 Seedance（填 Key 或勾选借用已填的方舟 Key）、即梦、小云雀或 LibTV（这三家用本机登录好的官方命令行，不填 Key），再选用哪家。开启后向图片接口（默认 OpenAI）和选用的视频服务发送 AI 写的画面说明和选作参考的素材图片，图片接口和方舟可以是中转站</td><td>按服务商计费；每次生成视频前需在页面上点「生成」确认，已经开始生成的视频点停止也停不下来，会在后台做完并照常扣费（应用需开着）；视频结果是服务商给的临时链接，应用随即下载进本机素材库</td></tr>
-    <tr><th scope="row">保存 AI 设置</th><td>接口模式向所配置接口发送一段 3 秒测试小视频，检查模型是否支持视频输入</td><td>本机 CLI 使用文字和图片，无需视频能力测试；解析与剪辑的配置可以不同</td></tr>
-    <tr><th scope="row">本机 CLI</th><td>由本机 Codex / Claude Code 使用你的订阅及网络配置，将文字、图片和工具返回的内容发送到对应 AI 服务</td><td>应用以不保存 CLI 会话的方式调用，不加载用户配置的规则、插件或 MCP；应用内剪辑对话仍保存在本机</td></tr>
+    <tr><th scope="row">本地报告</th><td>不需要发送原始记录到任何服务；统计在电脑完成</td><td>记录和汇总保存在当前设备；公开分享报告会暴露其中显示的内容</td></tr>
+    <tr><th scope="row">送去拆片工坊</th><td>先从抖音下载这条视频，再把视频文件和它的标题、作者、链接、时长复制进本机拆片工坊的收件箱</td><td>只在你点了之后发生，不经网络；图文作品送不了；拆片工坊怎么用这条视频由它自己说明</td></tr>
   </tbody>
 </table>
 </div>
-<p>抖音 Cookie 和整份个人记录不作为 AI 输入发送。AI 接口 Key（含生成图片、视频用的 Key）保存在当前设备的浏览器配置中，采集器仅在请求中使用，不将 Key 写入采集器记录文件。AI 剪辑的对话、工程和素材库（含 AI 生成的图片和视频）保存在本机，当前不按抖音账号隔离。登录凭据和个人备份都应由本人保管。</p>
+<p>抖音 Cookie 和整份个人记录不会交给拆片工坊或其他 AI 服务。登录凭据和个人备份都应由本人保管。</p>
 
 <h2 id="sources">这些说明依据哪些源码？</h2>
-<p>本指南依据公开仓库的实现整理。文档描述当前行为，接口可用性仍由抖音和你选择的 AI 服务决定；具体版本变更见 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases">Releases</a>。</p>
+<p>本指南依据公开仓库的实现整理。文档描述当前行为，接口可用性仍由抖音决定；具体版本变更见 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases">Releases</a>。</p>
 <ul>
   <li>导出勾选项与文件结构：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/services/exportData.ts">exportData.ts</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/components/workspace/DataExportDialog.tsx">DataExportDialog.tsx</a>。</li>
   <li>登录与记录采集：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/browserConnection.mjs">browserConnection.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/directHistory.mjs">directHistory.mjs</a>。</li>
   <li>官方档案与年度统计：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/domain/personalArchiveParser.ts">personalArchiveParser.ts</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/domain/annualReport.ts">annualReport.ts</a>。</li>
-  <li>AI 输入与本机配置：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/videoAnalysis.mjs">videoAnalysis.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/aiEdit/tools.mjs">aiEdit/tools.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/localAi.mjs">localAi.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/services/aiEdit.ts">services/aiEdit.ts</a>。</li>
+  <li>送去拆片工坊：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/desktop/reelLab.mjs">desktop/reelLab.mjs</a>。</li>
 </ul>
 <footer>
   <a href="./">下载与常见问题</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview">GitHub 源码</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/issues">反馈问题</a> · <a href="llms.txt">项目事实索引</a> · <a href="sitemap.xml">网站地图</a>

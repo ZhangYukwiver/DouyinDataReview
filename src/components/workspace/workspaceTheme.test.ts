@@ -5,7 +5,6 @@ vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 import { alpha, palettes, themeCss, webPalettes, workspaceColors, workspaceRadii } from "./workspaceTheme";
 import { archiveCss } from "./archiveCss";
 import { HEAVY_WEIGHT_HASHES, minimalCss } from "./minimalCss";
-import { WEIGHT_HASHES, aiCss } from "./aiCss";
 import { posterCss } from "./posterCss";
 import { traceCss } from "./traceCss";
 import { fx, ws } from "./motion";
@@ -185,8 +184,7 @@ describe("workspace theme", () => {
 
   it("ships the trace layout layer last, scoped so archive and poster never match it", () => {
     const css = themeCss();
-    // 风格版式层里年志排最后，只有 AI 两页的质感层（aiCss）在它后面
-    expect(css.endsWith(`${traceCss}\n${aiCss}`)).toBe(true);
+    expect(css.endsWith(traceCss)).toBe(true);
     expect(css.indexOf(traceCss)).toBeGreaterThan(css.indexOf(posterCss));
     const selectors = [...traceCss.matchAll(/([^{};]+)\{[^{}]*\}/gu)].map((match) => match[1]!.trim());
     expect(selectors.length).toBeGreaterThan(100);
@@ -222,25 +220,5 @@ describe("workspace theme", () => {
 
   it("keeps alpha colours in the form RN-web forwards untouched", () => {
     expect(alpha(workspaceColors.accent, 0.13)).toBe("var(--ws-unset, color-mix(in srgb, var(--ws-accent) 13%, transparent))");
-  });
-});
-
-describe("aiCss", () => {
-  it("暗色风格收字重用的原子类哈希和 RN-web 现算的一致，开发版和打包版类名都写上", () => {
-    for (const weight of ["700", "600", "500"] as const) {
-      const className = String(atomic({ fontWeight: weight })[0].fontWeight);
-      const hash = className.slice(className.lastIndexOf("-") + 1);
-      expect(WEIGHT_HASHES[weight]).toBe(hash);
-      expect(aiCss).toContain(`.r-${hash}`);
-      expect(aiCss).toContain(`.r-fontWeight-${hash}`);
-    }
-  });
-
-  it("只管 AI 剪辑和 AI 解析两页，拼在主题最后", () => {
-    for (const block of aiCss.split("\n").filter((line) => line.includes("{") && !line.startsWith("@keyframes") && !line.startsWith("@media"))) {
-      const selectors = block.slice(0, block.indexOf("{")).split(",");
-      for (const selector of selectors) expect(selector).toMatch(/\[data-testid="(?:ai-edit|analysis)-workspace"\]/u);
-    }
-    expect(themeCss().endsWith(aiCss)).toBe(true);
   });
 });

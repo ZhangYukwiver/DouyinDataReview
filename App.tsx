@@ -82,6 +82,7 @@ import {
   importPersonalArchive,
 } from "./src/services/importPersonalArchive";
 import {
+  canSendToReelLab,
   checkDesktopUpdates,
   downloadDesktopUpdate,
   getDesktopCollectorConfig,
@@ -90,26 +91,23 @@ import {
   isDesktopApp,
   isDesktopWindowHidden,
   notifyDesktopBackgroundSyncBlocked,
+  REELLAB_DOWNLOAD_URL,
+  sendDesktopToReelLab,
   subscribeDesktopBackgroundSync,
   subscribeDesktopUpdateState,
-  takeDesktopAnalysisChoice,
   trackDesktopWindowVisibility,
   type DesktopUpdateState,
 } from "./src/desktopRuntime";
 import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAiVideoInstalled, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAiVideoInstalled, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
-import { usePendingLooks } from "./src/components/workspace/aiEditLook";
 import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
 import { buildDataExport, type DataExportSelection } from "./src/services/exportData";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
-import { AnalysisWorkspace } from "./src/components/workspace/AnalysisWorkspace";
-import { AiEditWorkspace } from "./src/components/workspace/AiEditWorkspace";
-import { analysisInUse, startAnalysis } from "./src/services/videoAnalysis";
 // @ts-expect-error react-native-web 没给内部模块出类型
 import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
 
@@ -266,11 +264,6 @@ function AppContent() {
   const [collectorBusy, setCollectorBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
-  // AI 视频工作台（AI 剪辑 + AI 解析）是可选功能：没装时侧栏和卡片上都不出现入口
-  const [aiVideoInstalled, setAiVideoInstalled] = useState(() => Platform.OS === "web" && loadAiVideoInstalled());
-  // 模型看不了视频时，AI 剪辑和 AI 解析要页面在浏览器里拆视频：应用开着就接，不管当前在哪个页面。
-  // AI 剪辑的活儿不看装没装：剪到一半移除了工作台，那一轮在采集器上还在跑，要的截图照样有人接
-  usePendingLooks(Platform.OS === "web" ? collectorUrl : null, collectorToken, aiVideoInstalled);
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   // 首屏正在扫码登录或导入凭据（桌面版）：同样挡住读取和换号，但界面上不写成「正在切换账号」
@@ -281,6 +274,8 @@ function AppContent() {
   const sparkRenewing = useSyncExternalStore(sparkRenewJob.subscribe, sparkRenewJob.snapshot)?.running === true;
   const [collectorError, setCollectorError] = useState<string | null>(null);
   const [downloadStates, setDownloadStates] = useState<Record<string, RecordDownloadState>>({});
+  // 「送去拆片工坊」的进度，和下载一样按记录 id 记；同时在送的任务也记在 downloadInFlightRef 里（键带 reellab: 前缀）
+  const [sendStates, setSendStates] = useState<Record<string, RecordDownloadState>>({});
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
   const [batchDownloadActive, setBatchDownloadActive] = useState(false);
   const [appStyle, setAppStyle] = useState<AppStyle>(() => (Platform.OS === "web" ? loadAppStyle() : "archive"));
@@ -558,13 +553,6 @@ function AppContent() {
     return () => subscription.remove();
   }, []);
 
-  useEffect(() => {
-    void takeDesktopAnalysisChoice().then((choice) => {
-      if (choice === null) return;
-      saveAiVideoInstalled(choice);
-      setAiVideoInstalled(choice);
-    });
-  }, []);
   // 配对闲置过期（电脑睡过一夜）时悄悄重新配对，不用用户先断开再连
   useEffect(() => {
     setCollectorTokenRenewal(async (expired) => {
@@ -1197,6 +1185,7 @@ function AppContent() {
       setStoppingSync(false);
       setCollectorBusy(false);
       setDownloadStates({});
+      setSendStates({});
       setDownloadJobs({});
       setCollectorError(stopError
         ? `已断开应用，但无法确认采集任务已停止：${stopError}`
@@ -1239,6 +1228,7 @@ function AppContent() {
     removeArchive();
     setFrozenSnapshot(null);
     setDownloadStates({});
+    setSendStates({});
     setDownloadJobs({});
   }
 
@@ -1594,24 +1584,6 @@ function AppContent() {
     setDownloadStates((current) => ({ ...current, [recordId]: state }));
   }
 
-  // 卡片上的「解析」：交给采集器开始解析，再切到解析库看进度；还没设置好 AI 就直接去解析库设置。
-  // stay：探索页一切走，刚翻到的主页和作品就没了，所以开始后留在原地（返回 true 让它自己提示）
-  async function analyzeRecord(record: { url?: string | null }, stay = false): Promise<boolean> {
-    const url = record.url?.trim();
-    if (!url) return false;
-    if (!collectorToken) { openSettings(); return false; }
-    const config = analysisInUse();
-    if (!config) { setDashboardView("analysis"); return false; }
-    try {
-      await startAnalysis({ baseUrl: collectorUrl, token: collectorToken }, url, config);
-    } catch (error) {
-      showAlert("解析没开始", error instanceof Error ? error.message : "请稍后重试。");
-      return false;
-    }
-    if (!stay) setDashboardView("analysis");
-    return stay;
-  }
-
   async function downloadRecord(record: PersonalVideoRecord, keepExplore = false): Promise<void> {
     if (Platform.OS !== "web") {
       showAlert("暂不支持下载", "请在桌面 Web 工作台中将视频保存到本地。");
@@ -1679,6 +1651,71 @@ function AppContent() {
       showAlert("下载失败", error instanceof LocalCollectorError ? error.message : "视频下载失败，请稍后重试。");
     } finally {
       downloadInFlightRef.current.delete(record.id);
+    }
+  }
+
+  // 「送去拆片工坊」：先像下载按钮那样让采集器下好视频（正常清晰度），再由桌面外壳复制进拆片工坊的收件箱、叫醒它。
+  // keepExplore：从探索页发起的，下载时别关掉探索会话。返回 true 表示送到了
+  async function sendRecordToReelLab(record: PersonalVideoRecord, keepExplore = false): Promise<boolean> {
+    const sourceUrl = record.url?.trim();
+    if (!sourceUrl) {
+      showAlert("送不过去", "该记录没有可用的抖音链接。");
+      return false;
+    }
+    const token = collectorToken;
+    const baseUrl = collectorUrl;
+    if (!token) {
+      showAlert("需要连接采集器", "请先在“连接与采集”页面连接本地采集服务，再送去拆片工坊。");
+      return false;
+    }
+    const flight = `reellab:${record.id}`;
+    if (downloadInFlightRef.current.has(flight)) return false;
+    const requestId = downloadRequestRef.current;
+    downloadInFlightRef.current.add(flight);
+    const mark = (state: RecordDownloadState) => setSendStates((current) => ({ ...current, [record.id]: state }));
+    mark("queued");
+    try {
+      let job = await startCollectorVideoDownload(baseUrl, token, sourceUrl, undefined, false, keepExplore);
+      const deadline = Date.now() + DOWNLOAD_JOB_TIMEOUT_MS;
+      while (job.status === "queued" || job.status === "running") {
+        if (downloadRequestRef.current !== requestId) return false;
+        mark(job.status);
+        if (Date.now() >= deadline) throw new LocalCollectorError("timeout", "视频下载超时，请稍后重试。");
+        await delay(DOWNLOAD_JOB_POLL_INTERVAL_MS);
+        job = await getCollectorVideoDownload(baseUrl, token, job.id);
+      }
+      if (downloadRequestRef.current !== requestId) return false;
+      if (job.status !== "complete") {
+        throw new LocalCollectorError(job.errorCode ?? "download_failed", job.error ?? "视频下载失败，请稍后重试。");
+      }
+      const result = await sendDesktopToReelLab({
+        jobId: job.id,
+        title: record.title,
+        author: record.author,
+        url: sourceUrl,
+        // 记录里没有单独的简介：抖音的标题就是简介那段话
+        description: null,
+        durationSeconds: record.durationSeconds ?? null,
+      });
+      if (result.status === "not_installed") {
+        mark("idle");
+        confirmAlert("还没装拆片工坊", "拆片工坊是单独的应用，装好后再点一次视频上的「送去」按钮就行。现在去下载吗？", "去下载", (confirmed) => {
+          if (confirmed) void openRecord(REELLAB_DOWNLOAD_URL);
+        });
+        return false;
+      }
+      if (result.status === "failed") throw new LocalCollectorError("send_failed", result.message);
+      mark("complete");
+      // 已经放进收件箱了，只是没叫醒：按送到算，别让人重送出一份重复的
+      if (result.wakeFailed) showAlert("已送到拆片工坊", "视频已经放好了，但没能自动打开拆片工坊。手动打开它就能看到。");
+      return true;
+    } catch (error) {
+      if (downloadRequestRef.current !== requestId) return false;
+      mark("failed");
+      showAlert("没送到拆片工坊", error instanceof LocalCollectorError ? error.message : "请稍后重试。");
+      return false;
+    } finally {
+      downloadInFlightRef.current.delete(flight);
     }
   }
 
@@ -1769,15 +1806,10 @@ function AppContent() {
     saveAutoSync(!value);
     return !value;
   });
-  // 移除只收起入口，剪辑、解析过的结果和填过的 Key 都留着，重新安装就回来
-  const toggleAiVideo = () => {
-    const next = !aiVideoInstalled;
-    saveAiVideoInstalled(next);
-    setAiVideoInstalled(next);
-    if (!next && (dashboardView === "analysis" || dashboardView === "aiEdit")) setDashboardView("summary");
-  };
   const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus);
-  const recordDownloading = batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running");
+  const recordDownloading = batchDownloadActive || [...Object.values(downloadStates), ...Object.values(sendStates)].some((state) => state === "queued" || state === "running");
+  // 「送去拆片工坊」只有桌面版有：要靠外壳把文件复制进拆片工坊的收件箱
+  const reelLabReady = canSendToReelLab();
   const loginBlocked = accountBlockedReason({ switchingAccount, syncing: syncingRecords, busy: collectorBusy, downloading: recordDownloading, sparkRenewing });
   const accountName = activeAccountName(collectorToken !== null, collectorStatus, collectorAccounts);
 
@@ -1856,11 +1888,9 @@ function AppContent() {
         />
       ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
-          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onAnalyzeRecord={aiVideoInstalled ? (record) => analyzeRecord(record, true) : undefined} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
+          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onSendToReelLab={reelLabReady ? (record) => sendRecordToReelLab(record, true) : undefined} downloadStates={downloadStates} sendStates={sendStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
-          analysis={aiVideoInstalled ? <AnalysisWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} /> : undefined}
-          aiEdit={aiVideoInstalled ? <AiEditWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} records={workspaceRecords} onOpenSettings={openSettings} /> : undefined}
-          onAnalyzeRecord={aiVideoInstalled ? analyzeRecord : undefined}
+          onSendToReelLab={reelLabReady ? (record) => void sendRecordToReelLab(record) : undefined}
           activeView={dashboardView}
           appStyle={appStyle}
           storyStyle={storyStyle}
@@ -1895,6 +1925,7 @@ function AppContent() {
           privacy={privacy}
           records={workspaceRecords}
           downloadStates={downloadStates}
+          sendStates={sendStates}
           report={personalSummary ?? livingReport}
           sourceLabel={sourceLabel}
           status={collectorStatus}
@@ -1944,8 +1975,6 @@ function AppContent() {
         }}
         autoSyncEnabled={autoSyncEnabled}
         onToggleAutoSync={toggleAutoSync}
-        aiVideoInstalled={aiVideoInstalled}
-        onToggleAiVideo={toggleAiVideo}
         privacy={privacy}
         onTogglePrivacy={() => setPrivacy((value) => !value)}
         collector={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null}

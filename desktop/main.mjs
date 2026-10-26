@@ -1,15 +1,14 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, session, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { chromeProvider, findBrowser } from "../collector/aiEdit/film/browser.mjs";
 import { browserDirectories, connectExternalBrowser } from "../collector/browserConnection.mjs";
 import { startCollectorServer } from "../collector/server.mjs";
-import { electronFilmProvider } from "./filmWindow.mjs";
 import { createAppUpdateController } from "./appUpdater.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
+import { REELLAB_INBOX_URL, REELLAB_PROTOCOL, sendToReelLab } from "./reelLab.mjs";
 import { startStaticServer } from "./staticServer.mjs";
 import { isSameOriginUrl, isStoryUrl } from "./windowPolicy.mjs";
 
@@ -252,38 +251,6 @@ function createMainWindow(appUrl, { hidden = false } = {}) {
   return window;
 }
 
-function takeInstallChoice() {
-  if (!app.isPackaged) return null;
-  const file = path.join(process.resourcesPath, "install-options.json");
-  let choice;
-  try {
-    choice = JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return null;
-  }
-  // ponytail: 删不掉的话每次启动都会再交一次、盖掉设置里的选择；按用户安装（perMachine: false）目录可写，不另记状态
-  try { rmSync(file); } catch { /* 见上 */ }
-  return { analysis: choice?.analysis === true };
-}
-
-// Mac 用 dmg 拖进「应用程序」就装完了，没有安装向导：第一次打开时问一次，当作安装时的选项。
-// 开机后台启动时不弹，等下次正常打开再问
-async function askInstallChoiceOnMac() {
-  if (process.platform !== "darwin" || !app.isPackaged || openedAtLogin()) return null;
-  const marker = path.join(app.getPath("userData"), "install-choice-asked");
-  if (existsSync(marker)) return null;
-  const { response } = await dialog.showMessageBox({
-    type: "question",
-    buttons: ["安装", "暂不安装"],
-    defaultId: 1,
-    cancelId: 1,
-    message: "要安装可选功能「AI 视频工作台」吗？",
-    detail: "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱。AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key，或者这台电脑上装好并登录的 Codex、Claude Code。\n\n现在不装的话，以后也可以在设置里安装。",
-  });
-  try { writeFileSync(marker, ""); } catch { /* 记不下就下次再问 */ }
-  return { analysis: response === 0 };
-}
-
 async function startDesktopRuntime() {
   // 应用内登录碰到验证时，把验证框结构（打码后）存在本机采集器数据目录里，只给排查用，不上传
   const diagnostics = path.join(app.getPath("userData"), "collector", "diagnostics");
@@ -298,9 +265,6 @@ async function startDesktopRuntime() {
     // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
     browserSources: [{ id: "app", label: "应用内登录", inApp: true }, ...browserDirectories()],
     browserConnector: (source, options) => (source.inApp ? connectInApp(source, options) : connectExternalBrowser(source)),
-    // AI 剪辑的网页片段、本机出片：Windows 用系统自带的 Edge（或 Chrome）无头画，应用的离屏窗口在 Windows 上画 canvas 会随机截到空白帧；
-    // Mac 和找不到浏览器时用应用自己的离屏窗口
-    filmBrowser: process.platform === "win32" && findBrowser() ? chromeProvider() : electronFilmProvider({ BrowserWindow }),
   });
   try {
     const rootDirectory = path.join(projectDirectory, "dist");
@@ -366,14 +330,13 @@ async function launch() {
       updateInstallRequested = true;
     },
   });
-  // 「AI 视频工作台」装不装：Windows 看安装向导里勾没勾（build/installer.nsh 写的），Mac 第一次打开时问；
-  // 只交给页面一次，页面记进设置后就以设置为准
-  let installChoice = takeInstallChoice() ?? await askInstallChoiceOnMac();
-  ipcMain.handle("desktop:take-install-choice", () => {
-    const choice = installChoice;
-    installChoice = null;
-    return choice;
-  });
+  // 「送去拆片工坊」：页面先让采集器下好视频，这里把文件复制进拆片工坊的收件箱再叫醒它（约定见 desktop/reelLab.mjs）
+  ipcMain.handle("desktop:send-to-reellab", (_event, request) => sendToReelLab(request, {
+    isInstalled: () => Boolean(app.getApplicationNameForProtocol(REELLAB_PROTOCOL)),
+    getDownloadFilePath: (jobId) => desktopRuntime?.collector.getDownloadFilePath(jobId) ?? null,
+    inboxDirectory: path.join(app.getPath("appData"), "ReelLab", "inbox"),
+    openInbox: () => shell.openExternal(REELLAB_INBOX_URL),
+  }));
   ipcMain.handle("desktop:get-collector-config", () => ({
     baseUrl: desktopRuntime?.collector.baseUrl,
     pairingCode: desktopRuntime?.collector.getPairingCode(),

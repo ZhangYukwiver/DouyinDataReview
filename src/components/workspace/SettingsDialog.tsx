@@ -12,7 +12,7 @@ import { appUpdateAction } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
 
-export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "features" | "about";
+export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "about";
 
 export interface SettingsDialogProps {
   visible: boolean;
@@ -26,9 +26,6 @@ export interface SettingsDialogProps {
   onChangeStoryStyle: (style: StoryStyle) => void;
   autoSyncEnabled: boolean;
   onToggleAutoSync: () => void;
-  /** 可选功能「AI 视频工作台」（AI 剪辑 + AI 解析）装没装 */
-  aiVideoInstalled: boolean;
-  onToggleAiVideo: () => void;
   privacy: boolean;
   onTogglePrivacy: () => void;
   /** 连上的采集器：「允许在抖音上操作」存在采集器那边 */
@@ -69,7 +66,6 @@ const SECTIONS: ReadonlyArray<{ key: SettingsSection; title: string }> = [
   { key: "privacy", title: "隐私" },
   { key: "account", title: "账号" },
   { key: "data", title: "数据" },
-  { key: "features", title: "可选功能" },
   { key: "about", title: "关于" },
 ];
 
@@ -171,8 +167,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 : tab === "privacy" ? <Privacy {...props} />
                   : tab === "account" ? <Account {...props} />
                     : tab === "data" ? <Data {...props} />
-                      : tab === "features" ? <Features {...props} />
-                        : <About {...props} />}
+                      : <About {...props} />}
           </ScrollView>
         </View>
       </View>
@@ -392,20 +387,6 @@ function Data({ appStyle, canClear, connected, onClearCache, onExportData }: Set
         <Button appStyle={appStyle} disabled={!canClear} icon={Trash2} kind="danger" label="清除本地记录" onPress={onClearCache} testID="settings-clear" />
       </View>
     </>
-  );
-}
-
-function Features({ aiVideoInstalled, appStyle, onToggleAiVideo }: SettingsDialogProps) {
-  return (
-    <View style={styles.row}>
-      <RowCopy
-        detail={aiVideoInstalled
-          ? "已安装，在侧栏的「AI 视频工作台」里用。移除后入口会收起来，剪辑、解析过的结果和填过的设置都还留着。"
-          : "AI 剪辑：说说想怎么剪，AI 帮你排时间线，做好放进剪映草稿箱；AI 解析：拆解视频的选题、结构和拍法。需要自备大模型的 API Key，或者这台电脑上装好并登录的 Codex、Claude Code。"}
-        title="AI 视频工作台"
-      />
-      <Button appStyle={appStyle} icon={aiVideoInstalled ? undefined : Download} label={aiVideoInstalled ? "移除" : "安装"} onPress={onToggleAiVideo} testID="settings-ai-video" />
-    </View>
   );
 }
 

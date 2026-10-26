@@ -113,7 +113,7 @@ for (const page of pages) {
   outputs.set(file, html);
 }
 
-const llms = `# ${name}\n\n> ${summary}\n\n项目文档核对日期：${pages[0].modified}。具体版本与安装包以 Releases 为准。\n\n## 项目与文档\n\n- [下载与项目介绍](${siteUrl}): 平台、功能、安装与常见问题。\n- [数据导出与年度报告指南](${absolute("guide.html")}): 导出步骤、官方档案导入、覆盖范围、AI 数据流与源码依据。\n- [GitHub 仓库与 README](${repository}): 实现方式、功能边界和源码运行。\n- [最新发布](${releaseUrl}): 已发布版本和安装包。\n- [问题反馈](${repository}/issues): Bug 与功能建议。\n- [MIT 许可](${licenseUrl}): 源码使用许可。\n\n## 项目事实\n\n${facts.map(({ label, value }) => `- ${label}：${value}`).join("\n")}\n\n## 功能\n\n${features.map((feature) => `- ${feature}`).join("\n")}\n\n## 常见问题与边界\n\n${faq.map(({ question, answer }) => `### ${question}\n\n${answer}`).join("\n\n")}\n`;
+const llms = `# ${name}\n\n> ${summary}\n\n项目文档核对日期：${pages[0].modified}。具体版本与安装包以 Releases 为准。\n\n## 项目与文档\n\n- [下载与项目介绍](${siteUrl}): 平台、功能、安装与常见问题。\n- [数据导出与年度报告指南](${absolute("guide.html")}): 导出步骤、官方档案导入、覆盖范围、数据流向与源码依据。\n- [GitHub 仓库与 README](${repository}): 实现方式、功能边界和源码运行。\n- [最新发布](${releaseUrl}): 已发布版本和安装包。\n- [问题反馈](${repository}/issues): Bug 与功能建议。\n- [MIT 许可](${licenseUrl}): 源码使用许可。\n\n## 项目事实\n\n${facts.map(({ label, value }) => `- ${label}：${value}`).join("\n")}\n\n## 功能\n\n${features.map((feature) => `- ${feature}`).join("\n")}\n\n## 常见问题与边界\n\n${faq.map(({ question, answer }) => `### ${question}\n\n${answer}`).join("\n\n")}\n`;
 outputs.set("llms.txt", llms);
 outputs.set("docs/llms.txt", llms);
 outputs.set("docs/sitemap.xml", `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${pages.map((page) => `  <url><loc>${escape(absolute(page.url))}</loc><lastmod>${page.modified}</lastmod></url>`).join("\n")}\n</urlset>\n`);
