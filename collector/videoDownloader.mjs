@@ -277,15 +277,9 @@ function candidateScore(candidate) {
   ];
 }
 
-/** smallest：挑码率最低、带声音的一档（交给 AI 解析时体积越小越好），挑不出就按默认挑最好的。 */
-export function selectDouyinMediaCandidate(candidates, { smallest = false } = {}) {
+export function selectDouyinMediaCandidate(candidates) {
   const playable = (Array.isArray(candidates) ? candidates : [])
     .filter((candidate) => candidate?.type !== "audio" && isAllowedMediaUrl(candidate?.url));
-  if (smallest) {
-    const small = playable.filter((candidate) => candidate.type === "video+audio" && candidate.bitrate > 0)
-      .sort((left, right) => left.bitrate - right.bitrate)[0];
-    if (small) return small;
-  }
   playable.sort((left, right) => {
     const a = candidateScore(left);
     const b = candidateScore(right);
@@ -673,11 +667,9 @@ export async function downloadDouyinVideo({
   pageTimeoutMs,
   mediaWaitMs,
   timeoutMs,
-  smallest = false,
 } = {}) {
   const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal });
   signal?.throwIfAborted();
-  if (smallest && parsed.media) parsed.media = selectDouyinMediaCandidate(parsed.candidates, { smallest }) ?? parsed.media;
   const fileName = makeVideoFileName({
     title: parsed.title,
     videoId: parsed.videoId,

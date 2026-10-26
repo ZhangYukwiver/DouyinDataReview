@@ -22,7 +22,6 @@ import {
   Bookmark,
   ChartColumn,
   Check,
-  Clapperboard,
   Download,
   Eye,
   EyeOff,
@@ -44,6 +43,7 @@ import {
   Radio,
   RefreshCw,
   Search,
+  Send,
   Plug,
   Settings,
   Settings2,
@@ -74,7 +74,6 @@ import { LiveRoomPlayer, type LiveTarget } from "./LiveRoomPlayer";
 import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../services/liveRoom";
 import { waitForCollector } from "../../services/videoFeed";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
-import { Segmented } from "./CreatorKit";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { earliestRecordDate, searchRecords } from "../../services/recordSearch";
 import {
@@ -96,20 +95,17 @@ import {
   type RecordFolderList,
   type RecordFolders,
 } from "../../services/recordFolders";
-import { useContextMenu, type MenuEntry } from "./AiEditMenu";
+import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { ReportDashboard } from "./ReportDashboard";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator" | "analysis" | "aiEdit";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator";
 
 export interface ContentWorkspaceProps {
   explore?: React.ReactNode;
   creator?: React.ReactNode;
-  analysis?: React.ReactNode;
-  /** AI 剪辑：左边对话、右边只读剪辑看板，做好后放进剪映草稿箱 */
-  aiEdit?: React.ReactNode;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
   chatMessages?: ChatMessage[];
@@ -126,12 +122,14 @@ export interface ContentWorkspaceProps {
   onChangeView: (view: WorkspaceViewKey) => void;
   onOpenRecord: (url: string) => Promise<void>;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
-  /** 交给解析库：采集器下载视频给 AI 拆解 */
-  onAnalyzeRecord?: (record: PersonalVideoRecord) => void;
+  /** 送去拆片工坊：采集器下好视频，再由桌面外壳放进拆片工坊的收件箱；只有桌面版给 */
+  onSendToReelLab?: (record: PersonalVideoRecord) => void;
   onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
   downloadStates?: Record<string, RecordDownloadState>;
+  /** 送去拆片工坊的进度，和下载一样按记录 id 记 */
+  sendStates?: Record<string, RecordDownloadState>;
   onOpenSettings: () => void;
   onReplayStory: () => void;
   onSync: () => void;
@@ -157,8 +155,6 @@ type IconComponent = React.ComponentType<{
 const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent; accent: string }> = [
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
-  // AI 剪辑和 AI 解析合成一个板块：侧栏一项，进去顶上两个页签
-  { id: "aiEdit", label: "AI 视频工作台", icon: Clapperboard, accent: color.amber },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
@@ -169,16 +165,8 @@ const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent
 ];
 
 
-type AiVideoView = "aiEdit" | "analysis";
-const AI_VIDEO_TABS: Array<{ label: string; value: AiVideoView }> = [{ label: "AI 剪辑", value: "aiEdit" }, { label: "AI 解析", value: "analysis" }];
-const isAiVideoView = (view: WorkspaceViewKey): view is AiVideoView => view === "aiEdit" || view === "analysis";
-/** 侧栏里哪一项算选中：AI 剪辑和 AI 解析共用「AI 视频工作台」那一项 */
-const navKey = (view: WorkspaceViewKey): WorkspaceViewKey => (view === "analysis" ? "aiEdit" : view);
-// 上次用的页签记在模块里：去「连接与采集」再回来，工作台卸载重挂也还记得
-let lastAiView: AiVideoView = "aiEdit";
-
-// 探索、创作者中心、解析库和 AI 剪辑是工具页：不显示条数、隐私和重新读取
-const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator" || view === "analysis" || view === "aiEdit";
+// 探索和创作者中心是工具页：不显示条数、隐私和重新读取
+const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -196,8 +184,6 @@ function Text({ style, ...rest }: TextProps) {
 export function ContentWorkspace({
   explore,
   creator,
-  analysis,
-  aiEdit,
   activeView,
   records,
   chatMessages = [],
@@ -214,11 +200,12 @@ export function ContentWorkspace({
   onChangeView,
   onOpenRecord,
   onDownloadRecord,
-  onAnalyzeRecord,
+  onSendToReelLab,
   onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
   downloadStates = {},
+  sendStates = {},
   onOpenSettings,
   onReplayStory,
   onSync,
@@ -244,11 +231,7 @@ export function ContentWorkspace({
   const sidebarWidth = mobile ? 0 : compactSidebar ? 82 : 224;
   // root 的桌面内边距与 stage 边框会占掉 36px，使用同一个主区宽度供各内容页计算。
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
-  // AI 视频工作台是可选功能，没装（App 不给 aiEdit）就不进侧栏
-  const nav = aiEdit ? navItems : navItems.filter((item) => item.id !== "aiEdit");
-  const currentNav = nav.find((item) => item.id === navKey(activeView)) ?? nav[0]!;
-  // 点侧栏的 AI 视频工作台：回到上次用的页签
-  useEffect(() => { if (isAiVideoView(activeView)) lastAiView = activeView; }, [activeView]);
+  const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
   const [reportUpdateNotice, setReportUpdateNotice] = useState(false);
   // 侧栏当前项的指示条：一根，随选中项滑动（各按钮 onLayout 报自己的 y）
   const [navTops, setNavTops] = useState<Record<string, number>>({});
@@ -263,7 +246,7 @@ export function ContentWorkspace({
   useEffect(() => {
     if (Platform.OS !== "web" || !sidebarOverflow) return;
     const body = sidebarBodyRef.current as unknown as HTMLElement | null;
-    const item = body?.querySelector<HTMLElement>(`[data-testid="workspace-nav-${navKey(activeView)}"]`);
+    const item = body?.querySelector<HTMLElement>(`[data-testid="workspace-nav-${activeView}"]`);
     if (!body || !item) return;
     const frame = body.getBoundingClientRect();
     const rect = item.getBoundingClientRect();
@@ -292,8 +275,6 @@ export function ContentWorkspace({
   const counts: Record<WorkspaceViewKey, number> = {
     explore: 0,
     creator: 0,
-    analysis: 0,
-    aiEdit: 0,
     watch_history: watchedVideos.length,
     live: watchedLives.length,
     liked_videos: records.liked_videos.length,
@@ -324,7 +305,6 @@ export function ContentWorkspace({
     if (isReportView(nextView) && !reportView) setReportAutoCollapsed(true);
     onChangeView(nextView);
   };
-  const openNav = (id: WorkspaceViewKey) => changeView(id === "aiEdit" ? (isAiVideoView(activeView) ? activeView : lastAiView) : id);
 
   const toggleSidebar = () => {
     if (reportView) {
@@ -342,18 +322,18 @@ export function ContentWorkspace({
         <View {...ws("w-side g-ink")} testID="workspace-sidebar" style={[styles.sidebar, collapseWidth, compactSidebar && styles.sidebarCompact]}>
           <View {...SIDENAV} onLayout={measureSidebar} ref={sidebarBodyRef} style={[styles.sidebarBody, sidebarOverflow && sidebarScroll]}>
           <View accessibilityRole="tablist" onLayout={measureSidebar} style={styles.sidebarNav}>
-            {Platform.OS === "web" && navTops[navKey(activeView)] !== undefined ? (
-              <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[navKey(activeView)]! + 14, backgroundColor: currentNav.accent }]} />
+            {Platform.OS === "web" && navTops[activeView] !== undefined ? (
+              <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[activeView]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
-            {nav.map((item) => (
+            {navItems.map((item) => (
               <NavButton
                 key={item.id}
                 compact={compactSidebar}
                 count={counts[item.id]}
                 item={item}
                 onLayoutTop={(y) => reportNavTop(item.id, y)}
-                onPress={() => openNav(item.id)}
-                selected={item.id === navKey(activeView)}
+                onPress={() => changeView(item.id)}
+                selected={item.id === activeView}
               />
             ))}
           </View>
@@ -415,7 +395,6 @@ export function ContentWorkspace({
             <View style={styles.topbarTitleRow}>
               <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{currentNav.label}</Text>
               {!toolView(activeView) ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
-              {isAiVideoView(activeView) && analysis ? <View style={styles.topbarTabs}><Segmented small options={AI_VIDEO_TABS} value={activeView} onChange={changeView} /></View> : null}
             </View>
           </View>
           <View style={styles.topbarActions}>
@@ -477,7 +456,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "analysis" ? analysis : activeView === "aiEdit" ? aiEdit : activeView === "chat" ? (
+        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
@@ -513,9 +492,10 @@ export function ContentWorkspace({
             onRetryFolders={folders.retry}
             label={currentNav.label}
             downloadStates={downloadStates}
+            sendStates={sendStates}
             mobile={mobile}
             onDownloadRecord={onDownloadRecord}
-            onAnalyzeRecord={onAnalyzeRecord}
+            onSendToReelLab={onSendToReelLab}
             onBatchDownloadActiveChange={onBatchDownloadActiveChange}
             onLoadVideo={onLoadVideo}
             commentsConnection={commentsConnection}
@@ -549,10 +529,10 @@ export function ContentWorkspace({
       {mobile ? (
         <View {...ws("w-bottom g-ink")} accessibilityRole="tablist" style={styles.bottomNav}>
           {Platform.OS === "web" ? (
-            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(nav.findIndex((item) => item.id === navKey(activeView)) + 0.5) / nav.length * 100}%`, backgroundColor: currentNav.accent }]} />
+            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(navItems.findIndex((item) => item.id === activeView) + 0.5) / navItems.length * 100}%`, backgroundColor: currentNav.accent }]} />
           ) : null}
-          {nav.map((item) => {
-            const selected = item.id === navKey(activeView);
+          {navItems.map((item) => {
+            const selected = item.id === activeView;
             const Icon = item.icon;
             return (
               <Pressable
@@ -560,7 +540,7 @@ export function ContentWorkspace({
                 accessibilityLabel={toolView(item.id) ? item.label : `${item.label}，${counts[item.id]} 条`}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
-                onPress={() => openNav(item.id)}
+                onPress={() => changeView(item.id)}
                 style={({ pressed }) => [styles.bottomNavItem, pressed && styles.buttonPressed, webPointer]}
               >
                 <Icon color={selected ? item.accent : color.textMuted} size={20} strokeWidth={selected ? 2.5 : 2} />
@@ -925,9 +905,10 @@ function RecordsGallery({
   onRetryFolders,
   label,
   downloadStates,
+  sendStates,
   mobile,
   onDownloadRecord,
-  onAnalyzeRecord,
+  onSendToReelLab,
   onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
@@ -949,9 +930,10 @@ function RecordsGallery({
   onRetryFolders?: () => void;
   label: string;
   downloadStates: Record<string, RecordDownloadState>;
+  sendStates: Record<string, RecordDownloadState>;
   mobile: boolean;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
-  onAnalyzeRecord?: (record: PersonalVideoRecord) => void;
+  onSendToReelLab?: (record: PersonalVideoRecord) => void;
   onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
@@ -1083,11 +1065,11 @@ function RecordsGallery({
     : undefined, [rowFrame]);
   // 卡片是 memo 的：读取、接收聊天时状态每变一次整页都要重渲染，几百张卡片跟着重画一遍要一两百毫秒。
   // 外面传进来的回调每次都是新函数，这里换成引用不变、调用时取最新那份的版本
-  const latest = useRef({ onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive, openFolderMenu });
-  latest.current = { onDownloadRecord, onAnalyzeRecord, onOpenRecord, openLive, openFolderMenu };
+  const latest = useRef({ onDownloadRecord, onSendToReelLab, onOpenRecord, openLive, openFolderMenu });
+  latest.current = { onDownloadRecord, onSendToReelLab, onOpenRecord, openLive, openFolderMenu };
   const handlers = useMemo(() => ({
     download: (record: PersonalVideoRecord) => latest.current.onDownloadRecord!(record),
-    analyze: (record: PersonalVideoRecord) => latest.current.onAnalyzeRecord!(record),
+    send: (record: PersonalVideoRecord) => latest.current.onSendToReelLab!(record),
     open: (url: string) => latest.current.onOpenRecord(url),
     live: (record: PersonalVideoRecord) => { latest.current.openLive?.(record); },
     folder: (record: PersonalVideoRecord, at: MenuPoint) => latest.current.openFolderMenu([record], at),
@@ -1328,10 +1310,11 @@ function RecordsGallery({
               cellStyle={cellStyle}
               selection={selectionFor(item)}
               downloadState={downloadStates[item.id] ?? "idle"}
+              sendState={sendStates[item.id] ?? "idle"}
               filedIn={filedIn}
               folderName={folderName}
               onDownloadRecord={item.mediaType === "live" || !onDownloadRecord ? undefined : handlers.download}
-              onAnalyzeRecord={item.mediaType === "live" || !onAnalyzeRecord ? undefined : handlers.analyze}
+              onSendToReelLab={item.mediaType === "live" || !onSendToReelLab ? undefined : handlers.send}
               onFolderMenu={onFolderMenu}
               onPlayRecord={item.mediaType === "live" ? openLive && handlers.live : onLoadVideo ? setPlayingRecord : undefined}
               onOpenRecord={handlers.open}
@@ -1449,10 +1432,11 @@ const RecordTile = memo(function RecordTile({
   cellStyle,
   selection,
   downloadState,
+  sendState,
   filedIn,
   folderName,
   onDownloadRecord,
-  onAnalyzeRecord,
+  onSendToReelLab,
   onFolderMenu,
   onPlayRecord,
   record,
@@ -1463,12 +1447,13 @@ const RecordTile = memo(function RecordTile({
   cellStyle?: object | null;
   selection?: RecordSelection;
   downloadState: RecordDownloadState;
+  sendState: RecordDownloadState;
   /** 实际放在哪个文件夹，给文件夹按钮的读屏说明用 */
   filedIn?: string;
   /** 封面左上角标出的文件夹名 */
   folderName?: string;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
-  onAnalyzeRecord?: (record: PersonalVideoRecord) => void;
+  onSendToReelLab?: (record: PersonalVideoRecord) => void;
   /** 打开「放进文件夹」菜单：悬停时右上角的按钮、右键都走这里 */
   onFolderMenu?: (record: PersonalVideoRecord, at: MenuPoint) => void;
   onPlayRecord?: (record: PersonalVideoRecord) => void;
@@ -1492,6 +1477,9 @@ const RecordTile = memo(function RecordTile({
     : downloadState === "complete"
       ? "已下载"
       : downloadState === "failed" ? "重试" : "下载";
+  const sending = sendState === "queued" || sendState === "running";
+  // 卡片上三颗按钮挤一行，字写短（和「跳转」「下载」一样两个字）；读屏说明写全
+  const sendLabel = sending ? "送去中" : sendState === "complete" ? "已送达" : sendState === "failed" ? "重送" : "送去";
   const markFocused = () => setFocused(true);
   const checkFocusBoundary = (event?: unknown) => {
     if (Platform.OS !== "web") {
@@ -1642,17 +1630,20 @@ const RecordTile = memo(function RecordTile({
               {downloading ? <ActivityIndicator color={color.white} size="small" /> : <Download color={color.white} size={14} strokeWidth={2.2} />}
               <Text style={styles.tileActionText}>{downloadLabel}</Text>
             </Pressable>
-            {onAnalyzeRecord && record.mediaType !== "image" ? <Pressable
-              accessibilityLabel="解析视频"
+            {onSendToReelLab && record.mediaType !== "image" ? <Pressable
+              testID="record-tile-action"
+              accessibilityLabel={sending ? "正在送去拆片工坊" : sendState === "complete" ? "已送到拆片工坊，再送一次" : sendState === "failed" ? "没送到拆片工坊，重送" : "送去拆片工坊"}
               accessibilityRole="button"
+              accessibilityState={{ disabled: sending }}
+              disabled={sending}
               onFocus={markFocused}
               onBlur={checkFocusBoundary}
-              onPress={() => onAnalyzeRecord(record)}
+              onPress={() => onSendToReelLab(record)}
               {...ws("btn-sig w-tileaction")}
-              style={({ pressed }) => [styles.tileAction, pressed && styles.tileActionPressed, webPointer]}
+              style={({ pressed }) => [styles.tileAction, sending && styles.tileActionDisabled, pressed && styles.tileActionPressed, webPointer]}
             >
-              <Clapperboard color={color.white} size={14} strokeWidth={2.2} />
-              <Text style={styles.tileActionText}>解析</Text>
+              {sending ? <ActivityIndicator color={color.white} size="small" /> : <Send color={color.white} size={14} strokeWidth={2.2} />}
+              <Text style={styles.tileActionText}>{sendLabel}</Text>
             </Pressable> : null}
           </View>
         </View>
@@ -2093,7 +2084,6 @@ const styles = StyleSheet.create({
   topbarHeading: { flex: 1, minWidth: 0 },
   topbarEyebrow: { color: color.accent, fontSize: 9, fontWeight: "600", letterSpacing: 3.5, fontFamily: font.mono },
   topbarTitleRow: { flexDirection: "row", alignItems: "baseline", gap: 9, marginTop: 3 },
-  topbarTabs: { alignSelf: "center", marginLeft: 6 },
   topbarTitle: { maxWidth: "80%", color: color.text, fontSize: 20, fontWeight: "600", letterSpacing: 3, fontFamily: font.serif },
   topbarTitleMobile: { fontSize: 17 },
   topbarCount: { color: color.textMuted, fontSize: 13, fontFamily: font.didot, letterSpacing: 1, fontVariant: ["tabular-nums"] },

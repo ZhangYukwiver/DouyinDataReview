@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- geo:meta:start -->
 <title>抖音数据导出与年度报告（Douyin Wrapped）· DouyinDataReview</title>
-<meta name="description" content="DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存；可选 AI 解析与剪辑支持自配接口或本机 Codex / Claude Code。">
+<meta name="description" content="DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存；AI 视频解析与剪辑已拆成独立应用拆片工坊（ReelLab）。">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://zhangyukwiver.github.io/DouyinDataReview/">
 <link rel="alternate" type="text/plain" href="https://zhangyukwiver.github.io/DouyinDataReview/llms.txt" title="项目事实与文档索引">
@@ -13,13 +13,13 @@
 <meta property="og:locale" content="zh_CN">
 <meta property="og:site_name" content="DouyinDataReview">
 <meta property="og:title" content="抖音数据导出与年度报告（Douyin Wrapped）· DouyinDataReview">
-<meta property="og:description" content="DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存；可选 AI 解析与剪辑支持自配接口或本机 Codex / Claude Code。">
+<meta property="og:description" content="DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存；AI 视频解析与剪辑已拆成独立应用拆片工坊（ReelLab）。">
 <meta property="og:url" content="https://zhangyukwiver.github.io/DouyinDataReview/">
 <meta property="og:image" content="https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg">
 <meta property="og:image:alt" content="DouyinDataReview 持续报告界面，使用合成示例数据">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="抖音数据导出与年度报告（Douyin Wrapped）· DouyinDataReview">
-<meta name="twitter:description" content="DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存；可选 AI 解析与剪辑支持自配接口或本机 Codex / Claude Code。">
+<meta name="twitter:description" content="DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存；AI 视频解析与剪辑已拆成独立应用拆片工坊（ReelLab）。">
 <meta name="twitter:image" content="https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg">
 <script type="application/ld+json">
 {
@@ -42,9 +42,9 @@
       "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#page",
       "url": "https://zhangyukwiver.github.io/DouyinDataReview/",
       "name": "抖音数据导出与年度报告（Douyin Wrapped）· DouyinDataReview",
-      "description": "DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存；可选 AI 解析与剪辑支持自配接口或本机 Codex / Claude Code。",
+      "description": "DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存；AI 视频解析与剪辑已拆成独立应用拆片工坊（ReelLab）。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-10-24",
+      "dateModified": "2026-10-26",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -79,7 +79,7 @@
         "实时聊天与用户主动触发的续火花消息",
         "本人创作者中心数据总览、作品数据与粉丝画像（只读）",
         "本地持续报告与抖音年度回顾，导出 HTML 和 PNG",
-        "可选 AI 视频工作台，解析与剪辑支持自配接口或本机 Codex / Claude Code，剪辑工程可导入剪映草稿箱"
+        "桌面版一键把视频送去独立应用拆片工坊（ReelLab）做 AI 解析与剪辑"
       ],
       "offers": {
         "@type": "Offer",
@@ -180,7 +180,7 @@
           "name": "收费吗？数据会传到哪里？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "应用免费、源码采用 MIT 许可。可选 AI 视频工作台支持自配接口或本机已登录的 Codex / Claude Code，使用自己的订阅或服务商计费。个人记录保存和报告统计在本机完成；在线采集会请求抖音。AI 解析向所选 AI 服务发送视频或本机提取的镜头截图等输入；AI 剪辑会发送对话、素材清单、时间线和工具检索到的记录摘要，解析参考视频时还可能发送视频或截图；生成图片和视频需在 AI 剪辑设置中开启（填 Key，方舟也可勾选借用已填的 Key，即梦、小云雀、LibTV 用本机命令行），之后画面说明和选作参考的素材图片会发给你配置的图片接口（默认 OpenAI）和你选的视频服务（火山方舟 Seedance、即梦、小云雀或 LibTV），按服务商计费，每次生成视频前会先问你。接口模式保存设置时会发送测试小视频；本机 CLI 仅使用文字、截图和节拍，仍会联网请求相应 AI 服务。抖音 Cookie 和整份个人记录不作为 AI 输入发送；完整数据流见使用指南。"
+            "text": "应用免费、源码采用 MIT 许可。个人记录保存和报告统计在本机完成；在线采集只请求抖音，应用本身不调用 AI 服务。AI 视频解析与剪辑已拆成独立应用拆片工坊（ReelLab）：只有你在桌面版点「送去」按钮送到拆片工坊的那条视频（文件和标题、作者、链接、时长）会复制给它，之后的数据流由拆片工坊自己说明。抖音 Cookie 和整份个人记录不会交给它。"
           }
         },
         {
@@ -294,8 +294,8 @@ a{color:var(--accent)}
   <div><dt>支持平台</dt><dd>Windows 10 / 11 x64；macOS Apple Silicon（M1 及更新）；界面语言为中文。</dd></div>
   <div><dt>数据来源</dt><dd>本人账号可访问的抖音接口、本应用备份，或抖音官方个人信息下载档案；面向抖音（Douyin），不支持国际版 TikTok。</dd></div>
   <div><dt>导出与报告</dt><dd>记录按勾选项导出 JSON，聊天默认不勾选；年度报告可导出独立 HTML 和 1080 × 1440 PNG。</dd></div>
-  <div><dt>费用与许可</dt><dd>应用免费，源码采用 MIT 许可；可选 AI 支持自配接口或本机已登录的 Codex / Claude Code，使用自己的订阅或服务商计费。</dd></div>
-  <div><dt>本地与联网</dt><dd>记录保存和报告统计在本机完成；在线采集需要联网及有效登录凭据；可选 AI 解析与剪辑会通过所配置接口或本机 CLI 向相应 AI 服务发送输入。</dd></div>
+  <div><dt>费用与许可</dt><dd>应用免费，源码采用 MIT 许可；本地统计与年度报告不需要 AI 服务。</dd></div>
+  <div><dt>本地与联网</dt><dd>记录保存和报告统计在本机完成；在线采集需要联网及有效登录凭据；应用本身不调用 AI 服务。</dd></div>
 </dl>
 <!-- geo:facts:end -->
 <ul>
@@ -305,9 +305,9 @@ a{color:var(--accent)}
   <li>内容库按标题、作者、话题搜索，视频能在应用里播放或下载到本地</li>
   <li>按勾选项导出 JSON 备份，换电脑可导入；也可导入抖音官方 JSON / ZIP 档案</li>
   <li>生成年度报告和持续报告，年度回顾可导出独立 HTML 与 PNG 分享图</li>
-  <li>可选 AI 视频工作台，解析与剪辑支持自配接口或本机已登录的 Codex / Claude Code，剪辑工程可导入剪映草稿箱</li>
+  <li>桌面版一键把视频送去独立应用<a href="https://github.com/ZhangYukwiver/ReelLab">拆片工坊（ReelLab）</a>做 AI 解析与剪辑</li>
 </ul>
-<p>具体操作见<a href="guide.html#export">数据导出步骤</a>、<a href="guide.html#annual-report">年度报告指南</a>与<a href="guide.html#privacy">数据和 AI 隐私说明</a>。在线采集不保证取回全部历史，群聊正文不写入备份。</p>
+<p>具体操作见<a href="guide.html#export">数据导出步骤</a>、<a href="guide.html#annual-report">年度报告指南</a>与<a href="guide.html#privacy">数据去向说明</a>。在线采集不保证取回全部历史，群聊正文不写入备份。</p>
 <h2 id="install">安装与首次登录</h2>
 <p>桌面版自带采集器，在首屏用抖音 App 扫码、核对账号并确认导入即可读取，不需要另外安装浏览器或扩展。分别勾选要读取的视频记录和聊天，首次默认只勾选视频。源码运行和浏览器导入方式见<a href="https://github.com/ZhangYukwiver/DouyinDataReview#快速开始">README 快速开始</a>。</p>
 <p><b>macOS：</b>打开 dmg，把「DouyinDataReview」拖进「应用程序」。安装包没有开发者签名，第一次打开前先在「终端」里运行下面这行，不然会提示“应用已损坏”：</p>
@@ -342,14 +342,14 @@ a{color:var(--accent)}
 <h3 id="batch-download">能批量下载抖音里喜欢和收藏的视频吗？</h3>
 <p>能。内容库点「批量下载」进入多选，选中的视频会打包成 ZIP 保存到本机；图文作品会下载全部图片。探索页的用户主页也支持下载作品。在线下载需要网络、有效会话，以及当前账号可访问的作品。</p>
 <h3 id="privacy-and-ai">收费吗？数据会传到哪里？</h3>
-<p>应用免费、源码采用 MIT 许可。可选 AI 视频工作台支持自配接口或本机已登录的 Codex / Claude Code，使用自己的订阅或服务商计费。个人记录保存和报告统计在本机完成；在线采集会请求抖音。AI 解析向所选 AI 服务发送视频或本机提取的镜头截图等输入；AI 剪辑会发送对话、素材清单、时间线和工具检索到的记录摘要，解析参考视频时还可能发送视频或截图；生成图片和视频需在 AI 剪辑设置中开启（填 Key，方舟也可勾选借用已填的 Key，即梦、小云雀、LibTV 用本机命令行），之后画面说明和选作参考的素材图片会发给你配置的图片接口（默认 OpenAI）和你选的视频服务（火山方舟 Seedance、即梦、小云雀或 LibTV），按服务商计费，每次生成视频前会先问你。接口模式保存设置时会发送测试小视频；本机 CLI 仅使用文字、截图和节拍，仍会联网请求相应 AI 服务。抖音 Cookie 和整份个人记录不作为 AI 输入发送；完整数据流见使用指南。</p>
+<p>应用免费、源码采用 MIT 许可。个人记录保存和报告统计在本机完成；在线采集只请求抖音，应用本身不调用 AI 服务。AI 视频解析与剪辑已拆成独立应用拆片工坊（ReelLab）：只有你在桌面版点「送去」按钮送到拆片工坊的那条视频（文件和标题、作者、链接、时长）会复制给它，之后的数据流由拆片工坊自己说明。抖音 Cookie 和整份个人记录不会交给它。</p>
 <h3 id="account-risk">会被封号吗？</h3>
 <p>没法保证不会。工具使用本人账号导入的会话，但采集依赖抖音未公开承诺的私有接口，接口变化可能导致功能失效或触发账号风控。请仅用于本人账号和个人数据管理；发送消息、点赞和评论等操作由用户主动触发。</p>
 <h3 id="supported-platforms">支持哪些系统？能在手机或 Intel Mac 上安装吗？</h3>
 <p>已提供的桌面安装包支持 Windows 10 / 11 x64 和 macOS Apple Silicon（M1 及更新）。目前没有原生手机安装包、Intel Mac 安装包或 Linux 安装包。开发者可从源码运行 Web 工作台；手机在可信局域网连接电脑采集器的方式见仓库 README。</p>
 <!-- geo:faq:end -->
 <h2 id="en" lang="en">In English</h2>
-<p lang="en">DouyinDataReview is a free, MIT-licensed desktop app for Windows x64 and macOS Apple Silicon. Export your own Douyin watch history, likes, favorites and saved friend chats as JSON, import an official Douyin JSON / ZIP archive, and generate a local year-in-review (Douyin Wrapped) as HTML or PNG. Group chat bodies are excluded from backups, and a complete lifetime history is not guaranteed. It targets Douyin in China; international TikTok is not supported. The interface is in Chinese. Optional AI analysis and editing use an endpoint you configure or a signed-in local Codex CLI / Claude Code, which sends inputs to its AI service using your subscription; see the <a href="guide.html#privacy">data flow guide</a>.</p>
+<p lang="en">DouyinDataReview is a free, MIT-licensed desktop app for Windows x64 and macOS Apple Silicon. Export your own Douyin watch history, likes, favorites and saved friend chats as JSON, import an official Douyin JSON / ZIP archive, and generate a local year-in-review (Douyin Wrapped) as HTML or PNG. Group chat bodies are excluded from backups, and a complete lifetime history is not guaranteed. It targets Douyin in China; international TikTok is not supported. The interface is in Chinese. AI video analysis and editing now live in a separate app, <a href="https://github.com/ZhangYukwiver/ReelLab">ReelLab</a>; the desktop app can send a video there in one click. See the <a href="guide.html#privacy">data flow guide</a>.</p>
 <h2 id="contact">交流与反馈</h2>
 <div class="qq">
   <img src="qq-group.jpg" alt="QQ 群二维码" loading="lazy">
@@ -358,7 +358,7 @@ a{color:var(--accent)}
 
 <footer>
   开源项目，源码和历史版本都在 <a href="https://github.com/ZhangYukwiver/DouyinDataReview">GitHub</a>。
-  本机记录与报告统计无需 AI；可选 AI 功能的数据流见<a href="guide.html#privacy">隐私说明</a>。
+  本机记录与报告统计无需 AI；数据去向见<a href="guide.html#privacy">隐私说明</a>。
   <a href="guide.html">使用指南</a> · <a href="llms.txt">项目事实索引</a> · <a href="sitemap.xml">网站地图</a>。
 </footer>
 </main>

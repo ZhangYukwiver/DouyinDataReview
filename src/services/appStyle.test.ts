@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { APP_STYLES, applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAiVideoInstalled, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAiVideoInstalled, saveAppStyle, saveAutoSync, saveStoryStyle, STORY_STYLES } from "./appStyle";
+import { APP_STYLES, applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveStoryStyle, STORY_STYLES } from "./appStyle";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const data = new Map(Object.entries(initial));
@@ -54,28 +54,6 @@ describe("app style", () => {
     saveAutoSync(true, storage);
     expect(loadAutoSync(storage)).toBe(true);
     expect(loadAutoSync(undefined)).toBe(true);
-  });
-
-  it("keeps the AI video workbench uninstalled until chosen", () => {
-    const storage = memoryStorage();
-    expect(loadAiVideoInstalled(storage)).toBe(false);
-    saveAiVideoInstalled(true, storage);
-    expect(loadAiVideoInstalled(storage)).toBe(true);
-    saveAiVideoInstalled(false, storage);
-    expect(loadAiVideoInstalled(storage)).toBe(false);
-  });
-
-  it("counts someone who already set up AI edit as installed, unless they chose otherwise", () => {
-    const storage = memoryStorage();
-    storage.setItem("dy2.aiEditConfig", JSON.stringify({ baseUrl: "https://a.com/v1", apiKey: "k", model: "m" }));
-    expect(loadAiVideoInstalled(storage)).toBe(true);
-    saveAiVideoInstalled(false, storage);
-    expect(loadAiVideoInstalled(storage)).toBe(false);
-    const empty = memoryStorage();
-    empty.setItem("dy2.aiEditConfig", JSON.stringify({ baseUrl: "https://a.com/v1", apiKey: "", model: "m" }));
-    expect(loadAiVideoInstalled(empty)).toBe(false);
-    empty.setItem("dy2.aiEditConfig", "{坏的");
-    expect(loadAiVideoInstalled(empty)).toBe(false);
   });
 
   it("survives a storage that throws", () => {

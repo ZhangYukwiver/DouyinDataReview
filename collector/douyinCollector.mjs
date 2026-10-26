@@ -557,7 +557,7 @@ export class DouyinCollector {
     }
     this.externalSessionState = "reconnect_required";
     const problem = new DirectHistoryError("browser_reconnect_required", "导入的登录凭据已失效或不完整，请在设置 → 账号中重新扫码登录或连接浏览器，完成登录或验证后再次导入。");
-    // 调用方要分清是登录失效还是安全验证（AI 剪辑搜抖音时给不同的提示）
+    // 调用方要分清是登录失效还是安全验证
     problem.cause = error;
     // Each caller owns its task state; only publish the shared credential flag here.
     this.updateStatus({});
@@ -919,8 +919,7 @@ export class DouyinCollector {
     return this.publicVideoDownloadJob(job);
   }
 
-  /** smallest：下最低一档清晰度，给 AI 解析用 */
-  startVideoDownload(sourceUrl, { playback = false, smallest = false } = {}) {
+  startVideoDownload(sourceUrl, { playback = false } = {}) {
     this.assertReadPermission("videos");
     const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
     if (this.visibleBrowserWorkRunning()) {
@@ -931,7 +930,6 @@ export class DouyinCollector {
     const job = {
       id: randomUUID(),
       playback,
-      smallest,
       ...(playback ? { streamKey: randomBytes(24).toString("base64url") } : {}),
       sourceUrl: normalizedSourceUrl,
       status: "queued",
@@ -1046,7 +1044,6 @@ export class DouyinCollector {
         sourceUrl: job.sourceUrl,
         outputDirectory: path.join(this.dataDirectory, "downloads"),
         signal: controller.signal,
-        smallest: job.smallest,
         onProgress: (bytes) => this.touchVideoDownloadJob(job, { bytes }),
       });
       this.touchVideoDownloadJob(job, {

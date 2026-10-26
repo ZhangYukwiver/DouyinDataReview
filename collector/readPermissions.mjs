@@ -17,7 +17,7 @@ export function readPermissionForRequest(method, pathname) {
   if ((method === "POST" && ["/v1/chat/observe", "/v1/chat/messages", "/v1/chat/send"].includes(pathname))
     || (method === "GET" && pathname === "/v1/chat/streaks")) return "chat";
   if ((method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/downloads",
-    "/v1/explore/read", "/v1/explore/interact", "/v1/explore/video", "/v1/creator/read", "/v1/live/rooms", "/v1/analyses"].includes(pathname))
+    "/v1/explore/read", "/v1/explore/interact", "/v1/explore/video", "/v1/creator/read", "/v1/live/rooms"].includes(pathname))
     || (method === "GET" && (pathname === "/v1/live/following" || /^\/v1\/live\/rooms\/[0-9a-f-]{36}$/u.test(pathname)))) return "videos";
   return null;
 }

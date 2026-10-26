@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  canSendToReelLab,
   checkDesktopUpdates,
   downloadDesktopUpdate,
   getDesktopOpenAtLogin,
   getDesktopUpdateState,
   installDesktopUpdate,
+  sendDesktopToReelLab,
   setDesktopOpenAtLogin,
   subscribeDesktopUpdateState,
 } from "./desktopRuntime";
@@ -60,5 +62,35 @@ describe("open at login bridge", () => {
     withBridge({ getOpenAtLogin: () => { throw new Error("sync throw"); }, setOpenAtLogin: async () => "yes" });
     expect(await getDesktopOpenAtLogin()).toBeNull();
     expect(await setDesktopOpenAtLogin(true)).toBeNull();
+  });
+});
+
+describe("send to ReelLab bridge", () => {
+  const handoff = { jobId: "12345678-1234-1234-1234-123456789abc", title: "标题", author: null, url: "https://example.com/v/1", description: null, durationSeconds: 8 };
+
+  it("has no button outside the desktop app or on an older shell", async () => {
+    expect(canSendToReelLab()).toBe(false);
+    expect(await sendDesktopToReelLab(handoff)).toMatchObject({ status: "failed" });
+    withBridge({});
+    expect(canSendToReelLab()).toBe(false);
+  });
+
+  it("passes the handoff through and keeps only the answers it knows", async () => {
+    const sendToReelLab = vi.fn(async () => ({ status: "sent" }));
+    withBridge({ sendToReelLab });
+    expect(canSendToReelLab()).toBe(true);
+    expect(await sendDesktopToReelLab(handoff)).toEqual({ status: "sent" });
+    expect(sendToReelLab).toHaveBeenCalledWith(handoff);
+
+    withBridge({ sendToReelLab: async () => ({ status: "sent", wakeFailed: true }) });
+    expect(await sendDesktopToReelLab(handoff)).toEqual({ status: "sent", wakeFailed: true });
+    withBridge({ sendToReelLab: async () => ({ status: "not_installed" }) });
+    expect(await sendDesktopToReelLab(handoff)).toEqual({ status: "not_installed" });
+    withBridge({ sendToReelLab: async () => ({ status: "failed", message: "只能送视频，图文作品送不过去。" }) });
+    expect(await sendDesktopToReelLab(handoff)).toEqual({ status: "failed", message: "只能送视频，图文作品送不过去。" });
+    withBridge({ sendToReelLab: async () => "weird" });
+    expect(await sendDesktopToReelLab(handoff)).toMatchObject({ status: "failed", message: expect.any(String) });
+    withBridge({ sendToReelLab: async () => { throw new Error("ipc failed"); } });
+    expect(await sendDesktopToReelLab(handoff)).toMatchObject({ status: "failed" });
   });
 });

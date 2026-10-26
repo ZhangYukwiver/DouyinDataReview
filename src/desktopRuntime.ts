@@ -41,11 +41,27 @@ interface DesktopRuntimeBridge {
   isWindowVisible(): Promise<unknown>;
   onWindowVisibility(listener: (visible: boolean) => void): () => void;
   notifyBackgroundSyncBlocked(message: string): void;
-  // 比上面晚加的：旧版外壳没有这两个，用前先看在不在
+  // 比上面晚加的：旧版外壳没有这几个，用前先看在不在
   getOpenAtLogin?(): Promise<unknown>;
   setOpenAtLogin?(enabled: boolean): Promise<unknown>;
-  takeInstallChoice?(): Promise<unknown>;
+  sendToReelLab?(request: ReelLabHandoff): Promise<unknown>;
 }
+
+/** 交给拆片工坊的一条视频：jobId 是采集器里已经下好的下载任务，文件由桌面外壳复制过去 */
+export interface ReelLabHandoff {
+  jobId: string;
+  title: string;
+  author: string | null;
+  url: string | null;
+  description: string | null;
+  durationSeconds: number | null;
+}
+
+// wakeFailed：文件已经放进收件箱，只是没能叫醒拆片工坊，用户手动打开它就能看到
+export type ReelLabSendResult = { status: "sent"; wakeFailed?: boolean } | { status: "not_installed" } | { status: "failed"; message: string };
+
+/** 拆片工坊的下载页：没装时提示用户去这里下 */
+export const REELLAB_DOWNLOAD_URL = "https://github.com/ZhangYukwiver/ReelLab/releases/latest";
 
 declare global {
   interface Window {
@@ -209,14 +225,21 @@ export async function setDesktopOpenAtLogin(enabled: boolean): Promise<boolean |
   }
 }
 
-/** 安装时选没选「AI 视频工作台」（Windows 安装向导勾选、Mac 第一次打开时问）；只在装完第一次打开时有，之后和浏览器里是 null */
-export async function takeDesktopAnalysisChoice(): Promise<boolean | null> {
+/** 能不能「送去拆片工坊」：只有带这个接口的桌面版外壳能，浏览器里打开时没有这个按钮 */
+export function canSendToReelLab(): boolean {
+  return typeof getDesktopRuntime()?.sendToReelLab === "function";
+}
+
+/** 把下好的视频交给拆片工坊；没装时答 not_installed，别的问题都收成 failed，不抛错 */
+export async function sendDesktopToReelLab(handoff: ReelLabHandoff): Promise<ReelLabSendResult> {
   const runtime = getDesktopRuntime();
-  if (typeof runtime?.takeInstallChoice !== "function") return null;
+  if (typeof runtime?.sendToReelLab !== "function") return { status: "failed", message: "只有桌面版能送去拆片工坊。" };
   try {
-    const value = await runtime.takeInstallChoice() as { analysis?: unknown } | null;
-    return typeof value?.analysis === "boolean" ? value.analysis : null;
+    const value = await runtime.sendToReelLab(handoff) as { status?: unknown; message?: unknown; wakeFailed?: unknown } | null;
+    if (value?.status === "sent") return value.wakeFailed === true ? { status: "sent", wakeFailed: true } : { status: "sent" };
+    if (value?.status === "not_installed") return { status: "not_installed" };
+    return { status: "failed", message: typeof value?.message === "string" && value.message ? value.message : "没送过去，请稍后重试。" };
   } catch {
-    return null;
+    return { status: "failed", message: "没送过去，请稍后重试。" };
   }
 }

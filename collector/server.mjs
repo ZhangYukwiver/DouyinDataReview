@@ -11,9 +11,6 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
-import { createAiEdit } from "./aiEdit/index.mjs";
-import { chromeProvider } from "./aiEdit/film/browser.mjs";
-import { createLocalAi } from "./localAi.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
@@ -25,9 +22,7 @@ import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
-import { LIBRARY_TEXTS, createLookDesk } from "./aiEdit/look.mjs";
-import { AnalysisError, AnalysisLibrary, parseAnalysisConfig, startAnalysis } from "./videoAnalysis.mjs";
-import { VideoDownloadError, fetchMediaStream } from "./videoDownloader.mjs";
+import { fetchMediaStream } from "./videoDownloader.mjs";
 
 const DEFAULT_PORT = 4765;
 const MAX_BODY_BYTES = 4 * 1024;
@@ -139,11 +134,10 @@ function isAllowedOrigin(origin, explicitOrigins) {
   return explicitOrigins.includes(origin);
 }
 
-// 采集器自己放出去的网页（AI 写的网页片段、导入的 openfilm 工程、编码页）：页面脚本是 AI 或别人写的，不许它们取配对码、
-// 配对、调要配对的接口，不然能自己拿到 token 替用户点「生成」花钱。同源请求浏览器带 Sec-Fetch-Site: same-origin；
-// 页面换个主机名打回来（127.0.0.1 ↔ localhost / [::1] / 局域网地址）时浏览器算 cross-site，但 Origin 的端口还是采集器
-// 自己的，也一样当成自己的页面。应用页面在 47651 端口或开发服务器上，和采集器同在 127.0.0.1 监听，端口永远不会撞上；
-// MCP 桥和测试这类 Node 客户端两个头都不带，不受影响。
+// 采集器地址上打开的页面（比如直接在浏览器里打开的视频流）不是工作台，不许它们取配对码、配对、调要配对的接口。
+// 同源请求浏览器带 Sec-Fetch-Site: same-origin；页面换个主机名打回来（127.0.0.1 ↔ localhost / [::1] / 局域网地址）时
+// 浏览器算 cross-site，但 Origin 的端口还是采集器自己的，也一样当成自己的页面。应用页面在 47651 端口或开发服务器上，
+// 和采集器同在 127.0.0.1 监听，端口永远不会撞上；测试这类 Node 客户端两个头都不带，不受影响。
 function fromOwnPage(request, ownPort) {
   if (request.headers["sec-fetch-site"] === "same-origin") return true;
   const origin = request.headers.origin;
@@ -242,8 +236,6 @@ export async function startCollectorServer({
   dataDirectory = path.join(projectDirectory, ".local-data"),
   browserSources = browserDirectories(),
   browserConnector = connectExternalBrowser,
-  // 网页片段逐帧渲染用的浏览器：桌面版传 Electron 的隐藏窗口，单独跑时用本机 Chrome / Edge
-  filmBrowser = chromeProvider(),
 } = {}) {
   const options = { lan, port, origins };
   await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
@@ -275,24 +267,6 @@ export async function startCollectorServer({
     if (!store) folderStores.set(target.dataDirectory, store = new RecordFolderStore(target.dataDirectory));
     return store;
   };
-  // 解析库不分账号，放在根数据目录
-  const analyses = new AnalysisLibrary(path.join(dataDirectory, "analyses.json"));
-  await analyses.load();
-  // 解析库用的模型看不了视频时，请解析库页面在浏览器里拆截图和节拍
-  const analysisLooks = createLookDesk({ filePath: "/v1/analyses/look", texts: LIBRARY_TEXTS });
-  // 本机的 Codex / Claude Code：AI 剪辑和解析库共用，关采集器时把还在跑的 CLI 一起杀掉
-  const localAi = createLocalAi({ dataDirectory });
-  // AI 剪辑（会话、工程、素材库）同样不分账号；切换账号期间拿不到采集器，导入抖音视频会提示稍等
-  const aiEdit = createAiEdit({
-    dataDirectory,
-    localAi,
-    getCollector: () => (switching ? null : collector),
-    busyReason: () => (explorer.busy ? "请等待当前探索操作完成后继续。" : null),
-    getExplorer: () => (switching ? null : explorer),
-    filmBrowser,
-    getOrigin: () => origin,
-  });
-  let origin = null;
   // 账号操作（切换、新建、删除）一次只做一个；切换期间旧采集器在关、新的还没接上
   let accountWork = null;
   let switching = false;
@@ -423,8 +397,7 @@ export async function startCollectorServer({
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
         "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        // PATCH：AI 剪辑设置里开关技能
-        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
         "Access-Control-Max-Age": "600",
       });
       response.end();
@@ -482,16 +455,7 @@ export async function startCollectorServer({
       return;
     }
 
-    // AI 剪辑的素材文件给 <video>/<img> 直接用，带不了 Bearer，靠素材库的 key
-    if (await aiEdit.handle(request, response, url)) return;
-    // 解析库请页面拆视频时给 <video> 的临时地址：地址里的随机串就是凭证，半小时失效
-    const analysisLookFile = request.method === "GET" ? url.pathname.match(/^\/v1\/analyses\/look\/([0-9a-f]{32})\/file$/u) : null;
-    if (analysisLookFile) {
-      await analysisLooks.sendFile(request, response, analysisLookFile[1]);
-      return;
-    }
-
-    // 上面不用配对的文件地址照常给网页片段用；往下要配对的接口，采集器自己放出去的页面就算拿到了 token 也不认
+    // 往下要配对的接口，采集器地址上打开的页面就算拿到了 token 也不认
     if (ownPage) {
       sendJson(response, 403, { error: "same_origin_not_allowed" });
       return;
@@ -500,9 +464,6 @@ export async function startCollectorServer({
       sendJson(response, 401, { error: "not_paired" });
       return;
     }
-
-    // AI 剪辑不分账号，切换账号期间也照常用
-    if (await aiEdit.handle(request, response, url, { paired: true })) return;
 
     // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录和文件夹照常能读，接收中的聊天页要一直拉
     const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (["/v1/records", "/v1/folders"].includes(url.pathname) && !accountWork));
@@ -801,40 +762,6 @@ export async function startCollectorServer({
       } else {
         sendJson(response, 200, { job });
       }
-    } else if (url.pathname === "/v1/analyses/looks") {
-      // 应用开着就接活儿：只回挂着的拆视频任务（不带整份解析结果，轮询很轻）
-      if (request.method !== "GET") { sendJson(response, 405, { error: "method_not_allowed" }); return; }
-      sendJson(response, 200, { looks: analyses.list().filter((item) => item.status === "running" && item.look).map((item) => ({ id: item.id, look: item.look })) });
-    } else if (/^\/v1\/analyses\/[0-9a-f-]{36}\/look\/[0-9a-f]{16}$/u.test(url.pathname)) {
-      // 解析库页面交回拆好的截图和节拍、压缩好的视频（base64，最大约 45MB 的 mp4），或接手、进度回执
-      if (request.method !== "POST") { sendJson(response, 405, { error: "method_not_allowed" }); return; }
-      const [, , , id, , jobId] = url.pathname.split("/");
-      try {
-        analysisLooks.answer(id, jobId, await readJsonBody(request, 96 * 1024 * 1024));
-        sendJson(response, 200, { ok: true });
-      } catch (error) {
-        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
-        sendJson(response, error?.status ?? (malformed ? 400 : 500), { error: error?.code ?? "invalid_request", message: error?.code ? error.message : "请求无效，请重试。" });
-      }
-    } else if (url.pathname === "/v1/analyses" || /^\/v1\/analyses\/[0-9a-f-]{36}$/u.test(url.pathname)) {
-      // 解析库：GET 全部，POST 开始解析一条（带链接和接口配置），DELETE 删一条
-      try {
-        if (request.method === "GET" && url.pathname === "/v1/analyses") sendJson(response, 200, { analyses: analyses.list() });
-        else if (request.method === "POST" && url.pathname === "/v1/analyses") {
-          const body = await readJsonBody(request, 16 * 1024);
-          if (explorer.busy) { sendJson(response, 409, { error: "collector_busy", message: "请等待当前探索操作完成后继续。" }); return; }
-          if (rejectWhileSwitching(response)) return;
-          sendJson(response, 202, { analysis: startAnalysis({ library: analyses, collector, url: body?.url, config: parseAnalysisConfig(body?.config), looks: analysisLooks, localAi }) });
-        } else if (request.method === "DELETE" && url.pathname !== "/v1/analyses") sendJson(response, 200, { removed: await analyses.remove(url.pathname.split("/").at(-1)) });
-        else sendJson(response, 405, { error: "method_not_allowed" });
-      } catch (error) {
-        const known = error instanceof AnalysisError || error instanceof VideoDownloadError;
-        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
-        if (!response.headersSent) sendJson(response, known ? (error.code === "collector_busy" ? 409 : error.status ?? 400) : malformed ? 400 : 500, {
-          error: known ? error.code : malformed ? "invalid_request" : "analysis_failed",
-          message: known ? error.message : malformed ? "请求无效，请重试。" : "解析没开始，请稍后重试。",
-        });
-      }
     } else if (url.pathname === "/v1/creator/read") {
       // 创作者中心的数据：工作台一次传一批白名单里的查询，原样带回抖音的结果（只读）
       try {
@@ -1011,9 +938,6 @@ export async function startCollectorServer({
     browserLoginController?.abort();
     for (const finish of statusWaiters) finish();
     try {
-      analysisLooks.close();
-      await aiEdit.close();
-      await localAi.close();
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器
       await accountWork?.catch(() => undefined);
       await browserWork;
@@ -1033,11 +957,12 @@ export async function startCollectorServer({
     await shutdown();
     throw new Error("采集服务未能分配 TCP 端口。");
   }
-  origin = `http://127.0.0.1:${address.port}`;
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     dataDirectory,
     getPairingCode: () => pairing.displayCode(),
+    // 送去拆片工坊：桌面主进程按下载任务取已下好的文件，没下完或不在下载目录里就是 null
+    getDownloadFilePath: (jobId) => collector.getVideoDownloadFilePath(jobId),
     close: shutdown,
   };
 }
