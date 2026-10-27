@@ -765,7 +765,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     }
     update();
     addEventListener("scroll", update, { passive: true });
-    if (!REDUCED && window.StoryGlide) glide = window.StoryGlide.install({ scenes: () => scenes.map((s) => s.el) });
+    if (!REDUCED && window.StoryGlide) glide = window.StoryGlide.install({ scenes: () => scenes.map((s) => s.el), tau: 0.07 });
     addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { remeasureMarquees(); update(); }, 120); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { remeasureMarquees(); update(); });
     addEventListener("load", () => { remeasureMarquees(); update(); });
