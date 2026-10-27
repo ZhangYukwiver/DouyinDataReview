@@ -34,6 +34,7 @@ import {
   createEmptyPersonalRecords,
   type PersonalArchiveData,
   type PersonalRecordCollection,
+  type PersonalRecordType,
   type PersonalVideoRecord,
 } from "./src/domain/personalRecords";
 import { countChatMessages, type ChatConversationSummary, type ChatMessage } from "./src/domain/chatRecords";
@@ -48,6 +49,7 @@ import {
   getCollectorAccounts,
   getCollectorPairingCode,
   getCollectorChat,
+  getCollectorNewRecords,
   getCollectorRecords,
   getCollectorStatus,
   getCollectorVideoDownload,
@@ -286,6 +288,8 @@ function AppContent() {
   const [frozenSnapshot, setFrozenSnapshot] = useState<CollectorSnapshot | null>(null);
   // 冻结那一刻的采集状态：显示的是读取前那份记录，完整度也按那时的算
   const [frozenState, setFrozenState] = useState<CollectorStatus["state"] | undefined>(undefined);
+  // 读取中这一轮新读到的记录：只给内容库列表边读边出，报告还用冻结那份，读完整份拉回来再一起算
+  const [liveRecords, setLiveRecords] = useState<PersonalRecordCollection | null>(null);
   // 极简风格没有自己的报告页，打开报告时借用这里选的一套（设置面板里改）
   const [storyStyle, setStoryStyle] = useState<StoryStyle>(() => (Platform.OS === "web" ? loadStoryStyle() : "archive"));
   // 设置面板开着时是要先滚到的那一节，关着是 null
@@ -299,6 +303,8 @@ function AppContent() {
   // 别处换掉快照时记录数组也跟着换，对不上引用就当没拉过
   const loadedRecordsRef = useRef<{ records: PersonalRecordCollection; revision: number } | null>(null);
   const collectorRecordsRef = useRef<PersonalRecordCollection | undefined>(undefined);
+  // liveRecords 是采集器第几轮读取的、已经取到第几条；轮询按它接着往下取
+  const liveRecordsRef = useRef<{ run: number; received: number; records: PersonalRecordCollection } | null>(null);
   const importRequest = useRef(0);
   const pollRequest = useRef(0);
   const statusPollAbortRef = useRef<AbortController | null>(null);
@@ -460,12 +466,15 @@ function AppContent() {
     // 只在 busy 翻转时取值：翻成 true 的那一刻 collectorSnapshot 还是采集前的数据
     setFrozenSnapshot(collectorBusy ? collectorSnapshot : null);
     setFrozenState(collectorBusy ? collectorStatus?.state : undefined);
+    liveRecordsRef.current = null;
+    setLiveRecords(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectorBusy]);
 
   // 冻结的样本只在采集器忙的时候用；忙完那一帧 effect 还没清掉它，别让旧数字闪回来
   const shownSnapshot = (collectorBusy && frozenSnapshot) || collectorSnapshot;
-  recordsFrozenRef.current = Boolean(collectorBusy && frozenSnapshot);
+  const recordsFrozen = Boolean(collectorBusy && frozenSnapshot);
+  recordsFrozenRef.current = recordsFrozen;
   collectorRecordsRef.current = collectorSnapshot?.records;
   // 导入的文件是用户刚明确选的，连着采集器也先用它；移除文件就换回采集器的数据
   const displaySnapshot: DisplaySnapshot | null = selectedArchive?.data
@@ -629,6 +638,25 @@ function AppContent() {
     return true;
   }
 
+  // 只取这一轮新读到、还没取过的那几条接在后面；采集器换了一轮就从头接。只是给列表先看的，取不到就等读完那次整份刷新
+  async function refreshLiveRecords(baseUrl: string, token: string, requestId: number, { run, count }: { run: number; count: number }) {
+    const held = liveRecordsRef.current?.run === run ? liveRecordsRef.current : null;
+    if (held && held.received >= count) return;
+    const batch = await getCollectorNewRecords(baseUrl, token, run, held?.received ?? 0).catch(() => null);
+    if (!batch || pollRequest.current !== requestId) return;
+    const current = liveRecordsRef.current;
+    // 同一轮却接不上：采集器刚读完、已经清掉了，手上这些留着等读完那次整份刷新
+    const prior = current?.run === batch.run ? current.records : null;
+    if ((prior && batch.after !== current!.received) || batch.received === 0) return;
+    const records = prior
+      ? Object.fromEntries((Object.keys(prior) as PersonalRecordType[]).map((type) => [
+        type, batch.records[type].length ? [...prior[type], ...batch.records[type]] : prior[type],
+      ])) as PersonalRecordCollection
+      : batch.records;
+    liveRecordsRef.current = { run: batch.run, received: batch.after + batch.received, records };
+    setLiveRecords(records);
+  }
+
   async function pollCollector(baseUrl: string, token: string, requestId: number) {
     statusPollAbortRef.current?.abort();
     const controller = new AbortController();
@@ -685,6 +713,7 @@ function AppContent() {
           } else if (snapshotVersion !== nextVersion) {
             if (!await refreshCollectorChat(baseUrl, token, requestId)) return;
           }
+          if (holdRecords && status.newRecords) await refreshLiveRecords(baseUrl, token, requestId, status.newRecords);
           snapshotVersion = nextVersion;
         }
         if (pollRequest.current !== requestId) return;
@@ -1924,6 +1953,7 @@ function AppContent() {
           onTogglePrivacy={() => setPrivacy((value) => !value)}
           privacy={privacy}
           records={workspaceRecords}
+          liveRecords={recordsFrozen && displaySnapshot?.source === "collector" ? liveRecords : null}
           downloadStates={downloadStates}
           sendStates={sendStates}
           report={personalSummary ?? livingReport}

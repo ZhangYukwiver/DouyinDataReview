@@ -705,11 +705,17 @@ describe("DouyinCollector sync startup", () => {
     collector.status.state = "partial";
     collector.runDirectRecords = vi.fn().mockReturnValue(runGate);
 
+    collector.newRecords = { run: 0, items: [{ type: "liked_videos", record: { id: "liked_videos:old-run" } }] };
     expect(collector.startSync()).toBe(true);
     expect(collector.getStatus().state).toBe("collecting");
+    // 新的一轮从空的开始，读完清掉
+    expect(collector.getStatus().newRecords).toEqual({ run: 1, count: 0 });
+    expect(collector.getNewRecords(1, 0).records).toEqual([]);
+    collector.newRecords.items.push({ type: "liked_videos", record: { id: "liked_videos:this-run" } });
 
     finishRun();
-    await runGate;
+    await collector.syncPromise;
+    expect(collector.getNewRecords(1, 0).records).toEqual([]);
   });
 
   it("exposes the error code so the app can react to a missing login", async () => {
@@ -850,6 +856,13 @@ describe("DouyinCollector direct records", () => {
     expect(collector.snapshot.records.watch_history).toHaveLength(2);
     // 整份重读时本地已有的那条不算新增
     expect(collector.snapshot.warnings[0]).toBe("无界面读取完成：新增观看 1、点赞 1、收藏 1；读取观看历史 2 页、点赞 1 页、收藏 1 页。");
+    // 工作台边读边取的也只有这三条，按读到的顺序；接着上次取到的位置往下给，问的不是这一轮就从头给
+    const fresh = (batch) => batch.records.map(({ type, record }) => [type, record.videoId]);
+    expect(collector.getStatus().newRecords).toEqual({ run: 0, count: 3 });
+    expect(fresh(collector.getNewRecords(0, 0))).toEqual([["watch_history", "history-new"], ["liked_videos", "liked-new"], ["favorite_videos", "favorite-new"]]);
+    expect(collector.getNewRecords(0, 2)).toMatchObject({ run: 0, after: 2 });
+    expect(fresh(collector.getNewRecords(0, 2))).toEqual([["favorite_videos", "favorite-new"]]);
+    expect(collector.getNewRecords(7, 2)).toMatchObject({ run: 0, after: 0 });
     expect(collector.readDirectHistory.mock.calls.map(([, cursor, options]) => [cursor, Boolean(options?.completedOnly)])).toEqual([
       ["0", false],
       ["1700000000000", false],

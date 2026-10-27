@@ -41,6 +41,8 @@ export interface CollectorStatus {
   revision?: number;
   /** 记录本身换过几次（只存聊天不算）；老版本采集器没有这一项 */
   recordsRevision?: number;
+  /** 这一轮读取（run）里本地原来没有的记录读到了几条，工作台据此边读边取；老版本采集器没有这一项 */
+  newRecords?: { run: number; count: number };
   chatConnection?: "connecting" | "connected" | "reconnecting" | null;
   /** 当前读取走 direct_records；page 仅兼容旧采集器状态。 */
   syncMode: "page" | "direct_records" | null;
@@ -157,6 +159,10 @@ export class LocalCollectorError extends Error {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isPrivateIpv4(hostname: string): boolean {
@@ -733,6 +739,8 @@ function parseStatus(value: unknown): CollectorStatus {
     code: typeof value.code === "string" ? value.code : null,
     ...(typeof value.revision === "number" && Number.isSafeInteger(value.revision) && value.revision >= 0 ? { revision: value.revision } : {}),
     ...(typeof value.recordsRevision === "number" && Number.isSafeInteger(value.recordsRevision) && value.recordsRevision >= 0 ? { recordsRevision: value.recordsRevision } : {}),
+    ...(isObject(value.newRecords) && isCount(value.newRecords.run) && isCount(value.newRecords.count)
+      ? { newRecords: { run: value.newRecords.run, count: value.newRecords.count } } : {}),
     chatConnection: value.chatConnection === "connecting" || value.chatConnection === "connected" || value.chatConnection === "reconnecting"
       ? value.chatConnection : null,
     syncMode: value.syncMode === "page" || value.syncMode === "direct_records" ? value.syncMode : null,
@@ -1027,6 +1035,32 @@ export async function getCollectorStatus(baseUrl: string, token: string, afterRe
 
 export async function getCollectorRecords(baseUrl: string, token: string): Promise<CollectorSnapshot> {
   return parseSnapshot(await requestJson(baseUrl, "/v1/records", {}, token));
+}
+
+export interface CollectorNewRecords {
+  run: number;
+  /** 这一批从第几条开始；和手里的对不上（换了一轮）就是从头给的 */
+  after: number;
+  /** 采集器给了几条（含解析不了被跳过的），下一次从 after + received 接着取 */
+  received: number;
+  records: PersonalRecordCollection;
+}
+
+const RECORD_TYPES: readonly PersonalRecordType[] = ["watch_history", "liked_videos", "favorite_videos"];
+
+// 读取中只取这一轮新读到的那几条，不用每页都把几 MB 的整份记录搬一遍
+export async function getCollectorNewRecords(baseUrl: string, token: string, run: number, after: number): Promise<CollectorNewRecords> {
+  const value = await requestJson(baseUrl, `/v1/records?part=new&run=${run}&after=${after}`, {}, token);
+  if (!isObject(value) || !isCount(value.run) || !isCount(value.after) || !Array.isArray(value.records)) {
+    throw new LocalCollectorError("invalid_response", "采集服务返回了无效记录。");
+  }
+  const records = createEmptyPersonalRecords();
+  for (const item of value.records) {
+    const type = isObject(item) ? RECORD_TYPES.find((kind) => kind === item.type) : undefined;
+    const record = type && isObject(item) ? parseRecord(item.record) : null;
+    if (type && record) records[type].push(record);
+  }
+  return { run: value.run, after: value.after, received: value.records.length, records };
 }
 
 // 只取聊天：记录没换时不用每来一条消息就搬一遍、解析一遍几 MB 的记录

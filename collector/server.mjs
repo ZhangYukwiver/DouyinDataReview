@@ -919,7 +919,12 @@ export async function startCollectorServer({
         sendJson(response, 400, { error: "invalid_revision" });
       } else waitForStatus(response, Number(requestedRevision));
     } else if (request.method === "GET" && url.pathname === "/v1/records") {
-      sendJson(response, 200, url.searchParams.get("part") === "chat" ? collector.getChatSnapshot() : collector.getSnapshot());
+      const part = url.searchParams.get("part");
+      if (part === "new") {
+        const [run, after] = ["run", "after"].map((key) => url.searchParams.get(key) ?? "");
+        if (!/^\d{1,12}$/u.test(run) || !/^\d{1,12}$/u.test(after)) sendJson(response, 400, { error: "invalid_revision" });
+        else sendJson(response, 200, collector.getNewRecords(Number(run), Number(after)));
+      } else sendJson(response, 200, part === "chat" ? collector.getChatSnapshot() : collector.getSnapshot());
     } else if (request.method === "GET" && url.pathname === "/v1/folders") {
       try {
         sendJson(response, 200, await foldersOf(collector).read());
