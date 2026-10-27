@@ -242,6 +242,8 @@ export async function startCollectorServer({
   port = DEFAULT_PORT,
   // 固定端口被占时改用随机端口（桌面版用）：应用照常能用，只是推荐流过滤扩展找不到它
   randomPortFallback = false,
+  // 扩展文件夹里装的推荐流过滤扩展版本（桌面版给）；扩展发现比自己新就重新加载
+  feedExtensionVersion = null,
   origins = [],
   dataDirectory = path.join(projectDirectory, ".local-data"),
   browserSources = browserDirectories(),
@@ -849,7 +851,7 @@ export async function startCollectorServer({
         if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
           if (fromExtension) {
             const { rules, mode, remove } = await feedFilter.touch();
-            sendJson(response, 200, { rules, mode, remove });
+            sendJson(response, 200, { rules, mode, remove, version: feedExtensionVersion });
           } else {
             const value = await feedFilter.read();
             sendJson(response, 200, { rules: value.rules, mode: value.mode, extension: extensionState(value) });

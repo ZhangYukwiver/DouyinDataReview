@@ -7,6 +7,17 @@
 const PORTS = [47652, 4765];
 const MAX_PENDING = 300;
 
+// 扩展版本号是点分数字（1.2.0）
+function isNewerVersion(candidate, current) {
+  const a = String(candidate).split(".").map(Number);
+  const b = String(current).split(".").map(Number);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] || 0) - (b[index] || 0);
+    if (difference) return difference > 0;
+  }
+  return false;
+}
+
 let chain = Promise.resolve();
 const serial = (task) => (chain = chain.then(task, task));
 
@@ -65,14 +76,24 @@ async function refresh() {
   if (typeof value?.rules !== "string" || typeof value?.mode !== "string") return null;
   const next = { rules: value.rules, mode: value.mode };
   await chrome.storage.local.set({ settings: next });
+  // 应用带了更新的扩展、已经换进了浏览器加载的那个文件夹：重新加载一次就是新版。
+  // 同一个版本只试一次：万一是从别的文件夹加载的，重载了还是旧版，不能每分钟重载一回
+  if (typeof value.version === "string" && isNewerVersion(value.version, chrome.runtime.getManifest().version)) {
+    const { reloadedFor } = await chrome.storage.local.get("reloadedFor");
+    if (reloadedFor !== value.version) {
+      await chrome.storage.local.set({ reloadedFor: value.version });
+      chrome.runtime.reload();
+    }
+  }
   return next;
 }
 
-// 每分钟和应用对一次：应用能看到扩展还在，叫移除也在这时收到；刚装好就先对一次
+// 每分钟和应用对一次：应用能看到扩展还在，叫移除、有新版也在这时收到；刚装好、浏览器一启动就先对一次
 const sync = () => serial(async () => { await refresh(); await flush(); });
 chrome.alarms.get("sync").then((alarm) => alarm || chrome.alarms.create("sync", { periodInMinutes: 1 }));
 chrome.alarms.onAlarm.addListener(sync);
 chrome.runtime.onInstalled.addListener(sync);
+chrome.runtime.onStartup.addListener(sync);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // 上次存下的：马上就有，页面打开时先用它，免得等后台连应用的那几秒里第一批推荐漏过去
