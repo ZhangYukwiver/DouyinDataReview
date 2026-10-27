@@ -453,6 +453,8 @@ export class DouyinCollector {
     this.chatSendPromise = null;
     this.syncRunId = 0;
     this.syncMode = null;
+    // 这一轮读取里本地原来没有的记录，按读到的顺序攒着给工作台边读边取；读完就清掉，那时整份记录已经存好了
+    this.newRecords = { run: 0, items: [] };
     // 边采边存的最小间隔，快照是整份重写的，不能每页都写
     this.progressPersistIntervalMs = 1_500;
     this.chatHistoryPageLimit = CHAT_FRIEND_HISTORY_PAGE_LIMIT;
@@ -648,6 +650,12 @@ export class DouyinCollector {
   getChatSnapshot() {
     const { schemaVersion, updatedAt, chatMessages, chatConversations, warnings } = this.snapshot;
     return structuredClone({ schemaVersion, updatedAt, chatMessages, chatConversations, warnings });
+  }
+
+  // 读取中只取第 after 条以后新读到的记录；问的不是这一轮就从头给，工作台按返回的 run 和 after 对齐
+  getNewRecords(run, after) {
+    const from = run === this.newRecords.run ? Math.min(after, this.newRecords.items.length) : 0;
+    return { run: this.newRecords.run, after: from, records: this.newRecords.items.slice(from) };
   }
 
   // 存盘前核对浏览器里登录的还是不是这个账号：换成别的抖音号就抛 account_mismatch，两个人的记录不能混进一份；
@@ -1154,9 +1162,11 @@ export class DouyinCollector {
     this.syncMode = "direct_records";
     const runId = this.syncRunId + 1;
     this.syncRunId = runId;
+    this.newRecords = { run: runId, items: [] };
     this.updateStatus({
       syncMode: "direct_records",
       syncFull: full,
+      newRecords: { run: runId, count: 0 },
       state: "collecting",
       phase: "watch_history",
       progress: null,
@@ -1174,6 +1184,7 @@ export class DouyinCollector {
         });
       })
       .finally(() => {
+        if (this.newRecords.run === runId) this.newRecords.items = [];
         if (this.syncPromise === promise) {
           this.syncPromise = null;
           this.syncMode = null;
@@ -1661,6 +1672,8 @@ export class DouyinCollector {
         type,
         new Set(incrementalByType.get(type) ? existingRecords[type].map((record) => record.id) : []),
       ]));
+      // knownIds 只给增量读取判断停在哪；「新增」要和本地已有的比，整份重读时也一样，否则读到的每条都算新的
+      const existingIds = new Map(REQUIRED_TYPES.map((type) => [type, new Set(existingRecords[type].map((record) => record.id))]));
       const newIds = new Map(REQUIRED_TYPES.map((type) => [type, new Set()]));
       const rejectedIds = new Map(REQUIRED_TYPES.map((type) => [type, new Set()]));
       const returnedCounts = new Map(REQUIRED_TYPES.map((type) => [type, 0]));
@@ -1676,11 +1689,16 @@ export class DouyinCollector {
       const trackResult = (type, result) => {
         returnedCounts.set(type, returnedCounts.get(type) + result.pageSize);
         filteredCounts.set(type, filteredCounts.get(type) + result.rejectedRecordIds.length);
-        for (const id of result.acceptedRecordIds) {
-          if (!knownIds.get(type).has(id)) newIds.get(type).add(id);
-        }
+        const fresh = result.acceptedRecordIds.filter((id) => !existingIds.get(type).has(id) && !newIds.get(type).has(id));
+        for (const id of fresh) newIds.get(type).add(id);
         for (const id of result.rejectedRecordIds) rejectedIds.get(type).add(id);
+        if (fresh.length === 0) return;
+        const byId = new Map(accumulator.records[type].map((record) => [record.id, record]));
+        for (const id of fresh) {
+          if (byId.has(id)) this.newRecords.items.push({ type, record: structuredClone(byId.get(id)) });
+        }
       };
+      const newRecordsStatus = () => ({ run: this.newRecords.run, count: this.newRecords.items.length });
       const previewRecords = (type, final = false) => {
         const preview = structuredClone(stagedRecords);
         preview[type] = finalizeDirectType(
@@ -1694,13 +1712,9 @@ export class DouyinCollector {
         );
         return preview;
       };
-      const progressMessage = (type, pageCount) => {
-        const returned = returnedCounts.get(type);
-        const filtered = filteredCounts.get(type);
-        return incrementalByType.get(type)
-          ? `正在读取${TYPE_LABELS[type]}新增记录（第 ${pageCount} 页，接口 ${returned} 条，新增 ${newIds.get(type).size} 条，过滤 ${filtered} 条）`
-          : `正在读取${TYPE_LABELS[type]}全部记录（第 ${pageCount} 页，接口 ${returned} 条，保留 ${accumulator.snapshot().records[type].length} 条，过滤 ${filtered} 条）`;
-      };
+      const progressMessage = (type, pageCount) => (
+        `正在读取${TYPE_LABELS[type]}${incrementalByType.get(type) ? "新增" : "全部"}记录（第 ${pageCount} 页，接口 ${returnedCounts.get(type)} 条，新增 ${newIds.get(type).size} 条，过滤 ${filteredCounts.get(type)} 条）`
+      );
       // 每读一段就落盘，工作台边采边能看到新记录；限流是因为快照要整份重写
       let lastProgressPersistAt = Date.now();
       const persistProgress = async (type) => {
@@ -1753,6 +1767,7 @@ export class DouyinCollector {
               phase: type,
               message: progressMessage(type, pageCount),
               counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
+              newRecords: newRecordsStatus(),
             });
             await persistProgress(type);
             return !result.recordIds.some((id) => knownIds.get(type).has(id));
@@ -1787,6 +1802,7 @@ export class DouyinCollector {
             phase: type,
             message: progressMessage(type, pageCounts[type]),
             counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
+            newRecords: newRecordsStatus(),
           });
           await persistProgress(type);
           if (result.recordIds.some((id) => knownIds.get(type).has(id))) break;

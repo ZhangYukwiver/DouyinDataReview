@@ -110,6 +110,8 @@ export interface ContentWorkspaceProps {
   creator?: React.ReactNode;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
+  /** 读取中这一轮新读到、还不在 records 里的记录：只进列表和侧栏计数，报告等读完拿到整份再算 */
+  liveRecords?: PersonalRecordCollection | null;
   chatMessages?: ChatMessage[];
   chatConversations?: ChatConversationSummary[];
   chatConnected?: boolean;
@@ -186,6 +188,13 @@ const toolView = (view: SideKey) => view === "explore" || view === "creator";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
+const NO_RECORDS: PersonalVideoRecord[] = [];
+// 直播记录存在观看历史里（mediaType live），侧栏单独一栏，观看历史只列视频，免得一条出现两次
+const splitLive = (list: PersonalVideoRecord[]) => [
+  list.filter((record) => record.mediaType !== "live"),
+  list.filter((record) => record.mediaType === "live"),
+] as const;
+
 // 侧栏收放是同一套版式在变窄：宽度做过渡，展开态的文字原地淡出并被侧栏裁掉，不换一套窄版面。
 const COLLAPSE_MS = 380;
 const collapseWidth = ease("width", COLLAPSE_MS);
@@ -202,6 +211,7 @@ export function ContentWorkspace({
   creator,
   activeView,
   records,
+  liveRecords = null,
   chatMessages = [],
   chatConversations = [],
   chatConnected = false,
@@ -286,20 +296,17 @@ export function ContentWorkspace({
     () => buildReportModel(records, reportChats.chatMessages, report, reportChats.chatConversations),
     [reportChats.chatConversations, reportChats.chatMessages, records, report],
   );
-  // 直播记录存在观看历史里（mediaType live），侧栏单独一栏，观看历史只列视频，免得一条出现两次
-  const [watchedVideos, watchedLives] = useMemo(() => [
-    records.watch_history.filter((record) => record.mediaType !== "live"),
-    records.watch_history.filter((record) => record.mediaType === "live"),
-  ], [records.watch_history]);
+  const [watchedVideos, watchedLives] = useMemo(() => splitLive(records.watch_history), [records.watch_history]);
+  const [incomingVideos, incomingLives] = useMemo(() => splitLive(liveRecords?.watch_history ?? NO_RECORDS), [liveRecords?.watch_history]);
   const folders = useRecordFolders(commentsConnection, status?.account?.id);
   const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
   const counts: Record<SideKey, number> = {
     explore: 0,
     creator: 0,
-    watch_history: watchedVideos.length,
-    live: watchedLives.length,
-    liked_videos: records.liked_videos.length,
-    favorite_videos: records.favorite_videos.length,
+    watch_history: watchedVideos.length + incomingVideos.length,
+    live: watchedLives.length + incomingLives.length,
+    liked_videos: records.liked_videos.length + (liveRecords?.liked_videos.length ?? 0),
+    favorite_videos: records.favorite_videos.length + (liveRecords?.favorite_videos.length ?? 0),
     feed_filtered: feedVideos.length,
     library: 0,
     chat: countChatMessages(chatMessages, chatConversations),
@@ -556,6 +563,7 @@ export function ContentWorkspace({
             onOpenSettings={onOpenSettings}
             privacy={privacy}
             records={activeView === "live" ? watchedLives : activeView === "feed_filtered" ? feedVideos : activeView === "watch_history" ? watchedVideos : records[activeView]}
+            incoming={activeView === "live" ? incomingLives : activeView === "feed_filtered" ? undefined : activeView === "watch_history" ? incomingVideos : liveRecords?.[activeView]}
             sourceLabel={sourceLabel}
             status={status}
             width={mainWidth}
@@ -990,7 +998,8 @@ function RecordsGallery({
   onOpenRecord,
   onOpenSettings,
   privacy,
-  records,
+  records: savedRecords,
+  incoming,
   sourceLabel,
   status,
   width,
@@ -1019,11 +1028,27 @@ function RecordsGallery({
   onOpenSettings: () => void;
   privacy: boolean;
   records: PersonalVideoRecord[];
+  /** 读取中这一轮新读到的，按读到的顺序排在 records 前面 */
+  incoming?: PersonalVideoRecord[];
   sourceLabel: string;
   status: CollectorStatus | null;
   width: number;
 }) {
   const [layout, setLayout] = useState<"grid" | "list">("grid");
+  const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
+  // 网格每行的 key 是这一行几条记录的 id 拼起来的：插进不满一行的新记录，下面每一行都要整个重挂、封面重新加载。
+  // 新读到的凑满整行才放上去，零头等下一页，读完整份刷新时一起出来
+  const step = layout === "grid" ? columns : 1;
+  const ready = incoming ? incoming.length - incoming.length % step : 0;
+  const records = useMemo(() => (ready ? [...incoming!.slice(0, ready), ...savedRecords] : savedRecords), [incoming, ready, savedRecords]);
+  // 刚放上来的那一批按读到的顺序错开升起；换栏目、换网格列表时已经在的不重放
+  const batch = useRef({ activeType, step, from: 0, ready: 0 });
+  if (batch.current.ready !== ready || batch.current.activeType !== activeType || batch.current.step !== step) {
+    const grew = batch.current.activeType === activeType && batch.current.step === step && batch.current.ready < ready;
+    batch.current = { activeType, step, from: grew ? batch.current.ready : ready, ready };
+  }
+  const enterFrom = batch.current.from;
+  const enterOrder = useMemo(() => new Map((incoming ?? NO_RECORDS).slice(enterFrom, ready).map((record, index) => [record.id, index + 1])), [incoming, enterFrom, ready]);
   const [playingRecord, setPlayingRecord] = useState<PersonalVideoRecord | null>(null);
   const [liveTarget, setLiveTarget] = useState<LiveTarget | null>(null);
   const openLive = Platform.OS === "web" && !privacy
@@ -1116,7 +1141,6 @@ function RecordsGallery({
     if (move && selectMode === "folder") setSelected(new Set());
     setFolderDialog(null);
   };
-  const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
   // 最后一行不满时 flex:1 会把卡片拉宽，限成一列宽（12 是 gridRow 的 gap）
   const cellStyle = useMemo(() => Platform.OS === "web" ? ({ maxWidth: `calc((100% - ${(columns - 1) * 12}px) / ${columns})` } as object) : null, [columns]);
   // 滚动条要按全部记录的总高度算才拖得动：没有 getItemLayout 时列表只把量过的行算进滚动范围，拖到底会一截截往外长。
@@ -1417,8 +1441,9 @@ function RecordsGallery({
               privacy={privacy}
               record={item}
               type={activeType}
+              enter={enterOrder.get(item.id)}
             />
-          : <RecordRow folderName={folderName} onFolderMenu={onFolderMenu} selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} />;
+          : <RecordRow enter={enterOrder.get(item.id)} folderName={folderName} onFolderMenu={onFolderMenu} selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} />;
       }}
       // 上万条记录靠滚轮翻太慢，留一条常驻、能拖的滚动条（样式见 motionCss 的 data-scrollbar）
       {...{ dataSet: { scrollbar: "" } }}
@@ -1539,6 +1564,7 @@ const RecordTile = memo(function RecordTile({
   type,
   privacy,
   onOpenRecord,
+  enter,
 }: {
   cellStyle?: object | null;
   selection?: RecordSelection;
@@ -1557,6 +1583,8 @@ const RecordTile = memo(function RecordTile({
   type: PersonalRecordType;
   privacy: boolean;
   onOpenRecord: (url: string) => Promise<void>;
+  /** 读取中刚放上来的第几条，进场按它错开 */
+  enter?: number;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -1603,7 +1631,7 @@ const RecordTile = memo(function RecordTile({
   }, []);
   return (
     <View
-      {...fx({ reveal: inView, hover: "card", ws: "w-tile" })}
+      {...fx({ reveal: inView, hover: "card", ws: "w-tile", i: enter })}
       ref={tileRef}
       testID={`record-tile-${record.id}`}
       onFocus={markFocused}
@@ -1752,7 +1780,8 @@ const RecordTile = memo(function RecordTile({
   );
 });
 
-const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, selection, folderName, onFolderMenu }: {
+const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, selection, folderName, onFolderMenu, enter }: {
+  enter?: number;
   record: PersonalVideoRecord;
   type: PersonalRecordType;
   privacy: boolean;
@@ -1772,7 +1801,7 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
       aria-checked={selection?.checked}
       disabled={selection ? selection.disabled : !record.url}
       onPress={() => selection ? selection.toggle() : record.url && void onOpenRecord(record.url)}
-      {...fx({ hover: "tint", ws: "w-row" })}
+      {...fx({ hover: "tint", ws: "w-row", motion: enter ? "rise" : null, i: enter })}
       {...contextMenuProps(onFolderMenu && !selection ? (at) => onFolderMenu(record, at) : undefined)}
       style={({ pressed }) => [styles.recordRow, pressed && styles.recordRowPressed, record.url && webPointer]}
     >

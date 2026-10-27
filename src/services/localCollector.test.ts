@@ -18,6 +18,7 @@ import {
   LocalCollectorError,
   loadCollectorVideo,
   getCollectorStatus,
+  getCollectorNewRecords,
   getCollectorVideoDownload,
   isChatReceiving,
   normalizeCollectorBaseUrl,
@@ -979,5 +980,32 @@ describe("saved Douyin accounts", () => {
   it("reads a status without an account from older collectors", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(idle)));
     await expect(getCollectorStatus(baseUrl, "session-secret")).resolves.toMatchObject({ state: "idle", account: null });
+  });
+});
+
+describe("records read during a sync", () => {
+  const baseUrl = "http://127.0.0.1:4765";
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+  it("reads the new-record count from the status and parses only usable records of known kinds", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({
+      state: "collecting", phase: "liked_videos", message: "正在读取", counts: { watch_history: 0, liked_videos: 0, favorite_videos: 0 },
+      updatedAt: null, browserOpen: false, newRecords: { run: 3, count: 2 },
+    })));
+    await expect(getCollectorStatus(baseUrl, "session-secret")).resolves.toMatchObject({ newRecords: { run: 3, count: 2 } });
+
+    const fetchMock = vi.fn().mockResolvedValue(json({ run: 3, after: 1, records: [
+      { type: "liked_videos", record: { id: "liked_videos:a", videoId: "a", title: "新点赞", url: "https://www.douyin.com/video/a" } },
+      { type: "constructor", record: { id: "x", title: "不认识的分类" } },
+      { type: "favorite_videos", record: "坏的" },
+    ] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const batch = await getCollectorNewRecords(baseUrl, "session-secret", 3, 1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/v1/records?part=new&run=3&after=1");
+    // 跳过的也算给过了，下一次从 1 + 3 接着取
+    expect(batch).toMatchObject({ run: 3, after: 1, received: 3 });
+    expect(batch.records.liked_videos.map((record) => record.title)).toEqual(["新点赞"]);
+    expect(batch.records.favorite_videos).toEqual([]);
+    expect(batch.records.watch_history).toEqual([]);
   });
 });
