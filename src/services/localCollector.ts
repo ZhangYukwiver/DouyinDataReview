@@ -1259,6 +1259,21 @@ export async function collectorOpenBrowserExtensions(baseUrl: string, token: str
   await requestJson(baseUrl, "/v1/feed-filter/open-extensions", { method: "POST", body: JSON.stringify({ browser }) }, token, 30_000);
 }
 
+const FEED_VIDEO_ACTIONS: readonly string[] = ["observed", "hidden", "disliked", "dislike_failed"];
+
+/** 内容库「推荐流挡掉的」：扩展在抖音网页里碰到的命中视频，和观看记录同一个格式，多带命中的词条和处置结果（旧的在前） */
+export async function collectorFeedFilteredVideos(baseUrl: string, token: string): Promise<PersonalVideoRecord[]> {
+  const value = await requestJson(baseUrl, "/v1/feed-filter/videos", {}, token);
+  if (!isObject(value) || !Array.isArray(value.videos)) throw new LocalCollectorError("invalid_response", "采集服务没返回挡掉的视频。");
+  return value.videos.flatMap((item): PersonalVideoRecord[] => {
+    const record = parseRecord(item, "platform_action");
+    const mark = isObject(item) && isObject(item.feedFilter) ? item.feedFilter : null;
+    if (!record || !mark || !FEED_VIDEO_ACTIONS.includes(String(mark.action))) return [];
+    const matched = Array.isArray(mark.matched) ? mark.matched.filter((rule): rule is string => typeof rule === "string").slice(0, 5) : [];
+    return [{ ...record, feedFilter: { action: mark.action as NonNullable<PersonalVideoRecord["feedFilter"]>["action"], matched } }];
+  });
+}
+
 /** 扩展送来的处置记录（旧的在前）；clear 为 true 时清空 */
 export async function collectorFeedFilterEvents(baseUrl: string, token: string, clear = false): Promise<FeedFilterEvent[]> {
   const value = await requestJson(baseUrl, "/v1/feed-filter/events", clear ? { method: "DELETE" } : {}, token);

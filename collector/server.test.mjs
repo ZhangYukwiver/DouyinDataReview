@@ -685,6 +685,8 @@ describe("推荐流过滤扩展接口", () => {
     expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ rules: "营销号\nauthor:某人", mode: "dislike" }) })).body)
       .toMatchObject({ rules: "营销号\nauthor:某人", mode: "dislike" });
     expect((await app("/v1/feed-filter/events")).body.events).toEqual([event]);
+    expect((await app("/v1/feed-filter/videos")).body.videos).toEqual([]);
+    expect((await bare("/v1/feed-filter/videos")).status).toBe(403);
     expect((await app("/v1/feed-filter/open-extensions", { method: "POST", body: JSON.stringify({ browser: "app" }) })).body.error).toBe("browser_unsupported");
 
     // 点移除：扩展下次来时看到 remove，报一声再卸载自己；之后设置页显示没装

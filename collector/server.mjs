@@ -888,8 +888,9 @@ export async function startCollectorServer({
           await openBrowserPage(source, "extensions");
           sendJson(response, 200, { ok: true });
         } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/events") {
+          // 每条带着视频信息（一两 KB），扩展一批最多送 20 条
           let body;
-          try { body = await readJsonBody(request, 64 * 1024); } catch { body = null; }
+          try { body = await readJsonBody(request, 256 * 1024); } catch { body = null; }
           if (!Array.isArray(body?.events) || body.events.length > 50) {
             sendJson(response, 400, { error: "invalid_request" });
             return;
@@ -898,6 +899,9 @@ export async function startCollectorServer({
           sendJson(response, 200, { ok: true });
         } else if (request.method === "GET" && url.pathname === "/v1/feed-filter/events") {
           sendJson(response, 200, { events: (await feedFilter.read()).events });
+        } else if (request.method === "GET" && url.pathname === "/v1/feed-filter/videos") {
+          // 内容库「推荐流挡掉的」：和观看记录一样的记录，多带命中的词条和处置结果
+          sendJson(response, 200, { videos: (await feedFilter.read()).videos });
         } else if (request.method === "DELETE" && url.pathname === "/v1/feed-filter/events") {
           await feedFilter.clearEvents();
           sendJson(response, 200, { ok: true });

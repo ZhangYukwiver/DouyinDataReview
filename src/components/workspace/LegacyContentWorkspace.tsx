@@ -29,9 +29,11 @@ import {
   FolderInput,
   FolderMinus,
   FolderPlus,
+  Funnel,
   Heart,
   History,
   LayoutGrid,
+  LibraryBig,
   LayoutDashboard,
   List,
   MessageCircle,
@@ -64,7 +66,7 @@ import type {
   PersonalRecordType,
   PersonalVideoRecord,
 } from "../../domain/personalRecords";
-import type { CollectorStatus } from "../../services/localCollector";
+import { collectorFeedFilteredVideos, type CollectorStatus } from "../../services/localCollector";
 import type { ExploreConnection } from "../../services/explorer";
 import { DEFAULT_APP_STYLE, DEFAULT_STORY_STYLE, resolveStoryStyle, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import Svg, { Circle } from "react-native-svg";
@@ -101,7 +103,7 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "summary" | "highlights" | "chat" | "explore" | "creator";
 
 export interface ContentWorkspaceProps {
   explore?: React.ReactNode;
@@ -152,21 +154,35 @@ type IconComponent = React.ComponentType<{
   fill?: string;
 }>;
 
-const navItems: Array<{ id: WorkspaceViewKey; label: string; icon: IconComponent; accent: string }> = [
+type NavItem<Id extends string = WorkspaceViewKey> = { id: Id; label: string; icon: IconComponent; accent: string };
+
+const navItems: NavItem[] = [
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
   { id: "favorite_videos", label: "收藏", icon: Bookmark, accent: color.amber },
+  { id: "feed_filtered", label: "推荐流挡掉的", icon: Funnel, accent: color.green },
   { id: "chat", label: "聊天", icon: MessageCircle, accent: color.cyan },
   { id: "summary", label: "持续报告", icon: LayoutDashboard, accent: color.green },
   { id: "highlights", label: "变化线索", icon: Star, accent: color.cyan },
 ];
 
 
+// 观看历史、直播、喜欢、收藏、推荐流挡掉的是同一种记录列表：侧栏只占「内容库」一项，进去用页签切换
+const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered"];
+const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
+type SideKey = WorkspaceViewKey | "library";
+const libraryItems = navItems.filter((item) => isLibraryView(item.id));
+const sideItems: NavItem<SideKey>[] = [
+  ...navItems.filter((item) => item.id === "explore" || item.id === "creator"),
+  { id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan },
+  ...navItems.filter((item) => !isLibraryView(item.id) && item.id !== "explore" && item.id !== "creator"),
+];
+
 // 探索和创作者中心是工具页：不显示条数、隐私和重新读取
-const toolView = (view: WorkspaceViewKey) => view === "explore" || view === "creator";
+const toolView = (view: SideKey) => view === "explore" || view === "creator";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -232,6 +248,10 @@ export function ContentWorkspace({
   // root 的桌面内边距与 stage 边框会占掉 36px，使用同一个主区宽度供各内容页计算。
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
   const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
+  const sideKey: SideKey = isLibraryView(activeView) ? "library" : activeView;
+  // 点侧栏「内容库」回到上次看的那一栏
+  const lastLibraryView = useRef<WorkspaceViewKey>(isLibraryView(activeView) ? activeView : "watch_history");
+  if (isLibraryView(activeView)) lastLibraryView.current = activeView;
   const [reportUpdateNotice, setReportUpdateNotice] = useState(false);
   // 侧栏当前项的指示条：一根，随选中项滑动（各按钮 onLayout 报自己的 y）
   const [navTops, setNavTops] = useState<Record<string, number>>({});
@@ -246,13 +266,13 @@ export function ContentWorkspace({
   useEffect(() => {
     if (Platform.OS !== "web" || !sidebarOverflow) return;
     const body = sidebarBodyRef.current as unknown as HTMLElement | null;
-    const item = body?.querySelector<HTMLElement>(`[data-testid="workspace-nav-${activeView}"]`);
+    const item = body?.querySelector<HTMLElement>(`[data-testid="workspace-nav-${sideKey}"]`);
     if (!body || !item) return;
     const frame = body.getBoundingClientRect();
     const rect = item.getBoundingClientRect();
     if (rect.top < frame.top) body.scrollTop += rect.top - frame.top;
     else if (rect.bottom > frame.bottom) body.scrollTop += rect.bottom - frame.bottom + 24;
-  }, [activeView, sidebarOverflow, height]);
+  }, [sideKey, sidebarOverflow, height]);
   const reportNavTop = (id: string, y: number) => setNavTops((current) => (current[id] === y ? current : { ...current, [id]: y }));
   const seenUpdatedAtRef = useRef<string | null>(updatedAt);
   const totalRecords = records.watch_history.length + records.liked_videos.length + records.favorite_videos.length;
@@ -272,13 +292,16 @@ export function ContentWorkspace({
     records.watch_history.filter((record) => record.mediaType === "live"),
   ], [records.watch_history]);
   const folders = useRecordFolders(commentsConnection, status?.account?.id);
-  const counts: Record<WorkspaceViewKey, number> = {
+  const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
+  const counts: Record<SideKey, number> = {
     explore: 0,
     creator: 0,
     watch_history: watchedVideos.length,
     live: watchedLives.length,
     liked_videos: records.liked_videos.length,
     favorite_videos: records.favorite_videos.length,
+    feed_filtered: feedVideos.length,
+    library: 0,
     chat: countChatMessages(chatMessages, chatConversations),
     summary: model.unique || totalRecords,
     highlights: livingReport
@@ -287,6 +310,7 @@ export function ContentWorkspace({
         ? Object.values(report.highlights.data as AnnualHighlightsData).filter(Boolean).length
         : 0,
   };
+  counts.library = LIBRARY_VIEWS.reduce((sum, view) => sum + counts[view], 0);
   useEffect(() => {
     if (updatedAt && seenUpdatedAtRef.current && updatedAt !== seenUpdatedAtRef.current) setReportUpdateNotice(true);
     seenUpdatedAtRef.current = updatedAt;
@@ -301,7 +325,8 @@ export function ContentWorkspace({
   const shownCount = useCountUp(counts[activeView]);
   const [ringRef, ringDrawn] = useDraw<View>();
 
-  const changeView = (nextView: WorkspaceViewKey) => {
+  const changeView = (next: SideKey) => {
+    const nextView = next === "library" ? lastLibraryView.current : next;
     if (isReportView(nextView) && !reportView) setReportAutoCollapsed(true);
     onChangeView(nextView);
   };
@@ -322,10 +347,10 @@ export function ContentWorkspace({
         <View {...ws("w-side g-ink")} testID="workspace-sidebar" style={[styles.sidebar, collapseWidth, compactSidebar && styles.sidebarCompact]}>
           <View {...SIDENAV} onLayout={measureSidebar} ref={sidebarBodyRef} style={[styles.sidebarBody, sidebarOverflow && sidebarScroll]}>
           <View accessibilityRole="tablist" onLayout={measureSidebar} style={styles.sidebarNav}>
-            {Platform.OS === "web" && navTops[activeView] !== undefined ? (
-              <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[activeView]! + 14, backgroundColor: currentNav.accent }]} />
+            {Platform.OS === "web" && navTops[sideKey] !== undefined ? (
+              <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[sideKey]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
-            {navItems.map((item) => (
+            {sideItems.map((item) => (
               <NavButton
                 key={item.id}
                 compact={compactSidebar}
@@ -333,7 +358,7 @@ export function ContentWorkspace({
                 item={item}
                 onLayoutTop={(y) => reportNavTop(item.id, y)}
                 onPress={() => changeView(item.id)}
-                selected={item.id === activeView}
+                selected={item.id === sideKey}
               />
             ))}
           </View>
@@ -443,6 +468,32 @@ export function ContentWorkspace({
           </View>
         </View>
 
+        {isLibraryView(activeView) ? (
+          <View {...ws("w-libtabs")} accessibilityRole="tablist" style={[styles.libraryTabs, mobile && styles.libraryTabsMobile]}>
+            {libraryItems.map((item) => {
+              const on = item.id === activeView;
+              const Icon = item.icon;
+              return (
+                <Pressable
+                  key={item.id}
+                  accessibilityLabel={`${item.label}，${counts[item.id]} 条`}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: on }}
+                  aria-selected={on}
+                  {...fx({ hover: "tint", ws: on ? "c-filter on" : "c-filter" })}
+                  onPress={() => changeView(item.id)}
+                  style={({ pressed }) => [styles.libraryTab, on && { backgroundColor: alpha(item.accent, 0.13) }, pressed && styles.buttonPressed, webPointer]}
+                  testID={`library-tab-${item.id}`}
+                >
+                  <Icon color={on ? item.accent : color.textMuted} size={15} strokeWidth={on ? 2.4 : 2} />
+                  <Text numberOfLines={1} style={[styles.libraryTabText, on && styles.libraryTabTextOn]}>{item.label}</Text>
+                  <Text {...ws("mono")} style={[styles.libraryTabCount, on && { color: item.accent }]}>{formatCompactNumber(counts[item.id])}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+
         {reportView && reportUpdateNotice ? (
           <Pressable
             accessibilityRole="button"
@@ -484,11 +535,13 @@ export function ContentWorkspace({
               : <HighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={report} />
         ) : (
           <RecordsGallery
-            activeType={activeView === "live" ? "watch_history" : activeView}
+            activeType={activeView === "live" || activeView === "feed_filtered" ? "watch_history" : activeView}
             live={activeView === "live"}
-            folders={activeView === "live" || Platform.OS !== "web" ? null : folders.lists?.[activeView] ?? null}
-            folderError={folders.error}
-            onChangeFolders={activeView === "live" ? undefined : (update) => folders.change(activeView, update)}
+            feedFiltered={activeView === "feed_filtered"}
+            onOpenPreferences={onOpenPreferences}
+            folders={activeView === "live" || activeView === "feed_filtered" || Platform.OS !== "web" ? null : folders.lists?.[activeView] ?? null}
+            folderError={activeView === "feed_filtered" ? null : folders.error}
+            onChangeFolders={activeView === "live" || activeView === "feed_filtered" ? undefined : (update) => folders.change(activeView, update)}
             onRetryFolders={folders.retry}
             label={currentNav.label}
             downloadStates={downloadStates}
@@ -502,7 +555,7 @@ export function ContentWorkspace({
             onOpenRecord={onOpenRecord}
             onOpenSettings={onOpenSettings}
             privacy={privacy}
-            records={activeView === "live" ? watchedLives : activeView === "watch_history" ? watchedVideos : records[activeView]}
+            records={activeView === "live" ? watchedLives : activeView === "feed_filtered" ? feedVideos : activeView === "watch_history" ? watchedVideos : records[activeView]}
             sourceLabel={sourceLabel}
             status={status}
             width={mainWidth}
@@ -529,10 +582,10 @@ export function ContentWorkspace({
       {mobile ? (
         <View {...ws("w-bottom g-ink")} accessibilityRole="tablist" style={styles.bottomNav}>
           {Platform.OS === "web" ? (
-            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(navItems.findIndex((item) => item.id === activeView) + 0.5) / navItems.length * 100}%`, backgroundColor: currentNav.accent }]} />
+            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(sideItems.findIndex((item) => item.id === sideKey) + 0.5) / sideItems.length * 100}%`, backgroundColor: currentNav.accent }]} />
           ) : null}
-          {navItems.map((item) => {
-            const selected = item.id === activeView;
+          {sideItems.map((item) => {
+            const selected = item.id === sideKey;
             const Icon = item.icon;
             return (
               <Pressable
@@ -544,7 +597,7 @@ export function ContentWorkspace({
                 style={({ pressed }) => [styles.bottomNavItem, pressed && styles.buttonPressed, webPointer]}
               >
                 <Icon color={selected ? item.accent : color.textMuted} size={20} strokeWidth={selected ? 2.5 : 2} />
-                <Text style={[styles.bottomNavLabel, selected && { color: item.accent }]}>{item.label === "观看历史" ? "历史" : item.label}</Text>
+                <Text style={[styles.bottomNavLabel, selected && { color: item.accent }]}>{item.label === "创作者中心" ? "创作者" : item.label}</Text>
                 {selected && Platform.OS !== "web" ? <View style={[styles.bottomNavIndicator, { backgroundColor: item.accent }]} /> : null}
               </Pressable>
             );
@@ -605,7 +658,7 @@ function NavButton({
 }: {
   compact: boolean;
   count: number;
-  item: (typeof navItems)[number];
+  item: NavItem<SideKey>;
   onLayoutTop?: (y: number) => void;
   onPress: () => void;
   selected: boolean;
@@ -643,6 +696,26 @@ function NavButton({
  * 文件夹跟着采集器的当前账号走：改动先在界面上生效，再按先后顺序整份存回采集器。
  * 存不上就退回上一次存好的样子并说明，排在后面的改动也一起作废，免得界面上看着放好了、其实没存。
  */
+// 内容库「推荐流挡掉的」：浏览器扩展送进采集器的命中视频，新的在前。开着这一栏时隔半分钟刷一次，
+// 别的时候只在连上采集器时读一次（侧栏要显示条数）
+function useFeedFilteredVideos(connection: ExploreConnection | null | undefined, active: boolean) {
+  const [videos, setVideos] = useState<PersonalVideoRecord[]>([]);
+  const baseUrl = connection?.baseUrl, token = connection?.token;
+  useEffect(() => {
+    if (!baseUrl || !token) { setVideos([]); return undefined; }
+    let alive = true;
+    const load = () => collectorFeedFilteredVideos(baseUrl, token).then((list) => { if (alive) setVideos(list.reverse()); }, () => undefined);
+    void load();
+    const timer = active ? setInterval(load, 30_000) : null;
+    return () => { alive = false; if (timer) clearInterval(timer); };
+  }, [active, baseUrl, token]);
+  return videos;
+}
+
+const FEED_ACTION_LABEL: Record<NonNullable<PersonalVideoRecord["feedFilter"]>["action"], string> = {
+  observed: "只记录", hidden: "已隐藏", disliked: "已反馈", dislike_failed: "反馈没成功",
+};
+
 function useRecordFolders(connection: ExploreConnection | null | undefined, accountId: string | undefined) {
   const owner = connection ? `${connection.baseUrl}|${accountId ?? ""}` : null;
   const [state, setState] = useState<{ owner: string; lists: RecordFolders } | null>(null);
@@ -899,6 +972,8 @@ function FolderDialog({
 function RecordsGallery({
   activeType,
   live = false,
+  feedFiltered = false,
+  onOpenPreferences,
   folders,
   folderError,
   onChangeFolders,
@@ -923,6 +998,9 @@ function RecordsGallery({
   activeType: PersonalRecordType;
   /** 直播一栏：卡片进直播间，页头能粘贴直播间链接 */
   live?: boolean;
+  /** 「推荐流挡掉的」一栏：记录来自浏览器扩展，没有文件夹，空的时候指去设置 →「推荐流」 */
+  feedFiltered?: boolean;
+  onOpenPreferences?: () => void;
   /** 这一栏的文件夹；没连采集器（或采集器太旧）时为 null，不显示文件夹 */
   folders?: RecordFolderList | null;
   folderError?: string | null;
@@ -1173,6 +1251,7 @@ function RecordsGallery({
               ? `在 ${folderRecords.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
               : currentFolder ? `「${nameOf(currentFolder)}」里放了 ${folderCounts?.get(currentFolder.id) ?? 0} 条，全部一共 ${records.length} 条`
               : folderFilter === UNFILED ? `还有 ${folderCounts?.get(UNFILED) ?? 0} 条没放进文件夹`
+              : feedFiltered ? `浏览器扩展在抖音网页里碰到的 ${records.length} 条，新的在前`
               : `${sourceLabel} · ${status?.message ?? `${records.length} 条本地记录`}`}</Text>
           </View>
           {records.length > 0 && !privacy ? (
@@ -1280,6 +1359,23 @@ function RecordsGallery({
           >
             <Text style={styles.emptyButtonText}>看全部</Text>
           </Pressable>
+        </View>
+      ) : feedFiltered ? (
+        <View {...fx({ motion: "rise" })} style={styles.emptyState} testID="feed-filtered-empty">
+          <View {...ws("w-emptyicon")} style={styles.emptyIcon}><Funnel color={color.cyan} size={24} /></View>
+          <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>还没有挡掉的视频</Text>
+          <Text style={styles.emptyDetail}>到设置里的「推荐流」装好浏览器扩展、写好词条，以后在抖音网页里命中的视频会出现在这里，和观看记录一样能播放、能下载。</Text>
+          {onOpenPreferences ? (
+            <Pressable
+              {...ws("btn-solid")}
+              accessibilityRole="button"
+              onPress={onOpenPreferences}
+              style={({ pressed }) => [styles.emptyButton, pressed && styles.buttonPressed, webPointer]}
+            >
+              <Settings color={color.black} size={18} />
+              <Text style={styles.emptyButtonText}>打开设置</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : (
         <View {...fx({ motion: "rise" })} style={styles.emptyState}>
@@ -1552,6 +1648,7 @@ const RecordTile = memo(function RecordTile({
             <View style={[styles.tileTopLeft, selection && styles.tileTopLeftSelecting]}>
               <View {...ws("w-type")} style={[styles.typeBadge, { backgroundColor: accent }]} />
               {folderName ? <Text {...ws("stamp w-folder")} numberOfLines={1} style={[styles.durationBadge, styles.folderBadge]}>{folderName}</Text> : null}
+              {record.feedFilter ? <Text {...ws("stamp")} numberOfLines={1} style={[styles.durationBadge, styles.folderBadge]}>{FEED_ACTION_LABEL[record.feedFilter.action]}</Text> : null}
             </View>
             {record.durationSeconds ? <Text {...ws("stamp")} style={styles.durationBadge}>{formatDuration(record.durationSeconds)}</Text> : null}
           </View>
@@ -1570,6 +1667,9 @@ const RecordTile = memo(function RecordTile({
           <Text numberOfLines={1} style={styles.tileAuthor}>{privacy ? "创作者已隐藏" : record.author ?? "未知创作者"}</Text>
           <Text {...ws("mono")} style={styles.tileDate}>{formatShortDate(record.occurredAt)}</Text>
         </View>
+        {record.feedFilter?.matched.length ? (
+          <Text numberOfLines={1} style={styles.tileFeedRule}>命中：{privacy ? "词条已隐藏" : record.feedFilter.matched.join("、")}</Text>
+        ) : null}
       </Pressable>
       {showActions ? (
         <View {...fx({ motion: "fade", ws: "w-overlay" })} pointerEvents="auto" style={styles.tileActionsOverlay}>
@@ -1690,6 +1790,11 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
           {record.durationSeconds ? <Text {...ws("mono")} style={styles.rowMetaText}>{formatDuration(record.durationSeconds)}</Text> : null}
           {record.topics?.[0] ? <Text {...ws("stamp-sig")} style={[styles.rowTopic, { color: accent }]}>#{privacy ? "话题" : record.topics[0]}</Text> : null}
           {folderName ? <View style={styles.rowFolder}><Folder color={color.textMuted} size={11} /><Text numberOfLines={1} style={styles.rowMetaText}>{folderName}</Text></View> : null}
+          {record.feedFilter ? (
+            <Text numberOfLines={1} style={styles.rowMetaText}>
+              {FEED_ACTION_LABEL[record.feedFilter.action]}{record.feedFilter.matched.length ? ` · 命中：${privacy ? "词条已隐藏" : record.feedFilter.matched.join("、")}` : ""}
+            </Text>
+          ) : null}
         </View>
       </View>
       {record.url && !selection ? <ArrowUpRight color={color.textMuted} size={19} /> : null}
@@ -2150,6 +2255,7 @@ const styles = StyleSheet.create({
   tileMetaRow: { minHeight: 20, flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 },
   tileAuthor: { flex: 1, color: color.textMuted, fontSize: 10 },
   tileDate: { color: color.textMuted, fontSize: 9 },
+  tileFeedRule: { color: color.textMuted, fontSize: 10, marginTop: 1 },
   tileActionsOverlay: {
     position: "absolute",
     top: 0,
@@ -2193,6 +2299,13 @@ const styles = StyleSheet.create({
   rowFolder: { flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 160 },
   // 文件夹芯片照聊天页的筛选芯片写（c-filters / c-filter），另外三种风格的样式都已经覆盖到
   folderBar: { marginBottom: 16 },
+  // 内容库页签：顶栏下面一条，和文件夹小标签同一个路数，选中的用这一栏自己的颜色
+  libraryTabs: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, paddingHorizontal: 24, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  libraryTabsMobile: { paddingHorizontal: 12 },
+  libraryTab: { height: 32, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, borderRadius: radius.small },
+  libraryTabText: { color: color.textMuted, fontSize: 13, fontWeight: "700" },
+  libraryTabTextOn: { color: color.text },
+  libraryTabCount: { color: color.textMuted, fontSize: 11, fontVariant: ["tabular-nums"] },
   folderRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
   folderTabs: { flexShrink: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   folderRetry: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10 },

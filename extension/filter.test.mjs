@@ -25,7 +25,7 @@ describe("推荐流词条", () => {
     const json = { aweme_list: [aweme("7000000000000000001"), aweme("7000000000000000002", { desc: "沉浸式 带 货 现场", author: { nickname: "别人", uid: "1" } })] };
     const hits = filterFeed(json, compileRules("/带\\s*货/g"), true);
     expect(json.aweme_list.map((item) => item.aweme_id)).toEqual(["7000000000000000001"]);
-    expect(hits).toEqual([{ id: "7000000000000000002", desc: "沉浸式 带 货 现场", author: "别人", matched: ["/带\\s*货/g"], score: 1 }]);
+    expect(hits).toMatchObject([{ id: "7000000000000000002", desc: "沉浸式 带 货 现场", author: "别人", matched: ["/带\\s*货/g"], score: 1 }]);
     // 去掉了 g：连着判两次结果一样
     expect(filterFeed({ aweme_list: [aweme("1", { desc: "带货" }), aweme("2", { desc: "带货" })] }, compileRules("/带货/g"), true)).toHaveLength(2);
   });
@@ -48,6 +48,26 @@ describe("推荐流词条", () => {
     const kept = { aweme_list: [aweme("7000000000000000001")] };
     expect(filterFeed(kept, compileRules("火锅"), false)).toHaveLength(1);
     expect(kept.aweme_list).toHaveLength(1);
+  });
+
+  it("命中的视频带上记录要用的字段，播放地址这些不带", () => {
+    const full = aweme("7000000000000000009", {
+      desc: "营销号带货", share_url: "https://www.iesdouyin.com/share/video/7000000000000000009/?x=1", create_time: 1_790_000_000, aweme_type: 0,
+      author: { nickname: "甲", uid: "9", sec_uid: "MS4w", avatar_thumb: { url_list: ["https://a/1.jpg", "https://a/2.jpg", "https://a/3.jpg"] }, signature: "长签名" },
+      video: { duration: 15000, cover: { url_list: ["https://c/1.jpg"] }, play_addr: { url_list: ["https://v/1.mp4"] }, bit_rate: [{}] },
+      statistics: { digg_count: 5, comment_count: 1, share_count: 2, collect_count: 3, play_count: 0, admire_count: 9 },
+      text_extra: [{ hashtag_name: "好物" }, { user_id: "1" }], music: { id_str: "77", title: "原声", author: "甲", play_url: { url_list: ["https://m/1.mp3"] } },
+    });
+    const [hit] = filterFeed({ aweme_list: [full] }, compileRules("营销号"), true);
+    expect(JSON.parse(JSON.stringify(hit.aweme))).toEqual({
+      aweme_id: "7000000000000000009", desc: "营销号带货", aweme_type: 0, create_time: 1_790_000_000,
+      share_url: "https://www.iesdouyin.com/share/video/7000000000000000009/?x=1",
+      author: { nickname: "甲", uid: "9", sec_uid: "MS4w", avatar_thumb: { url_list: ["https://a/1.jpg", "https://a/2.jpg"] } },
+      video: { duration: 15000, cover: { url_list: ["https://c/1.jpg"] } },
+      music: { id: "77", title: "原声", author: "甲" },
+      text_extra: [{ hashtag_name: "好物" }],
+      statistics: { play_count: 0, digg_count: 5, comment_count: 1, share_count: 2, collect_count: 3 },
+    });
   });
 
   it("没有词条或回包里没有 aweme_list 时原样不动", () => {

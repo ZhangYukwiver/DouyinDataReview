@@ -55,6 +55,44 @@ describe("推荐流过滤存储", () => {
     expect(kept[1].matched).toHaveLength(5);
   });
 
+  it("带视频信息的命中存成和观看记录一样的记录：同一个作品只留最近一次，清空时一起清", async () => {
+    const directory = await makeDirectory();
+    const store = new FeedFilterStore(directory);
+    const aweme = (id) => ({ aweme_id: id, desc: "直播间带货 #好物", create_time: 1_780_000_000, aweme_type: 0,
+      author: { nickname: "营销号甲", uid: "9", avatar_thumb: { url_list: ["https://p3.douyinpic.com/a.jpg"] } },
+      video: { duration: 15_000, cover: { url_list: ["https://p3.douyinpic.com/c.jpg"] } },
+      statistics: { digg_count: 12, comment_count: 3 }, text_extra: [{ hashtag_name: "好物" }], music: { id: "7", title: "原声", author: "营销号甲" } });
+    await store.addEvents([
+      { ...event("7000000000000000001"), aweme: aweme("7000000000000000001") },
+      { ...event("7000000000000000002", "observed"), aweme: aweme("7000000000000000002") },
+      // 没带视频信息、作品号对不上、动作不算挡的，都不进这一栏
+      event("7000000000000000003"), { ...event("7000000000000000004"), aweme: aweme("7000000000000000005") },
+      { ...event("", "unreadable"), aweme: aweme("7000000000000000006") },
+    ]);
+    await store.addEvents([{ ...event("7000000000000000001", "disliked"), t: 1_790_000_100_000, aweme: aweme("7000000000000000001") }]);
+    const { videos, events } = await new FeedFilterStore(directory).read();
+    expect(events).toHaveLength(6);
+    expect(events.some((item) => "aweme" in item)).toBe(false);
+    expect(videos.map((video) => [video.videoId, video.feedFilter.action])).toEqual([["7000000000000000002", "observed"], ["7000000000000000001", "disliked"]]);
+    expect(videos[1]).toMatchObject({
+      id: "feed_filtered:7000000000000000001", title: "直播间带货 #好物", author: "营销号甲", authorId: "9", url: "https://www.douyin.com/video/7000000000000000001",
+      occurredAt: new Date(1_790_000_100_000).toISOString(), coverUrl: "https://p3.douyinpic.com/c.jpg", authorAvatarUrl: "https://p3.douyinpic.com/a.jpg",
+      mediaType: "video", durationSeconds: 15, topics: ["好物"], stats: { diggCount: 12, commentCount: 3 }, music: { title: "原声" },
+      feedFilter: { action: "disliked", matched: ["营销号"] },
+    });
+    await store.clearEvents();
+    expect((await new FeedFilterStore(directory).read()).videos).toEqual([]);
+  });
+
+  it("磁盘上的视频记录也逐条过一遍：不是这一栏的、动作不认识的丢掉，最多留 1000 条", () => {
+    const video = (id, action = "hidden") => ({ id: `feed_filtered:${id}`, title: "t", author: null, occurredAt: null, url: null, videoId: id, feedFilter: { action, matched: ["a", 7] } });
+    const value = sanitizeFeedFilter({ videos: [video("1", "deleted"), { ...video("2"), id: "watch_history:2" }, video("3"),
+      ...Array.from({ length: 1100 }, (_, index) => video(String(10_000 + index)))] });
+    expect(value.videos).toHaveLength(1000);
+    expect(value.videos.at(-1).videoId).toBe("11099");
+    expect(sanitizeFeedFilter({ videos: [video("3")] }).videos[0].feedFilter).toEqual({ action: "hidden", matched: ["a"] });
+  });
+
   it("半截文件先留底再当空的用", async () => {
     const directory = await makeDirectory();
     await writeFile(path.join(directory, "feed-filter.json"), "{\"rules\":");
