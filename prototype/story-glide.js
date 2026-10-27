@@ -160,7 +160,8 @@
       }
       const next = clamp(target + dy);
       const d = crossing(target, next);
-      if (d !== null) { target = d; swallowDir = dir; pull = 0; pullDir = 0; }
+      // 这一下刚起步、离起点不到半屏就碰上的停靠点不拦：不然整整一下只挪一小截就被吞掉
+      if (d !== null && Math.abs(d - gestureFrom) >= vh() * 0.5) { target = d; swallowDir = dir; pull = 0; pullDir = 0; }
       else {
         target = next;
         const inside = pinnedAt(target);
