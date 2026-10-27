@@ -56,6 +56,8 @@ export interface PersonalVideoRecord {
   watchProgress?: PersonalVideoProgress | null;
   /** Douyin's own verdict for this viewing: true once it played past ~90–95%; absent when it was never checked. */
   watchCompleted?: boolean;
+  /** 推荐流过滤扩展在抖音网页里碰到它时命中的词条和处置结果；只有内容库「推荐流挡掉的」那一栏有 */
+  feedFilter?: { action: "observed" | "hidden" | "disliked" | "dislike_failed"; matched: string[] };
 }
 
 export type PersonalRecordCollection = Record<PersonalRecordType, PersonalVideoRecord[]>;

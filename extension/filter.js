@@ -64,6 +64,29 @@
     return { score, matched };
   }
 
+  const urls = (value) => (Array.isArray(value?.url_list) ? { url_list: value.url_list.slice(0, 2) } : undefined);
+  const counts = (stats) => stats && Object.fromEntries(["play_count", "digg_count", "comment_count", "share_count", "collect_count", "download_count"]
+    .filter((key) => typeof stats[key] === "number").map((key) => [key, stats[key]]));
+
+  // 命中视频送回应用要用的字段：和观看记录同一套转换（采集器 normalizeAweme）认的那些。
+  // 播放地址、码率、各种实验字段都不带，一条一两 KB；应用要播放时按作品号现取
+  function slim(aweme) {
+    const author = aweme?.author ?? {};
+    const video = aweme?.video;
+    const music = aweme?.music;
+    return {
+      aweme_id: String(aweme?.aweme_id ?? ""), desc: aweme?.desc, caption: aweme?.caption, item_title: aweme?.item_title,
+      aweme_type: aweme?.aweme_type, create_time: aweme?.create_time, share_url: aweme?.share_url ?? aweme?.share_info?.share_url,
+      author: { nickname: author.nickname, unique_id: author.unique_id, uid: author.uid, sec_uid: author.sec_uid, avatar_thumb: urls(author.avatar_thumb) },
+      video: video ? { duration: video.duration, cover: urls(video.cover), origin_cover: urls(video.origin_cover) } : undefined,
+      // 图文只要知道是图文，图片本身播放时再取
+      images: Array.isArray(aweme?.images) ? [] : undefined,
+      music: music ? { id: music.id_str ?? music.id, title: music.title, author: music.author } : undefined,
+      text_extra: (aweme?.text_extra ?? []).map((item) => item?.hashtag_name).filter(Boolean).slice(0, 10).map((hashtag_name) => ({ hashtag_name })),
+      statistics: counts(aweme?.statistics),
+    };
+  }
+
   // 推荐接口的返回里只动 aweme_list：命中的拿掉（hide=false 时只报不拿），返回命中的那几条
   function filterFeed(json, rules, hide) {
     const hits = [];
@@ -72,7 +95,7 @@
       const result = match(rules, fieldsOf(aweme));
       if (result.score < THRESHOLD) return true;
       hits.push({ id: String(aweme?.aweme_id ?? ""), desc: String(aweme?.desc ?? "").slice(0, 120),
-        author: String(aweme?.author?.nickname ?? "").slice(0, 40), matched: result.matched.slice(0, 5), score: result.score });
+        author: String(aweme?.author?.nickname ?? "").slice(0, 40), matched: result.matched.slice(0, 5), score: result.score, aweme: slim(aweme) });
       return !hide;
     });
     return hits;

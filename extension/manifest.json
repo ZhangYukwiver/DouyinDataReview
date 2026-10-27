@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DouyinDataReview 推荐流过滤",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "按 DouyinDataReview 里设的词条，在抖音网页的推荐进页面之前拿掉不想看的视频。词条、过滤方式和记录都在应用里管。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArMqwZC1ScyL5woQWMCDou8hFyUMKTvJPdbOAWx4un6jIfudS8W7QqUSHzYcHZBrG9M13UnK13lFpvKHtqPz6jK+kuJAT6R0wZ3f2oMy9Tkc77oGBNzFyGMFr+SBh+jxA5iECMWVcvlRdHRSP7LfN6hfd4vwemrKZ8rQ87EfJCinjzZPDj0ciMVYluZ3EgFI2tcNp+LvNXhPhBR33FACkaCCZzMKhO/zT/a5EoUXxz6GWaUShI5wQp7YH4aUrIa5iU4xgLRgwCpquWzDO9FomnWU++VWxratvUJ3sn6p8b1xnF4ptN3ppf0fr7KL24escxdJLkpOmtqWlx7FCNo9EqwIDAQAB",
   "icons": { "128": "icon-128.png" },

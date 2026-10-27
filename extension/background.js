@@ -46,7 +46,8 @@ async function call(path, init = {}) {
 async function flush() {
   let { pending = [] } = await chrome.storage.local.get("pending");
   while (pending.length) {
-    const batch = pending.slice(0, 50);
+    // 每条带着视频信息（一两 KB），一批 20 条
+    const batch = pending.slice(0, 20);
     if (!(await call("/v1/feed-filter/events", { method: "POST", body: JSON.stringify({ events: batch }) }))) return;
     pending = pending.slice(batch.length);
     await chrome.storage.local.set({ pending });
