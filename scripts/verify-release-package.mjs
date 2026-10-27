@@ -95,7 +95,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     "collector/directExplorer.mjs", "collector/directLive.mjs", "collector/directProto.mjs",
     "collector/directWrites.mjs", "collector/nativeSignature.mjs", "collector/sm3.mjs",
     "collector/browserConnection.mjs", "collector/readPermissions.mjs", "collector/openBrowserDebugging.ps1", "collector/server.mjs",
-    "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs", "desktop/inAppBrowser.mjs",
+    "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs", "desktop/inAppBrowser.mjs", "desktop/feedExtension.mjs",
     "node_modules/ws/index.js",
     "node_modules/ws/wrapper.mjs", "node_modules/ws/lib/websocket.js",
   ]) {

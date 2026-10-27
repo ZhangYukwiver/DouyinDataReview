@@ -698,6 +698,15 @@ describe("推荐流过滤扩展接口", () => {
     expect((await app("/v1/feed-filter/events")).body.events).toEqual([]);
   });
 
+  it("告诉扩展文件夹里装的是哪个版本，扩展发现比自己新就重新加载", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "feed-filter-version-"));
+    temporaryDirectories.push(dataDirectory);
+    const runtime = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath, feedExtensionVersion: "1.2.0" });
+    runtimes.push(runtime);
+    const { token } = await (await fetch(`${runtime.baseUrl}/v1/pair`, { method: "POST", headers: { Origin: EXTENSION, "Content-Type": "application/json" }, body: "{}" })).json();
+    expect(await (await fetch(`${runtime.baseUrl}/v1/feed-filter`, { headers: { Authorization: `Bearer ${token}` } })).json()).toMatchObject({ version: "1.2.0" });
+  });
+
   it("别的扩展和网页来源连不上", async () => {
     const { runtime } = await startPaired("feed-filter-origin-");
     for (const origin of ["chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "https://www.douyin.com"]) {

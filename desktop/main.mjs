@@ -1,12 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, session, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { browserDirectories, connectExternalBrowser } from "../collector/browserConnection.mjs";
 import { startCollectorServer } from "../collector/server.mjs";
 import { createAppUpdateController } from "./appUpdater.mjs";
+import { syncFeedExtension } from "./feedExtension.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
 import { REELLAB_INBOX_URL, REELLAB_PROTOCOL, sendToReelLab } from "./reelLab.mjs";
 import { startStaticServer } from "./staticServer.mjs";
@@ -261,8 +262,14 @@ async function startDesktopRuntime() {
       mkdirSync(diagnostics, { recursive: true });
       writeFileSync(path.join(diagnostics, `verify-${Date.now()}.html`), `<!-- ${url.replace(/--/gu, "")} -->\n${html}`, { mode: 0o600 });
     } });
+  // 装过扩展的话，应用带了新版本就换进文件夹；文件夹里实际是哪个版本交给采集器，扩展发现比自己新会自己重新加载
+  let feedExtensionVersion = null;
+  if (existsSync(feedExtensionDirectory())) {
+    try { feedExtensionVersion = syncFeedExtension(feedExtensionSource(), feedExtensionDirectory()); } catch { /* 拷不过去就先用旧的那份 */ }
+  }
   const collector = await startCollectorServer({
     port: COLLECTOR_PORT,
+    feedExtensionVersion,
     randomPortFallback: true,
     dataDirectory: path.join(app.getPath("userData"), "collector"),
     // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
@@ -294,14 +301,9 @@ async function stopDesktopRuntime() {
 }
 
 // 推荐流过滤扩展：从应用包里拷到 userData 下一个固定的普通文件夹，浏览器从这里加载。
-// 位置固定才不怕应用挪地方（Mac 上没放进「应用程序」时路径每次都变）；应用更新后在扩展页点「重新加载」就是新版
+// 位置固定才不怕应用挪地方（Mac 上没放进「应用程序」时路径每次都变）
 const feedExtensionDirectory = () => path.join(app.getPath("userData"), "browser-extension");
-// 先清空再拷：旧版本里有、新版本删掉的文件不留下
-const copyFeedExtension = () => {
-  rmSync(feedExtensionDirectory(), { recursive: true, force: true });
-  cpSync(path.join(app.isPackaged ? process.resourcesPath : projectDirectory, "extension"), feedExtensionDirectory(),
-    { recursive: true, filter: (source) => !source.endsWith(".test.mjs") });
-};
+const feedExtensionSource = () => path.join(app.isPackaged ? process.resourcesPath : projectDirectory, "extension");
 
 async function launch() {
   // macOS needs an app menu for ⌘Q and ⌘C/⌘V in text fields; Windows keeps no menu bar.
@@ -309,9 +311,6 @@ async function launch() {
     ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }])
     : null);
   desktopRuntime = await startDesktopRuntime();
-  if (existsSync(feedExtensionDirectory())) {
-    try { copyFeedExtension(); } catch { /* 拷不过去就先用旧的那份 */ }
-  }
   // electron-updater must be created after Electron is ready. In development
   // we intentionally do not touch its singleton, so `npm run desktop` never
   // tries to read a missing app-update.yml.
@@ -356,7 +355,7 @@ async function launch() {
   // 设置页上的扩展图标被拖起来：把扩展文件夹交给系统拖放，用户放进浏览器扩展页就装上了（开发者模式下浏览器认拖进来的文件夹）
   ipcMain.on("desktop:start-extension-drag", (event) => {
     try {
-      copyFeedExtension();
+      syncFeedExtension(feedExtensionSource(), feedExtensionDirectory());
       event.sender.startDrag({ file: feedExtensionDirectory(), icon: nativeImage.createFromPath(path.join(feedExtensionDirectory(), "icon-128.png")).resize({ width: 64 }) });
     } catch { /* 拖不起来就什么都不做 */ }
   });
