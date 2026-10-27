@@ -411,7 +411,7 @@ function extensionText(extension: FeedExtensionStatus, canDrag: boolean): string
   if (extension.lastSeenAt !== null) {
     const minutes = Math.floor((Date.now() - extension.lastSeenAt) / 60_000);
     const since = minutes < 1 ? "刚刚" : minutes < 60 ? `${minutes} 分钟前` : minutes < 1440 ? `${Math.floor(minutes / 60)} 小时前` : `${Math.floor(minutes / 1440)} 天前`;
-    return `扩展已装好，${since}和应用对过一次（浏览器开着时每分钟一次）。应用更新后，到扩展页点一下它的「重新加载」。`;
+    return `扩展已装好，${since}和应用对过一次（浏览器开着时每分钟一次）。应用带了新版扩展时，它会自己升级。`;
   }
   return canDrag
     ? "装一次就一直有效：先点右边打开浏览器的扩展页，第一次要打开扩展页右上角的「开发者模式」，再把下面的图标拖进扩展页。"
