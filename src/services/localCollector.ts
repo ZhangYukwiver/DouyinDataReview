@@ -968,7 +968,7 @@ async function requestJson(
           ? "自动获取配对码仅支持当前电脑，请输入采集器显示的配对码。"
         : errorCode === "not_paired"
           ? "连接已过期，请重新配对。"
-          : (["download_start_failed", "import_busy", "import_failed", "collector_busy", "settings_save_failed"].includes(errorCode) || errorCode.startsWith("account_") || errorCode.startsWith("browser_")) && serverMessage
+          : (["download_start_failed", "import_busy", "import_failed", "collector_busy", "settings_save_failed", "feed_filter_failed"].includes(errorCode) || errorCode.startsWith("account_") || errorCode.startsWith("browser_")) && serverMessage
             ? serverMessage
           : errorCode === "collector_busy"
             ? "采集器正在忙，等它做完再试。"
@@ -1210,6 +1210,67 @@ export async function collectorWrites(baseUrl: string, token: string, enabled?: 
     enabled === undefined ? {} : { method: "POST", body: JSON.stringify({ enabled }) }, token);
   if (!isObject(value) || typeof value.enabled !== "boolean") throw new LocalCollectorError("invalid_response", "采集服务没返回操作开关。");
   return value.enabled;
+}
+
+export type FeedFilterMode = "off" | "observe" | "hide" | "dislike";
+/** 应用经远程调试连着用户浏览器的状态：waiting = 想连但浏览器没开或没开调试，会自己再连 */
+export interface FeedControlStatus {
+  state: "off" | "waiting" | "connecting" | "connected";
+  browser: string | null;
+  label: string | null;
+  /** 正管着的抖音标签页数 */
+  tabs: number;
+  message: string | null;
+}
+export interface FeedFilterSettings {
+  rules: string;
+  mode: FeedFilterMode;
+  control: FeedControlStatus;
+}
+export interface FeedFilterEvent {
+  t: number;
+  id: string;
+  desc: string;
+  author: string;
+  matched: string[];
+  action: "observed" | "hidden" | "disliked" | "dislike_failed" | "unreadable";
+}
+const FEED_FILTER_MODES: readonly string[] = ["off", "observe", "hide", "dislike"];
+const FEED_FILTER_ACTIONS: readonly string[] = ["observed", "hidden", "disliked", "dislike_failed", "unreadable"];
+const FEED_CONTROL_STATES: readonly string[] = ["off", "waiting", "connecting", "connected"];
+
+function parseFeedControl(value: unknown): FeedControlStatus {
+  if (!isObject(value) || !FEED_CONTROL_STATES.includes(String(value.state))) throw new LocalCollectorError("invalid_response", "采集服务没返回浏览器连接状态。");
+  const text = (item: unknown) => (typeof item === "string" && item ? item : null);
+  return { state: value.state as FeedControlStatus["state"], browser: text(value.browser), label: text(value.label),
+    tabs: typeof value.tabs === "number" ? value.tabs : 0, message: text(value.message) };
+}
+
+/** 推荐流控制的词条、模式和浏览器连接状态；带上 change 就是改 */
+export async function collectorFeedFilter(baseUrl: string, token: string, change?: Partial<Pick<FeedFilterSettings, "rules" | "mode">>): Promise<FeedFilterSettings> {
+  const value = await requestJson(baseUrl, "/v1/feed-filter", change ? { method: "POST", body: JSON.stringify(change) } : {}, token);
+  if (!isObject(value) || typeof value.rules !== "string" || !FEED_FILTER_MODES.includes(String(value.mode)))
+    throw new LocalCollectorError("invalid_response", "采集服务没返回推荐流过滤的设置。");
+  return { rules: value.rules, mode: value.mode as FeedFilterMode, control: parseFeedControl(value.control) };
+}
+
+/** 连上用户的浏览器（chrome / edge / comet）；browser 为 null 就是断开 */
+export async function collectorFeedControl(baseUrl: string, token: string, browser: string | null): Promise<FeedControlStatus> {
+  const value = await requestJson(baseUrl, browser ? "/v1/feed-filter/connect" : "/v1/feed-filter/disconnect",
+    { method: "POST", body: JSON.stringify(browser ? { browser } : {}) }, token, 70_000);
+  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务没返回浏览器连接状态。");
+  return parseFeedControl(value.control);
+}
+
+/** 页面里取回的处置记录（旧的在前）；clear 为 true 时清空 */
+export async function collectorFeedFilterEvents(baseUrl: string, token: string, clear = false): Promise<FeedFilterEvent[]> {
+  const value = await requestJson(baseUrl, "/v1/feed-filter/events", clear ? { method: "DELETE" } : {}, token);
+  if (clear) return [];
+  if (!isObject(value) || !Array.isArray(value.events)) throw new LocalCollectorError("invalid_response", "采集服务没返回处置记录。");
+  return value.events.flatMap((item): FeedFilterEvent[] => isObject(item) && FEED_FILTER_ACTIONS.includes(String(item.action)) && typeof item.t === "number"
+    ? [{ t: item.t, id: String(item.id ?? ""), desc: String(item.desc ?? ""), author: String(item.author ?? ""),
+      matched: Array.isArray(item.matched) ? item.matched.map(String) : [], action: item.action as FeedFilterEvent["action"] }]
+    : []);
 }
 
 export async function stopCollectorChatObservation(baseUrl: string, token: string): Promise<CollectorStatus> {

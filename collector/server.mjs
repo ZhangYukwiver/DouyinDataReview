@@ -22,6 +22,8 @@ import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
+import { FeedControl } from "./feedControl.mjs";
+import { FEED_FILTER_MODES, FeedFilterStore } from "./feedFilter.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
 
 const DEFAULT_PORT = 4765;
@@ -245,6 +247,17 @@ export async function startCollectorServer({
   // 点赞、收藏、关注、评论要先在设置里打开；所有账号共用这一个开关，默认关
   const writeSettingsFile = path.join(dataDirectory, "write-actions.json");
   let writesEnabled = await readFile(writeSettingsFile, "utf8").then((text) => JSON.parse(text).enabled === true).catch(() => false);
+  // 推荐流控制：词条和记录所有账号共用；应用经远程调试连着用户自己的浏览器，只管 www.douyin.com 的标签页
+  const feedFilter = new FeedFilterStore(dataDirectory);
+  const feedControl = new FeedControl({
+    sources: browserSources.filter((source) => !source.inApp),
+    onEvents: (events) => feedFilter.addEvents(events).catch(() => undefined),
+  });
+  // 上次连着浏览器的话，启动后接着连（浏览器会弹窗让用户允许）
+  feedFilter.read().then((value) => {
+    feedControl.update(value);
+    if (value.browser) feedControl.connect(value.browser, { quiet: true }).catch(() => undefined);
+  }, () => undefined);
   // 每个账号一个采集器，各用自己目录里的登录态和记录；同一时间只开当前这一个
   const openCollector = async (account) => {
     const directory = accounts.directory(account);
@@ -470,7 +483,7 @@ export async function startCollectorServer({
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
     const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
     // 操作开关存在根目录、所有账号共用，换号时也能读改
-    const accountFree = url.pathname === "/v1/settings/writes";
+    const accountFree = url.pathname === "/v1/settings/writes" || url.pathname.startsWith("/v1/feed-filter");
     if (!readable && !loginWait && !accountFree && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
@@ -815,6 +828,52 @@ export async function startCollectorServer({
         writesEnabled = body.enabled;
       }
       sendJson(response, 200, { enabled: writesEnabled });
+    } else if (url.pathname.startsWith("/v1/feed-filter")) {
+      try {
+        if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
+          const { rules, mode } = await feedFilter.read();
+          sendJson(response, 200, { rules, mode, control: feedControl.status() });
+        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter") {
+          let body;
+          try { body = await readJsonBody(request, 64 * 1024); } catch { body = null; }
+          if ((body?.rules !== undefined && typeof body.rules !== "string") || (body?.mode !== undefined && !FEED_FILTER_MODES.includes(body.mode))) {
+            sendJson(response, 400, { error: "invalid_request" });
+            return;
+          }
+          const value = await feedFilter.setSettings(body);
+          feedControl.update(value);
+          sendJson(response, 200, { rules: value.rules, mode: value.mode, control: feedControl.status() });
+        } else if (request.method === "POST" && (url.pathname === "/v1/feed-filter/connect" || url.pathname === "/v1/feed-filter/disconnect")) {
+          // 连的是这台电脑上的浏览器，和浏览器登录一样只许本机来
+          if (!isLoopbackAddress(request.socket.remoteAddress)) {
+            sendJson(response, 403, { error: "loopback_only", message: "只能在当前电脑上连接浏览器。" });
+            return;
+          }
+          if (url.pathname.endsWith("/disconnect")) {
+            const control = feedControl.disconnect();
+            await feedFilter.setBrowser(null);
+            sendJson(response, 200, { control });
+            return;
+          }
+          let body;
+          try { body = await readJsonBody(request); } catch { body = null; }
+          try {
+            await feedControl.connect(body?.browser);
+          } finally {
+            // 调试开关还没开时也记下来：开了以后自动连上；用户在浏览器里拒绝了就不再连
+            await feedFilter.setBrowser(feedControl.wanted).catch(() => undefined);
+          }
+          sendJson(response, 200, { control: feedControl.status() });
+        } else if (request.method === "GET" && url.pathname === "/v1/feed-filter/events") {
+          sendJson(response, 200, { events: (await feedFilter.read()).events });
+        } else if (request.method === "DELETE" && url.pathname === "/v1/feed-filter/events") {
+          await feedFilter.clearEvents();
+          sendJson(response, 200, { ok: true });
+        } else sendJson(response, 404, { error: "not_found" });
+      } catch (error) {
+        if (error instanceof BrowserConnectionError) sendJson(response, error.status, { error: error.code, message: error.message, control: feedControl.status() });
+        else sendJson(response, 500, { error: "feed_filter_failed", message: "推荐流过滤的设置没读写成功，请稍后再试。" });
+      }
     } else if (request.method === "GET" && url.pathname === "/v1/status") {
       const requestedRevision = url.searchParams.get("afterRevision");
       if (requestedRevision === null) sendJson(response, 200, collector.getStatus());
@@ -936,6 +995,7 @@ export async function startCollectorServer({
     if (shuttingDown) return;
     shuttingDown = true;
     browserLoginController?.abort();
+    feedControl.dispose();
     for (const finish of statusWaiters) finish();
     try {
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器
