@@ -1661,6 +1661,8 @@ export class DouyinCollector {
         type,
         new Set(incrementalByType.get(type) ? existingRecords[type].map((record) => record.id) : []),
       ]));
+      // knownIds 只给增量读取判断停在哪；「新增」要和本地已有的比，整份重读时也一样，否则读到的每条都算新的
+      const existingIds = new Map(REQUIRED_TYPES.map((type) => [type, new Set(existingRecords[type].map((record) => record.id))]));
       const newIds = new Map(REQUIRED_TYPES.map((type) => [type, new Set()]));
       const rejectedIds = new Map(REQUIRED_TYPES.map((type) => [type, new Set()]));
       const returnedCounts = new Map(REQUIRED_TYPES.map((type) => [type, 0]));
@@ -1677,7 +1679,7 @@ export class DouyinCollector {
         returnedCounts.set(type, returnedCounts.get(type) + result.pageSize);
         filteredCounts.set(type, filteredCounts.get(type) + result.rejectedRecordIds.length);
         for (const id of result.acceptedRecordIds) {
-          if (!knownIds.get(type).has(id)) newIds.get(type).add(id);
+          if (!existingIds.get(type).has(id)) newIds.get(type).add(id);
         }
         for (const id of result.rejectedRecordIds) rejectedIds.get(type).add(id);
       };
@@ -1694,13 +1696,9 @@ export class DouyinCollector {
         );
         return preview;
       };
-      const progressMessage = (type, pageCount) => {
-        const returned = returnedCounts.get(type);
-        const filtered = filteredCounts.get(type);
-        return incrementalByType.get(type)
-          ? `正在读取${TYPE_LABELS[type]}新增记录（第 ${pageCount} 页，接口 ${returned} 条，新增 ${newIds.get(type).size} 条，过滤 ${filtered} 条）`
-          : `正在读取${TYPE_LABELS[type]}全部记录（第 ${pageCount} 页，接口 ${returned} 条，保留 ${accumulator.snapshot().records[type].length} 条，过滤 ${filtered} 条）`;
-      };
+      const progressMessage = (type, pageCount) => (
+        `正在读取${TYPE_LABELS[type]}${incrementalByType.get(type) ? "新增" : "全部"}记录（第 ${pageCount} 页，接口 ${returnedCounts.get(type)} 条，新增 ${newIds.get(type).size} 条，过滤 ${filteredCounts.get(type)} 条）`
+      );
       // 每读一段就落盘，工作台边采边能看到新记录；限流是因为快照要整份重写
       let lastProgressPersistAt = Date.now();
       const persistProgress = async (type) => {

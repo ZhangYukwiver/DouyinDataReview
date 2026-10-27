@@ -781,6 +781,15 @@ describe("DouyinCollector direct records", () => {
       "其中 19 条缺少观看时间，已保持为空，未使用发布时间或采集时间替代。",
       "保留的其他提示。",
     ];
+    initial.records.watch_history = [{
+      id: "watch_history:history-second:2023-11-14T21:56:40.000Z",
+      title: "上一页观看",
+      author: null,
+      occurredAt: "2023-11-14T21:56:40.000Z",
+      occurredAtSource: "platform_action",
+      url: "https://www.douyin.com/video/history-second",
+      videoId: "history-second",
+    }];
     initial.records.liked_videos = [{
       id: "liked_videos:liked-old",
       title: "旧点赞",
@@ -839,6 +848,8 @@ describe("DouyinCollector direct records", () => {
     expect(collector.snapshot.records.liked_videos.map((record) => record.videoId)).toEqual(["liked-new"]);
     expect(collector.snapshot.records.favorite_videos.map((record) => record.videoId)).toEqual(["favorite-new"]);
     expect(collector.snapshot.records.watch_history).toHaveLength(2);
+    // 整份重读时本地已有的那条不算新增
+    expect(collector.snapshot.warnings[0]).toBe("无界面读取完成：新增观看 1、点赞 1、收藏 1；读取观看历史 2 页、点赞 1 页、收藏 1 页。");
     expect(collector.readDirectHistory.mock.calls.map(([, cursor, options]) => [cursor, Boolean(options?.completedOnly)])).toEqual([
       ["0", false],
       ["1700000000000", false],
