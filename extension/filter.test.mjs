@@ -3,9 +3,9 @@ import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
-// 和页面里一样，把 feedFilterRules.js 当普通脚本跑一遍，拿它挂在 globalThis 上的 DYF
+// 和页面里一样，把 filter.js 当普通脚本跑一遍，拿它挂在 globalThis 上的 DYF
 const context = {};
-vm.runInNewContext(readFileSync(new URL("./feedFilterRules.js", import.meta.url), "utf8"), context);
+vm.runInNewContext(readFileSync(new URL("./filter.js", import.meta.url), "utf8"), context);
 const { compileRules, filterFeed } = context.DYF;
 
 const aweme = (id, overrides = {}) => ({

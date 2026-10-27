@@ -651,33 +651,56 @@ describe("collector own-page guard", () => {
   });
 });
 
-describe("推荐流控制接口", () => {
-  it("读改词条和模式、看连接状态；浏览器没装时说清楚；断开后记住不再连", async () => {
-    const dataDirectory = await mkdtemp(path.join(tmpdir(), "feed-filter-"));
-    temporaryDirectories.push(dataDirectory);
-    const runtime = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath,
-      browserSources: [{ id: "app", label: "应用内登录", inApp: true }, { id: "chrome", label: "Chrome", directory: path.join(dataDirectory, "no-chrome") }] });
-    runtimes.push(runtime);
-    const { token } = await fetch(`${runtime.baseUrl}/v1/pair`, { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: runtime.getPairingCode() }) }).then((response) => response.json());
-    const call = (pathname, method = "GET", body) => fetch(`${runtime.baseUrl}${pathname}`, { method,
-      headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body && JSON.stringify(body) })
+describe("推荐流过滤扩展接口", () => {
+  const EXTENSION = "chrome-extension://phliimhdokpkdhmeofkpbcnkncknjkka";
+
+  it("扩展按固定来源免配对码领令牌，只能拉设置、送记录、报已移除；应用改设置、看状态、叫扩展移除", async () => {
+    const { runtime, headers } = await startPaired("feed-filter-");
+    const code = runtime.getPairingCode();
+    const fromExtension = (pathname, init = {}) => fetch(`${runtime.baseUrl}${pathname}`,
+      { ...init, headers: { Origin: EXTENSION, "Content-Type": "application/json", ...init.headers } });
+
+    const paired = await fromExtension("/v1/pair", { method: "POST", body: "{}" });
+    expect(paired.status).toBe(200);
+    expect(paired.headers.get("access-control-allow-origin")).toBe(EXTENSION);
+    // 应用自己的配对码没被用掉
+    expect(runtime.getPairingCode()).toBe(code);
+    const auth = { Authorization: `Bearer ${(await paired.json()).token}` };
+
+    const app = (pathname, init = {}) => fetch(`${runtime.baseUrl}${pathname}`, { ...init, headers: { ...headers, "Content-Type": "application/json" } })
       .then(async (response) => ({ status: response.status, body: await response.json() }));
+    expect((await app("/v1/feed-filter")).body).toMatchObject({ mode: "observe", extension: { lastSeenAt: null, removing: false } });
 
-    const initial = await call("/v1/feed-filter");
-    expect(initial.body).toMatchObject({ mode: "observe", control: { state: "off", browser: null, tabs: 0 } });
-    expect((await call("/v1/feed-filter", "POST", { mode: "nope" })).status).toBe(400);
-    expect((await call("/v1/feed-filter", "POST", { rules: "营销号\nauthor:某人", mode: "dislike" })).body).toMatchObject({ rules: "营销号\nauthor:某人", mode: "dislike" });
-    expect((await call("/v1/feed-filter")).body.mode).toBe("dislike");
+    // 扩展后台发的 GET 不带 Origin：按令牌认出是扩展，照样只给那几个接口
+    const bare = (pathname, init = {}) => fetch(`${runtime.baseUrl}${pathname}`, { ...init, headers: { ...auth, ...init.headers } });
+    expect(await (await bare("/v1/feed-filter")).json()).toMatchObject({ mode: "observe", remove: false });
+    expect((await app("/v1/feed-filter")).body.extension.lastSeenAt).toEqual(expect.any(Number));
+    expect((await bare("/v1/records")).status).toBe(403);
+    const event = { t: 1_790_000_000_000, id: "7000000000000000001", desc: "带货现场", author: "某人", matched: ["带货"], action: "hidden" };
+    expect((await fromExtension("/v1/feed-filter/events", { method: "POST", headers: auth, body: JSON.stringify({ events: [event] }) })).status).toBe(200);
+    for (const [pathname, method] of [["/v1/records", "GET"], ["/v1/feed-filter", "POST"], ["/v1/feed-filter/remove", "POST"], ["/v1/feed-filter/events", "GET"], ["/v1/feed-filter/events", "DELETE"], ["/v1/feed-filter/open-extensions", "POST"]])
+      expect((await fromExtension(pathname, { method, headers: auth })).status).toBe(403);
 
-    // 应用内登录不是能连的浏览器；目录不在就是没装
-    expect((await call("/v1/feed-filter/connect", "POST", { browser: "app" })).body.error).toBe("browser_unsupported");
-    const missing = await call("/v1/feed-filter/connect", "POST", { browser: "chrome" });
-    expect(missing).toMatchObject({ status: 409, body: { error: "browser_unavailable", control: { state: "off", browser: null } } });
+    expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ mode: "nope" }) })).status).toBe(400);
+    expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ rules: "营销号\nauthor:某人", mode: "dislike" }) })).body)
+      .toMatchObject({ rules: "营销号\nauthor:某人", mode: "dislike" });
+    expect((await app("/v1/feed-filter/events")).body.events).toEqual([event]);
+    expect((await app("/v1/feed-filter/open-extensions", { method: "POST", body: JSON.stringify({ browser: "app" }) })).body.error).toBe("browser_unsupported");
 
-    expect((await call("/v1/feed-filter/disconnect", "POST")).body.control).toMatchObject({ state: "off", browser: null });
-    expect(JSON.parse(await readFile(path.join(dataDirectory, "feed-filter.json"), "utf8")).browser).toBeNull();
-    expect((await call("/v1/feed-filter/events")).body.events).toEqual([]);
-    expect((await call("/v1/feed-filter/events", "DELETE")).status).toBe(200);
+    // 点移除：扩展下次来时看到 remove，报一声再卸载自己；之后设置页显示没装
+    expect((await app("/v1/feed-filter/remove", { method: "POST", body: JSON.stringify({ remove: true }) })).body.extension).toMatchObject({ removing: true });
+    expect(await (await fromExtension("/v1/feed-filter", { headers: auth })).json()).toMatchObject({ mode: "dislike", remove: true });
+    expect((await fromExtension("/v1/feed-filter/removed", { method: "POST", headers: auth, body: "{}" })).status).toBe(200);
+    expect((await app("/v1/feed-filter")).body.extension).toEqual({ lastSeenAt: null, removing: false });
+    expect((await app("/v1/feed-filter/events", { method: "DELETE" })).status).toBe(200);
+    expect((await app("/v1/feed-filter/events")).body.events).toEqual([]);
+  });
+
+  it("别的扩展和网页来源连不上", async () => {
+    const { runtime } = await startPaired("feed-filter-origin-");
+    for (const origin of ["chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "https://www.douyin.com"]) {
+      const response = await fetch(`${runtime.baseUrl}/v1/pair`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: "{}" });
+      expect(response.status).toBe(403);
+    }
   });
 });

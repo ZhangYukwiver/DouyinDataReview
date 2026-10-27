@@ -29,4 +29,5 @@ contextBridge.exposeInMainWorld("desktopRuntime", Object.freeze({
   getOpenAtLogin: () => ipcRenderer.invoke("desktop:get-open-at-login"),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke("desktop:set-open-at-login", enabled === true),
   sendToReelLab: (request) => ipcRenderer.invoke("desktop:send-to-reellab", request),
+  startExtensionDrag: () => ipcRenderer.send("desktop:start-extension-drag"),
 }));

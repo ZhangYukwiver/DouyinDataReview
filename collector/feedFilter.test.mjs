@@ -25,22 +25,22 @@ describe("推荐流过滤存储", () => {
     expect(value.mode).toBe("observe");
     expect(value.rules).toContain("营销号");
     expect(value.events).toEqual([]);
-    expect(value.browser).toBeNull();
+    expect(value).toMatchObject({ lastSeenAt: null, remove: false });
   });
 
-  it("改词条、模式、要连的浏览器和记录都落盘，重开还在", async () => {
+  it("改词条、模式、扩展状态和记录都落盘，重开还在", async () => {
     const directory = await makeDirectory();
     const store = new FeedFilterStore(directory);
-    await Promise.all([store.setSettings({ rules: "带货", mode: "hide" }), store.addEvents([event("7000000000000000001")]), store.setBrowser("edge")]);
+    await Promise.all([store.setSettings({ rules: "带货", mode: "hide" }), store.addEvents([event("7000000000000000001")]), store.touch(), store.requestRemove(true)]);
     const reopened = await new FeedFilterStore(directory).read();
-    expect(reopened).toMatchObject({ rules: "带货", mode: "hide", browser: "edge", events: [event("7000000000000000001")] });
-    await store.setBrowser("firefox");
-    expect((await new FeedFilterStore(directory).read()).browser).toBeNull();
+    expect(reopened).toMatchObject({ rules: "带货", mode: "hide", remove: true, lastSeenAt: expect.any(Number), events: [event("7000000000000000001")] });
+    await store.removed();
+    expect(await new FeedFilterStore(directory).read()).toMatchObject({ remove: false, lastSeenAt: null });
     await store.clearEvents();
     expect((await new FeedFilterStore(directory).read()).events).toEqual([]);
   });
 
-  it("页面里取回来的记录逐条过一遍：动作不认识、没有作品号的丢掉，字段截短，最多留 500 条", () => {
+  it("扩展送来的记录逐条过一遍：动作不认识、没有作品号的丢掉，字段截短，最多留 500 条", () => {
     const value = sanitizeFeedFilter({ mode: "boom", events: [
       event("7000000000000000001", "deleted"), event("abc"), { ...event(""), action: "unreadable" },
       { ...event("7000000000000000002"), desc: "长".repeat(500), matched: ["a", "b", "c", "d", "e", "f", 7] },

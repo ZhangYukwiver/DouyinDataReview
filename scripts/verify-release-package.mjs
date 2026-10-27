@@ -133,9 +133,17 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     assert.deepEqual(await readFile(path.join(resources, "app.asar.unpacked", relative)), await readFile(path.join(sourceDirectory, relative)));
   }
 
-  for (const relative of await filesUnder(resources)) {
+  const packagedFiles = await filesUnder(resources);
+  for (const relative of ["manifest.json", "filter.js", "page.js", "bridge.js", "background.js"])
+    assert(packagedFiles.includes(`extension/${relative}`), `Feed filter extension is missing ${relative}`);
+  for (const relative of packagedFiles) {
     assertPublicPackagePath(relative);
-    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/"), `Unexpected resource: ${relative}`);
+    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("extension/"), `Unexpected resource: ${relative}`);
+    // 推荐流过滤扩展原样带上（浏览器从拷出去的这份加载），不许多出或改动文件
+    if (relative.startsWith("extension/")) {
+      assert(!relative.endsWith(".test.mjs"), `Test file in package: ${relative}`);
+      assert.deepEqual(await readFile(path.join(resources, relative)), await readFile(path.join(sourceDirectory, relative)), `Extension file differs from source: ${relative}`);
+    }
     if (relative === "app-update.yml") {
       assertPublicUpdateMetadata(await readFile(path.join(resources, relative), "utf8"), sourcePackage.name);
     }

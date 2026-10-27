@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
-import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
+import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources, openBrowserPage } from "./browserConnection.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
 import { importedReadPermissions, parseReadPermissions, PUBLIC_ACTIONS, readPermissionForRequest, WRITES_DISABLED_MESSAGE } from "./readPermissions.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
@@ -22,8 +22,7 @@ import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
-import { FeedControl } from "./feedControl.mjs";
-import { FEED_FILTER_MODES, FeedFilterStore } from "./feedFilter.mjs";
+import { FEED_FILTER_MODES, FEED_FILTER_ORIGINS, FeedFilterStore } from "./feedFilter.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
 
 const DEFAULT_PORT = 4765;
@@ -110,29 +109,36 @@ class PairingManager {
 
   pair(code) {
     if (!constantTimeStringEqual(code, this.code)) return null;
-    const token = randomBytes(32).toString("base64url");
-    this.sessions.set(token, Date.now() + SESSION_TTL_MS);
     this.code = this.createCode();
+    return this.issue();
+  }
+
+  // scope：app = 工作台；extension = 推荐流过滤扩展，只能用放给它的几个接口
+  issue(scope = "app") {
+    const token = randomBytes(32).toString("base64url");
+    this.sessions.set(token, { expiry: Date.now() + SESSION_TTL_MS, scope });
     return token;
   }
 
   authorize(header) {
     if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
     const token = header.slice(7);
-    const expiry = this.sessions.get(token);
-    if (!expiry || expiry <= Date.now()) {
+    const session = this.sessions.get(token);
+    if (!session || session.expiry <= Date.now()) {
       this.sessions.delete(token);
-      return false;
+      return null;
     }
     // 闲置 12 小时才过期：托盘常驻每 3 小时补读一次，用着就一直有效
-    this.sessions.set(token, Date.now() + SESSION_TTL_MS);
-    return true;
+    session.expiry = Date.now() + SESSION_TTL_MS;
+    return session.scope;
   }
 }
 
 function isAllowedOrigin(origin, explicitOrigins) {
   if (!origin) return true;
   if (/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/iu.test(origin)) return true;
+  // 推荐流过滤扩展（固定 ID）；它能用的接口在下面另外收窄
+  if (FEED_FILTER_ORIGINS.includes(origin)) return true;
   return explicitOrigins.includes(origin);
 }
 
@@ -234,6 +240,8 @@ async function readJsonBody(request, limit = MAX_BODY_BYTES) {
 export async function startCollectorServer({
   lan = false,
   port = DEFAULT_PORT,
+  // 固定端口被占时改用随机端口（桌面版用）：应用照常能用，只是推荐流过滤扩展找不到它
+  randomPortFallback = false,
   origins = [],
   dataDirectory = path.join(projectDirectory, ".local-data"),
   browserSources = browserDirectories(),
@@ -247,17 +255,8 @@ export async function startCollectorServer({
   // 点赞、收藏、关注、评论要先在设置里打开；所有账号共用这一个开关，默认关
   const writeSettingsFile = path.join(dataDirectory, "write-actions.json");
   let writesEnabled = await readFile(writeSettingsFile, "utf8").then((text) => JSON.parse(text).enabled === true).catch(() => false);
-  // 推荐流控制：词条和记录所有账号共用；应用经远程调试连着用户自己的浏览器，只管 www.douyin.com 的标签页
+  // 推荐流控制：词条、过滤方式和处置记录所有账号共用；浏览器里由扩展照着做
   const feedFilter = new FeedFilterStore(dataDirectory);
-  const feedControl = new FeedControl({
-    sources: browserSources.filter((source) => !source.inApp),
-    onEvents: (events) => feedFilter.addEvents(events).catch(() => undefined),
-  });
-  // 上次连着浏览器的话，启动后接着连（浏览器会弹窗让用户允许）
-  feedFilter.read().then((value) => {
-    feedControl.update(value);
-    if (value.browser) feedControl.connect(value.browser, { quiet: true }).catch(() => undefined);
-  }, () => undefined);
   // 每个账号一个采集器，各用自己目录里的登录态和记录；同一时间只开当前这一个
   const openCollector = async (account) => {
     const directory = accounts.directory(account);
@@ -435,6 +434,13 @@ export async function startCollectorServer({
     }
 
     if (request.method === "POST" && url.pathname === "/v1/pair") {
+      // 推荐流过滤扩展不用配对码：配对码用一次就换，扩展抢先用掉会让应用自己那次配对失败。
+      // 来源是固定的扩展 ID（网页伪造不了 Origin），而且它拿到的令牌只能用下面放给它的几个接口
+      if (FEED_FILTER_ORIGINS.includes(origin)) {
+        if (!isLoopbackAddress(request.socket.remoteAddress ?? "")) sendJson(response, 403, { error: "loopback_only" });
+        else sendJson(response, 200, { token: pairing.issue("extension"), expiresInSeconds: SESSION_TTL_MS / 1000 });
+        return;
+      }
       // 放在限次之前：页面乱试配对码也不占本机（和应用同一个地址）的尝试次数
       if (ownPage) {
         sendJson(response, 403, { error: "same_origin_not_allowed" });
@@ -473,8 +479,17 @@ export async function startCollectorServer({
       sendJson(response, 403, { error: "same_origin_not_allowed" });
       return;
     }
-    if (!pairing.authorize(request.headers.authorization)) {
+    const scope = pairing.authorize(request.headers.authorization);
+    if (!scope) {
       sendJson(response, 401, { error: "not_paired" });
+      return;
+    }
+    // 扩展只能拉设置、送处置记录、报自己已移除，别的接口（记录、聊天、账号）一律不给。按令牌认，
+    // 不按 Origin：浏览器扩展后台发的 GET 不带 Origin
+    const fromExtension = scope === "extension" || FEED_FILTER_ORIGINS.includes(origin);
+    if (fromExtension && !((request.method === "GET" && url.pathname === "/v1/feed-filter")
+      || (request.method === "POST" && ["/v1/feed-filter/events", "/v1/feed-filter/removed"].includes(url.pathname)))) {
+      sendJson(response, 403, { error: "extension_not_allowed" });
       return;
     }
 
@@ -829,10 +844,16 @@ export async function startCollectorServer({
       }
       sendJson(response, 200, { enabled: writesEnabled });
     } else if (url.pathname.startsWith("/v1/feed-filter")) {
+      const extensionState = ({ lastSeenAt, remove }) => ({ lastSeenAt, removing: remove });
       try {
         if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
-          const { rules, mode } = await feedFilter.read();
-          sendJson(response, 200, { rules, mode, control: feedControl.status() });
+          if (fromExtension) {
+            const { rules, mode, remove } = await feedFilter.touch();
+            sendJson(response, 200, { rules, mode, remove });
+          } else {
+            const value = await feedFilter.read();
+            sendJson(response, 200, { rules: value.rules, mode: value.mode, extension: extensionState(value) });
+          }
         } else if (request.method === "POST" && url.pathname === "/v1/feed-filter") {
           let body;
           try { body = await readJsonBody(request, 64 * 1024); } catch { body = null; }
@@ -841,29 +862,40 @@ export async function startCollectorServer({
             return;
           }
           const value = await feedFilter.setSettings(body);
-          feedControl.update(value);
-          sendJson(response, 200, { rules: value.rules, mode: value.mode, control: feedControl.status() });
-        } else if (request.method === "POST" && (url.pathname === "/v1/feed-filter/connect" || url.pathname === "/v1/feed-filter/disconnect")) {
-          // 连的是这台电脑上的浏览器，和浏览器登录一样只许本机来
-          if (!isLoopbackAddress(request.socket.remoteAddress)) {
-            sendJson(response, 403, { error: "loopback_only", message: "只能在当前电脑上连接浏览器。" });
+          sendJson(response, 200, { rules: value.rules, mode: value.mode, extension: extensionState(value) });
+        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/remove") {
+          // 点了移除：扩展下次来对接（一分钟内）时自己卸载；remove=false 是取消
+          let body;
+          try { body = await readJsonBody(request); } catch { body = null; }
+          if (typeof body?.remove !== "boolean") {
+            sendJson(response, 400, { error: "invalid_request" });
             return;
           }
-          if (url.pathname.endsWith("/disconnect")) {
-            const control = feedControl.disconnect();
-            await feedFilter.setBrowser(null);
-            sendJson(response, 200, { control });
+          sendJson(response, 200, { extension: extensionState(await feedFilter.requestRemove(body.remove)) });
+        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/removed") {
+          await feedFilter.removed();
+          sendJson(response, 200, { ok: true });
+        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/open-extensions") {
+          // 在用户的浏览器里打开扩展页：浏览器和网址都是本机写死的，和浏览器登录一样只许本机来
+          if (!isLoopbackAddress(request.socket.remoteAddress)) {
+            sendJson(response, 403, { error: "loopback_only", message: "只能在当前电脑上打开浏览器。" });
             return;
           }
           let body;
           try { body = await readJsonBody(request); } catch { body = null; }
-          try {
-            await feedControl.connect(body?.browser);
-          } finally {
-            // 调试开关还没开时也记下来：开了以后自动连上；用户在浏览器里拒绝了就不再连
-            await feedFilter.setBrowser(feedControl.wanted).catch(() => undefined);
+          const source = browserSources.find((item) => !item.inApp && item.id === body?.browser);
+          if (!source) throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge 或 Comet。", 400);
+          await openBrowserPage(source, "extensions");
+          sendJson(response, 200, { ok: true });
+        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/events") {
+          let body;
+          try { body = await readJsonBody(request, 64 * 1024); } catch { body = null; }
+          if (!Array.isArray(body?.events) || body.events.length > 50) {
+            sendJson(response, 400, { error: "invalid_request" });
+            return;
           }
-          sendJson(response, 200, { control: feedControl.status() });
+          await feedFilter.addEvents(body.events);
+          sendJson(response, 200, { ok: true });
         } else if (request.method === "GET" && url.pathname === "/v1/feed-filter/events") {
           sendJson(response, 200, { events: (await feedFilter.read()).events });
         } else if (request.method === "DELETE" && url.pathname === "/v1/feed-filter/events") {
@@ -871,7 +903,7 @@ export async function startCollectorServer({
           sendJson(response, 200, { ok: true });
         } else sendJson(response, 404, { error: "not_found" });
       } catch (error) {
-        if (error instanceof BrowserConnectionError) sendJson(response, error.status, { error: error.code, message: error.message, control: feedControl.status() });
+        if (error instanceof BrowserConnectionError) sendJson(response, error.status, { error: error.code, message: error.message });
         else sendJson(response, 500, { error: "feed_filter_failed", message: "推荐流过滤的设置没读写成功，请稍后再试。" });
       }
     } else if (request.method === "GET" && url.pathname === "/v1/status") {
@@ -986,7 +1018,12 @@ export async function startCollectorServer({
   });
 
   await new Promise((resolve, reject) => {
-    server.once("error", reject);
+    server.once("error", (error) => {
+      if (!randomPortFallback || !options.port || error?.syscall !== "listen") return reject(error);
+      console.warn(`采集服务固定端口 ${options.port} 不可用（${error.code}），这次改用随机端口`);
+      server.once("error", reject);
+      server.listen(0, bindAddress, resolve);
+    });
     server.listen(options.port, bindAddress, resolve);
   });
 
@@ -995,7 +1032,6 @@ export async function startCollectorServer({
     if (shuttingDown) return;
     shuttingDown = true;
     browserLoginController?.abort();
-    feedControl.dispose();
     for (const finish of statusWaiters) finish();
     try {
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器
