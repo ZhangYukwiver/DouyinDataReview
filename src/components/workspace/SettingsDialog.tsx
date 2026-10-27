@@ -1,18 +1,21 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { Check, Download, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
 import { getDesktopOpenAtLogin, setDesktopOpenAtLogin, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
-import { collectorAccountName, collectorWrites, findTwinAccount, formatAccountAddedDay, type CollectorAccounts } from "../../services/localCollector";
+import {
+  collectorAccountName, collectorFeedControl, collectorFeedFilter, collectorFeedFilterEvents, collectorWrites, findTwinAccount, formatAccountAddedDay,
+  getBrowserLoginSources, type BrowserLoginSource, type CollectorAccounts, type FeedControlStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings,
+} from "../../services/localCollector";
 import { ease, revealFrom, ws } from "./motion";
 import { RELEASE_NOTES } from "./releaseNotes";
 import { appUpdateAction } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
 
-export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "about";
+export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "feed" | "about";
 
 export interface SettingsDialogProps {
   visible: boolean;
@@ -66,6 +69,7 @@ const SECTIONS: ReadonlyArray<{ key: SettingsSection; title: string }> = [
   { key: "privacy", title: "隐私" },
   { key: "account", title: "账号" },
   { key: "data", title: "数据" },
+  { key: "feed", title: "推荐流" },
   { key: "about", title: "关于" },
 ];
 
@@ -167,6 +171,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 : tab === "privacy" ? <Privacy {...props} />
                   : tab === "account" ? <Account {...props} />
                     : tab === "data" ? <Data {...props} />
+                      : tab === "feed" ? <FeedFilter {...props} />
                       : <About {...props} />}
           </ScrollView>
         </View>
@@ -385,6 +390,139 @@ function Data({ appStyle, canClear, connected, onClearCache, onExportData }: Set
       <View style={styles.row}>
         <RowCopy detail="只清掉这台电脑上存的观看、喜欢和收藏记录，抖音账号和登录都不受影响，下次读取会重新拿回来。" title="清除本地记录" />
         <Button appStyle={appStyle} disabled={!canClear} icon={Trash2} kind="danger" label="清除本地记录" onPress={onClearCache} testID="settings-clear" />
+      </View>
+    </>
+  );
+}
+
+const FEED_MODES: ReadonlyArray<{ key: FeedFilterMode; label: string; detail: string }> = [
+  { key: "off", label: "关", detail: "扩展什么都不动，推荐流照原样。" },
+  { key: "observe", label: "只记录", detail: "命中的视频照样刷得到，只记在下面。先用它看看词条会不会误杀。" },
+  { key: "hide", label: "隐藏", detail: "命中的视频在推荐数据进页面之前就被拿掉，刷不到。" },
+  { key: "dislike", label: "隐藏并反馈", detail: "拿掉以后再替你点「不感兴趣」，以后少推这类。用的是你自己的抖音号，每分钟最多点 6 条，多出来的只隐藏。" },
+];
+const FEED_ACTIONS: Record<FeedFilterEvent["action"], string> = {
+  observed: "只记录", hidden: "已隐藏", disliked: "已反馈", dislike_failed: "已隐藏，反馈没成功", unreadable: "这一页推荐数据读不了，原样放过了",
+};
+
+function controlText(control: FeedControlStatus): string {
+  if (control.state === "connected")
+    return `已连着 ${control.label}，正管着 ${control.tabs} 个抖音标签页。只碰 www.douyin.com 的标签页，别的网站不碰。`;
+  if (control.message) return control.message;
+  return "连上后，你在浏览器里刷抖音网页时，推荐流按下面的词条过滤。浏览器要先打开远程调试（地址栏输入 chrome://inspect/#remote-debugging 勾选），连接时浏览器会弹窗让你允许。";
+}
+
+function eventTime(at: number): string {
+  const date = new Date(at);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getMonth() + 1}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** 推荐流控制：应用经远程调试连着用户自己的浏览器，按词条改抖音网页的推荐数据；词条、过滤方式和处置记录都存在采集器里 */
+function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
+  const baseUrl = collector?.baseUrl, token = collector?.token;
+  const [settings, setSettings] = useState<FeedFilterSettings | null>(null);
+  const [draft, setDraft] = useState("");
+  const [events, setEvents] = useState<FeedFilterEvent[]>([]);
+  const [browsers, setBrowsers] = useState<BrowserLoginSource[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const fail = (value: unknown) => setError(value instanceof Error ? value.message : "没存上，请稍后再试。");
+  useEffect(() => {
+    setSettings(null);
+    if (!baseUrl || !token) return;
+    let live = true;
+    Promise.all([collectorFeedFilter(baseUrl, token), collectorFeedFilterEvents(baseUrl, token), getBrowserLoginSources(baseUrl, token).catch(() => [])])
+      .then(([value, history, sources]) => {
+        if (!live) return;
+        setSettings(value);
+        setDraft(value.rules);
+        setEvents(history);
+        setBrowsers(sources.filter((source) => source.id !== "app" && source.available));
+      }, (value: unknown) => { if (live) fail(value); });
+    // 开着这一页时隔几秒刷一下连接状态和新记录
+    const timer = setInterval(() => {
+      Promise.all([collectorFeedFilter(baseUrl, token), collectorFeedFilterEvents(baseUrl, token)]).then(([value, history]) => {
+        if (!live) return;
+        setSettings((current) => (current ? { ...current, control: value.control } : value));
+        setEvents(history);
+      }, () => undefined);
+    }, 3000);
+    return () => { live = false; clearInterval(timer); };
+  }, [baseUrl, token]);
+  if (!baseUrl || !token) {
+    return <View style={styles.row}><RowCopy detail="先在采集器页连上采集器，才能改这一页。" title="推荐流控制" /></View>;
+  }
+  const save = (change: Partial<Pick<FeedFilterSettings, "rules" | "mode">>) => {
+    setSaving(true);
+    setError(null);
+    collectorFeedFilter(baseUrl, token, change).then((value) => {
+      setSettings(value);
+      setDraft(value.rules);
+    }, fail).finally(() => setSaving(false));
+  };
+  const connect = (browser: string | null) => {
+    setConnecting(true);
+    setError(null);
+    collectorFeedControl(baseUrl, token, browser).then((control) => setSettings((current) => (current ? { ...current, control } : current)), fail)
+      .finally(() => setConnecting(false));
+  };
+  const mode = FEED_MODES.find((item) => item.key === settings?.mode);
+  const control = settings?.control;
+  return (
+    <>
+      <View style={[styles.row, styles.rowIntro]}>
+        <Text style={styles.detail}>你照常在 Chrome、Edge 里刷抖音网页，由应用替你管推荐流：命中词条的视频在推荐数据进页面之前就被拿掉。应用开着、连着浏览器时才生效；改了词条马上生效。打开页面时随网页一起来的第一屏拦不到，往下刷出来的才会过滤。</Text>
+        {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
+      </View>
+      <View style={styles.row}>
+        <View style={styles.copy}>
+          <Text style={styles.rowTitle}>连接浏览器</Text>
+          <Text style={styles.detail} testID="settings-feed-control">{control ? controlText(control) : "正在读取…"}</Text>
+        </View>
+        <View style={styles.actions}>
+          {!control ? null : control.state === "off"
+            ? browsers.map((source) => (
+              <Button key={source.id} appStyle={appStyle} busy={connecting} disabled={connecting} label={`连 ${source.label}`}
+                onPress={() => connect(source.id)} testID={`settings-feed-connect-${source.id}`} />
+            ))
+            : <Button appStyle={appStyle} disabled={connecting} label="断开" onPress={() => connect(null)} testID="settings-feed-disconnect" />}
+        </View>
+      </View>
+      <View style={[styles.row, styles.rowStacked]}>
+        <RowCopy detail={mode?.detail ?? "正在读取…"} title="过滤方式" />
+        <View style={styles.choices}>
+          {FEED_MODES.map((item) => (
+            <Button key={item.key} appStyle={appStyle} disabled={!settings || saving} kind={item.key === settings?.mode ? "primary" : "secondary"}
+              label={item.label} onPress={() => { if (item.key !== settings?.mode) save({ mode: item.key }); }} testID={`settings-feed-mode-${item.key}`} />
+          ))}
+        </View>
+      </View>
+      <View style={[styles.row, styles.rowStacked]}>
+        <RowCopy detail="一行一条，# 开头的是注释。只写词就在文案、作者、话题和配乐里都找；也可以写 author:昵称或抖音号、tag:话题、desc:文案里的词、/正则/i；末尾加 @0.5 这种权重，几条加起来到 1 才算命中。" title="词条" />
+        <TextInput accessibilityLabel="词条" editable={Boolean(settings) && !saving} multiline onChangeText={setDraft} spellCheck={false}
+          style={styles.rulesInput} testID="settings-feed-rules" value={draft} />
+        <View style={styles.actions}>
+          <Button appStyle={appStyle} busy={saving} disabled={!settings || saving || draft === settings.rules} kind="primary" label="保存词条"
+            onPress={() => save({ rules: draft })} testID="settings-feed-save" />
+        </View>
+      </View>
+      <View style={[styles.row, styles.rowStacked]}>
+        <View style={styles.rowHead}>
+          <RowCopy detail={events.length ? `最近 ${events.length} 条，新的在上面。误杀的话回头改词条。` : "还没有记录。先用「只记录」刷一会儿，命中的会记在这里。"} title="处置记录" />
+          <Button appStyle={appStyle} disabled={!events.length} icon={Trash2} kind="danger" label="清空"
+            onPress={() => void collectorFeedFilterEvents(baseUrl, token, true).then(setEvents, fail)} testID="settings-feed-clear" />
+        </View>
+        {events.slice(-100).reverse().map((event, index) => (
+          <View key={`${event.t}-${event.id}-${index}`} style={styles.feedEvent}>
+            <Text numberOfLines={1} style={styles.detail}>
+              <Text style={styles.value}>{eventTime(event.t)}</Text>{`  ${FEED_ACTIONS[event.action]}  `}
+              <Text style={styles.rowTitle}>{event.desc || (event.id ? "（没有文案）" : "")}</Text>{event.author ? `  @${event.author}` : ""}
+            </Text>
+            {event.matched.length ? <Text numberOfLines={1} style={styles.detail}>命中：{event.matched.join("、")}</Text> : null}
+          </View>
+        ))}
       </View>
     </>
   );
@@ -707,6 +845,11 @@ const styles = StyleSheet.create({
   currentTag: { flexShrink: 0, paddingHorizontal: 9, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: color.surfaceMuted },
   currentText: { fontFamily: font.sans, color: color.textSecondary, fontSize: 12, fontWeight: "500" },
   actions: { flexDirection: "row", flexShrink: 0, gap: 8 },
+  choices: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  rowHead: { flexDirection: "row", alignItems: "center", gap: 16 },
+  rulesInput: { minHeight: 132, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: color.border, borderRadius: radius.small,
+    backgroundColor: color.surface, color: color.text, fontFamily: font.mono, fontSize: 12.5, lineHeight: 19, textAlignVertical: "top" },
+  feedEvent: { gap: 1 },
   // 按钮：次按钮白底细描边，主按钮实底，危险操作红字红描边；禁用 40%
   button: { minHeight: 32, flexShrink: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   buttonHover: { backgroundColor: color.surfaceMuted },
