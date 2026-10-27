@@ -1,11 +1,8 @@
-// 应用经远程调试注入到用户浏览器的抖音页面里（页面自己的环境，网页脚本运行之前），排在 feedFilterRules.js 后面。
+// 扩展装进抖音页面自己的环境（MAIN world，document_start，网页脚本运行之前），排在 filter.js 后面。
 // 推荐数据走 XHR：在页面读到响应之前把命中的视频从 aweme_list 里拿掉，页面根本拿不到这几条，也就不会播。
-// 词条随注入的代码一起来（__dyfBoot），改词条时应用发 dyf:settings 事件；处置结果攒着，等应用来取（__dyfDrain）。
+// 词条和模式由应用定，经 bridge.js 以 dyf:settings 事件送来；处置结果用 dyf:events 事件交回去，最后存进应用。
 (function () {
   "use strict";
-  const boot = globalThis.__dyfBoot;
-  delete globalThis.__dyfBoot;
-  // 注入是跟着标签页走的：标签页跳到别的网站时这里什么都不做
   if (location.hostname !== "www.douyin.com" || window.__dyfInstalled) return;
   window.__dyfInstalled = true;
 
@@ -17,20 +14,15 @@
   let settings = null;
   let warned = false;
   const seen = new Set();
-  const pending = [];
 
-  const apply = (text) => {
+  document.addEventListener("dyf:settings", (event) => {
     try {
-      const value = JSON.parse(text);
+      const value = JSON.parse(event.detail);
       settings = { mode: value.mode, rules: DYF.compileRules(value.rules) };
     } catch { /* 坏消息不换掉手上的词条 */ }
-  };
-  if (typeof boot === "string") apply(boot);
-  document.addEventListener("dyf:settings", (event) => apply(event.detail));
+  });
 
-  // 应用定时来取；最多攒 300 条，应用断开太久就丢最旧的
-  const emit = (events) => { pending.push(...events); pending.splice(0, Math.max(0, pending.length - 300)); };
-  Object.defineProperty(window, "__dyfDrain", { value: () => JSON.stringify(pending.splice(0, 50)) });
+  const emit = (events) => document.dispatchEvent(new CustomEvent("dyf:events", { detail: JSON.stringify(events) }));
 
   function isFeed(url) {
     try { return FEED.test(new URL(String(url), location.href).pathname); } catch { return false; }

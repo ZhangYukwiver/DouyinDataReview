@@ -85,6 +85,16 @@
       "!collector/fixtures/**",
       "!node_modules/!(playwright-core|ws|fflate|electron-updater|builder-util-runtime|debug|ms|fs-extra|graceful-fs|jsonfile|universalify|js-yaml|argparse|sax|lazy-val|lodash.escaperegexp|lodash.isequal|semver|tiny-typed-emitter)/**"
     ],
+    "extraResources": [
+      {
+        "from": "extension",
+        "to": "extension",
+        "filter": [
+          "**/*",
+          "!*.test.mjs"
+        ]
+      }
+    ],
     "asar": true,
     "asarUnpack": [
       "collector/openBrowserDebugging.ps1",

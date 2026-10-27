@@ -1213,19 +1213,15 @@ export async function collectorWrites(baseUrl: string, token: string, enabled?: 
 }
 
 export type FeedFilterMode = "off" | "observe" | "hide" | "dislike";
-/** 应用经远程调试连着用户浏览器的状态：waiting = 想连但浏览器没开或没开调试，会自己再连 */
-export interface FeedControlStatus {
-  state: "off" | "waiting" | "connecting" | "connected";
-  browser: string | null;
-  label: string | null;
-  /** 正管着的抖音标签页数 */
-  tabs: number;
-  message: string | null;
+/** 浏览器扩展的状态：lastSeenAt = 扩展最近一次来对接（每分钟一次，没装或已移除是 null）；removing = 点了移除、等扩展自己卸载 */
+export interface FeedExtensionStatus {
+  lastSeenAt: number | null;
+  removing: boolean;
 }
 export interface FeedFilterSettings {
   rules: string;
   mode: FeedFilterMode;
-  control: FeedControlStatus;
+  extension: FeedExtensionStatus;
 }
 export interface FeedFilterEvent {
   t: number;
@@ -1237,32 +1233,33 @@ export interface FeedFilterEvent {
 }
 const FEED_FILTER_MODES: readonly string[] = ["off", "observe", "hide", "dislike"];
 const FEED_FILTER_ACTIONS: readonly string[] = ["observed", "hidden", "disliked", "dislike_failed", "unreadable"];
-const FEED_CONTROL_STATES: readonly string[] = ["off", "waiting", "connecting", "connected"];
 
-function parseFeedControl(value: unknown): FeedControlStatus {
-  if (!isObject(value) || !FEED_CONTROL_STATES.includes(String(value.state))) throw new LocalCollectorError("invalid_response", "采集服务没返回浏览器连接状态。");
-  const text = (item: unknown) => (typeof item === "string" && item ? item : null);
-  return { state: value.state as FeedControlStatus["state"], browser: text(value.browser), label: text(value.label),
-    tabs: typeof value.tabs === "number" ? value.tabs : 0, message: text(value.message) };
+function parseFeedExtension(value: unknown): FeedExtensionStatus {
+  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务没返回扩展状态。");
+  return { lastSeenAt: typeof value.lastSeenAt === "number" && Number.isFinite(value.lastSeenAt) ? value.lastSeenAt : null, removing: value.removing === true };
 }
 
-/** 推荐流控制的词条、模式和浏览器连接状态；带上 change 就是改 */
+/** 推荐流过滤的词条、过滤方式和扩展状态；带上 change 就是改 */
 export async function collectorFeedFilter(baseUrl: string, token: string, change?: Partial<Pick<FeedFilterSettings, "rules" | "mode">>): Promise<FeedFilterSettings> {
   const value = await requestJson(baseUrl, "/v1/feed-filter", change ? { method: "POST", body: JSON.stringify(change) } : {}, token);
   if (!isObject(value) || typeof value.rules !== "string" || !FEED_FILTER_MODES.includes(String(value.mode)))
     throw new LocalCollectorError("invalid_response", "采集服务没返回推荐流过滤的设置。");
-  return { rules: value.rules, mode: value.mode as FeedFilterMode, control: parseFeedControl(value.control) };
+  return { rules: value.rules, mode: value.mode as FeedFilterMode, extension: parseFeedExtension(value.extension) };
 }
 
-/** 连上用户的浏览器（chrome / edge / comet）；browser 为 null 就是断开 */
-export async function collectorFeedControl(baseUrl: string, token: string, browser: string | null): Promise<FeedControlStatus> {
-  const value = await requestJson(baseUrl, browser ? "/v1/feed-filter/connect" : "/v1/feed-filter/disconnect",
-    { method: "POST", body: JSON.stringify(browser ? { browser } : {}) }, token, 70_000);
-  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务没返回浏览器连接状态。");
-  return parseFeedControl(value.control);
+/** 叫扩展下次来对接时把自己卸载掉；remove 为 false 是取消 */
+export async function collectorRemoveFeedExtension(baseUrl: string, token: string, remove: boolean): Promise<FeedExtensionStatus> {
+  const value = await requestJson(baseUrl, "/v1/feed-filter/remove", { method: "POST", body: JSON.stringify({ remove }) }, token);
+  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务没返回扩展状态。");
+  return parseFeedExtension(value.extension);
 }
 
-/** 页面里取回的处置记录（旧的在前）；clear 为 true 时清空 */
+/** 在用户的浏览器（chrome / edge / comet）里开一个新窗口打开扩展页 */
+export async function collectorOpenBrowserExtensions(baseUrl: string, token: string, browser: string): Promise<void> {
+  await requestJson(baseUrl, "/v1/feed-filter/open-extensions", { method: "POST", body: JSON.stringify({ browser }) }, token, 30_000);
+}
+
+/** 扩展送来的处置记录（旧的在前）；clear 为 true 时清空 */
 export async function collectorFeedFilterEvents(baseUrl: string, token: string, clear = false): Promise<FeedFilterEvent[]> {
   const value = await requestJson(baseUrl, "/v1/feed-filter/events", clear ? { method: "DELETE" } : {}, token);
   if (clear) return [];

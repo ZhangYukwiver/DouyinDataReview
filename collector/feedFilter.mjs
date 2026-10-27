@@ -1,10 +1,12 @@
 import { copyFile, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
-// 推荐流控制的词条、模式、要连的浏览器和处置记录。不分账号：浏览器里登的号不一定是应用里正用的那个。
+// 推荐流控制的词条、模式、处置记录和浏览器扩展的状态。不分账号：浏览器里登的号不一定是应用里正用的那个。
+// 扩展的固定 ID 来自 extension/manifest.json 里的 key；Edge 上扩展页地址是 extension:// 开头，两种都认
+export const FEED_FILTER_EXTENSION_ID = "phliimhdokpkdhmeofkpbcnkncknjkka";
+export const FEED_FILTER_ORIGINS = [`chrome-extension://${FEED_FILTER_EXTENSION_ID}`, `extension://${FEED_FILTER_EXTENSION_ID}`];
 export const FEED_FILTER_MODES = ["off", "observe", "hide", "dislike"];
 const ACTIONS = new Set(["observed", "hidden", "disliked", "dislike_failed", "unreadable"]);
-const BROWSERS = ["chrome", "edge", "comet"];
 const MAX_RULES_CHARACTERS = 20_000;
 const MAX_EVENTS = 500;
 
@@ -26,8 +28,10 @@ export function sanitizeFeedFilter(value) {
   const rules = typeof value?.rules === "string" ? value.rules.slice(0, MAX_RULES_CHARACTERS) : DEFAULT_RULES;
   const mode = FEED_FILTER_MODES.includes(value?.mode) ? value.mode : "observe";
   const events = (Array.isArray(value?.events) ? value.events : []).map(sanitizeEvent).filter(Boolean).slice(-MAX_EVENTS);
-  const browser = BROWSERS.includes(value?.browser) ? value.browser : null;
-  return { rules, mode, events, browser };
+  // 扩展最近一次来对接的时间（没装或已移除是 null）；remove = 用户点了移除、等扩展下次来时自己卸载
+  const lastSeenAt = Number.isFinite(value?.lastSeenAt) ? value.lastSeenAt : null;
+  const remove = value?.remove === true;
+  return { rules, mode, events, lastSeenAt, remove };
 }
 
 export class FeedFilterStore {
@@ -93,9 +97,18 @@ export class FeedFilterStore {
     return this.update((current) => ({ ...current, events: [...current.events, ...events] }));
   }
 
-  // 用户连上过哪个浏览器：应用下次启动接着连；点断开或在浏览器里拒绝就是 null
-  setBrowser(browser) {
-    return this.update((current) => ({ ...current, browser }));
+  // 扩展每分钟来对一次，记下时间，设置页据此说「已装好」
+  touch() {
+    return this.update((current) => ({ ...current, lastSeenAt: Date.now() }));
+  }
+
+  requestRemove(remove) {
+    return this.update((current) => ({ ...current, remove }));
+  }
+
+  // 扩展收到移除、卸载自己之前来报一声
+  removed() {
+    return this.update((current) => ({ ...current, remove: false, lastSeenAt: null }));
   }
 
   clearEvents() {

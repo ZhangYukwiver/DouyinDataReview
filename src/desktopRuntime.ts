@@ -45,6 +45,7 @@ interface DesktopRuntimeBridge {
   getOpenAtLogin?(): Promise<unknown>;
   setOpenAtLogin?(enabled: boolean): Promise<unknown>;
   sendToReelLab?(request: ReelLabHandoff): Promise<unknown>;
+  startExtensionDrag?(): void;
 }
 
 /** 交给拆片工坊的一条视频：jobId 是采集器里已经下好的下载任务，文件由桌面外壳复制过去 */
@@ -226,6 +227,16 @@ export async function setDesktopOpenAtLogin(enabled: boolean): Promise<boolean |
 }
 
 /** 能不能「送去拆片工坊」：只有带这个接口的桌面版外壳能，浏览器里打开时没有这个按钮 */
+/** 桌面版才能把推荐流过滤扩展从设置页拖到浏览器扩展页 */
+export function canDragDesktopExtension(): boolean {
+  return typeof getDesktopRuntime()?.startExtensionDrag === "function";
+}
+
+/** 在拖动开始那一刻调用：把扩展文件夹交给系统拖放 */
+export function startDesktopExtensionDrag(): void {
+  getDesktopRuntime()?.startExtensionDrag?.();
+}
+
 export function canSendToReelLab(): boolean {
   return typeof getDesktopRuntime()?.sendToReelLab === "function";
 }

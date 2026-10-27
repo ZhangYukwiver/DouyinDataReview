@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, session, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +25,8 @@ const LOGIN_ITEM = { args: [HIDDEN_ARG] };
 // 页面的设置（风格、自动补读等）存在 localStorage 里，而 localStorage 按 origin（含端口）分开存：
 // 端口每次随机的话，重启后就读不到上次的设置。所以页面服务优先用固定端口，绑不上（被占用、被系统保留）才退回随机端口。
 const WEB_PORT = 47651;
+// 推荐流过滤扩展按这个端口找采集器；和页面服务的 47651 挨着，被占时退回随机端口（扩展就连不上了）
+const COLLECTOR_PORT = 47652;
 
 let mainWindow = null;
 let desktopRuntime = null;
@@ -260,7 +262,8 @@ async function startDesktopRuntime() {
       writeFileSync(path.join(diagnostics, `verify-${Date.now()}.html`), `<!-- ${url.replace(/--/gu, "")} -->\n${html}`, { mode: 0o600 });
     } });
   const collector = await startCollectorServer({
-    port: 0,
+    port: COLLECTOR_PORT,
+    randomPortFallback: true,
     dataDirectory: path.join(app.getPath("userData"), "collector"),
     // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
     browserSources: [{ id: "app", label: "应用内登录", inApp: true }, ...browserDirectories()],
@@ -290,12 +293,25 @@ async function stopDesktopRuntime() {
   await Promise.allSettled([runtime.web.close(), runtime.collector.close()]);
 }
 
+// 推荐流过滤扩展：从应用包里拷到 userData 下一个固定的普通文件夹，浏览器从这里加载。
+// 位置固定才不怕应用挪地方（Mac 上没放进「应用程序」时路径每次都变）；应用更新后在扩展页点「重新加载」就是新版
+const feedExtensionDirectory = () => path.join(app.getPath("userData"), "browser-extension");
+// 先清空再拷：旧版本里有、新版本删掉的文件不留下
+const copyFeedExtension = () => {
+  rmSync(feedExtensionDirectory(), { recursive: true, force: true });
+  cpSync(path.join(app.isPackaged ? process.resourcesPath : projectDirectory, "extension"), feedExtensionDirectory(),
+    { recursive: true, filter: (source) => !source.endsWith(".test.mjs") });
+};
+
 async function launch() {
   // macOS needs an app menu for ⌘Q and ⌘C/⌘V in text fields; Windows keeps no menu bar.
   Menu.setApplicationMenu(process.platform === "darwin"
     ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }])
     : null);
   desktopRuntime = await startDesktopRuntime();
+  if (existsSync(feedExtensionDirectory())) {
+    try { copyFeedExtension(); } catch { /* 拷不过去就先用旧的那份 */ }
+  }
   // electron-updater must be created after Electron is ready. In development
   // we intentionally do not touch its singleton, so `npm run desktop` never
   // tries to read a missing app-update.yml.
@@ -337,6 +353,13 @@ async function launch() {
     inboxDirectory: path.join(app.getPath("appData"), "ReelLab", "inbox"),
     openInbox: () => shell.openExternal(REELLAB_INBOX_URL),
   }));
+  // 设置页上的扩展图标被拖起来：把扩展文件夹交给系统拖放，用户放进浏览器扩展页就装上了（开发者模式下浏览器认拖进来的文件夹）
+  ipcMain.on("desktop:start-extension-drag", (event) => {
+    try {
+      copyFeedExtension();
+      event.sender.startDrag({ file: feedExtensionDirectory(), icon: nativeImage.createFromPath(path.join(feedExtensionDirectory(), "icon-128.png")).resize({ width: 64 }) });
+    } catch { /* 拖不起来就什么都不做 */ }
+  });
   ipcMain.handle("desktop:get-collector-config", () => ({
     baseUrl: desktopRuntime?.collector.baseUrl,
     pairingCode: desktopRuntime?.collector.getPairingCode(),
