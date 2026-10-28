@@ -51,6 +51,9 @@ const SELF_PROFILE_URL = "https://www.douyin.com/user/self";
 const LOGIN_COOKIE_NAMES = new Set(["sessionid", "sessionid_ss", "sid_tt", "sid_guard"]);
 const REQUIRED_TYPES = ["watch_history", "liked_videos", "favorite_videos"];
 const TYPE_LABELS = { watch_history: "观看历史", liked_videos: "点赞列表", favorite_videos: "收藏列表" };
+// 点赞、收藏单个接口给的东西用不了时只跳过这一类（抖音桌面端的登录态读点赞就回空响应）；
+// 登录失效、限流、要验证这些是整个会话的问题，照旧停下
+const SKIPPABLE_LIST_ERRORS = new Set(["invalid_json", "schema_changed", "http_error"]);
 const ENDPOINT_ACTIVATION_WAIT_MS = 8_000;
 const MAX_CHAT_MESSAGES = 100_000;
 // ponytail: bound a broken cursor chain while still allowing the 100k-message
@@ -1772,15 +1775,20 @@ export class DouyinCollector {
         }]);
         this.updateStatus({ updatedAt: this.snapshot.updatedAt });
       };
-      const persistCompletedType = async (type, finalPhase) => {
+      const skipped = [];
+      // completed=false：这一类被跳过，本地记录和「读完过」标记都不动，下次再整份读
+      const persistCompletedType = async (type, finalPhase, { completed = true } = {}) => {
         this.assertSyncActive(runId);
-        stagedRecords[type] = previewRecords(type, true)[type];
-        directSync[type] = true;
+        if (completed) {
+          stagedRecords[type] = previewRecords(type, true)[type];
+          directSync[type] = true;
+        }
         const newCounts = Object.fromEntries(REQUIRED_TYPES.map((kind) => [kind, newIds.get(kind).size]));
         const warnings = [...new Set([
-          finalPhase
-            ? `${DIRECT_COMPLETE_WARNING_PREFIX}新增观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}；读取观看历史 ${pageCounts.watch_history} 页、点赞 ${pageCounts.liked_videos} 页、收藏 ${pageCounts.favorite_videos} 页。`
-            : `无界面读取阶段完成：${TYPE_LABELS[type]}已保存，其他分类继续读取。`,
+          ...(finalPhase
+            ? [`${DIRECT_COMPLETE_WARNING_PREFIX}新增观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}；读取观看历史 ${pageCounts.watch_history} 页、点赞 ${pageCounts.liked_videos} 页、收藏 ${pageCounts.favorite_videos} 页。`]
+            : completed ? [`无界面读取阶段完成：${TYPE_LABELS[type]}已保存，其他分类继续读取。`] : []),
+          ...skipped.map(({ kind, message }) => `${TYPE_LABELS[kind]}这次没读到，保留了本地原有的记录：${message}`),
           ...(missingViewTimes > 0
             ? [`其中 ${missingViewTimes} 条缺少观看日期，已保持为空，未使用发布时间或采集时间替代。`]
             : []),
@@ -1799,19 +1807,27 @@ export class DouyinCollector {
       for (const [phaseIndex, [type, endpointUrl]] of phases.entries()) {
         const endpoint = matchDouyinEndpoint(endpointUrl);
         if (type !== "watch_history") {
-          pageCounts[type] = await this.collectDirectList(context, type, async (payload, pageCount) => {
-            this.assertSyncActive(runId);
-            const result = accumulator.addResponse(endpoint, payload);
-            trackResult(type, result);
-            this.updateStatus({
-              phase: type,
-              message: progressMessage(type, pageCount),
-              counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
-              newRecords: newRecordsStatus(),
+          try {
+            pageCounts[type] = await this.collectDirectList(context, type, async (payload, pageCount) => {
+              this.assertSyncActive(runId);
+              const result = accumulator.addResponse(endpoint, payload);
+              trackResult(type, result);
+              this.updateStatus({
+                phase: type,
+                message: progressMessage(type, pageCount),
+                counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
+                newRecords: newRecordsStatus(),
+              });
+              await persistProgress(type);
+              return !result.recordIds.some((id) => knownIds.get(type).has(id));
             });
-            await persistProgress(type);
-            return !result.recordIds.some((id) => knownIds.get(type).has(id));
-          });
+          } catch (error) {
+            if (!SKIPPABLE_LIST_ERRORS.has(error?.code)) throw error;
+            pageCounts[type] = 0;
+            skipped.push({ kind: type, message: error.message });
+            await persistCompletedType(type, phaseIndex === phases.length - 1, { completed: false });
+            continue;
+          }
           await persistCompletedType(type, phaseIndex === phases.length - 1);
           continue;
         }
@@ -1893,9 +1909,10 @@ export class DouyinCollector {
         state: "complete",
         phase: null,
         progress: null,
-        message: allIncremental
+        message: (allIncremental
           ? `已读取新增记录（观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}${liveAdded > 0 ? `、直播 ${liveAdded}` : ""}）`
-          : `已读取并合并全部可见记录（观看 ${stagedRecords.watch_history.length}、点赞 ${stagedRecords.liked_videos.length}、收藏 ${stagedRecords.favorite_videos.length}）`,
+          : `已读取并合并全部可见记录（观看 ${stagedRecords.watch_history.length}、点赞 ${stagedRecords.liked_videos.length}、收藏 ${stagedRecords.favorite_videos.length}）`)
+          + (skipped.length ? `；${skipped.map(({ kind }) => TYPE_LABELS[kind]).join("、")}这次没读到` : ""),
         counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
         updatedAt: this.snapshot.updatedAt,
       });
