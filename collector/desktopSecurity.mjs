@@ -1,4 +1,5 @@
 import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { DirectHistoryError } from "./directHistory.mjs";
 import { directCryptCookieFingerprint, directSessionFingerprint, validateDirectCredentials } from "./directCredentials.mjs";
@@ -9,6 +10,39 @@ import { directCryptCookieFingerprint, directSessionFingerprint, validateDirectC
 // 两处都是 leveldb，值可能落在 snappy 压缩的 SSTable 块里，所以要解压再按 encoding 解码。
 
 const LOGIN_COOKIE_NAMES = ["sessionid", "sessionid_ss", "sid_tt", "sid_guard"];
+const validMsToken = (value) => /^[A-Za-z0-9+/_=-]{100,1024}$/u.test(value ?? "");
+
+// 部分客户端不落盘 msToken；从同设备近期缓存请求 URL 补读，不扫描响应正文。
+function readCachedMsToken(directory, cookies, createdAt) {
+  const uifid = cookies.find((cookie) => cookie.name === "UIFID")?.value;
+  if (!uifid) return "";
+  const root = path.join(directory, "Cache", "Cache_Data");
+  let files;
+  try { files = readdirSync(root).filter((name) => /^[a-f0-9]{16}_0$/u.test(name)); } catch { return ""; }
+  const cutoff = Math.max(Date.now() - 2 * 60 * 60_000, (Number(createdAt) || 0) * 1000);
+  let latest = cutoff, token = "";
+  for (const name of files) {
+    let fd;
+    try {
+      const file = path.join(root, name), modified = statSync(file).mtimeMs;
+      if (modified <= latest) continue;
+      fd = openSync(file, "r");
+      const header = Buffer.alloc(24);
+      if (readSync(fd, header, 0, 24, 0) !== 24 || header.subarray(0, 8).toString("hex") !== "305c72a71b6dfbfc" || header.readUInt32LE(8) !== 5) continue;
+      const length = header.readUInt32LE(12);
+      if (!length || length > 16_384) continue;
+      const key = Buffer.alloc(length);
+      if (readSync(fd, key, 0, length, 24) !== length) continue;
+      const url = new URL(key.toString("utf8").match(/https:\/\/[^\u0000]+$/u)?.[0] ?? "");
+      if (!["www.douyin.com", "www-hj.douyin.com"].includes(url.hostname) || url.username || url.password || url.hash
+        || url.searchParams.get("aid") !== "6383" || url.searchParams.get("uifid") !== uifid) continue;
+      const value = url.searchParams.get("msToken");
+      if (validMsToken(value)) { token = value; latest = modified; }
+    } catch { /* 正在写入或不同格式的缓存直接跳过。 */ }
+    finally { if (fd !== undefined) closeSync(fd); }
+  }
+  return token;
+}
 
 export class DesktopSecurityError extends DirectHistoryError {
   constructor(code, message) {
@@ -223,26 +257,32 @@ export async function readDesktopSecurity({ directory, cookies, uid, userAgent }
   const traitRaw = pickValue(storage, origin, "dtrait-sdk/s_sdk_server_cert_key");
   const trait = traitRaw ? JSON.parse(Buffer.from(traitRaw, "base64").toString("utf8")) : null;
   const traitBlob = pickValue(storage, origin, "SLARDARuc_dtrait_sdk");
-  const msToken = pickValue(storage, origin, "msToken");
 
   if (!crypt?.ec_privateKey || !certificate?.data)
     throw new DesktopSecurityError("desktop_security_missing", "抖音桌面端还没生成操作证书，先在客户端里打开一次抖音再试。");
 
-  // 当前登录用的那份 ticket / ts_sign 要和 Cookie 里的签名 id 对得上，旧副本会读不到数据
-  const signId = cookies.find((cookie) => cookie.name === "bd_ticket_guard_ts_sign_id")?.value ?? "";
-  let ticket = "", tsSign = "";
-  if (signId) {
-    for (const directoryName of readdirSync(path.join(directory, "IndexedDB")).sort()) {
-      for (const text of readIndexedDbTexts(path.join(directory, "IndexedDB", directoryName))) {
-        for (const match of text.replace(/\\"/gu, "\"").matchAll(/"ticket":"(hash\.[A-Za-z0-9+/=]+)","ts_sign":"(ts\.[12]\.[A-Za-z0-9]+)"/gu)) {
-          if (match[2].startsWith(signId)) { ticket = match[1]; tsSign = match[2]; }
-        }
-      }
-      if (tsSign) break;
+  // 部分客户端不保存签名 id Cookie；此时用 ticket = hash.SHA256(登录 Cookie)
+  // 和同一份客户端证书核对归属。已有签名 id 对不上时不能降级接受旧票据。
+  const signIds = cookies.filter((cookie) => cookie.name === "bd_ticket_guard_ts_sign_id" && cookie.value).map((cookie) => cookie.value);
+  const loginTickets = new Set(cookies.filter((cookie) => ["sessionid", "sessionid_ss", "sid_tt"].includes(cookie.name) && cookie.value)
+    .map((cookie) => `hash.${createHash("sha256").update(cookie.value).digest("base64")}`));
+  const candidates = [];
+  try { candidates.push(unwrapData(pickValue(storage, origin, "security-sdk/s_sdk_sign_data_key/web_protect"))); }
+  catch { /* Local Storage 的旧副本损坏时仍可读取 IndexedDB。 */ }
+  for (const text of readIndexedDbTexts(path.join(directory, "IndexedDB", "https_www.douyin.com_0.indexeddb.leveldb"))) {
+    for (const match of text.replace(/\\"/gu, "\"").matchAll(/\{[^{}]*"ticket"\s*:[^{}]*\}/gu)) {
+      try { candidates.push(JSON.parse(match[0])); } catch { /* 跳过不完整的写入。 */ }
     }
   }
-  if (!tsSign)
-    throw new DesktopSecurityError("desktop_security_missing", "抖音桌面端的操作票据已失效，请在客户端里重新进入一次抖音后再试。");
+  const matched = candidates.filter((value) => value && /^hash\.[A-Za-z0-9+/=]+$/u.test(value.ticket ?? "")
+    && /^ts\.[12]\.[A-Za-z0-9]+$/u.test(value.ts_sign ?? "") && value.client_cert === certificate.data
+    && (signIds.length ? signIds.some((id) => value.ts_sign.startsWith(id)) : loginTickets.has(value.ticket)))
+    .sort((left, right) => (Number(right.create_time) || 0) - (Number(left.create_time) || 0))[0];
+  if (!matched)
+    throw new DesktopSecurityError("desktop_security_missing", "没找到与当前登录匹配的抖音桌面端操作票据，请在客户端里重新进入一次抖音后再试。");
+  const { ticket, ts_sign: tsSign } = matched;
+  const msToken = [pickValue(storage, origin, "msToken"), cookies.find((cookie) => cookie.name === "msToken")?.value].find(validMsToken)
+    || readCachedMsToken(directory, cookies, matched.create_time);
 
   const session = { version: 1, uid: String(uid ?? ""), userAgent, cookies, values: {}, requestHeaders: {} };
   const security = validateDirectCredentials({
