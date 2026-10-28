@@ -169,7 +169,7 @@ Chrome 的现有实例连接方式需要 144 或更新版本；Edge 需要提供
 2. 在「设置 → 账号 → 导入登录凭据」选择「抖音桌面端」，点「读取登录态」。macOS 会弹出钥匙串授权框（「douyin Safe Storage」），点「允许」。
 3. 核对昵称、勾选读取类型，点「确认导入」。导入后不打开客户端也能继续读取；客户端开着时如果正好在写登录数据，稍等几秒再点一次。
 
-Windows 上 Cookie 库用 DPAPI（当前用户）解开的密钥做 AES-256-GCM 解密；macOS 上密钥从钥匙串「douyin Safe Storage」派生，按 AES-128-CBC 解密。两边都只保留 `douyin.com` 域的条目，明文不落盘。桌面端来源只读视频类记录（观看历史、喜欢、收藏、创作者中心、直播、下载）；聊天要走 IM 的设备凭据，点赞、收藏、评论、发私信这类写操作要签名凭据，都在浏览器连接或扫码登录里导入。Linux 上这一项不会出现。
+Windows 上 Cookie 库用 DPAPI（当前用户）解开的密钥做 AES-256-GCM 解密；macOS 上密钥从钥匙串「douyin Safe Storage」派生，按 AES-128-CBC 解密。两边都只保留 `douyin.com` 域的条目，明文不落盘。客户端里同时还存着收发私信要用的 ticket-guard 材料（私钥、客户端证书、服务端证书、ticket / ts_sign 和 dtrait 公钥），导入时一起取出来：私钥和证书在 `Local Storage` 的 `security-sdk/*` 里，最新的 ticket / ts_sign 在 `IndexedDB` 里，按 Cookie 里的 `bd_ticket_guard_ts_sign_id` 挑当前那一份。桌面端导入之后，聊天、续火花这类需要签名的操作同样不用再打开客户端；只有客户端换了登录或刷新了票据，才需要重新导入一次。Linux 上这一项不会出现。
 
 > 安装包只含应用代码和 Web 页面，不含本地记录、登录状态或浏览器配置。采集记录保存在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/` 或 Windows 当前用户的应用数据目录，改名后继续沿用，升级不会覆盖。旧版 macOS 应用名为「内容数据工作台」，替换时移除旧应用即可。
 >

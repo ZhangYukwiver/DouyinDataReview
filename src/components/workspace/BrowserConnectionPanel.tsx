@@ -155,9 +155,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       const result = await inspectBrowserLogin(baseUrl, token, selected, status?.account?.id, controller.signal, fresh);
       if (controller.signal.aborted || !visibleRef.current) { await cancelBrowserLogin(baseUrl, token, result.id); return; }
       candidateRef.current = result; setCandidate(result);
-      // 抖音桌面端的登录态只够读视频，聊天要用浏览器或扫码登录导入
-      const next = result.readPermissions ?? { videos: true, chat: false };
-      setReadPermissions(result.browser === "desktop" ? { videos: next.videos, chat: false } : next);
+      setReadPermissions(result.readPermissions ?? { videos: true, chat: false });
       setAdopt(true);
     } catch (reason) {
       // 首屏：抖音登录等了 5 分钟过期就自动续一张；上一次连接还没在采集器那边收完尾（刚取消、刚切回首屏）就稍等再来。
@@ -282,19 +280,15 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
           </Pressable>
         </View> : null}
         <View style={styles.actions}>
-          {(["videos", "chat"] as const).map(kind => {
-            // 抖音桌面端的 Cookie 里没有 IM 设备凭据，聊天那一项在这里不可选
-            const unavailable = kind === "chat" && candidate.browser === "desktop";
-            return <Pressable key={kind} accessibilityRole="checkbox"
-              accessibilityLabel={kind === "videos" ? "读取视频" : "读取聊天"} accessibilityState={{ checked: readPermissions[kind] && !unavailable, disabled: disabled || unavailable }}
-              aria-checked={readPermissions[kind] && !unavailable} disabled={disabled || unavailable} onPress={() => setReadPermissions(current => ({ ...current, [kind]: !current[kind] }))}
-              style={[styles.option, readPermissions[kind] && !unavailable && styles.selected, (disabled || unavailable) && styles.disabled]} testID={kind === "videos" ? "browser-read-videos" : "browser-read-chat"}>
-              <Text style={styles.text}>{unavailable ? "—" : readPermissions[kind] ? "✓ " : "○ "}{kind === "videos" ? "读取视频" : "读取聊天"}{unavailable ? "（桌面端不支持）" : ""}</Text>
-            </Pressable>;
-          })}
+          {(["videos", "chat"] as const).map(kind => <Pressable key={kind} accessibilityRole="checkbox"
+            accessibilityLabel={kind === "videos" ? "读取视频" : "读取聊天"} accessibilityState={{ checked: readPermissions[kind], disabled }}
+            aria-checked={readPermissions[kind]} disabled={disabled} onPress={() => setReadPermissions(current => ({ ...current, [kind]: !current[kind] }))}
+            style={[styles.option, readPermissions[kind] && styles.selected, disabled && styles.disabled]} testID={kind === "videos" ? "browser-read-videos" : "browser-read-chat"}>
+            <Text style={styles.text}>{readPermissions[kind] ? "✓ " : "○ "}{kind === "videos" ? "读取视频" : "读取聊天"}</Text>
+          </Pressable>)}
         </View>
         <Text style={styles.detail}>视频：观看历史、喜欢、收藏及视频相关联网读取。聊天：历史记录、实时接收及火花。勾选视频后自动完整读取一次，勾选聊天后自动整理历史并开始接收；未勾选的类型不能继续联网读取，已有本地数据仍可查看。</Text>
-        {candidate.browser === "desktop" ? <Text style={styles.detail}>抖音桌面端的登录态只够读取视频记录；聊天要走独立的设备凭据，需要用浏览器或扫码登录导入。</Text> : null}
+        {candidate.browser === "desktop" ? <Text style={styles.detail}>抖音桌面端里存着收私信要用的操作证书，一起导入后聊天也能直接走接口；证书对不上时会在下一次打开客户端后自动补上。</Text> : null}
         {!readPermissions.videos && !readPermissions.chat ? <Text style={styles.error}>请至少选择一项读取权限。</Text> : null}
         <View style={styles.actions}>
           <Action label="确认导入" disabled={disabled || (!readPermissions.videos && !readPermissions.chat)} onPress={confirm} testID="browser-login-confirm" />

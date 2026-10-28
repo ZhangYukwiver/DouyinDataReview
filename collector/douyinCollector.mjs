@@ -44,6 +44,7 @@ import { readDirectCredentialMaterial, completeDirectCredentialExport, requireDi
 import { DirectChatClient } from "./directChat.mjs";
 import { BrowserConnectionError } from "./browserConnection.mjs";
 import { writeDesktopTemplate } from "./desktopClient.mjs";
+import { readDesktopSecurity } from "./desktopSecurity.mjs";
 import { importedReadPermissions, parseReadPermissions } from "./readPermissions.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
@@ -636,7 +637,7 @@ export class DouyinCollector {
   }
 
   // 抖音桌面端：登录态直接从本机客户端取。没有浏览器连接，也不开调试端口
-  async attachDesktopClient({ identity, cookies, userAgent, webid, readPermissions = this.getReadPermissions() }) {
+  async attachDesktopClient({ identity, cookies, userAgent, webid, directory, readPermissions = this.getReadPermissions() }) {
     readPermissions = parseReadPermissions(readPermissions);
     if (!identity?.uid) throw new BrowserConnectionError("desktop_login_required", "抖音桌面端里没有可用的登录账号，请先在客户端登录。");
     if (this.accountUid && this.accountUid !== identity.uid) throw accountMismatchError(identity.nickname);
@@ -656,12 +657,16 @@ export class DouyinCollector {
       await this.applyAccountIdentity(identity);
       await writeDesktopTemplate(this.dataDirectory, { cookies, webid, userAgent });
       const template = await loadDirectHistoryTemplate(this.dataDirectory);
+      // 客户端里同一套 ticket-guard 材料也能用：取到就一起导入，聊天和需要签名的操作都走它
+      const security = await readDesktopSecurity({ directory, cookies, uid: identity.uid, userAgent }).catch(() => null);
       await saveDirectSession(this.dataDirectory, { version: 1, uid: identity.uid, secUid: identity.secUid ?? null,
-        userAgent, values: template.values, requestHeaders: template.headers, cookies });
+        userAgent, values: template.values, requestHeaders: template.headers, cookies, ...(security ? { security } : {}) });
       this.externalSessionState = "ready";
-      await this.ensureDirectApi({ history: readPermissions.videos });
+      await this.ensureDirectApi({ history: readPermissions.videos, security: Boolean(security) });
       this.updateStatus({ state: "idle", phase: null, progress: null, browserOpen: false,
-        message: `已导入抖音桌面端里「${identity.nickname || "抖音账号"}」的登录凭据，之后不打开客户端也能继续读取。` });
+        message: security
+          ? `已导入抖音桌面端里「${identity.nickname || "抖音账号"}」的登录凭据和操作证书，聊天与读取都不需要再打开客户端。`
+          : `已导入抖音桌面端里「${identity.nickname || "抖音账号"}」的登录凭据，之后不打开客户端也能继续读取；聊天还需要客户端的操作证书，下次打开客户端再导入一次即可。` });
     } catch (error) {
       await this.close();
       await Promise.all(files.map((name, index) => backups[index] === null

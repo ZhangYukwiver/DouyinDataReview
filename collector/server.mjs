@@ -616,7 +616,7 @@ export async function startCollectorServer({
               const login = await desktopConnector(source);
               loginController.signal.throwIfAborted();
               const id = randomUUID();
-              pendingBrowser = { id, identity: login.identity, desktop: login };
+              pendingBrowser = { id, identity: login.identity, desktop: { ...login, directory: source.directory } };
               sendJson(response, 200, { candidate: await browserCandidate(id, "desktop", login.identity) });
               return;
             }
@@ -639,11 +639,8 @@ export async function startCollectorServer({
             const readPermissions = parseReadPermissions(body.readPermissions);
             const pending = pendingBrowser;
             if (!pending || pending.id !== body.id) throw new BrowserConnectionError("browser_candidate_expired", "连接确认已过期，请重新连接。");
-            // 抖音桌面端：没有连接可接管，直接把读到的登录态交给当前账号
+            // 抖音桌面端：没有连接可接管，直接把读到的登录态和操作证书交给当前账号
             if (pending.desktop) {
-              // 客户端的 Cookie 里没有 IM 的设备凭据，聊天只能在浏览器或扫码登录里导入
-              if (readPermissions.chat)
-                throw new DesktopClientError("desktop_chat_unsupported", "抖音桌面端的登录态只能读取视频；读取聊天请在浏览器里连接或扫码登录后导入。", 400);
               const { desktop } = pending;
               pendingBrowser = null;
               let created = null;

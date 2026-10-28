@@ -61,25 +61,6 @@ it("identifies the desktop account and waits for confirmation like a browser imp
   expect(cancelled.status).toBe(200);
 });
 
-it("refuses to read chat from a desktop client session", async () => {
-  const dataDirectory = await mkdtemp(path.join(tmpdir(), "dy-desktop-chat-"));
-  cleanup.push(() => rm(dataDirectory, { recursive: true, force: true }));
-  const runtime = await startCollectorServer({ port: 0, dataDirectory, browserSources: [], desktopSupported: true,
-    desktopConnector: async () => ({ cookies: [{ name: "sessionid", value: "session-value", domain: ".douyin.com", path: "/" }],
-      webid: "7272714522396821031", userAgent: DESKTOP_USER_AGENT,
-      identity: { uid: "607350412292247", nickname: "桌面端账号", avatar: null, secUid: null } }) });
-  cleanup.push(() => runtime.close());
-  const headers = await pair(runtime);
-  const connected = await fetch(`${runtime.baseUrl}/v1/browser/connect`, { method: "POST", headers,
-    body: JSON.stringify({ browser: "desktop" }) }).then((response) => response.json());
-  const confirm = await fetch(`${runtime.baseUrl}/v1/browser/confirm`, { method: "POST", headers,
-    body: JSON.stringify({ id: connected.candidate.id, readPermissions: { videos: true, chat: true } }) })
-    .then(async (response) => ({ status: response.status, body: await response.json() }));
-  // 客户端的 Cookie 里没有 IM 设备凭据，这一项要挡在导入之前
-  expect(confirm.status).toBe(400);
-  expect(confirm.body).toMatchObject({ error: "desktop_chat_unsupported" });
-});
-
 it("reports a readable message when the desktop client has no login data", async () => {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "dy-desktop-missing-"));
   const desktopDirectory = await mkdtemp(path.join(tmpdir(), "dy-desktop-empty-"));
