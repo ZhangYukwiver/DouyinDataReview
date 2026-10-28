@@ -313,7 +313,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
           </Pressable>)}
         </View>}
         {inApp ? compact ? null : <Text style={styles.detail}>点“扫码登录”后这里会显示抖音的登录二维码，用抖音 App 扫一扫并在手机上确认，再核对账号导入凭据。登录状态只存在本应用里，不用打开浏览器调试。</Text>
-          : desktopSource ? <Text style={styles.detail}>直接读本机抖音电脑客户端里已登录的账号，不用开浏览器，也不用开调试端口。客户端正在写登录数据时等几秒再试；导入之后不打开客户端也能继续读取。</Text>
+          : desktopSource ? <Text style={styles.detail}>直接读本机抖音电脑客户端里已登录的账号，不用开浏览器，也不用开调试端口。Mac 上会弹一次钥匙串授权，点「允许」即可。客户端正在写登录数据时等几秒再试；导入之后不打开客户端也能继续读取。</Text>
           : <>
           {source ? <Text selectable style={styles.detail}>未开启调试时，点击“连接浏览器”会尝试自动打开 {source.label} 的调试设置页。勾选允许远程调试后再次连接；也可手动打开 {source.inspectUrl}。连接时请在浏览器中允许。</Text> : null}
           <Text style={styles.detail}>调试权限覆盖整个浏览器；工作台仅访问自己创建的抖音页面和抖音 Cookie。导出后可关闭调试开关，无需安装扩展。</Text>

@@ -251,8 +251,8 @@ export async function startCollectorServer({
   browserConnector = connectExternalBrowser,
   // 抖音桌面端的数据目录和登录态读取可替换，测试里用假的客户端目录
   desktopDirectory = desktopDataDirectory(),
-  // 抖音电脑客户端目前只有 Windows 版，别的系统上不列出这一项
-  desktopSupported = process.platform === "win32",
+  // 抖音电脑客户端有 Windows 和 Mac 版，别的系统上不列出这一项
+  desktopSupported = ["win32", "darwin"].includes(process.platform),
   desktopConnector = async (source) => {
     const session = await readDesktopSession({ directory: source.directory });
     const identity = await readDesktopIdentity(session.cookies);

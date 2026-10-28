@@ -1,4 +1,4 @@
-import { createCipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createHash, pbkdf2Sync, randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,7 +8,9 @@ import { loadDirectHistoryTemplate } from "./directHistory.mjs";
 import {
   DESKTOP_USER_AGENT,
   decryptDesktopCookie,
+  discoverDesktopClient,
   desktopDataDirectory,
+  desktopKey,
   desktopTemplateRequest,
   readDesktopCookies,
   readDesktopSession,
@@ -57,6 +59,38 @@ it("decrypts v10 cookies and strips the host hash prefix", () => {
   expect(decryptDesktopCookie(encrypt("legacy", ".douyin.com", { prefix: false }), KEY, ".douyin.com")).toBe("legacy");
   expect(decryptDesktopCookie(encrypt("hello", ".douyin.com"), randomBytes(32), ".douyin.com")).toBeNull();
   expect(decryptDesktopCookie(Buffer.from("v20garbage"), KEY, ".douyin.com")).toBeNull();
+});
+
+const MAC_KEY = pbkdf2Sync("keychain-password", "saltysalt", 1003, 16, "sha1");
+
+// Mac 版写的 v10：3 字节前缀 + AES-128-CBC 密文（IV 是 16 个空格），明文同样前置域哈希
+function encryptMac(value, host, key = MAC_KEY) {
+  const cipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
+  const head = createHash("sha256").update(host).digest();
+  return Buffer.concat([Buffer.from("v10", "latin1"), cipher.update(Buffer.concat([head, Buffer.from(value, "utf8")])), cipher.final()]);
+}
+
+it("reads the mac client: Cookies at the data root, CBC with a keychain-derived key", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "dy-desktop-mac-"));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const db = new DatabaseSync(path.join(directory, "Cookies"));
+  db.exec("create table cookies (host_key text, name text, value text, encrypted_value blob, path text, expires_utc integer, is_secure integer, is_httponly integer, samesite integer)");
+  const insert = db.prepare("insert into cookies values (?,?,?,?,?,?,?,?,?)");
+  insert.run(".douyin.com", "sessionid", "", encryptMac("mac-session-value", ".douyin.com"), "/", 0, 1, 1, -1);
+  insert.run(".douyin.com", "broken", "", encryptMac("wrong-key", ".douyin.com", Buffer.alloc(16, 7)), "/", 0, 1, 1, -1);
+  db.close();
+
+  const calls = [];
+  const key = await desktopKey(directory, { platform: "darwin",
+    run: async (file, args) => { calls.push([file, ...args]); return { stdout: "keychain-password\n" }; } });
+  expect(key.equals(MAC_KEY)).toBe(true);
+  expect(calls).toEqual([["/usr/bin/security", "find-generic-password", "-w", "-s", "douyin Safe Storage", "-a", "douyin"]]);
+  const cookies = await readDesktopCookies({ directory, key });
+  expect(cookies.map((cookie) => [cookie.name, cookie.value])).toEqual([["sessionid", "mac-session-value"]]);
+  expect(await discoverDesktopClient({ directory })).toMatchObject({ available: true, loggedIn: true });
+  // 用户在钥匙串弹框里点了拒绝
+  await expect(desktopKey(directory, { platform: "darwin", run: async () => { throw new Error("User canceled the operation."); } }))
+    .rejects.toMatchObject({ code: "desktop_key_failed" });
 });
 
 it("keeps only douyin cookies and maps them to the session shape", async () => {
@@ -120,5 +154,5 @@ it("points at the douyin client data directory per platform", () => {
   expect(desktopDataDirectory({ platform: "win32", env: { APPDATA: "C:\\Users\\me\\AppData\\Roaming" }, home: "C:\\Users\\me" }))
     .toBe(path.join("C:\\Users\\me\\AppData\\Roaming", "douyin"));
   expect(desktopDataDirectory({ platform: "darwin", env: {}, home: "/Users/me" }))
-    .toBe(path.join("/Users/me", "Library", "Application Support", "douyin"));
+    .toBe(path.join("/Users/me", "Library", "Application Support", "抖音"));
 });

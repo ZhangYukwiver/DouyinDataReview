@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createDecipheriv, createHash } from "node:crypto";
+import { createDecipheriv, createHash, pbkdf2Sync } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -11,7 +11,8 @@ import { nativeSignedUrl } from "./nativeSignature.mjs";
 // 抖音电脑客户端的采集来源：客户端是 Electron（8.x 起），主窗口就是 www.douyin.com，
 // 登录态存在 Chromium 的 Cookie 库里。这里只读它的登录态，不驱动客户端、不开调试端口。
 const runFile = promisify(execFile);
-const COOKIE_FILE = path.join("Network", "Cookies");
+// Windows 版在 Network/Cookies；Mac 版（8.7）还放在数据目录根上
+const COOKIE_FILES = [path.join("Network", "Cookies"), "Cookies"];
 const LOCAL_STATE_FILE = "Local State";
 const STORAGE_DIRECTORY = path.join("Local Storage", "leveldb");
 // Chromium 130 起 Cookie 明文前置 32 字节 = SHA256(host_key)，解出来要先剥掉
@@ -39,25 +40,50 @@ export class DesktopClientError extends Error {
   constructor(code, message, status = 409) { super(message); this.code = code; this.status = status; }
 }
 
-// 客户端的数据目录固定为 %APPDATA%\douyin（Windows）。只认这一个位置：Cookie 和密钥都在里面
+// 客户端的数据目录固定：Windows 是 %APPDATA%\douyin，macOS 是 ~/Library/Application Support/抖音。
+// 只认这一个位置：Cookie 和密钥（或密钥的钥匙串条目）都跟着它
 export function desktopDataDirectory({ platform = process.platform, env = process.env, home = homedir() } = {}) {
   if (platform === "win32") return path.join(env.APPDATA || path.join(home, "AppData", "Roaming"), "douyin");
-  if (platform === "darwin") return path.join(home, "Library", "Application Support", "douyin");
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "抖音");
   return path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "douyin");
+}
+
+async function cookieFile(directory, statFile = stat) {
+  for (const name of COOKIE_FILES) {
+    const file = path.join(directory, name);
+    if (await statFile(file).then((value) => value.isFile(), () => false)) return file;
+  }
+  return null;
 }
 
 // 客户端装过、登录过就一定有数据目录；不看注册表也不启动进程
 export async function discoverDesktopClient({ directory = desktopDataDirectory(), statFile = stat } = {}) {
   const available = await statFile(directory).then((value) => value.isDirectory(), () => false);
   if (!available) return { id: "desktop", label: "抖音桌面端", available: false, debugging: false, loggedIn: false };
-  const cookies = await statFile(path.join(directory, COOKIE_FILE)).then((value) => value.isFile(), () => false);
+  const cookies = Boolean(await cookieFile(directory, statFile));
   return { id: "desktop", label: "抖音桌面端", available: true, debugging: cookies, loggedIn: cookies };
 }
 
-// Windows 只留 DPAPI：Local State 里的 encrypted_key 用当前用户凭据解出 AES 密钥
+// macOS：钥匙串「douyin Safe Storage」里的口令按 Chromium 的规则派生 AES-128 密钥。
+// 第一次读会弹系统授权框，要等用户点「允许」
+async function macDesktopKey(run) {
+  let stdout;
+  try {
+    ({ stdout } = await run("/usr/bin/security", ["find-generic-password", "-w", "-s", "douyin Safe Storage", "-a", "douyin"],
+      { timeout: 120_000, maxBuffer: 16 * 1024 }));
+  } catch {
+    throw new DesktopClientError("desktop_key_failed", "没能从钥匙串读到抖音桌面端的 Cookie 密钥。请在弹出的系统对话框里点「允许」；没弹框的话先打开客户端登录一次。");
+  }
+  const password = stdout.trim();
+  if (!password) throw new DesktopClientError("desktop_key_failed", "钥匙串里抖音桌面端的 Cookie 密钥是空的，请先打开客户端登录一次。");
+  return pbkdf2Sync(password, "saltysalt", 1003, 16, "sha1");
+}
+
+// Windows：Local State 里的 encrypted_key 用当前用户 DPAPI 解出 AES-256 密钥
 export async function desktopKey(directory, { platform = process.platform, run = runFile } = {}) {
+  if (platform === "darwin") return macDesktopKey(run);
   if (platform !== "win32")
-    throw new DesktopClientError("desktop_unsupported", "抖音桌面端读取目前只支持 Windows 客户端。", 400);
+    throw new DesktopClientError("desktop_unsupported", "抖音桌面端读取目前只支持 Windows 和 macOS 客户端。", 400);
   let stdout;
   try {
     ({ stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", keyScriptPath],
@@ -70,16 +96,22 @@ export async function desktopKey(directory, { platform = process.platform, run =
   return key;
 }
 
-// v10 = AES-256-GCM，nonce 12 字节跟随 payload，末尾 16 字节是 tag
+// v10 两种写法按密钥长度分：Windows 32 字节 = AES-256-GCM，nonce 12 字节跟随 payload，末尾 16 字节是 tag；
+// macOS 16 字节 = AES-128-CBC，IV 固定是 16 个空格
 export function decryptDesktopCookie(encrypted, key, hostKey) {
   const buffer = Buffer.from(encrypted ?? []);
-  if (buffer.length < 3 + 12 + 16) return null;
+  if (buffer.length < 3 + 16) return null;
   if (!["v10", "v11"].includes(buffer.subarray(0, 3).toString("latin1"))) return null;
   let plain;
   try {
-    const decipher = createDecipheriv("aes-256-gcm", key, buffer.subarray(3, 15));
-    decipher.setAuthTag(buffer.subarray(buffer.length - 16));
-    plain = Buffer.concat([decipher.update(buffer.subarray(15, buffer.length - 16)), decipher.final()]);
+    if (key.length === 16) {
+      const decipher = createDecipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
+      plain = Buffer.concat([decipher.update(buffer.subarray(3)), decipher.final()]);
+    } else {
+      const decipher = createDecipheriv("aes-256-gcm", key, buffer.subarray(3, 15));
+      decipher.setAuthTag(buffer.subarray(buffer.length - 16));
+      plain = Buffer.concat([decipher.update(buffer.subarray(15, buffer.length - 16)), decipher.final()]);
+    }
   } catch { return null; }
   const hash = createHash("sha256").update(hostKey, "utf8").digest();
   if (plain.length > HOST_HASH_BYTES && plain.subarray(0, HOST_HASH_BYTES).equals(hash))
@@ -102,7 +134,8 @@ async function snapshotCookies(directory, { attempts = 4, delay = 250 } = {}) {
     try {
       const workspace = await mkdtemp(path.join(tmpdir(), "dy-desktop-"));
       const copy = path.join(workspace, "Cookies");
-      await copyFile(path.join(directory, COOKIE_FILE), copy);
+      // 两处都没有就照常报 ENOENT，落到下面的「没找到登录数据」
+      await copyFile(await cookieFile(directory) ?? path.join(directory, COOKIE_FILES[0]), copy);
       return { workspace, copy };
     } catch (error) {
       lastError = error;
