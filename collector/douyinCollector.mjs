@@ -43,6 +43,7 @@ import { DirectApiClient, loadDirectSession, saveDirectSession, sameDirectSessio
 import { readDirectCredentialMaterial, completeDirectCredentialExport, requireDirectCredentials } from "./directCredentials.mjs";
 import { DirectChatClient } from "./directChat.mjs";
 import { BrowserConnectionError } from "./browserConnection.mjs";
+import { writeDesktopTemplate } from "./desktopClient.mjs";
 import { importedReadPermissions, parseReadPermissions } from "./readPermissions.mjs";
 
 const HOME_URL = "https://www.douyin.com/";
@@ -500,12 +501,13 @@ export class DouyinCollector {
     this.snapshot.warnings = currentChatWarnings(this.snapshot.warnings);
     try {
       const source = JSON.parse(await readFile(path.join(this.dataDirectory, "external-browser.json"), "utf8"));
-      if (["app", "chrome", "edge", "comet"].includes(source.browser)) this.externalSource = source;
+      if (["app", "chrome", "edge", "comet", "desktop"].includes(source.browser)) this.externalSource = source;
     } catch { /* Credentials remain account-bound even when an older cache has no source marker. */ }
     try {
       const session = await loadDirectSession(this.dataDirectory, this.accountUid);
       if (this.getReadPermissions().videos) await loadDirectHistoryTemplate(this.dataDirectory);
-      requireDirectCredentials(session);
+      // 抖音桌面端只导出读接口要用的登录态，没有写操作凭据也算可用；要写的时候会单独再校验
+      if (this.externalSource?.browser !== "desktop") requireDirectCredentials(session);
       // A browser's short token can expire while the imported login remains
       // usable. Verify the actual HTTP identity before asking for a new import.
       this.externalSessionState = "ready";
@@ -626,6 +628,44 @@ export class DouyinCollector {
       this.externalSource = previous.source ?? { browser: connection.browser };
       this.externalSessionState = previous.state;
       if (!previous.source) await writeFile(path.join(this.dataDirectory, "external-browser.json"), `${JSON.stringify(this.externalSource)}\n`, { mode: 0o600 });
+      throw error;
+    }
+  }
+
+  // 抖音桌面端：登录态直接从本机客户端取。没有浏览器连接，也不开调试端口
+  async attachDesktopClient({ identity, cookies, userAgent, webid, readPermissions = this.getReadPermissions() }) {
+    readPermissions = parseReadPermissions(readPermissions);
+    if (!identity?.uid) throw new BrowserConnectionError("desktop_login_required", "抖音桌面端里没有可用的登录账号，请先在客户端登录。");
+    if (this.accountUid && this.accountUid !== identity.uid) throw accountMismatchError(identity.nickname);
+    await this.close();
+    const files = ["direct-session.json", "direct-history-template.json", "external-browser.json"];
+    const previous = { source: this.externalSource, state: this.externalSessionState };
+    const backups = await Promise.all(files.map(async (name) => {
+      try { return await readFile(path.join(this.dataDirectory, name)); }
+      catch (error) { if (error.code === "ENOENT") return null; throw error; }
+    }));
+    try {
+      this.externalSource = { browser: "desktop", readPermissions };
+      this.externalSessionState = "exporting";
+      await writeFile(path.join(this.dataDirectory, "external-browser.json"), `${JSON.stringify(this.externalSource)}\n`, { mode: 0o600 });
+      this.updateStatus({ state: "idle", phase: null, progress: null, browserOpen: false, message: "正在读取抖音桌面端的登录凭据。" });
+      this.accountMismatch = false;
+      await this.applyAccountIdentity(identity);
+      await writeDesktopTemplate(this.dataDirectory, { cookies, webid, userAgent });
+      const template = await loadDirectHistoryTemplate(this.dataDirectory);
+      await saveDirectSession(this.dataDirectory, { version: 1, uid: identity.uid, secUid: identity.secUid ?? null,
+        userAgent, values: template.values, requestHeaders: template.headers, cookies });
+      this.externalSessionState = "ready";
+      await this.ensureDirectApi({ history: readPermissions.videos });
+      this.updateStatus({ state: "idle", phase: null, progress: null, browserOpen: false,
+        message: `已导入抖音桌面端里「${identity.nickname || "抖音账号"}」的登录凭据，之后不打开客户端也能继续读取。` });
+    } catch (error) {
+      await this.close();
+      await Promise.all(files.map((name, index) => backups[index] === null
+        ? rm(path.join(this.dataDirectory, name), { force: true })
+        : writeFile(path.join(this.dataDirectory, name), backups[index], { mode: 0o600 })));
+      this.externalSource = previous.source ?? null;
+      this.externalSessionState = previous.state;
       throw error;
     }
   }

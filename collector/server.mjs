@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources, openBrowserPage } from "./browserConnection.mjs";
+import { DesktopClientError, desktopDataDirectory, readDesktopIdentity, readDesktopSession } from "./desktopClient.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
 import { importedReadPermissions, parseReadPermissions, PUBLIC_ACTIONS, readPermissionForRequest, WRITES_DISABLED_MESSAGE } from "./readPermissions.mjs";
 import { ExplorerBridge } from "./explorerBridge.mjs";
@@ -248,8 +249,20 @@ export async function startCollectorServer({
   dataDirectory = path.join(projectDirectory, ".local-data"),
   browserSources = browserDirectories(),
   browserConnector = connectExternalBrowser,
+  // 抖音桌面端的数据目录和登录态读取可替换，测试里用假的客户端目录
+  desktopDirectory = desktopDataDirectory(),
+  // 抖音电脑客户端目前只有 Windows 版，别的系统上不列出这一项
+  desktopSupported = process.platform === "win32",
+  desktopConnector = async (source) => {
+    const session = await readDesktopSession({ directory: source.directory });
+    const identity = await readDesktopIdentity(session.cookies);
+    return { ...session, identity };
+  },
 } = {}) {
   const options = { lan, port, origins };
+  // 抖音桌面端和浏览器并列出现在登录来源里：它读本机客户端的登录态，不连调试端口
+  const loginSources = [...browserSources, ...(desktopSupported
+    ? [{ id: "desktop", label: "抖音桌面端", desktop: true, directory: desktopDirectory }] : [])];
   await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   await chmod(dataDirectory, 0o700);
   const accounts = new AccountRegistry(dataDirectory);
@@ -295,7 +308,7 @@ export async function startCollectorServer({
     if (!pendingBrowser || (id && pendingBrowser.id !== id)) return;
     const pending = pendingBrowser; pendingBrowser = null;
     clearTimeout(pending.timer);
-    await pending.connection.disconnect();
+    await pending.connection?.disconnect();
   };
   const browserIdentity = async (connection, page, options = { timeoutMs: 15_000 }) => {
     options.signal?.throwIfAborted();
@@ -321,8 +334,19 @@ export async function startCollectorServer({
     if (!active.uid && !Object.values(snapshot.records).some(items => items.length) && !snapshot.chatMessages.length && !snapshot.chatConversations.length) return active;
     return null;
   };
-  const pairing = new PairingManager();
-  const bindAddress = options.lan ? "0.0.0.0" : "127.0.0.1";
+  // 认出账号后先问用户确认：给哪个账号、读哪些。浏览器和桌面端共用这一份判断
+  const browserCandidate = async (id, browser, identity) => {
+    const target = browserTarget(identity);
+    let readPermissions = { videos: true, chat: false };
+    if (target) {
+      try { readPermissions = importedReadPermissions(JSON.parse(await readFile(path.join(accounts.directory(target), "external-browser.json"), "utf8"))); }
+      catch { /* A first import starts with video reading selected. */ }
+    }
+    const adoptable = !target && await canAdopt(identity);
+    return { id, browser, nickname: identity.nickname, uid: identity.uid,
+      accountId: target?.id ?? null, newAccount: !target, adoptable, readPermissions };
+  };
+  const pairing = new PairingManager();  const bindAddress = options.lan ? "0.0.0.0" : "127.0.0.1";
   const statusWaiters = new Set();
 
   const waitForStatus = (response, revision) => {
@@ -528,7 +552,7 @@ export async function startCollectorServer({
       }
       try {
         if (request.method === "GET" && url.pathname === "/v1/browser/sources") {
-          sendJson(response, 200, { sources: await listBrowserSources(browserSources), status: collector.getStatus() });
+          sendJson(response, 200, { sources: await listBrowserSources(loginSources), status: collector.getStatus() });
           return;
         }
         // 应用内登录等扫码时工作台来取二维码；要验证或想用验证码登录时，把藏着的登录窗口亮出来
@@ -582,10 +606,20 @@ export async function startCollectorServer({
         }
         try {
           if (url.pathname === "/v1/browser/connect") {
-            const source = browserSources.find(item => item.id === body.browser);
-            if (!source) throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge 或受支持的 Comet。", 400);
+            const source = loginSources.find(item => item.id === body.browser);
+            if (!source) throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge、Comet 或抖音桌面端。", 400);
             // fresh：应用内登录换个号扫码，先关掉待确认的窗口，连接器再清登录分区
             await clearPendingBrowser();
+            // 抖音桌面端：不弹页面、不开调试端口，直接把客户端的登录态读出来
+            if (source.desktop) {
+              loginController.signal.throwIfAborted();
+              const login = await desktopConnector(source);
+              loginController.signal.throwIfAborted();
+              const id = randomUUID();
+              pendingBrowser = { id, identity: login.identity, desktop: login };
+              sendJson(response, 200, { candidate: await browserCandidate(id, "desktop", login.identity) });
+              return;
+            }
             const connection = await browserConnector(source, { fresh: body.fresh === true });
             activeBrowserConnection = connection;
             try {
@@ -599,20 +633,37 @@ export async function startCollectorServer({
               const id = randomUUID();
               const timer = setTimeout(() => { void clearPendingBrowser(id); }, 2 * 60_000); timer.unref();
               pendingBrowser = { id, connection, page, identity, timer };
-              const target = browserTarget(identity);
-              let readPermissions = { videos: true, chat: false };
-              if (target) {
-                try { readPermissions = importedReadPermissions(JSON.parse(await readFile(path.join(accounts.directory(target), "external-browser.json"), "utf8"))); }
-                catch { /* A first import starts with video reading selected. */ }
-              }
-              const adoptable = !target && await canAdopt(identity);
-              sendJson(response, 200, { candidate: { id, browser: connection.browser, nickname: identity.nickname, uid: identity.uid,
-                accountId: target?.id ?? null, newAccount: !target, adoptable, readPermissions } });
+              sendJson(response, 200, { candidate: await browserCandidate(id, connection.browser, identity) });
             } catch (error) { await connection.disconnect(); throw error; }
           } else if (url.pathname === "/v1/browser/confirm") {
             const readPermissions = parseReadPermissions(body.readPermissions);
             const pending = pendingBrowser;
             if (!pending || pending.id !== body.id) throw new BrowserConnectionError("browser_candidate_expired", "连接确认已过期，请重新连接。");
+            // 抖音桌面端：没有连接可接管，直接把读到的登录态交给当前账号
+            if (pending.desktop) {
+              // 客户端的 Cookie 里没有 IM 的设备凭据，聊天只能在浏览器或扫码登录里导入
+              if (readPermissions.chat)
+                throw new DesktopClientError("desktop_chat_unsupported", "抖音桌面端的登录态只能读取视频；读取聊天请在浏览器里连接或扫码登录后导入。", 400);
+              const { desktop } = pending;
+              pendingBrowser = null;
+              let created = null;
+              try {
+                const existing = browserTarget(desktop.identity);
+                const adopt = !existing && body.adopt === true && await canAdopt(desktop.identity);
+                const target = existing ?? (adopt ? accounts.active() : (created = await accounts.create()));
+                if (target.id !== accounts.activeId) await runAccountWork(() => switchTo(target));
+                else { await explorer.close(); await collector.shutdown(); }
+                if (adopt) await collector.keepLocalLists();
+                await collector.attachDesktopClient({ ...desktop, readPermissions });
+                if (readPermissions.videos) collector.startSync({ mode: created ? "full_records" : "direct_records" });
+                sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
+              } catch (error) {
+                // Keep a newly created account recoverable; do not delete its data.
+                if (created && created.id !== accounts.activeId) await accounts.remove(created.id).catch(() => undefined);
+                throw error;
+              }
+              return;
+            }
             activeBrowserConnection = pending.connection;
             const identity = await browserIdentity(pending.connection, pending.page);
             if (identity.uid !== pending.identity.uid) { await clearPendingBrowser(); throw new BrowserConnectionError("account_mismatch", "浏览器里的账号已经变化，请重新连接并确认。"); }
@@ -648,9 +699,9 @@ export async function startCollectorServer({
           switching = false; finishBrowserWork(); browserWork = null;
         }
       } catch (error) {
-        const known = error instanceof BrowserConnectionError || error instanceof DirectHistoryError;
+        const known = error instanceof BrowserConnectionError || error instanceof DirectHistoryError || error instanceof DesktopClientError;
         if (!response.headersSent && !response.destroyed) sendJson(response, known ? error.status || 409 : 500, { error: known ? error.code : "browser_connection_failed",
-          message: known ? error.message : "浏览器连接没有完成，请检查登录和远程调试设置后重试。" });
+          message: known ? error.message : "登录来源没有连上，请检查登录和调试设置后重试。" });
       }
       return;
     }

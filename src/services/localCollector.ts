@@ -64,11 +64,11 @@ export function canReadCollector(status: CollectorStatus | null, kind: keyof Col
   return status?.readPermissions?.[kind] !== false;
 }
 
-const BROWSER_IDS: readonly string[] = ["app", "chrome", "edge", "comet"];
+const BROWSER_IDS: readonly string[] = ["app", "chrome", "edge", "comet", "desktop"];
 
 export interface BrowserLoginSource {
-  // app = 桌面版应用内登录窗口
-  id: "app" | "chrome" | "edge" | "comet";
+  // app = 桌面版应用内登录窗口；desktop = 本机的抖音电脑客户端
+  id: "app" | "chrome" | "edge" | "comet" | "desktop";
   label: string;
   available: boolean;
   debugging: boolean;
@@ -1335,7 +1335,9 @@ export async function getBrowserLoginSources(baseUrl: string, token: string): Pr
   return value.sources.flatMap((item): BrowserLoginSource[] => {
     if (!isObject(item) || !BROWSER_IDS.includes(String(item.id)) || typeof item.label !== "string") return [];
     const id = item.id as BrowserLoginSource["id"];
-    return [{ id, label: item.label, available: item.available === true, debugging: item.debugging === true, inspectUrl: `${id}://inspect/#remote-debugging` }];
+    // 抖音桌面端没有调试设置页，只有本机客户端里的登录态
+    return [{ id, label: item.label, available: item.available === true, debugging: item.debugging === true,
+      inspectUrl: id === "desktop" ? "" : `${id}://inspect/#remote-debugging` }];
   });
 }
 
