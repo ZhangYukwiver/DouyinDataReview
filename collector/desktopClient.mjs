@@ -206,6 +206,20 @@ export async function readDesktopWebId(directory, { list = readdir, read = readF
 
 const cookieValue = (cookies, name) => cookies.find((cookie) => cookie.name === name)?.value ?? "";
 
+// 本地存的 webid 可能是旧的（新的落在 leveldb 压缩块里，按字节读不出来），点赞接口却要 webid 和当前 ttwid 配对，
+// 对不上就回空响应。抖音首页 HTML 里服务端按当前 Cookie 给的 user_unique_id 就是配对的那个，网页自己发请求也用它
+const USER_UNIQUE_ID_PATTERN = /user_unique_id(?:\\*"|%22)\s*(?::|%3A)\s*(?:\\*"|%22)(\d{6,30})/u;
+export async function readServerWebId(cookies, { userAgent = DESKTOP_USER_AGENT, fetchImpl = fetch } = {}) {
+  try {
+    const response = await fetchImpl("https://www.douyin.com/", { redirect: "manual", signal: AbortSignal.timeout(15_000), headers: {
+      cookie: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
+      "user-agent": userAgent, accept: "text/html,application/xhtml+xml", "accept-language": "zh-CN,zh;q=0.9",
+    } });
+    if (!response.ok) return null;
+    return USER_UNIQUE_ID_PATTERN.exec(await response.text())?.[1] ?? null;
+  } catch { return null; }
+}
+
 // 观看历史模板的抓取需要一个「请求对象」：URL 带齐必需参数，UA 走客户端这份。
 // 直接复用官方的模板校验和落盘逻辑，格式与浏览器导入完全一致。
 export function desktopTemplateRequest({ cookies, webid, userAgent = DESKTOP_USER_AGENT }) {
@@ -272,12 +286,12 @@ export async function readDesktopIdentity(cookies, { userAgent = DESKTOP_USER_AG
 
 // 采集器要的东西：登录 Cookie、浏览器标识、webid 写进模板、以及是否拿到完整登录态
 export async function readDesktopSession({
-  directory = desktopDataDirectory(), platform = process.platform, key, readWebId = readDesktopWebId,
+  directory = desktopDataDirectory(), platform = process.platform, key, readWebId = readDesktopWebId, serverWebId = readServerWebId,
 } = {}) {
   const cookies = await readDesktopCookies({ directory, platform, key });
   if (!cookies.some((cookie) => ["sessionid", "sessionid_ss", "sid_tt", "sid_guard"].includes(cookie.name)))
     throw new DesktopClientError("desktop_login_required", "抖音桌面端里还没有登录账号，先在客户端登录后再读取。");
-  const webid = await readWebId(directory);
+  const webid = await serverWebId(cookies) ?? await readWebId(directory);
   if (!/^\d{6,30}$/u.test(webid ?? ""))
     throw new DesktopClientError("desktop_webid_missing", "抖音桌面端还没生成请求标识，先在客户端里打开一次抖音再试。");
   return { cookies, webid, userAgent: DESKTOP_USER_AGENT };

@@ -15,6 +15,7 @@ import {
   readDesktopCookies,
   readDesktopSession,
   readDesktopWebId,
+  readServerWebId,
   writeDesktopTemplate,
 } from "./desktopClient.mjs";
 
@@ -144,10 +145,30 @@ it("refuses to import when the client is not logged in or has no webid", async (
     .rejects.toMatchObject({ code: "desktop_login_required" });
 
   const loggedIn = await clientFixture();
-  await expect(readDesktopSession({ directory: loggedIn, key: KEY, readWebId: async () => null }))
+  const noServer = async () => null;
+  await expect(readDesktopSession({ directory: loggedIn, key: KEY, readWebId: async () => null, serverWebId: noServer }))
     .rejects.toMatchObject({ code: "desktop_webid_missing" });
-  await expect(readDesktopSession({ directory: loggedIn, key: KEY, readWebId: async () => "7272714522396821031" }))
+  await expect(readDesktopSession({ directory: loggedIn, key: KEY, readWebId: async () => "7272714522396821031", serverWebId: noServer }))
     .resolves.toMatchObject({ webid: "7272714522396821031", userAgent: DESKTOP_USER_AGENT });
+  // 首页给的 webid 和当前 ttwid 配对，优先用它；本地那份可能是旧的
+  await expect(readDesktopSession({ directory: loggedIn, key: KEY, readWebId: async () => "7272714522396821031",
+    serverWebId: async () => "7570000000000000001" })).resolves.toMatchObject({ webid: "7570000000000000001" });
+});
+
+it("takes the webid the douyin home page hands out for the current cookies", async () => {
+  const calls = [];
+  const page = (body, init = {}) => async (url, options) => { calls.push([url, options.headers.cookie]); return new Response(body, init); };
+  const cookies = [{ name: "ttwid", value: "t1" }, { name: "sessionid", value: "s1" }];
+  // RENDER_DATA 里是转义过的 JSON，另一处是 URL 编码
+  expect(await readServerWebId(cookies, { fetchImpl: page('x \\"user_is_auth\\":0,\\"user_unique_id\\":\\"7570000000000000001\\",\\"y') }))
+    .toBe("7570000000000000001");
+  expect(await readServerWebId(cookies, { fetchImpl: page("auth%22%3A0%2C%22user_unique_id%22%3A%227570000000000000002%22%2C") }))
+    .toBe("7570000000000000002");
+  expect(calls[0]).toEqual(["https://www.douyin.com/", "ttwid=t1; sessionid=s1"]);
+  // 只是参数说明里提到这个名字、没有值的不算
+  expect(await readServerWebId(cookies, { fetchImpl: page('{\\"param_name\\":\\"user_unique_id\\",\\"param_type\\":\\"string\\"}') })).toBeNull();
+  expect(await readServerWebId(cookies, { fetchImpl: page("blocked", { status: 403 }) })).toBeNull();
+  expect(await readServerWebId(cookies, { fetchImpl: async () => { throw new Error("offline"); } })).toBeNull();
 });
 
 it("points at the douyin client data directory per platform", () => {
