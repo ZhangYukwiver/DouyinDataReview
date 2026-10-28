@@ -484,7 +484,7 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
   return (
     <>
       <View style={[styles.row, styles.rowIntro]}>
-        <Text style={styles.detail}>装一次浏览器扩展，以后你在 Chrome、Edge 里刷抖音网页时，命中词条的视频在推荐数据进页面之前就被拿掉。词条、过滤方式和记录都在这里管；应用没开时扩展按上次的词条照常过滤，记录等应用开着时补传。打开页面时随网页一起来的第一屏拦不到，往下刷出来的才会过滤。</Text>
+        <Text style={styles.detail}>装一次浏览器扩展，以后你在 Chrome、Edge 里刷抖音网页时，命中词条的视频在推荐数据进页面之前就被拿掉。词条、过滤方式和记录都在这里管；应用没开时扩展按上次的词条照常过滤，记录等应用开着时补传。已经显示的首屏和作品详情只能记录命中，后续加载的推荐列表才会过滤。</Text>
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
       </View>
       <View style={[styles.row, styles.rowStacked]}>

@@ -50,6 +50,14 @@ describe("推荐流词条", () => {
     expect(kept.aweme_list).toHaveLength(1);
   });
 
+  it("按作者抖音号、短号以及作品标题匹配", () => {
+    const item = aweme("7000000000000000001", { desc: "", item_title: "王者荣耀", caption: "游戏日常",
+      author: { nickname: "小王", uid: "97119340507", unique_id: "game.creator", short_id: "123456" } });
+    for (const rule of ["author:game.creator", "author:123456", "desc:王者荣耀", "游戏日常"]) {
+      expect(filterFeed({ aweme_list: [item] }, compileRules(rule), true), rule).toHaveLength(1);
+    }
+  });
+
   it("命中的视频带上记录要用的字段，播放地址这些不带", () => {
     const full = aweme("7000000000000000009", {
       desc: "营销号带货", share_url: "https://www.iesdouyin.com/share/video/7000000000000000009/?x=1", create_time: 1_790_000_000, aweme_type: 0,
@@ -75,5 +83,11 @@ describe("推荐流词条", () => {
     expect(filterFeed(json, compileRules("# 只有注释"), true)).toEqual([]);
     expect(filterFeed({ status_code: 0 }, compileRules("火锅"), true)).toEqual([]);
     expect(json.aweme_list).toHaveLength(1);
+  });
+
+  it("推荐列表放在 data 里面时仍匹配和过滤，保留其他回包字段", () => {
+    const json = { status_code: 0, data: { has_more: 1, aweme_list: [aweme("7000000000000000001")] } };
+    expect(filterFeed(json, compileRules("火锅"), true)).toHaveLength(1);
+    expect(json).toEqual({ status_code: 0, data: { has_more: 1, aweme_list: [] } });
   });
 });
