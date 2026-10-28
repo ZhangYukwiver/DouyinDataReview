@@ -902,6 +902,44 @@ describe("DouyinCollector direct records", () => {
     expect(collector.snapshot.records.watch_history.map((record) => [record.videoId, record.watchCompleted])).toEqual([["saved-watch", undefined]]);
   });
 
+  it("keeps reading favorites when the liked list comes back unusable, but stops on session problems", async () => {
+    const setup = (likedError) => {
+      const store = mockStore("2026-08-13T00:00:00.000Z");
+      const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => []), newPage: vi.fn() };
+      const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
+      collector.snapshot = emptySnapshot();
+      collector.snapshot.records.liked_videos = [{ id: "liked_videos:liked-old", title: "旧点赞", author: null, occurredAt: null,
+        url: "https://www.douyin.com/video/liked-old", videoId: "liked-old" }];
+      collector.syncRunId = 1;
+      collector.ensureDirectApi = vi.fn(async () => context);
+      collector.readDirectHistory = vi.fn(async (_context, _cursor, options) => (options?.completedOnly
+        ? { status_code: 0, aweme_list: [], has_more: 0 }
+        : { status_code: 0, aweme_list: [{ aweme_id: "watch-1" }], aweme_date: { "watch-1": 1_700_000_000 }, has_more: 0 }));
+      collector.collectDirectList = vi.fn(async (_context, type, onPage) => {
+        if (type === "liked_videos") throw likedError;
+        await onPage({ status_code: 0, aweme_list: [{ aweme_id: "favorite-new" }], has_more: 0 }, 1);
+        return 1;
+      });
+      return collector;
+    };
+
+    // 抖音桌面端的登录态读点赞回空响应：点赞跳过、原有的留着，收藏照常读完
+    const collector = setup(new DirectHistoryError("invalid_json", "抖音接口没有返回有效 JSON。"));
+    await collector.runDirectRecords(1);
+    expect(collector.status.state).toBe("complete");
+    expect(collector.status.message).toContain("点赞列表这次没读到");
+    expect(collector.snapshot.records.liked_videos.map((record) => record.videoId)).toEqual(["liked-old"]);
+    expect(collector.snapshot.records.favorite_videos.map((record) => record.videoId)).toEqual(["favorite-new"]);
+    expect(collector.snapshot.directSync).toEqual({ watch_history: true, liked_videos: false, favorite_videos: true });
+    expect(collector.snapshot.warnings).toContain("点赞列表这次没读到，保留了本地原有的记录：抖音接口没有返回有效 JSON。");
+    expect(collector.snapshot.warnings[0]).toBe("无界面读取完成：新增观看 1、点赞 0、收藏 1；读取观看历史 1 页、点赞 0 页、收藏 1 页。");
+
+    // 登录失效是整个会话的问题，不能当成「这一类读不到」跳过去
+    const expired = setup(new DirectHistoryError("session_rejected", "抖音接口返回 HTTP 403。"));
+    await expect(expired.runDirectRecords(1)).rejects.toMatchObject({ code: "session_rejected" });
+    expect(expired.collectDirectList.mock.calls.map(([, type]) => type)).toEqual(["liked_videos"]);
+  });
+
   it("does not save when the direct request fails", async () => {
     const store = { save: vi.fn() };
     const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };

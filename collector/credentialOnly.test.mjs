@@ -41,7 +41,7 @@ it("never launches a browser when credentials are missing across all API entry p
 it("starts without a browser executable and rejects removed routes without altering records", async () => {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "dy-no-browser-server-"));
   cleanup.push(() => rm(dataDirectory, { recursive: true, force: true }));
-  const runtime = await startCollectorServer({ port: 0, dataDirectory, browserSources: [] });
+  const runtime = await startCollectorServer({ port: 0, dataDirectory, browserSources: [], desktopSupported: true });
   cleanup.push(() => runtime.close());
   const pair = await fetch(runtime.baseUrl + "/v1/pair", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code: runtime.getPairingCode() }) }).then(response => response.json());
@@ -52,6 +52,8 @@ it("starts without a browser executable and rejects removed routes without alter
     expect(response.status).toBe(404); expect(await response.json()).toMatchObject({ error: "not_found" });
   }
   expect(await fetch(runtime.baseUrl + "/v1/records", { headers }).then(response => response.json())).toEqual(before);
-  expect(await fetch(runtime.baseUrl + "/v1/browser/sources", { headers }).then(response => response.json()))
-    .toMatchObject({ sources: [], status: { browserSource: { mode: "cdp", credentials: "reconnect_required" } } });
+  // 没有浏览器可连时列表里只剩抖音桌面端：它读的是本机客户端，和浏览器无关
+  const sources = await fetch(runtime.baseUrl + "/v1/browser/sources", { headers }).then((response) => response.json());
+  expect(sources.sources.map((item) => item.id)).toEqual(["desktop"]);
+  expect(sources).toMatchObject({ status: { browserSource: { mode: "cdp", credentials: "reconnect_required" } } });
 });

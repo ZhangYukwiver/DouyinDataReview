@@ -98,6 +98,7 @@
     "asar": true,
     "asarUnpack": [
       "collector/openBrowserDebugging.ps1",
+      "collector/desktopCookies.ps1",
       "node_modules/playwright-core/**/*"
     ],
     "win": {

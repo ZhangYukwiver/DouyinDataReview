@@ -9,6 +9,7 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 import { sessionCookies } from "./directApi.mjs";
 import { installDirectCredentialCapture } from "./directCredentials.mjs";
+import { discoverDesktopClient } from "./desktopClient.mjs";
 import { prepareReadOnlyPage } from "./readOnlyPage.mjs";
 
 const COOKIE_URLS = ["https://www.douyin.com/", "https://www-hj.douyin.com/", "https://imapi.douyin.com/"];
@@ -108,6 +109,11 @@ export async function listBrowserSources(sources = browserDirectories()) {
   return Promise.all(sources.map(async source => {
     // 应用内登录窗口不用找浏览器目录，也不用开调试
     if (source.inApp) return { id: source.id, label: source.label, available: true, debugging: true };
+    // 抖音桌面端：只读本机客户端的登录态，没有调试端口这回事
+    if (source.desktop) {
+      const state = await discoverDesktopClient({ directory: source.directory });
+      return { id: source.id, label: source.label, available: state.available, debugging: state.loggedIn, desktop: true };
+    }
     const { directory: _directory, endpoint: _endpoint, ...publicSource } = await discoverBrowser(source);
     return publicSource;
   }));

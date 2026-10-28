@@ -209,6 +209,8 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   });
   const source = sources.find(item => item.id === selected);
   const inApp = selected === "app";
+  // 抖音桌面端：读本机客户端的登录态，没有调试端口也没有页面
+  const desktopSource = selected === "desktop";
   const sourceLabel = (id: BrowserLoginSource["id"]) => sources.find(item => item.id === id)?.label ?? (id === "app" ? "应用内登录" : id);
   const disabled = busy || blocked;
   // 二次验证要扫的码（使用原设备扫码）已经透传过来了就照常显示码；别的验证（短信、密码、滑块）首屏换成「打开验证窗口」
@@ -239,7 +241,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
           actions: revealed ? [
             { kind: "window", label: "在窗口里登录", testID: "browser-login-show-window", onPress: openVerifyWindow },
             { kind: "cancel", label: "取消", testID: "browser-login-cancel-connect", onPress: () => connectControllerRef.current?.abort() },
-          ] : sources.length > 1 ? [{ kind: "other", label: "改用 Chrome / Edge / Comet 导入", testID: "browser-login-other",
+          ] : sources.length > 1 ? [{ kind: "other", label: "改用 Chrome / Edge / Comet 或抖音桌面端导入", testID: "browser-login-other",
             onPress: () => { connectControllerRef.current?.abort(); setShowOther(true); } }] : [],
           label: loggedIn ? "点击重新扫码登录" : "点击显示二维码",
           detail: revealed ? qrcode?.hint || "打开抖音 App，点左上角的扫一扫，扫完在手机上确认。"
@@ -260,12 +262,14 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
         </Text> : null)
         : <Text style={styles.detail} accessibilityLiveRegion="polite" testID="browser-login-status">
           {status?.browserSource?.browser ? `${sourceLabel(status.browserSource.browser)} · ` : ""}
-          {status?.browserSource?.credentials === "ready" ? (status.browserSource.browser === "app" ? "凭据已导入" : "凭据已导入，浏览器可关闭")
+          {status?.browserSource?.credentials === "ready" ? (status.browserSource.browser === "app" ? "凭据已导入"
+            : status.browserSource.browser === "desktop" ? "凭据已导入，读的是抖音电脑客户端的登录态"
+            : "凭据已导入，浏览器可关闭")
             : status?.browserSource?.credentials === "exporting" ? "正在导出凭据" : "请连接浏览器并导入凭据"}
         </Text>}
       {status?.readPermissions && status.browserSource?.credentials === "ready" ? <Text style={styles.detail} testID="browser-read-permissions">当前账号：视频读取{status.readPermissions.videos ? "已开启" : "未开启"} · 聊天读取{status.readPermissions.chat ? "已开启" : "未开启"}</Text> : null}
       {candidate ? <>
-        <Text style={styles.title} testID="browser-login-candidate">{inApp ? "扫码" : "浏览器"}登录的是「{candidate.nickname || "抖音账号"}」</Text>
+        <Text style={styles.title} testID="browser-login-candidate">{inApp ? "扫码" : candidate.browser === "desktop" ? "抖音桌面端" : "浏览器"}登录的是「{candidate.nickname || "抖音账号"}」</Text>
         <Text style={styles.detail}>{candidate.adoptable && adopt ? "当前账号里已有的记录还没绑定抖音号，确认后会归到这个号名下，以后接着补读。"
           : candidate.newAccount ? "确认后添加这个账号，记录单独保存。" : "确认后更新这个账号的凭据和读取权限，保留已有记录及其他账号数据。"}</Text>
         {candidate.adoptable ? <View style={styles.actions}>
@@ -284,6 +288,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
           </Pressable>)}
         </View>
         <Text style={styles.detail}>视频：观看历史、喜欢、收藏及视频相关联网读取。聊天：历史记录、实时接收及火花。勾选视频后自动完整读取一次，勾选聊天后自动整理历史并开始接收；未勾选的类型不能继续联网读取，已有本地数据仍可查看。</Text>
+        {candidate.browser === "desktop" ? <Text style={styles.detail}>抖音桌面端里存着收私信要用的操作证书，一起导入后聊天也能直接走接口；证书对不上时会在下一次打开客户端后自动补上。</Text> : null}
         {!readPermissions.videos && !readPermissions.chat ? <Text style={styles.error}>请至少选择一项读取权限。</Text> : null}
         <View style={styles.actions}>
           <Action label="确认导入" disabled={disabled || (!readPermissions.videos && !readPermissions.chat)} onPress={confirm} testID="browser-login-confirm" />
@@ -296,15 +301,19 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
             accessibilityState={{ checked: item.id === selected, disabled: disabled || !item.available }} aria-checked={item.id === selected}
             disabled={disabled || !item.available} onPress={() => { setSelected(item.id); setNotice(null); setError(null); if (compact && item.id === "app") setShowOther(false); }}
             style={[styles.option, item.id === selected && styles.selected, !item.available && styles.disabled]} testID={`browser-login-${item.id}`}>
-            <Text style={styles.text}>{item.id === "app" ? "在应用里登录" : `${item.label} · ${!item.available ? "未找到" : item.debugging ? "可连接" : "需开启调试"}`}</Text>
+            <Text style={styles.text}>{item.id === "app" ? "在应用里登录"
+              : item.id === "desktop" ? `抖音桌面端 · ${!item.available ? "未找到" : item.debugging ? "可读取" : "需在客户端登录"}`
+              : `${item.label} · ${!item.available ? "未找到" : item.debugging ? "可连接" : "需开启调试"}`}</Text>
           </Pressable>)}
         </View>}
-        {inApp ? compact ? null : <Text style={styles.detail}>点“扫码登录”后这里会显示抖音的登录二维码，用抖音 App 扫一扫并在手机上确认，再核对账号导入凭据。登录状态只存在本应用里，不用打开浏览器调试。</Text> : <>
+        {inApp ? compact ? null : <Text style={styles.detail}>点“扫码登录”后这里会显示抖音的登录二维码，用抖音 App 扫一扫并在手机上确认，再核对账号导入凭据。登录状态只存在本应用里，不用打开浏览器调试。</Text>
+          : desktopSource ? <Text style={styles.detail}>直接读本机抖音电脑客户端里已登录的账号，不用开浏览器，也不用开调试端口。Mac 上会弹一次钥匙串授权，点「允许」即可。客户端正在写登录数据时等几秒再试；导入之后不打开客户端也能继续读取。</Text>
+          : <>
           {source ? <Text selectable style={styles.detail}>未开启调试时，点击“连接浏览器”会尝试自动打开 {source.label} 的调试设置页。勾选允许远程调试后再次连接；也可手动打开 {source.inspectUrl}。连接时请在浏览器中允许。</Text> : null}
           <Text style={styles.detail}>调试权限覆盖整个浏览器；工作台仅访问自己创建的抖音页面和抖音 Cookie。导出后可关闭调试开关，无需安装扩展。</Text>
         </>}
         {compact && waitingForScan ? null : <View style={styles.actions}>
-          <Action label={busy ? "连接处理中…" : inApp ? "扫码登录" : "连接浏览器"} disabled={disabled || !source?.available} onPress={() => connect()} testID="browser-login-connect" />
+          <Action label={busy ? "连接处理中…" : inApp ? "扫码登录" : desktopSource ? "读取登录态" : "连接浏览器"} disabled={disabled || !source?.available} onPress={() => connect()} testID="browser-login-connect" />
           {compact && inApp ? null : <Action label="刷新检测" disabled={disabled} onPress={() => { void refresh(); }} testID="browser-login-refresh" />}
           {status?.browserSource?.connected ? <Action label="断开连接" disabled={disabled} onPress={() => disconnect()} testID="browser-login-disconnect" /> : null}
           {compact && sources.length > 1 ? <Action label={showOther ? "只用扫码" : "改用 Chrome / Edge / Comet"} disabled={disabled}
@@ -323,6 +332,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
         <ActivityIndicator size="small" color={color.accent} />
         <Text style={styles.detail} accessibilityLiveRegion="polite">{candidate ? (inApp ? "正在导出凭据，请稍等。抖音要求安全验证时这里会提示，完成后会接着导入。" : "正在导出凭据，完成前请保持浏览器打开。")
           : inApp ? "打开抖音 App，点左上角的扫一扫扫码并在手机上确认。要做安全验证、或想用手机验证码登录时，点“在窗口里登录”。工作台会自动继续，最多等待 5 分钟。"
+          : desktopSource ? "正在读抖音电脑客户端的登录态，完成后核对账号导入。"
           : "请按提示开启调试或允许连接；进入抖音页面后完成登录或验证，未弹出登录框时可点击“登录”。工作台会自动继续，最多等待 5 分钟。"}</Text>
         {connecting ? <Action label="取消连接" disabled={false} onPress={() => connectControllerRef.current?.abort()} testID="browser-login-cancel-connect" /> : null}
       </View> : null}
