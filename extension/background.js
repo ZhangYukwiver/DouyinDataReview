@@ -7,6 +7,27 @@
 const PORTS = [47652, 4765];
 const MAX_PENDING = 300;
 
+// 排查真实页面：只留路径、计数和数据结构，不留请求参数、作品文案、Cookie 或令牌。
+function diagnosticOf(value) {
+  const count = (item) => Number.isFinite(item) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(item))) : 0;
+  const clean = Object.fromEntries(["installedAt", "settingsReceived", "ruleCount", "xhrRequests", "fetchRequests", "recognizedRequests",
+    "responsesRead", "videosRead", "matchedVideos", "eventsEmitted", "readFailures", "pendingPages"]
+    .map((key) => [key, count(value?.[key])]));
+  const paths = (items) => (Array.isArray(items) ? items : []).slice(-12).flatMap((item) => {
+    if (!["www.douyin.com", "www-hj.douyin.com"].includes(item?.host) || typeof item.path !== "string" || !item.path.startsWith("/aweme/")) return [];
+    return [{ host: item.host, path: item.path.split(/[?#]/u)[0].slice(0, 200),
+      transport: ["xhr", "fetch", "xmlhttprequest"].includes(item.transport) ? item.transport : "other",
+      recognized: item.recognized === true, count: count(item.count) }];
+  });
+  return { ...clean, mode: ["off", "observe", "hide", "dislike"].includes(value?.mode) ? value.mode : null,
+    xhrResponseHook: value?.xhrResponseHook === true, fetchHook: value?.fetchHook === true,
+    requests: paths(value?.requests), resources: paths(value?.resources),
+    lastResponse: value?.lastResponse ? { videos: count(value.lastResponse.videos),
+      transport: value.lastResponse.transport === "xhr" ? "xhr" : "fetch",
+      type: ["text", "json", "arraybuffer"].includes(value.lastResponse.type) ? value.lastResponse.type : "other",
+      keys: (Array.isArray(value.lastResponse.keys) ? value.lastResponse.keys : []).filter((key) => typeof key === "string" && /^[\w]{1,80}$/u.test(key)).slice(0, 16) } : null };
+}
+
 // 扩展版本号是点分数字（1.2.0）
 function isNewerVersion(candidate, current) {
   const a = String(candidate).split(".").map(Number);
@@ -20,6 +41,28 @@ function isNewerVersion(candidate, current) {
 
 let chain = Promise.resolve();
 const serial = (task) => (chain = chain.then(task, task));
+
+// 扩展重载会让旧的隔离脚本失去 runtime 连接，但网页和 MAIN 里的匹配器还在。
+// 仅对已授权的抖音标签检查连接；缺失时补装中转脚本，页面自身无需重新加载。
+async function restoreOpenPages() {
+  const version = chrome.runtime.getManifest().version;
+  const tabs = await chrome.tabs.query({ url: "https://www.douyin.com/*" });
+  const targets = tabs.filter((tab) => {
+    try { return Number.isInteger(tab.id) && new URL(tab.url).origin === "https://www.douyin.com"; } catch { return false; }
+  });
+  const results = await Promise.allSettled(targets.map(async (tab) => {
+    const bridge = await chrome.tabs.sendMessage(tab.id, { type: "dyf:ping" }).catch(() => null);
+    if (bridge?.version === version && bridge.ready === true) return "connected";
+    // page.js 已有安装保护：沿用当前页面的匹配器，不叠加网络拦截。
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", files: ["filter.js", "page.js"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", files: ["bridge.js"] });
+    return "restored";
+  }));
+  await chrome.storage.local.set({ pageAttachment: { version, checkedAt: Date.now(), pages: targets.length,
+    restored: results.filter((result) => result.status === "fulfilled" && result.value === "restored").length,
+    connected: results.filter((result) => result.status === "fulfilled" && result.value === "connected").length,
+    failed: results.filter((result) => result.status === "rejected").length } });
+}
 
 async function connect() {
   for (const port of PORTS) {
@@ -89,13 +132,33 @@ async function refresh() {
 }
 
 // 每分钟和应用对一次：应用能看到扩展还在，叫移除、有新版也在这时收到；刚装好、浏览器一启动就先对一次
-const sync = () => serial(async () => { await refresh(); await flush(); });
+const sync = () => serial(async () => {
+  await restoreOpenPages().catch(() => undefined);
+  await refresh();
+  await flush();
+});
 chrome.alarms.get("sync").then((alarm) => alarm || chrome.alarms.create("sync", { periodInMinutes: 1 }));
 chrome.alarms.onAlarm.addListener(sync);
 chrome.runtime.onInstalled.addListener(sync);
 chrome.runtime.onStartup.addListener(sync);
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "diagnostics") {
+    let page;
+    try { page = new URL(sender.url); } catch { return false; }
+    if (page.origin !== "https://www.douyin.com" || !Number.isInteger(sender.tab?.id)) return false;
+    const snapshot = { ...diagnosticOf(message.diagnostics), receivedAt: Date.now(), version: chrome.runtime.getManifest().version,
+      path: page.pathname.slice(0, 200),
+      bridgeEventsReceived: Number.isFinite(message.bridge?.eventsReceived) ? Math.max(0, Math.floor(message.bridge.eventsReceived)) : 0,
+      bridgeForwardFailures: Number.isFinite(message.bridge?.forwardFailures) ? Math.max(0, Math.floor(message.bridge.forwardFailures)) : 0 };
+    serial(async () => {
+      const { feedDiagnostics = {} } = await chrome.storage.local.get("feedDiagnostics");
+      const entries = Object.entries({ ...feedDiagnostics, [sender.tab.id]: snapshot })
+        .sort((a, b) => b[1].receivedAt - a[1].receivedAt).slice(0, 8);
+      await chrome.storage.local.set({ feedDiagnostics: Object.fromEntries(entries) });
+    });
+    return false;
+  }
   // 上次存下的：马上就有，页面打开时先用它，免得等后台连应用的那几秒里第一批推荐漏过去
   if (message?.type === "cached") {
     chrome.storage.local.get("settings").then(({ settings }) => sendResponse(settings ?? null), () => sendResponse(null));

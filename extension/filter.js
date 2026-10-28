@@ -41,12 +41,16 @@
     return rules;
   }
 
-  // 作者带上 uid：改了昵称也能用 author:数字 拦住；话题和抖音给的作品分类都算 tag
+  const list = (value) => Array.isArray(value) ? value : [];
+  const textOf = (...values) => normalize(values.filter((value) => typeof value === "string" || typeof value === "number").join(" "));
+
+  // 抖音号是 unique_id（老账号还有 short_id），uid 是内部用户号，两种都能按 author: 匹配。
+  // 图文和部分推荐把标题放在 caption/item_title；话题和抖音给的作品分类都算 tag。
   function fieldsOf(aweme) {
-    const tags = [...(aweme?.text_extra ?? []).map((item) => item?.hashtag_name), ...(aweme?.video_tag ?? []).map((item) => item?.tag_name)];
+    const tags = [...list(aweme?.text_extra).map((item) => item?.hashtag_name), ...list(aweme?.video_tag).map((item) => item?.tag_name)];
     const fields = {
-      desc: normalize(aweme?.desc),
-      author: normalize(`${aweme?.author?.nickname ?? ""} ${aweme?.author?.uid ?? ""}`),
+      desc: textOf(aweme?.desc, aweme?.caption, aweme?.item_title),
+      author: textOf(aweme?.author?.nickname, aweme?.author?.unique_id, aweme?.author?.short_id, aweme?.author?.uid),
       tag: normalize(tags.filter(Boolean).join(" ")),
       music: normalize(aweme?.music?.title),
     };
@@ -82,7 +86,7 @@
       // 图文只要知道是图文，图片本身播放时再取
       images: Array.isArray(aweme?.images) ? [] : undefined,
       music: music ? { id: music.id_str ?? music.id, title: music.title, author: music.author } : undefined,
-      text_extra: (aweme?.text_extra ?? []).map((item) => item?.hashtag_name).filter(Boolean).slice(0, 10).map((hashtag_name) => ({ hashtag_name })),
+      text_extra: list(aweme?.text_extra).map((item) => item?.hashtag_name).filter(Boolean).slice(0, 10).map((hashtag_name) => ({ hashtag_name })),
       statistics: counts(aweme?.statistics),
     };
   }
@@ -90,14 +94,16 @@
   // 推荐接口的返回里只动 aweme_list：命中的拿掉（hide=false 时只报不拿），返回命中的那几条
   function filterFeed(json, rules, hide) {
     const hits = [];
-    if (!rules.length || !Array.isArray(json?.aweme_list)) return hits;
-    json.aweme_list = json.aweme_list.filter((aweme) => {
+    const owner = Array.isArray(json?.aweme_list) ? json : json?.data;
+    if (!rules.length || !Array.isArray(owner?.aweme_list)) return hits;
+    const kept = owner.aweme_list.filter((aweme) => {
       const result = match(rules, fieldsOf(aweme));
       if (result.score < THRESHOLD) return true;
       hits.push({ id: String(aweme?.aweme_id ?? ""), desc: String(aweme?.desc ?? "").slice(0, 120),
         author: String(aweme?.author?.nickname ?? "").slice(0, 40), matched: result.matched.slice(0, 5), score: result.score, aweme: slim(aweme) });
       return !hide;
     });
+    if (hide) owner.aweme_list = kept;
     return hits;
   }
 
