@@ -152,6 +152,25 @@ export async function readDirectCredentialMaterial() {
   return result;
 }
 
+// 已登录的个人页不一定发出 passport 请求，设备信息也就一直不会经过捕获钩子。
+// 在当前登录页面内调用同一个凭据初始化接口，让官方 SDK 完成处理后再导出。
+export async function initializeDirectCredentialMaterial() {
+  if (location.origin !== "https://www.douyin.com" || !globalThis.securitySDK?.cryptoSDK || !globalThis.DTraitSDK) return false;
+  const cookies = Object.fromEntries(document.cookie.split(";").map(value => {
+    const separator = value.indexOf("=");
+    return [value.slice(0, separator).trim(), value.slice(separator + 1)];
+  }));
+  try {
+    await fetch("/passport/ticket_guard/get_client_cert/?aid=6383&type=trait&sdk_version=1.0.0.381&is_from_ttaccountsdk=1", {
+      method: "POST", credentials: "include", signal: AbortSignal.timeout(10_000),
+      headers: { "content-type": "application/x-www-form-urlencoded",
+        "x-tt-passport-csrf-token": cookies.passport_csrf_token || cookies.passport_csrf_token_default || "" },
+      body: "server_data=1&need_session_dtrait=1",
+    });
+  } catch { /* 保留登录/验证流程，由导出期限统一报告仍缺少的材料；不反复请求。 */ }
+  return true;
+}
+
 export async function refreshDirectCsrf(api) {
   const response = await api.raw("https://www.douyin.com/service/2/abtest_config/", { method: "HEAD", allowErrorStatus: true,
     headers: { "x-secsdk-csrf-request": "1", "x-secsdk-csrf-version": "1.2.22" } });

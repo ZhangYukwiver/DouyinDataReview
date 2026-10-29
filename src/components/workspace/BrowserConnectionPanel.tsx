@@ -163,7 +163,7 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       if (compact && visibleRef.current && reason instanceof LocalCollectorError && ["browser_login_timeout", "collector_busy"].includes(reason.code)) {
         renewRef.current = true; return;
       }
-      if (!controller.signal.aborted && (revealedRef.current || !compact)) throw reason;
+      if (!controller.signal.aborted && (revealedRef.current || !compact || showOther)) throw reason;
     } finally {
       if (connectControllerRef.current === controller) connectControllerRef.current = null;
       // 要续的话「连接中」不落下，二维码那块原地转圈等新码，不闪回按钮
@@ -178,11 +178,12 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
   });
   useEffect(() => { if (!preload) preloadedRef.current = false; }, [preload]);
   useEffect(() => {
-    if (!preload || !visible || blocked || preloadedRef.current || runningRef.current || candidateRef.current) return;
+    // 导入失败后保留报错；自动预加载会再次 run()，把错误清掉并闪回“等待同步”。
+    if (!preload || !visible || blocked || error || preloadedRef.current || runningRef.current || candidateRef.current) return;
     if (selected !== "app" || !sources.some(item => item.id === "app")) return;
     preloadedRef.current = true;
     void connect();
-  }, [preload, visible, blocked, selected, sources]);
+  }, [preload, visible, blocked, selected, sources, error]);
   const confirm = () => run(async () => {
     if (!candidate || (!readPermissions.videos && !readPermissions.chat)) return;
     let change: CollectorAccountChange;

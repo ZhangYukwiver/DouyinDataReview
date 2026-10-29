@@ -41,7 +41,7 @@ import { ChatSendError, validateChatSend } from "./chatSender.mjs";
 import { CreatorCenter } from "./creatorCenter.mjs";
 import { LiveRooms } from "./liveRoom.mjs";
 import { DirectApiClient, loadDirectSession, saveDirectSession, sameDirectSession, needsDirectSessionRefresh } from "./directApi.mjs";
-import { readDirectCredentialMaterial, completeDirectCredentialExport, requireDirectCredentials } from "./directCredentials.mjs";
+import { readDirectCredentialMaterial, initializeDirectCredentialMaterial, completeDirectCredentialExport, requireDirectCredentials } from "./directCredentials.mjs";
 import { DirectChatClient } from "./directChat.mjs";
 import { BrowserConnectionError } from "./browserConnection.mjs";
 import { writeDesktopTemplate } from "./desktopClient.mjs";
@@ -633,6 +633,8 @@ export class DouyinCollector {
       this.externalSource = previous.source ?? { browser: connection.browser };
       this.externalSessionState = previous.state;
       if (!previous.source) await writeFile(path.join(this.dataDirectory, "external-browser.json"), `${JSON.stringify(this.externalSource)}\n`, { mode: 0o600 });
+      this.updateStatus({ state: "error", phase: null, progress: null, browserOpen: false,
+        message: safeMessage(error, "登录凭据导入未完成，请重新连接后重试。") });
       throw error;
     }
   }
@@ -832,6 +834,8 @@ export class DouyinCollector {
         // The page can identify the account before its security SDK finishes
         // initializing. Allow a cold browser to finish the paired export.
         const deadline = Date.now() + DIRECT_CREDENTIAL_EXPORT_TIMEOUT_MS;
+        let initialized = false;
+        let missing = ["登录账号信息"];
         while (Date.now() < deadline) {
           signal?.throwIfAborted();
           const identity = await readLoginIdentity(page);
@@ -839,10 +843,15 @@ export class DouyinCollector {
           if (identity?.uid) {
             const material = await page.evaluate(readDirectCredentialMaterial);
             if (material) {
-              const msToken = context.directMsToken || api.cookie("msToken");
-              material.msToken = /^[A-Za-z0-9+/_=-]{100,1024}$/u.test(msToken || "") ? msToken : "";
+              // 页面初始化可能刚刷新 Cookie，旧 HTTP 会话里的快照还没有这枚令牌。
+              const cookies = await context.cookies();
+              material.msToken = [context.directMsToken, ...cookies.filter(cookie => cookie.name === "msToken").map(cookie => cookie.value)]
+                .find(value => /^[A-Za-z0-9+/_=-]{100,1024}$/u.test(value || "")) || "";
             }
-            if (material?.trait?.blob && material.ticket && material.privateKey && material.msToken) {
+            missing = [[material?.trait?.blob, "设备校验信息"], [material?.ticket && material.tsSign, "登录票据"],
+              [material?.privateKey && material.clientCert, "签名证书"], [material?.msToken, "会话令牌"]]
+              .filter(([ready]) => !ready).map(([, label]) => label);
+            if (!missing.length) {
               // A fresh login to the same account rotates Cookies. Complete
               // its paired export before replacing the active HTTP client.
               const session = await this.cacheDirectSession(context, page, identity, { updateApi: false });
@@ -856,10 +865,11 @@ export class DouyinCollector {
                 return security;
               } finally { await exporter.close(); }
             }
+            if (!initialized) initialized = await page.evaluate(initializeDirectCredentialMaterial);
           }
           await delay(500, undefined, { signal });
         }
-        throw new DirectHistoryError("write_credentials_missing", "未能获取完整签名与设备凭据，请在浏览器刷新抖音页面，完成登录或验证后重新连接。");
+        throw new DirectHistoryError("write_credentials_missing", `未能获取${missing.join("、")}，请在浏览器刷新抖音页面，完成登录或验证后重新连接。`);
       } finally {
         await page.close().catch(() => {});
       }
