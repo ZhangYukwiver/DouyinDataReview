@@ -1,0 +1,12 @@
+// Ninja otherwise starts one compiler per CPU, independently of Gradle's worker limit.
+gradle.beforeProject { project ->
+    ["com.android.application", "com.android.library"].each { plugin ->
+        project.plugins.withId(plugin) {
+            project.extensions.getByName("android").defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                "-DCMAKE_JOB_POOLS=proof_compile=2;proof_link=1",
+                "-DCMAKE_JOB_POOL_COMPILE=proof_compile",
+                "-DCMAKE_JOB_POOL_LINK=proof_link"
+            ])
+        }
+    }
+}

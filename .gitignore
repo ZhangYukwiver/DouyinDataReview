@@ -1,6 +1,8 @@
 node_modules/
 .DS_Store
 .expo/
+/android/
+/modules/*/android/build/
 dist/
 web-build/
 release/
@@ -12,6 +14,8 @@ release-*/
 npm-debug.log*
 
 # Local visual-production intermediates and capture evidence.
+/.playwright-cli/
+/.playwright-mcp/
 /collector-cover-*.jpeg
 /cover-paper-render-*.png
 /cropped_pages/

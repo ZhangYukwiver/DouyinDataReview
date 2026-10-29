@@ -3,14 +3,29 @@
 // Electron's crypto build omits SM3, so keep this portable implementation.
 const rot = (value, bits) => (value << (bits % 32)) | (value >>> ((32 - bits % 32) % 32));
 export function sm3Digest(value) {
-  const input = typeof value === "string" ? Buffer.from(value, "utf8") : Buffer.from(value);
+  // Keep the signer usable in Hermes as well as Node; no browser or Node crypto is needed.
+  const utf8 = (text) => {
+    const bytes = [];
+    for (const char of text) {
+      let code = char.codePointAt(0);
+      if (code >= 0xd800 && code <= 0xdfff) code = 0xfffd;
+      if (code < 0x80) bytes.push(code);
+      else if (code < 0x800) bytes.push(0xc0 | code >> 6, 0x80 | code & 63);
+      else if (code < 0x10000) bytes.push(0xe0 | code >> 12, 0x80 | code >> 6 & 63, 0x80 | code & 63);
+      else bytes.push(0xf0 | code >> 18, 0x80 | code >> 12 & 63, 0x80 | code >> 6 & 63, 0x80 | code & 63);
+    }
+    return Uint8Array.from(bytes);
+  };
+  const input = typeof value === "string" ? utf8(value) : Uint8Array.from(value);
   const size = Math.ceil((input.length + 9) / 64) * 64;
-  const padded = Buffer.alloc(size); input.copy(padded); padded[input.length] = 128;
-  padded.writeBigUInt64BE(BigInt(input.length) * 8n, size - 8);
+  const padded = new Uint8Array(size); padded.set(input); padded[input.length] = 128;
+  const view = new DataView(padded.buffer);
+  view.setUint32(size - 8, Math.floor(input.length * 8 / 2 ** 32));
+  view.setUint32(size - 4, input.length * 8 >>> 0);
   const state = [0x7380166f,0x4914b2b9,0x172442d7,0xda8a0600,0xa96f30bc,0x163138aa,0xe38dee4d,0xb0fb0e4e];
   for (let offset = 0; offset < size; offset += 64) {
     const w = new Uint32Array(68);
-    for (let i = 0; i < 16; i += 1) w[i] = padded.readUInt32BE(offset + i * 4);
+    for (let i = 0; i < 16; i += 1) w[i] = view.getUint32(offset + i * 4);
     for (let i = 16; i < 68; i += 1) {
       const x = w[i-16] ^ w[i-9] ^ rot(w[i-3],15);
       w[i] = x ^ rot(x,15) ^ rot(x,23) ^ rot(w[i-13],7) ^ w[i-6];
@@ -27,6 +42,7 @@ export function sm3Digest(value) {
     }
     for (const [index,item] of [a,b,c,d,e,f,g,h].entries()) state[index] = (state[index] ^ item) >>> 0;
   }
-  const out = Buffer.alloc(32); state.forEach((item,index) => out.writeUInt32BE(item,index*4));
-  return out;
+  const out = new Uint8Array(32), output = new DataView(out.buffer);
+  state.forEach((item,index) => output.setUint32(index*4,item));
+  return typeof Buffer === "undefined" ? out : Buffer.from(out);
 }

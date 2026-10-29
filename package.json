@@ -5,7 +5,9 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
+    "android": "expo run:android",
+    "android:prebuild": "node scripts/build-android-proof.mjs --prebuild-only",
+    "android:apk": "node scripts/build-android-proof.mjs",
     "ios": "expo start --ios",
     "web": "expo start --web",
     "collector": "node collector/server.mjs",
@@ -35,6 +37,7 @@
     "expo": "~57.0.11",
     "expo-document-picker": "~57.0.1",
     "expo-file-system": "~57.0.2",
+    "expo-intent-launcher": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.2",
     "fflate": "^0.8.3",
@@ -47,6 +50,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
     "react-native-web": "^0.21.2",
+    "react-native-webview": "13.16.1",
     "ws": "^8.22.0"
   },
   "devDependencies": {
