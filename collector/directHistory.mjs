@@ -375,7 +375,7 @@ export const DIRECT_API_PATHS = new Set([
   "/aweme/v1/web/aweme/favorite/", "/aweme/v1/web/aweme/listcollection/",
   "/aweme/v1/web/collects/list/", "/aweme/v1/web/collects/video/list/",
   "/aweme/v1/web/comment/list/",
-  "/aweme/v1/web/discover/search/", "/aweme/v1/web/search/item/",
+  "/aweme/v1/web/discover/search/", "/aweme/v1/web/search/item/", "/aweme/v1/web/tab/feed/",
   "/aweme/v1/web/commit/item/digg/", "/aweme/v1/web/aweme/collect/",
   "/aweme/v1/web/comment/publish", "/aweme/v1/web/comment/delete/", "/aweme/v1/web/commit/follow/user/",
   "/passport/safe/get_identity_security_token/",

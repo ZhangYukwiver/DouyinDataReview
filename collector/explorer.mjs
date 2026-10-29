@@ -117,7 +117,7 @@ function isCommentPublish(response, awemeId, content, replyTo) {
 
 // The first response each kind depends on; an empty body there is Douyin's risk control, not a missing login.
 const PRIMARY_RESPONSE = { users: /\/(?:discover\/search|search\/user)\/$/u, videos: /\/search\/(?:item|single)\/$/u,
-  profile: /\/aweme\/post\/$/u, detail: /\/aweme\/detail\/$/u, comments: /\/comment\/list\/$/u };
+  profile: /\/aweme\/post\/$/u, detail: /\/aweme\/detail\/$/u, comments: /\/comment\/list\/$/u, feed: /\/tab\/feed\/$/u };
 
 export function isExploreApiUrl(url) {
   return url.protocol === "https:" && ["www.douyin.com", "www-hj.douyin.com"].includes(url.hostname)
@@ -125,7 +125,7 @@ export function isExploreApiUrl(url) {
 }
 
 export function validateExploreRequest(input) {
-  if (!input || !["users", "videos", "profile", "detail", "comments", "sharees"].includes(input.kind)) throw new ExploreError("invalid_request", "请选择搜索用户或内容。", 400);
+  if (!input || !["users", "videos", "profile", "detail", "comments", "sharees", "feed"].includes(input.kind)) throw new ExploreError("invalid_request", "请选择搜索用户或内容。", 400);
   const query = text(input.query, 100);
   const id = text(input.id, 200);
   if (["users", "videos"].includes(input.kind) && (!query || String(input.query).trim().length > 100)) throw new ExploreError("invalid_request", "搜索词需为 1–100 个字符。", 400);
@@ -162,6 +162,10 @@ export function ingestExploreResponse(session, pathname, payload) {
     if (pathname.endsWith("/aweme/post/")) { raw = payload.aweme_list; normalize = normalizeExploreVideo; }
   } else if (kind === "detail" && pathname.endsWith("/aweme/detail/") && String(payload.aweme_detail?.aweme_id) === id) {
     session.video = normalizeExploreVideo(payload.aweme_detail); session.received = true;
+  } else if (kind === "feed" && pathname.endsWith("/tab/feed/")) {
+    // 直播和广告不放进推荐流：直播没有视频地址，广告不是推荐内容
+    raw = payload.aweme_list?.filter((item) => !item?.is_ads && (item?.images?.length || item?.video?.play_addr?.url_list?.length));
+    normalize = normalizeExploreVideo;
   } else if (kind === "comments" && pathname.endsWith("/comment/list/")) {
     raw = payload.comments; normalize = normalizeExploreComment;
   }

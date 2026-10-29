@@ -4,9 +4,11 @@ import { DouyinExplorer, ExploreError, validateExploreRequest, ingestExploreResp
 import { directWrite } from "./directWrites.mjs";
 
 const ROUTES = { users: "/aweme/v1/web/discover/search/", videos: "/aweme/v1/web/search/item/",
-  profile: "/aweme/v1/web/aweme/post/", detail: "/aweme/v1/web/aweme/detail/", comments: "/aweme/v1/web/comment/list/" };
+  profile: "/aweme/v1/web/aweme/post/", detail: "/aweme/v1/web/aweme/detail/", comments: "/aweme/v1/web/comment/list/",
+  feed: "/aweme/v1/web/tab/feed/" };
 const hasMore = (value) => [true, 1, "1"].includes(value) ? true : [false, 0, "0"].includes(value) ? false : null;
-const cursorOf = (payload, kind) => String(payload[kind === "profile" ? "max_cursor" : "cursor"] ?? "");
+// 推荐没有游标，按网页的做法每刷一屏 refresh_index 加一
+const cursorOf = (payload, kind, cursor) => kind === "feed" ? String(Number(cursor) + 1) : String(payload[kind === "profile" ? "max_cursor" : "cursor"] ?? "");
 
 // Reuse the existing response normalizers and API contracts for HTTP reads and
 // writes. Credential bootstrap belongs to the collector's login session.
@@ -33,10 +35,13 @@ export class DirectExplorer extends DouyinExplorer {
       case "profile": query = { sec_user_id: session.id, max_cursor: session.cursor, count: "18", publish_video_strategy_type: "2" }; break;
       case "detail": query = { aweme_id: session.id }; break;
       case "comments": query = { aweme_id: session.id, cursor: session.cursor, count: "20", item_type: "0" }; break;
+      case "feed": query = { count: "10", refresh_index: String(Number(session.cursor) + 1), pull_type: session.cursor === "0" ? "0" : "2",
+        video_type_select: "1", aweme_pc_rec_raw_data: JSON.stringify({ is_client: false }) }; break;
     }
     const pathname = ROUTES[session.kind];
     const referer = session.kind === "profile" ? `https://www.douyin.com/user/${session.id}`
-      : ["detail", "comments"].includes(session.kind) ? `https://www.douyin.com/video/${session.id}` : "https://www.douyin.com/search/";
+      : ["detail", "comments"].includes(session.kind) ? `https://www.douyin.com/video/${session.id}`
+      : session.kind === "feed" ? "https://www.douyin.com/?recommend=1" : "https://www.douyin.com/search/";
     const reads = [api.request(pathname, { query, referer, signal })];
     if (session.kind === "profile" && !session.profile) reads.push(api.request("/aweme/v1/web/user/profile/other/", { query: { sec_user_id: session.id }, referer, signal }));
     const results = await Promise.allSettled(reads);
@@ -51,7 +56,7 @@ export class DirectExplorer extends DouyinExplorer {
     if (!session.received || (session.kind === "profile" && !session.profile) || (session.kind === "detail" && !session.video))
       throw new ExploreError("schema_changed", "接口数据不完整，已加载的内容仍保留。");
     const more = session.kind === "detail" ? false : hasMore(payload.has_more);
-    const next = cursorOf(payload, session.kind);
+    const next = cursorOf(payload, session.kind, session.cursor);
     if (more === null || (more && (!/^\d{1,20}$/u.test(next) || next === session.cursor)))
       throw new ExploreError("pagination_stalled", "接口未返回有效分页，已加载的内容仍保留。");
     signal?.throwIfAborted();
