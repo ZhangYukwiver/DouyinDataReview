@@ -176,6 +176,7 @@ describe("imported credentials without a running browser", () => {
     await expect(collector.attachExternalBrowser(connection, { uid: "123", nickname: "合成账号" }, {}, { videos: false, chat: true })).rejects.toMatchObject({ code: "request_failed" });
     expect(await Promise.all(files.map(name => readFile(path.join(dataDirectory, name), "utf8")))).toEqual(before);
     expect(collector.getStatus().browserSource).toMatchObject({ credentials: "ready", connected: false });
+    expect(collector.getStatus()).toMatchObject({ state: "error", browserOpen: false, message: "offline" });
     expect(JSON.stringify(collector.getSnapshot())).toBe(records); expect(connection.disconnect).toHaveBeenCalled();
   });
 });

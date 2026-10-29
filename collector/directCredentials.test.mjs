@@ -1,7 +1,38 @@
 import { createPublicKey, createHash, createHmac, createDecipheriv, diffieHellman, hkdfSync, privateDecrypt, constants } from "node:crypto";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { directSessionFixture, testCookie, serverKeys, traitKeys } from "./fixtures/directClient.mjs";
-import { validateDirectCredentials, requireDirectCredentials, directSecurityHeaders, completeDirectCredentialExport } from "./directCredentials.mjs";
+import { validateDirectCredentials, requireDirectCredentials, directSecurityHeaders, completeDirectCredentialExport, initializeDirectCredentialMaterial } from "./directCredentials.mjs";
+
+describe("browser credential initialization", () => {
+  it("waits for the SDK and never sends the bootstrap request outside Douyin", async () => {
+    const fetch = vi.fn();
+    for (const environment of [
+      { location: { origin: "https://example.org" }, securitySDK: { cryptoSDK: {} }, DTraitSDK: {} },
+      { location: { origin: "https://www.douyin.com" }, securitySDK: { cryptoSDK: {} } },
+    ]) {
+      expect(await runInNewContext(`(${initializeDirectCredentialMaterial})()`, { ...environment, fetch })).toBe(false);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("uses the current page's official initialization request with a bounded wait", async () => {
+    const signal = {};
+    const fetch = vi.fn(async () => ({ ok: true }));
+    const timeout = vi.fn(() => signal);
+    expect(await runInNewContext(`(${initializeDirectCredentialMaterial})()`, {
+      location: { origin: "https://www.douyin.com" }, securitySDK: { cryptoSDK: {} }, DTraitSDK: {},
+      document: { cookie: "unrelated=value; passport_csrf_token=current-token==" },
+      fetch, AbortSignal: { timeout },
+    })).toBe(true);
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      "/passport/ticket_guard/get_client_cert/?aid=6383&type=trait&sdk_version=1.0.0.381&is_from_ttaccountsdk=1",
+      { method: "POST", credentials: "include", signal,
+        headers: { "content-type": "application/x-www-form-urlencoded", "x-tt-passport-csrf-token": "current-token==" },
+        body: "server_data=1&need_session_dtrait=1" });
+    expect(timeout).toHaveBeenCalledWith(10_000);
+  });
+});
 
 describe("paired direct credentials", ()=>{
   it("binds a SDK-verified key and certificate to the account and both Cookie bindings", ()=>{
