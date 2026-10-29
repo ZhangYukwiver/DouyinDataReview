@@ -8,7 +8,7 @@ import { buildPersonalSummary } from "../domain/annualReport";
 import { buildStoryData, type StoryData } from "../services/storyData";
 import { personalRecords, type MobileSnapshot } from "./collectionData";
 import { exportMobileFile } from "./mobileExport";
-import { STORY_PAGES, storyDocument, type StoryPage } from "./storyDocument";
+import { STORY_PAGES, storyDocument, storyExportScript, type StoryPage } from "./storyDocument";
 import { C, mono, ui } from "./mobileUi";
 
 export type StoryStyle = "trace" | "archive" | "poster";
@@ -66,7 +66,7 @@ export function StoryScreen({ snapshot, style, onClose }: { snapshot: MobileSnap
     const id = `story-${Date.now()}`; pendingExport.current = id; setExporting(true);
     exportTimer.current = setTimeout(() => { pendingExport.current = null; setExporting(false); setNotice("导出超时，请稍后重试。"); }, 15000);
     // Read the visible privacy switch, and reuse the existing story's anonymizer.
-    browser.current.injectJavaScript(`(()=>{const privacy=document.body.classList.contains('privacy-on');const data=privacy?window.StoryExport.scrub(window.__STORY_EXPORT__.data,{privateTopics:${page === "story-archive.html"}}):window.__STORY_EXPORT__.data;window.ReactNativeWebView.postMessage(JSON.stringify({type:'story-export',bridgeId:${JSON.stringify(bridgeId.current)},requestId:${JSON.stringify(id)},privacy,data}));})();true;`);
+    browser.current.injectJavaScript(storyExportScript(page, bridgeId.current, id));
   }
   const label = page === "story-archive.html" ? "档案馆" : page === "story-poster.html" ? "海报" : "内容年志";
   return <Modal visible animationType="slide" onRequestClose={onClose}><SafeAreaView style={[ui.screen, { backgroundColor: "#0c1220" }]}>
