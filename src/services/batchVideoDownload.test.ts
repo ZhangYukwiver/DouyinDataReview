@@ -108,7 +108,14 @@ describe("collector batch integration", () => {
     vi.useFakeTimers();
     const fetch = vi.fn().mockResolvedValueOnce(job("queued"))
       .mockResolvedValueOnce(job("running"))
-      .mockResolvedValueOnce(job("complete", { bytes: 5, fileName: "video.mp4" }))
+      .mockResolvedValueOnce(job("complete", {
+        bytes: 5,
+        fileName: "video.mp4",
+        evidence: [{
+          kind: "media", observedAt: "2026-10-28T08:42:45.000Z", host: "v3-dy-o.zjcdn.com", status: 206,
+          outcome: "downloaded", bytes: 5, declaredBytes: 5, sha256: "a".repeat(64), headers: { "x-cache": "MISS" },
+        }],
+      }))
       .mockResolvedValueOnce(new Response("video", { headers: { "Content-Type": "video/mp4" } }));
     vi.stubGlobal("fetch", fetch);
     const pending = loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal);
@@ -116,6 +123,7 @@ describe("collector batch integration", () => {
     const result = await pending;
     expect(await result.blob.text()).toBe("video");
     expect(result.fileName).toBe("video.mp4");
+    expect(result.evidence).toMatchObject([{ kind: "media", status: 206, host: "v3-dy-o.zjcdn.com", sha256: "a".repeat(64) }]);
     expect(fetch.mock.calls[0]?.[1].body).toBe(JSON.stringify({ url: record("111").url }));
     expect(fetch.mock.calls.every(([, init]) => init.headers.Authorization === "Bearer test-token")).toBe(true);
     expect(fetch.mock.lastCall?.[0]).toBe(`${connection.baseUrl}/v1/downloads/${id}/file`);
@@ -166,5 +174,26 @@ describe("ZIP export", () => {
     expect(Object.keys(entries)).toEqual(["001_.._相同标题.mp4", "002_.._相同标题.mp4"]);
     expect(Object.values(entries).map((bytes) => new TextDecoder().decode(bytes))).toEqual(["first", "second"]);
     expect(archive.type).toBe("application/zip");
+  });
+
+  it("adds a URL-free evidence manifest and stated limits to ZIPs when evidence is available", async () => {
+    const source = items();
+    source[0] = {
+      ...source[0]!, status: "complete",
+      file: {
+        ...file("first"),
+        evidence: [{
+          kind: "media", observedAt: "2026-10-28T08:42:45.000Z", host: "v3-dy-o.zjcdn.com", status: 206,
+          outcome: "downloaded", bytes: 5, declaredBytes: 5, sha256: "a".repeat(64),
+        }],
+      },
+    };
+    const archive = await createVideoBatchZip(source);
+    const entries = unzipSync(new Uint8Array(await archive.arrayBuffer()));
+    const manifestText = new TextDecoder().decode(entries["evidence.json"]);
+    const manifest = JSON.parse(manifestText);
+    expect(manifest.downloads).toMatchObject([{ fileName: "相同标题.mp4", bytes: 5, evidence: [{ kind: "media", status: 206, host: "v3-dy-o.zjcdn.com" }] }]);
+    expect(manifest.limitations).toEqual(expect.arrayContaining([expect.stringContaining("不代表平台的完整日志")]))
+    expect(manifestText).not.toMatch(/https?:\/\/|signature=|token=|cookie\s*[:=]|referer\s*[:=]/iu);
   });
 });

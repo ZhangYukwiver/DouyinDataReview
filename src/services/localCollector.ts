@@ -119,6 +119,29 @@ export interface CollectorSnapshot {
 
 export type VideoDownloadJobStatus = "queued" | "running" | "complete" | "failed";
 
+export interface VideoEvidenceEntry {
+  kind: "detail" | "media";
+  observedAt: string;
+  host: string | null;
+  status: number | null;
+  outcome: string;
+  accessible?: boolean | null;
+  businessStatus?: number | null;
+  reason?: string | null;
+  requestStartedAt?: string | null;
+  responseReceivedAt?: string | null;
+  elapsedMs?: number | null;
+  mediaSource?: string;
+  headers?: Record<string, string>;
+  bytes?: number | null;
+  declaredBytes?: number | null;
+  sha256?: string | null;
+  mediaIssuedAt?: string | null;
+  mediaExpiresAt?: string | null;
+  lifetimeSeconds?: number | null;
+  expirySource?: string | null;
+}
+
 export interface VideoDownloadJob {
   id: string;
   sourceUrl: string;
@@ -131,6 +154,7 @@ export interface VideoDownloadJob {
   updatedAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  evidence?: VideoEvidenceEntry[];
   /** Playback jobs only: grants the <video> element its stream without the session token. */
   streamKey?: string;
   /** Image posts only: pictures and music load directly; `live` marks a motion clip served through the stream. */
@@ -145,6 +169,7 @@ export type PlaybackMedia = string | ImageAlbum;
 export interface VideoDownloadFile {
   blob: Blob;
   fileName: string | null;
+  evidence?: VideoEvidenceEntry[];
 }
 
 export class LocalCollectorError extends Error {
@@ -870,6 +895,47 @@ function parseVideoDownloadJob(value: unknown): VideoDownloadJob {
   const images = Array.isArray(value.images)
     ? value.images.flatMap((image) => isObject(image) && https(image.url) ? [{ url: image.url, live: image.live === true }] : [])
     : [];
+  const evidenceHeaders = new Set([
+    "age", "cache-control", "content-length", "content-range", "content-type", "x-bdcdn-cache-status",
+    "x-cache", "x-oss-cdn-auth", "x-response-cache", "x-swift-cachetime", "x-swift-savetime",
+  ]);
+  const evidence = Array.isArray(value.evidence) ? value.evidence.flatMap((entry): VideoEvidenceEntry[] => {
+    if (!isObject(entry) || (entry.kind !== "detail" && entry.kind !== "media") || typeof entry.outcome !== "string") return [];
+    const status = typeof entry.status === "number" && Number.isSafeInteger(entry.status) ? entry.status : null;
+    const safeHeaders: Record<string, string> = {};
+    if (isObject(entry.headers)) {
+      for (const [key, item] of Object.entries(entry.headers)) {
+        const safeKey = key.toLowerCase();
+        if (evidenceHeaders.has(safeKey) && typeof item === "string") safeHeaders[safeKey] = item.slice(0, 256);
+      }
+    }
+    const optionalNumber = (item: unknown) => typeof item === "number" && Number.isSafeInteger(item) && item >= 0 ? item : null;
+    const optionalEvidenceString = (item: unknown) => typeof item === "string" ? item.slice(0, 256) : null;
+    return [{
+      kind: entry.kind,
+      observedAt: typeof entry.observedAt === "string" ? entry.observedAt : "",
+      host: optionalEvidenceString(entry.host),
+      status,
+      outcome: entry.outcome.slice(0, 80),
+      ...(typeof entry.accessible === "boolean" || entry.accessible === null ? { accessible: entry.accessible } : {}),
+      ...(typeof entry.businessStatus === "number" ? { businessStatus: entry.businessStatus } : {}),
+      ...(typeof entry.reason === "string" || entry.reason === null ? { reason: optionalEvidenceString(entry.reason) } : {}),
+      ...(entry.kind === "media" ? {
+        requestStartedAt: optionalEvidenceString(entry.requestStartedAt),
+        responseReceivedAt: optionalEvidenceString(entry.responseReceivedAt),
+        elapsedMs: optionalNumber(entry.elapsedMs),
+        mediaSource: typeof entry.mediaSource === "string" ? entry.mediaSource.slice(0, 40) : "unknown",
+        headers: safeHeaders ?? {},
+        bytes: optionalNumber(entry.bytes),
+        declaredBytes: optionalNumber(entry.declaredBytes),
+        sha256: typeof entry.sha256 === "string" && /^[\da-f]{64}$/iu.test(entry.sha256) ? entry.sha256.toLowerCase() : null,
+        mediaIssuedAt: optionalEvidenceString(entry.mediaIssuedAt),
+        mediaExpiresAt: optionalEvidenceString(entry.mediaExpiresAt),
+        lifetimeSeconds: optionalNumber(entry.lifetimeSeconds),
+        expirySource: optionalEvidenceString(entry.expirySource),
+      } : {}),
+    }];
+  }) : [];
   const createdAt = typeof value.createdAt === "string" ? value.createdAt : "";
   const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : createdAt;
   if (!createdAt || !updatedAt) throw new LocalCollectorError("invalid_response", "采集服务下载任务时间字段无效。");
@@ -887,6 +953,7 @@ function parseVideoDownloadJob(value: unknown): VideoDownloadJob {
     completedAt: optionalString(value.completedAt),
     ...(typeof value.streamKey === "string" ? { streamKey: value.streamKey } : {}),
     ...(images.length ? { images, music: https(value.music) ? value.music : null } : {}),
+    ...(evidence.length ? { evidence } : {}),
   };
 }
 
