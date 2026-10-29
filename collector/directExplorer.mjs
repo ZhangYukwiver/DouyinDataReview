@@ -91,6 +91,34 @@ export class DirectExplorer extends DouyinExplorer {
     if (this.sessions.size > 6) this.sessions.delete(this.sessions.keys().next().value);
     return this.snapshot(session);
   }
+  /** 在工作台里刷到的视频写进抖音观看历史，和网页进入一条视频时一样 */
+  async seen(input) {
+    const awemeId = String(input?.awemeId ?? ""), authorId = String(input?.authorId ?? "");
+    if (!/^\d{5,30}$/u.test(awemeId) || !/^\d{1,30}$/u.test(authorId)) throw new ExploreError("invalid_request", "作品或作者标识无效。", 400);
+    const api = await this.getApi({ security: true });
+    const acknowledgement = await directWrite(api, "history", { awemeId, authorId });
+    if (acknowledgement.status_code !== 0) throw new ExploreError("platform_rejected", "抖音没有记下这条观看记录。");
+    return { ok: true };
+  }
+  /** 播放器里的点赞 / 收藏：只发一个写请求，不开详情会话、不先读后读；抖音回执成功就算数 */
+  async react(input) {
+    const awemeId = String(input?.awemeId ?? "");
+    if (!/^\d{5,30}$/u.test(awemeId) || !["like", "collect"].includes(input?.action) || typeof input?.desired !== "boolean")
+      throw new ExploreError("invalid_request", "点赞或收藏请求无效。", 400);
+    const api = await this.getApi({ security: true });
+    let dispatched = false;
+    try {
+      const acknowledgement = await directWrite(api, input.action, { awemeId, desired: input.desired }, { onDispatch: () => { dispatched = true; } });
+      if (acknowledgement.status_code === 8) throw new ExploreError("login_required", "抖音登录已失效，请在登录窗口重新登录后再试。");
+      if (acknowledgement.status_code !== 0) throw new ExploreError("platform_rejected", "抖音没有接收这次操作，请稍后再试。");
+    } catch (error) {
+      // 已经发出去却没拿到回执：可能成了也可能没成，不能当失败退回
+      if (dispatched && !(error instanceof ExploreError)) return { outcome: "unknown", message: "结果没确认，稍后在抖音里看一眼。" };
+      throw error;
+    }
+    const label = input.action === "like" ? "点赞" : "收藏";
+    return { outcome: "confirmed", value: input.desired, message: input.desired ? `已${label}` : `已取消${label}` };
+  }
   async interact(input) {
     const session = this.sessions.get(input?.sessionId);
     if (!/^[\w-]{16,80}$/u.test(input?.requestId ?? "") || !["like", "collect", "follow", "comment", "share"].includes(input?.action))

@@ -27,6 +27,25 @@ describe("HTTP interactions", ()=>{
     if(action==="comment") expect(new URLSearchParams(options.data).get("text")).toBe("测试");
     await api.close();
   });
+  it("reuses the operation token for a few minutes and drops it once Douyin refuses a write",async()=>{
+    let status=0;
+    const {api,fetch}=directApiFixture(url=>url.pathname==="/service/2/abtest_config/" ? {headers:{"x-ware-csrf-token":"1,csrf"}} : {payload:{status_code:status}});
+    const csrf=()=>fetch.mock.calls.filter(([url])=>new URL(url).pathname==="/service/2/abtest_config/").length;
+    await directWrite(api,"like",{awemeId:id,desired:true}); await directWrite(api,"like",{awemeId:id,desired:false});
+    expect(csrf()).toBe(1);
+    status=8; await directWrite(api,"collect",{awemeId:id,desired:true});
+    status=0; await directWrite(api,"collect",{awemeId:id,desired:false});
+    expect(csrf()).toBe(2); await api.close();
+  });
+  it("records a watched video on the main site with the author and video id",async()=>{
+    const {api,fetch}=directApiFixture(url=>url.pathname==="/service/2/abtest_config/" ? {headers:{"x-ware-csrf-token":"1,csrf"}} : {payload:{status_code:0}});
+    await expect(directWrite(api,"history",{awemeId:id,authorId:"x"})).rejects.toMatchObject({code:"invalid_request"});
+    await directWrite(api,"history",{awemeId:id,authorId:"3723384264069184"});
+    const [url, options] = fetch.mock.calls.at(-1);
+    expect(new URL(url).origin+new URL(url).pathname).toBe("https://www.douyin.com/aweme/v1/web/history/write/");
+    expect(Object.fromEntries(new URLSearchParams(options.data))).toEqual({author_id:"3723384264069184",aweme_id:id});
+    expect(options.headers["bd-ticket-guard-client-data"]).toBeTruthy(); await api.close();
+  });
   it("rejects missing credentials or invalid targets without any network request",async()=>{
     const {api,fetch}=directApiFixture(()=>({}));
     await expect(directWrite(api,"follow",{uid:"123",secUid:api.session.secUid,desired:true})).rejects.toMatchObject({code:"invalid_request"});

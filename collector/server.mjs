@@ -763,7 +763,7 @@ export async function startCollectorServer({
       return;
     }
 
-    if (request.method === "POST" && ["/v1/explore/read", "/v1/explore/interact", "/v1/explore/video", "/v1/explore/close"].includes(url.pathname)) {
+    if (request.method === "POST" && ["/v1/explore/read", "/v1/explore/interact", "/v1/explore/react", "/v1/explore/seen", "/v1/explore/video", "/v1/explore/close"].includes(url.pathname)) {
       const controller = new AbortController();
       const abort = () => controller.abort();
       response.once("close", abort);
@@ -771,7 +771,7 @@ export async function startCollectorServer({
         const body = await readJsonBody(request);
         if (rejectWhileSwitching(response)) return;
         const operation = url.pathname.split("/").at(-1);
-        if (operation === "interact" && PUBLIC_ACTIONS.has(body?.action) && !writesEnabled) {
+        if ((operation === "interact" || operation === "react") && PUBLIC_ACTIONS.has(body?.action) && !writesEnabled) {
           sendJson(response, 403, { error: "writes_disabled", message: WRITES_DISABLED_MESSAGE });
           return;
         }

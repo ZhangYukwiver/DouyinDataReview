@@ -63,6 +63,17 @@ describe("code-based exploration", () => {
       .toEqual([["/aweme/v1/web/tab/feed/", "1", "0"], ["/aweme/v1/web/tab/feed/", "2", "2"]]);
     expect(second.hasMore).toBe(true);
   });
+  it("likes with a single write and never rolls back a write whose receipt was lost", async () => {
+    const csrf = { headers: { "x-ware-csrf-token": "1,csrf" } };
+    const { api, fetch } = directApiFixture((url) => url.pathname === "/service/2/abtest_config/" ? csrf : { payload: { status_code: 0 } });
+    const value = new DirectExplorer(null, async () => api);
+    await expect(value.react({ awemeId: id, action: "share", desired: true })).rejects.toMatchObject({ code: "invalid_request" });
+    await expect(value.react({ awemeId: id, action: "like", desired: true })).resolves.toEqual({ outcome: "confirmed", value: true, message: "已点赞" });
+    expect(fetch.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(["/service/2/abtest_config/", "/aweme/v1/web/commit/item/digg/"]);
+    const lost = directApiFixture((url) => url.pathname === "/service/2/abtest_config/" ? csrf : Promise.reject(new Error("connection closed")));
+    await expect(new DirectExplorer(null, async () => lost.api).react({ awemeId: id, action: "collect", desired: false })).resolves.toMatchObject({ outcome: "unknown" });
+    await api.close(); await lost.api.close();
+  });
   it("does not expand comment replies any more", async () => {
     const { value, api } = explorer(async () => ({ status_code: 0, comments: [{ cid: "1234567890", text: "评论" }], has_more: 0 }));
     const comments = await value.read({ kind: "comments", id });

@@ -26,6 +26,23 @@ describe("HTTP explorer adapter", () => {
     await expect(bridge.run({ kind: "users", query: "建筑" })).rejects.toMatchObject({ code: "browser_reconnect_required" });
     expect(bridge.busy).toBe(false);
   });
+  it("lets feed pages, reactions and watch marks run beside video preparation and syncs the library afterwards", async () => {
+    const { collector, api, bridge } = fixture();
+    collector.hasActiveVideoDownload = () => true;
+    collector.scheduleWatchHistoryRefresh = vi.fn(); collector.syncInteraction = vi.fn(async () => {});
+    bridge.explorer.read = vi.fn(async () => ({ kind: "feed" }));
+    bridge.explorer.seen = vi.fn(async () => ({ ok: true }));
+    bridge.explorer.react = vi.fn(async (input) => ({ outcome: "confirmed", value: input.desired }));
+    api.request.mockResolvedValue({ aweme_detail: { aweme_id: "7654321098765432100" } });
+    await expect(bridge.run({ kind: "feed" })).resolves.toEqual({ kind: "feed" });
+    await bridge.run({ awemeId: "7654321098765432100", authorId: "1" }, "seen");
+    expect(collector.scheduleWatchHistoryRefresh).toHaveBeenCalledOnce();
+    await bridge.run({ awemeId: "7654321098765432100", action: "collect", desired: true }, "react");
+    await vi.waitFor(() => expect(collector.syncInteraction).toHaveBeenCalledWith("favorite_videos", { aweme_id: "7654321098765432100" }, true), { timeout: 3_000 });
+    await expect(bridge.run({ kind: "users", query: "建筑" })).rejects.toMatchObject({ code: "collector_busy" });
+    collector.syncPromise = Promise.resolve();
+    await expect(bridge.run({ kind: "feed" })).rejects.toMatchObject({ code: "collector_busy" });
+  });
   it("refuses overlapping searches and waits for a running interaction before clearing sessions", async () => {
     const { bridge } = fixture();
     let finish;

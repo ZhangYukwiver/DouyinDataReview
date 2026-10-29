@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PersonalVideoRecord } from "../domain/personalRecords";
-import { closeExplore, interactExplore, readExplore, type ExplorePage } from "./explorer";
+import { closeExplore, interactExplore, reactExplore, readExplore, type ExplorePage } from "./explorer";
 import { LocalCollectorError } from "./localCollector";
-import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, waitForCollector } from "./videoFeed";
+import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, reactVideo, waitForCollector } from "./videoFeed";
 
-vi.mock("./explorer", () => ({ readExplore: vi.fn(), interactExplore: vi.fn(), closeExplore: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("./explorer", () => ({ readExplore: vi.fn(), interactExplore: vi.fn(), reactExplore: vi.fn(), closeExplore: vi.fn().mockResolvedValue(undefined) }));
 const connection = { baseUrl: "http://127.0.0.1:4765", token: "test-token" };
 const record: PersonalVideoRecord = { id: "record-1", title: "作品", author: "作者", occurredAt: null, url: "https://www.douyin.com/video/123456789", mediaType: "video" };
 const page: ExplorePage = { sessionId: "owned-comments", kind: "comments", items: [], profile: null, video: null, hasMore: true, limited: false };
@@ -30,6 +30,17 @@ describe("video feed", () => {
     const photo = { ...record, id: "photo", mediaType: "image" as const };
     expect(buildVideoFeed([photo, record, { ...record, id: "live", mediaType: "live" }, { ...record, id: "missing", url: null }, next], record)).toEqual([photo, record, next]);
     expect(buildVideoFeed([next], record)).toEqual([record, next]);
+  });
+});
+
+describe("player like and collect", () => {
+  it("sends one request with the wanted state and turns a refusal into an error", async () => {
+    vi.mocked(reactExplore).mockResolvedValueOnce({ outcome: "confirmed", value: true, message: "已点赞" });
+    await expect(reactVideo(connection, record, "like", true, new AbortController().signal)).resolves.toMatchObject({ value: true });
+    expect(reactExplore).toHaveBeenCalledWith(connection, { awemeId: "123456789", action: "like", desired: true });
+    expect(readExplore).not.toHaveBeenCalled();
+    vi.mocked(reactExplore).mockResolvedValueOnce({ outcome: "rejected", message: "抖音没有接收这次操作" });
+    await expect(reactVideo(connection, record, "collect", false, new AbortController().signal)).rejects.toThrow("抖音没有接收这次操作");
   });
 });
 

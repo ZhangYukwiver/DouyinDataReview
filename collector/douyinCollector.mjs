@@ -20,6 +20,7 @@ import {
   matchDouyinEndpoint,
   createEmptyRecords,
   mergeRecords,
+  normalizeAweme,
   normalizeDouyinResponse,
   normalizeRecord,
 } from "./normalizer.mjs";
@@ -1569,6 +1570,40 @@ export class DouyinCollector {
     });
     this.saveChain = task;
     return task;
+  }
+
+  // 工作台里点赞 / 收藏成功后同步本机「喜欢」「收藏」：点了放到最前面，取消就拿掉；整份读取时会整份替换，到时以抖音为准
+  async syncInteraction(type, aweme, present) {
+    const videoId = String(aweme?.aweme_id ?? "");
+    const record = present ? normalizeAweme(aweme, type, null) : null;
+    if (!videoId || (present && !record) || this.syncPromise) return;
+    await this.saveSnapshot((snapshot) => {
+      const rest = snapshot.records[type].filter((item) => item.videoId !== videoId);
+      return [{ ...snapshot.records, [type]: record ? [record, ...rest] : rest }, snapshot.warnings,
+        { directSync: snapshot.directSync, chatMessages: snapshot.chatMessages, chatConversations: snapshot.chatConversations }];
+    });
+  }
+
+  // 刷推荐记进抖音观看历史后，等几秒读回观看历史第一页并进本机：时间和抖音一致，下次读取不会重复；连着看几条只读一次
+  scheduleWatchHistoryRefresh() {
+    clearTimeout(this.watchHistoryTimer);
+    this.watchHistoryTimer = setTimeout(() => void this.refreshWatchHistoryHead().catch(() => {}), 4_000);
+    this.watchHistoryTimer.unref?.();
+  }
+
+  async refreshWatchHistoryHead() {
+    if (this.syncPromise) return;
+    const api = await this.ensureDirectApi({ history: true });
+    const { records } = normalizeDouyinResponse(matchDouyinEndpoint(DIRECT_HISTORY_ENDPOINT), await this.readDirectHistory(api, "0"));
+    if (this.syncPromise) return;
+    const known = (snapshot) => new Set(snapshot.records.watch_history.map((item) => item.id));
+    if (!records.some((item) => !known(this.snapshot).has(item.id))) return;
+    await this.saveSnapshot((snapshot) => {
+      const ids = known(snapshot);
+      const fresh = records.filter((item) => !ids.has(item.id));
+      return [{ ...snapshot.records, watch_history: [...fresh, ...snapshot.records.watch_history] }, snapshot.warnings,
+        { directSync: snapshot.directSync, chatMessages: snapshot.chatMessages, chatConversations: snapshot.chatConversations }];
+    });
   }
 
   assertSyncActive(runId) {

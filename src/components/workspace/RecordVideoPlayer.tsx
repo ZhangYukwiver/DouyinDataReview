@@ -1,10 +1,10 @@
 import React, { memo, useEffect, useRef, useState } from "react";
 import { Modal } from "react-native";
-import { ArrowUp, ArrowUpRight, Bookmark, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Forward, Heart, Link, MessageCircle, Music2, Pause, Play, Search, Smile, Volume2, VolumeX, X } from "lucide-react-native";
+import { ArrowUp, ArrowUpRight, Bookmark, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Forward, Heart, Link, Maximize, MessageCircle, Music2, Pause, Play, Search, Smile, Volume2, VolumeX, X } from "lucide-react-native";
 import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreComment, ExploreConnection, ExploreOutcome, ExplorePage, ExploreSharee } from "../../services/explorer";
-import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, waitForCollector } from "../../services/videoFeed";
+import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, reactVideo, waitForCollector } from "../../services/videoFeed";
 import { LocalCollectorError, type PlaybackMedia } from "../../services/localCollector";
 import "./RecordVideoPlayer.css";
 
@@ -29,23 +29,32 @@ type Props = {
   onReachEnd?: () => void;
   /** 顶栏「工作台」后面那几个字 */
   title?: string;
+  /** 一条视频开始播放时调用（推荐流用它把视频记进抖音观看历史） */
+  onSeen?: (record: PersonalVideoRecord) => void;
+  /** 推荐流上一批没要到时的原因，播放器里显示并给重试 */
+  feedError?: string | null;
 };
 
-export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnection = null, onOpenRecord, onClose, onReachEnd, title = "当前列表" }: Props) {
+export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnection = null, onOpenRecord, onClose, onReachEnd, title = "当前列表", onSeen, feedError = null }: Props) {
   // Freeze the opened list so background collection cannot reorder a playing feed; a growing feed only appends.
   const [feed, setFeed] = useState(() => buildVideoFeed(records ?? [record], record));
+  // 推荐流每来一批就接在后面；连着几批都没有能播的（全是直播、广告）就记下来，到 3 批先停，别一直空要
+  const [emptyBatches, setEmptyBatches] = useState(0);
+  const lastRecords = useRef(records);
   useEffect(() => {
-    if (!onReachEnd || !records) return;
-    setFeed((current) => {
-      const ids = new Set(current.map((item) => item.id));
-      const added = buildVideoFeed(records, record).filter((item) => !ids.has(item.id));
-      return added.length ? [...current, ...added] : current;
-    });
+    if (!onReachEnd || !records || records === lastRecords.current) return;
+    lastRecords.current = records;
+    const ids = new Set(feed.map((item) => item.id));
+    const added = buildVideoFeed(records, record).filter((item) => !ids.has(item.id));
+    setEmptyBatches((count) => added.length ? 0 : count + 1);
+    if (added.length) setFeed((current) => [...current, ...added.filter((item) => !current.some((known) => known.id === item.id))]);
   }, [records]);
   const [index, setIndex] = useState(() => Math.max(0, feed.findIndex((item) => item.id === record.id)));
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [muted, setMuted] = useState(false);
+  // 控制栏里的连播 / 清屏 / 倍速，换到下一条也保留
+  const [prefs, setPrefs] = useState<PlayerPrefs>({ autoNext: false, clean: false, rate: 1 });
   const active = feed[index]!;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<HTMLDivElement | null>(null);
@@ -63,7 +72,10 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
   };
   useEffect(() => { rootRef.current?.focus(); }, []);
   useEffect(() => { setShareOpen(false); }, [index]);
-  useEffect(() => { if (index >= feed.length - 3) onReachEnd?.(); }, [index, feed.length]);
+  // 剩不到 8 条就提前要下一批，来了还不够就接着要，一直补到前面有 8 条；出错或连着空了就停，等点重试
+  const stalled = emptyBatches >= 3 || Boolean(feedError);
+  useEffect(() => { if (!stalled && index >= feed.length - 8) onReachEnd?.(); }, [index, feed.length, records, stalled]);
+  const retryFeed = () => { setEmptyBatches(0); onReachEnd?.(); };
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -88,7 +100,7 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
         }
       }}>
       <div className="rv-layout" aria-label="视频播放器" role="dialog" aria-modal="true">
-        <div ref={viewerRef} className="rv-viewer"
+        <div ref={viewerRef} className={`rv-viewer${prefs.clean ? " rv-clean" : ""}`}
           onPointerDown={(event) => {
             swipe.current = null;
             suppressClick.current = false;
@@ -138,14 +150,18 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
           {/* The next video mounts hidden so it is resolved and buffering before the switch; anything else unmounts and is released. */}
           {feed.slice(index, index + 2).map((item, offset) => <Playback key={item.id} active={offset === 0} record={item} onLoadVideo={onLoadVideo}
             muted={muted} onToggleMute={() => setMuted((value) => !value)} commentsOpen={commentsOpen} onToggleComments={toggleComments} onOpenRecord={onOpenRecord}
-            shareOpen={shareOpen} onToggleShare={toggleShare}
-            commentsConnection={commentsConnection} position={`${index + offset + 1} / ${feed.length}`} title={title} onClose={onClose} />)}
+            shareOpen={shareOpen} onToggleShare={toggleShare} prefs={prefs} onPrefs={(patch) => setPrefs((value) => ({ ...value, ...patch }))} onEnded={() => move(1)} onSeen={onSeen}
+            commentsConnection={commentsConnection} title={title} onClose={onClose}
+            position={`${index + offset + 1} / ${feed.length}${index + offset < feed.length - 1 ? "" : !onReachEnd ? " · 已到最后" : stalled ? " · 暂时没有更多" : " · 正在加载更多"}`} />)}
+          {onReachEnd && stalled && index >= feed.length - 3 ? <div className="rv-feed-status" role="status">
+            <span>{feedError ? `推荐没加载出来：${feedError}` : "连着几批都是直播或广告，暂时没有能播的新视频。"}</span>
+            <button className="rv-button" onClick={retryFeed}>重试</button>
+          </div> : null}
+          {/* 上下切换放在控制栏最右边；推荐流到底时点「下一个」再要一次，上一批没要到也能重试 */}
           <nav className="rv-navigation" aria-label="切换视频">
-            <button className="rv-icon-button" aria-label="上一个视频" disabled={index === 0} onClick={() => move(-1)}><ChevronUp color="#fff" size={24} /></button>
-            {/* 推荐流到底时点「下一个」再要一次，上一批没要到也能重试 */}
+            <button className="rv-icon-button" aria-label="上一个视频" disabled={index === 0} onClick={() => move(-1)}><ChevronUp color="#fff" size={20} /></button>
             <button className="rv-icon-button" aria-label="下一个视频" disabled={index === feed.length - 1 && !onReachEnd}
-              onClick={() => index === feed.length - 1 ? onReachEnd?.() : move(1)}><ChevronDown color="#fff" size={24} /></button>
-            <span>{index < feed.length - 1 ? "上下滑动" : onReachEnd ? "正在加载更多" : "已到最后"}</span>
+              onClick={() => index === feed.length - 1 ? retryFeed() : move(1)}><ChevronDown color="#fff" size={20} /></button>
           </nav>
         </div>
       </div>
@@ -217,9 +233,16 @@ function DataStream() {
   return <><canvas ref={ref} className="rv-stream" aria-hidden="true" /><div className="rv-stream rv-stream-veil" aria-hidden="true" /></>;
 }
 
-function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, shareOpen, onToggleShare, commentsConnection, position, title, onClose, onOpenRecord }: {
+type PlayerPrefs = { autoNext: boolean; clean: boolean; rate: number };
+const RATES = [1, 1.25, 1.5, 2, 0.75];
+// 抖音电脑端那种标题：话题词单独上色；话题到空白、# 或标点为止（和采集器认话题的规则一样）
+const Caption = ({ text }: { text: string }) => <>{text.split(/(#[^#\s,，。！？!?;；~～]+)/u).map((part, i) => part.startsWith("#")
+  ? <span className="rv-tag" key={i}>{part}</span> : <EmojiText key={i} text={part} />)}</>;
+
+function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, shareOpen, onToggleShare, prefs, onPrefs, onEnded, onSeen, commentsConnection, position, title, onClose, onOpenRecord }: {
   active: boolean; record: PersonalVideoRecord; onLoadVideo: RecordVideoLoader; muted: boolean; onToggleMute: () => void;
   commentsOpen: boolean; onToggleComments: () => void; shareOpen: boolean; onToggleShare: () => void; commentsConnection: ExploreConnection | null;
+  prefs: PlayerPrefs; onPrefs: (patch: Partial<PlayerPrefs>) => void; onEnded: () => void; onSeen?: (record: PersonalVideoRecord) => void;
   position: string; title: string; onClose: () => void; onOpenRecord?: (url: string) => Promise<void>;
 }) {
   const [media, setMedia] = useState<PlaybackMedia | null>(null);
@@ -238,6 +261,34 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   const step = (direction: number) => { if (album) setSlide((value) => (value + direction + album.images.length) % album.images.length); };
   const loaderRef = useRef(onLoadVideo);
   loaderRef.current = onLoadVideo;
+  // 真开始放了才算看过：每次切到这条、画面出来时记一次（和网页一样，重看也会刷新时间）
+  const seenRef = useRef(onSeen);
+  seenRef.current = onSeen;
+  useEffect(() => { if (active && readyToPlay && !error) seenRef.current?.(record); }, [active, readyToPlay]);
+  // 点赞 / 收藏：初始状态来自列表（推荐流、探索带着；内容库的「喜欢」「收藏」本来就是点过的）
+  const initial = useRef({
+    like: (record as { liked?: boolean | null }).liked ?? (record.id.startsWith("liked_videos:") ? true : null),
+    collect: (record as { collected?: boolean | null }).collected ?? (record.id.startsWith("favorite_videos:") ? true : null),
+  }).current;
+  const [marks, setMarks] = useState(initial);
+  const [acting, setActing] = useState<"like" | "collect" | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(null), 3_500); return () => clearTimeout(timer); }, [toast]);
+  // 点下去立刻变色，后台只发一个请求；没成功就退回原样并说明原因，结果没确认就保持并提醒
+  const act = (action: "like" | "collect") => {
+    if (!commentsConnection || acting) return;
+    const before = marks[action];
+    const desired = !before;
+    setMarks((value) => ({ ...value, [action]: desired }));
+    setActing(action);
+    void reactVideo(commentsConnection, record, action, desired, AbortSignal.timeout(60_000))
+      .then((outcome) => { if (outcome.outcome !== "confirmed") setToast(outcome.message); })
+      .catch((cause) => { setMarks((value) => ({ ...value, [action]: before })); setToast(cause instanceof Error ? cause.message : "操作没成功，请稍后再试。"); })
+      .finally(() => setActing(null));
+  };
+  // 数字跟着自己的点赞 / 收藏加减一
+  const tally = (base: number | null | undefined, action: "like" | "collect") =>
+    base == null || marks[action] === initial[action] || marks[action] == null || initial[action] == null ? base : base + (marks[action] ? 1 : -1);
   useEffect(() => {
     const controller = new AbortController();
     const video = videoRef.current;
@@ -274,6 +325,7 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
     else { video.pause(); video.currentTime = 0; }
   }, [src, active]);
   useEffect(() => { if (error) videoRef.current?.pause(); }, [error]);
+  useEffect(() => { if (videoRef.current) videoRef.current.playbackRate = prefs.rate; }, [src, prefs.rate]);
   // 图文：配乐跟着播放和暂停走，每 4 秒翻一张，最后一张之后回到第一张（和视频循环一样）；划走就回到开头
   useEffect(() => {
     if (!album) return;
@@ -320,7 +372,8 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
           : <img key={i} src={image.url} alt="" hidden={i !== slide} referrerPolicy="no-referrer" draggable={false} />)}
         {album.music ? <audio ref={audioRef} src={album.music} loop muted={muted} preload="auto" /> : null}
       </div> : <video ref={videoRef} aria-label={`${record.title}，视频播放`} src={src ?? undefined} poster={record.coverUrl ?? undefined}
-        loop playsInline muted={muted} preload="auto" onClick={toggle} tabIndex={0}
+        loop={!prefs.autoNext} playsInline muted={muted} preload="auto" onClick={toggle} tabIndex={0}
+        onEnded={() => { if (active && prefs.autoNext) onEnded(); }}
         onLoadedData={() => setReadyToPlay(true)}
         onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
         onTimeUpdate={() => setElapsed(videoRef.current?.currentTime ?? 0)}
@@ -342,40 +395,56 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
         <div className="rv-avatar" aria-label={`作者：${record.author ?? "抖音用户"}`}>
           {record.authorAvatarUrl ? <img src={record.authorAvatarUrl} alt="" referrerPolicy="no-referrer" /> : <span>{(record.author ?? "抖").slice(0, 1)}</span>}
         </div>
-        <div className="rv-stat" aria-label={`获赞 ${count(record.stats?.diggCount)}`}><Heart color="#fff" fill="#fff" size={31} /><span>{count(record.stats?.diggCount)}</span></div>
-        <button className={`rv-stat ${commentsOpen ? "rv-selected" : ""}`} aria-label="查看评论" aria-expanded={commentsOpen} onClick={onToggleComments}>
-          <MessageCircle color={commentsOpen ? "#ff2c55" : "#fff"} fill={commentsOpen ? "#ff2c55" : "#fff"} size={31} /><span>{count(record.stats?.commentCount)}</span>
+        <button className={`rv-stat${marks.like ? " rv-selected" : ""}`} aria-label={marks.like ? "取消点赞" : "点赞"} aria-pressed={marks.like === true}
+          disabled={!commentsConnection || acting !== null} onClick={() => act("like")}>
+          <Heart color={marks.like ? "#fe2c55" : "#fff"} fill={marks.like ? "#fe2c55" : "#fff"} size={30} /><span>{count(tally(record.stats?.diggCount, "like"))}</span>
         </button>
-        <div className="rv-stat" aria-label={`收藏 ${count(record.stats?.collectCount)}`}><Bookmark color="#fff" fill="#fff" size={29} /><span>{count(record.stats?.collectCount)}</span></div>
+        <button className={`rv-stat ${commentsOpen ? "rv-selected" : ""}`} aria-label="查看评论" aria-expanded={commentsOpen} onClick={onToggleComments}>
+          <MessageCircle color={commentsOpen ? "#ff2c55" : "#fff"} fill={commentsOpen ? "#ff2c55" : "#fff"} size={30} /><span>{count(record.stats?.commentCount)}</span>
+        </button>
+        <button className={`rv-stat${marks.collect ? " rv-starred" : ""}`} aria-label={marks.collect ? "取消收藏" : "收藏"} aria-pressed={marks.collect === true}
+          disabled={!commentsConnection || acting !== null} onClick={() => act("collect")}>
+          <Bookmark color={marks.collect ? "#face15" : "#fff"} fill={marks.collect ? "#face15" : "#fff"} size={28} /><span>{count(tally(record.stats?.collectCount, "collect"))}</span>
+        </button>
         <button className="rv-stat" data-share-toggle aria-label="分享给朋友" aria-expanded={shareOpen} onClick={onToggleShare}>
           <Forward color={shareOpen ? "#ff2c55" : "#fff"} fill={shareOpen ? "#ff2c55" : "#fff"} size={30} /><span>{count(record.stats?.shareCount)}</span>
         </button>
-        {record.url && onOpenRecord ? <button className="rv-stat" aria-label="打开抖音原视频" onClick={() => void onOpenRecord(record.url!)}><ArrowUpRight color="#fff" size={32} /><span>原视频</span></button> : null}
+        {record.url && onOpenRecord ? <button className="rv-stat" aria-label="打开抖音原视频" onClick={() => void onOpenRecord(record.url!)}><ArrowUpRight color="#fff" size={30} /><span>原视频</span></button> : null}
       </aside>
       <div className="rv-caption">
-        <strong>@{record.author ?? "抖音用户"}</strong>
-        <p title={record.title}><EmojiText text={record.title} /></p>
-        {record.music?.title ? <div className="rv-music"><Music2 color="#fff" size={15} /><span>{record.music.title}{record.music.author ? ` · ${record.music.author}` : ""}</span></div> : null}
-        {record.publishedAt ? <small>{date(record.publishedAt)}</small> : null}
+        <strong>@{record.author ?? "抖音用户"}{record.publishedAt ? <small> · {date(record.publishedAt)}</small> : null}</strong>
+        <p title={record.title}><Caption text={record.title} /></p>
+        {record.music?.title ? <div className="rv-music"><Music2 color="#fff" size={14} /><span>{record.music.title}{record.music.author ? ` · ${record.music.author}` : ""}</span></div> : null}
       </div>
+      {/* 底部控制栏：顶上一条细进度线，左边播放和时间，右边连播、清屏、倍速、声音、全屏 */}
       <div className="rv-controls" data-feed-controls>
+        {album ? <div className="rv-album-dots">{album.images.map((_, i) => <button key={i} aria-label={`第 ${i + 1} 张`} aria-current={i === slide}
+          className={i <= slide ? "rv-on" : undefined} onClick={() => setSlide(i)} />)}</div>
+          : <input aria-label="视频进度" type="range" min={0} max={duration || 1} step={0.1} value={Math.min(elapsed, duration || 1)} disabled={!duration}
+            style={{ "--rv-played": `${duration ? Math.min(100, elapsed / duration * 100) : 0}%` } as React.CSSProperties}
+            onChange={(event) => { if (videoRef.current) { videoRef.current.currentTime = Number(event.target.value); setElapsed(Number(event.target.value)); } }} />}
         <div className="rv-control-row">
           <button className="rv-icon-button" aria-label={`${paused ? "播放" : "暂停"}${album ? "图文" : "视频"}`} disabled={!readyToPlay || Boolean(error)} onClick={toggle}>
-            {paused ? <Play color="#fff" fill="#fff" size={17} /> : <Pause color="#fff" fill="#fff" size={17} />}
+            {paused ? <Play color="#fff" fill="#fff" size={18} /> : <Pause color="#fff" fill="#fff" size={18} />}
           </button>
           {album ? <>
             <button className="rv-icon-button" aria-label="上一张" onClick={() => step(-1)}><ChevronLeft color="#fff" size={19} /></button>
             <span aria-live="polite">{slide + 1} / {album.images.length}</span>
             <button className="rv-icon-button" aria-label="下一张" onClick={() => step(1)}><ChevronRight color="#fff" size={19} /></button>
-          </> : <span>{time(elapsed)} / {time(duration)}</span>}
+          </> : <span className="rv-time">{time(elapsed)} <i>/</i> {time(duration)}</span>}
           <span className="rv-control-spacer" />
-          <button className="rv-icon-button" aria-label={muted ? "开启声音" : "静音"} onClick={onToggleMute}>{muted ? <VolumeX color="#fff" size={21} /> : <Volume2 color="#fff" size={21} />}</button>
+          <button className="rv-toggle" aria-pressed={prefs.autoNext} onClick={() => onPrefs({ autoNext: !prefs.autoNext })}><i />连播</button>
+          <button className="rv-toggle" aria-pressed={prefs.clean} onClick={() => onPrefs({ clean: !prefs.clean })}><i />清屏</button>
+          {album ? null : <button className="rv-text-control" aria-label={`播放速度 ${prefs.rate} 倍，点一下换`} onClick={() => onPrefs({ rate: RATES[(RATES.indexOf(prefs.rate) + 1) % RATES.length]! })}>
+            {prefs.rate === 1 ? "倍速" : `${prefs.rate}x`}</button>}
+          <button className="rv-icon-button" aria-label={muted ? "开启声音" : "静音"} onClick={onToggleMute}>{muted ? <VolumeX color="#fff" size={20} /> : <Volume2 color="#fff" size={20} />}</button>
+          <button className="rv-icon-button" aria-label="全屏" onClick={(event) => {
+            const layout = event.currentTarget.closest<HTMLElement>(".rv-layout");
+            void (document.fullscreenElement ? document.exitFullscreen() : layout?.requestFullscreen())?.catch(() => {});
+          }}><Maximize color="#fff" size={18} /></button>
         </div>
-        {album ? <div className="rv-album-dots">{album.images.map((_, i) => <button key={i} aria-label={`第 ${i + 1} 张`} aria-current={i === slide}
-          className={i <= slide ? "rv-on" : undefined} onClick={() => setSlide(i)} />)}</div>
-          : <input aria-label="视频进度" type="range" min={0} max={duration || 1} step={0.1} value={Math.min(elapsed, duration || 1)} disabled={!duration}
-            onChange={(event) => { if (videoRef.current) { videoRef.current.currentTime = Number(event.target.value); setElapsed(Number(event.target.value)); } }} />}
       </div>
+      {toast ? <p className="rv-toast" role="status">{toast}</p> : null}
       {active && shareOpen ? <VideoShare record={record} connection={commentsConnection} onClose={onToggleShare} /> : null}
     </div>
     {active && commentsOpen ? <VideoComments record={record} connection={commentsConnection} ready={Boolean(media || error)} onClose={onToggleComments} onOpenRecord={onOpenRecord} /> : null}

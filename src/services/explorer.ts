@@ -56,6 +56,14 @@ export async function readExplore(connection: ExploreConnection, query: ExploreQ
     throw new LocalCollectorError("invalid_response", "探索数据格式无效，请更新采集器。");
   return result;
 }
+/** 刷到的视频记进抖音观看历史（网页每进一条视频也会这样记） */
+export async function markExploreSeen(connection: ExploreConnection, input: { awemeId: string; authorId: string }): Promise<void> {
+  await request(connection, "seen", input);
+}
+/** 播放器里的点赞 / 收藏：只发一个请求，带上想要的状态 */
+export async function reactExplore(connection: ExploreConnection, input: { awemeId: string; action: "like" | "collect"; desired: boolean }): Promise<ExploreOutcome> {
+  return await request(connection, "react", input) as ExploreOutcome;
+}
 export async function interactExplore(connection: ExploreConnection, action: ExploreAction): Promise<ExploreOutcome> {
   const result = await request(connection, "interact", action) as ExploreOutcome;
   if (!result || !["confirmed", "unknown", "rejected"].includes(result.outcome))
