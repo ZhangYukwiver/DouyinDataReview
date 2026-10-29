@@ -12,6 +12,13 @@ const cursorOf = (payload, kind, cursor) => kind === "feed" ? String(Number(curs
 
 // Reuse the existing response normalizers and API contracts for HTTP reads and
 // writes. Credential bootstrap belongs to the collector's login session.
+/** 播放器离开一条时报的：看到第几毫秒、多长、看没看完 */
+function watchedItem(value) {
+  const awemeId = String(value?.awemeId ?? ""), { durationMs, positionMs, finished } = value ?? {};
+  return /^\d{5,30}$/u.test(awemeId) && Number.isSafeInteger(durationMs) && durationMs > 0 && Number.isSafeInteger(positionMs)
+    && positionMs >= 0 && typeof finished === "boolean" ? { awemeId, durationMs, positionMs: Math.min(positionMs, durationMs), finished } : false;
+}
+
 export class DirectExplorer extends DouyinExplorer {
   constructor(getContext, getApi, getChat) { super(getContext); this.getApi = getApi; this.getChat = getChat; }
   async read(input, { signal } = {}) {
@@ -92,11 +99,18 @@ export class DirectExplorer extends DouyinExplorer {
     return this.snapshot(session);
   }
   /** 在工作台里刷到的视频写进抖音观看历史，和网页进入一条视频时一样 */
+  // 和网页切下一条时一样：刚离开的那条是长视频就先存续播点，再记进入的这条，顺带说上一条看没看完。
+  // 关掉播放器时没有下一条，只存续播点。
   async seen(input) {
-    const awemeId = String(input?.awemeId ?? ""), authorId = String(input?.authorId ?? "");
-    if (!/^\d{5,30}$/u.test(awemeId) || !/^\d{1,30}$/u.test(authorId)) throw new ExploreError("invalid_request", "作品或作者标识无效。", 400);
+    const awemeId = input?.awemeId == null ? null : String(input.awemeId), authorId = String(input?.authorId ?? "");
+    const previous = input?.previous == null ? null : watchedItem(input.previous);
+    if (previous === false || (awemeId === null ? !previous : !/^\d{5,30}$/u.test(awemeId) || !/^\d{1,30}$/u.test(authorId)))
+      throw new ExploreError("invalid_request", "作品或作者标识无效。", 400);
     const api = await this.getApi({ security: true });
-    const acknowledgement = await directWrite(api, "history", { awemeId, authorId });
+    // ponytail: 网页实测只给几分钟以上的长视频存续播点，三分钟是按抖音历史里出现续播点的最短时长定的
+    if (previous && previous.durationMs >= 180_000) await directWrite(api, "progress", previous).catch(() => null);
+    if (!awemeId) return { ok: true };
+    const acknowledgement = await directWrite(api, "history", { awemeId, authorId, preItemId: previous?.awemeId, preItemSeen: previous?.finished });
     if (acknowledgement.status_code !== 0) throw new ExploreError("platform_rejected", "抖音没有记下这条观看记录。");
     return { ok: true };
   }

@@ -611,7 +611,9 @@ export function mergeRecords(existing, incoming) {
   if (stats) merged.stats = stats;
   const music = mergeNested(left.music, right.music, normalizeMusicObject);
   if (music) merged.music = music;
-  const progress = mergeNested(left.watchProgress, right.watchProgress, normalizeProgressObject);
+  // 抖音只存续播点，0 是「不知道」，别盖掉软件播放器记下的真实进度
+  const incomingProgress = right.watchProgress?.watchedSeconds > 0 || right.watchProgress?.percent > 0 ? right.watchProgress : null;
+  const progress = mergeNested(left.watchProgress, incomingProgress, normalizeProgressObject);
   if (progress) merged.watchProgress = progress;
   return merged;
 }

@@ -74,6 +74,28 @@ describe("code-based exploration", () => {
     await expect(new DirectExplorer(null, async () => lost.api).react({ awemeId: id, action: "collect", desired: false })).resolves.toMatchObject({ outcome: "unknown" });
     await api.close(); await lost.api.close();
   });
+  it("reports the video just left like the site: resume point for long ones, then the finish flag with the next write", async () => {
+    const csrf = { headers: { "x-ware-csrf-token": "1,csrf" } };
+    const { api, fetch } = directApiFixture((url) => url.pathname === "/service/2/abtest_config/" ? csrf : { payload: { status_code: 0 } });
+    const value = new DirectExplorer(null, async () => api);
+    const writes = () => fetch.mock.calls.filter(([url]) => new URL(url).pathname !== "/service/2/abtest_config/")
+      .map(([url, options]) => [new URL(url).pathname, Object.fromEntries(new URLSearchParams(options.data))]);
+    const prev = "7654321098765432101";
+    await value.seen({ awemeId: id, authorId: "123", previous: { awemeId: prev, positionMs: 1_308_033, durationMs: 1_337_089, finished: true } });
+    expect(writes()).toEqual([
+      ["/aweme/v1/web/play/progress/", { item_duration: "1337089", item_id: prev, item_progress: "1308033" }],
+      ["/aweme/v1/web/history/write/", { author_id: "123", aweme_id: id, pre_item_id: prev, pre_item_seen: "1" }],
+    ]);
+    fetch.mockClear();
+    await value.seen({ awemeId: id, authorId: "123", previous: { awemeId: prev, positionMs: 4_000, durationMs: 30_000, finished: false } });
+    expect(writes()).toEqual([["/aweme/v1/web/history/write/", { author_id: "123", aweme_id: id, pre_item_id: prev, pre_item_seen: "0" }]]);
+    fetch.mockClear();
+    await value.seen({ previous: { awemeId: prev, positionMs: 600_000, durationMs: 1_430_466, finished: false } });
+    expect(writes().map(([path]) => path)).toEqual(["/aweme/v1/web/play/progress/"]);
+    await expect(value.seen({})).rejects.toMatchObject({ code: "invalid_request" });
+    await expect(value.seen({ awemeId: id, authorId: "123", previous: { awemeId: prev, positionMs: -1, durationMs: 9, finished: true } })).rejects.toMatchObject({ code: "invalid_request" });
+    await api.close();
+  });
   it("does not expand comment replies any more", async () => {
     const { value, api } = explorer(async () => ({ status_code: 0, comments: [{ cid: "1234567890", text: "评论" }], has_more: 0 }));
     const comments = await value.read({ kind: "comments", id });

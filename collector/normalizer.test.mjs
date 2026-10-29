@@ -26,6 +26,11 @@ describe("watch completion label", () => {
     expect(normalizeRecord({ ...record, watchCompleted: "yes" })).not.toHaveProperty("watchCompleted");
     expect(mergeRecords({ ...record, watchCompleted: false }, record).watchCompleted).toBe(false);
   });
+  it("keeps the player's real progress when Douyin's copy only says 0", () => {
+    const played = { ...record, watchProgress: { watchedSeconds: 12, percent: 25 } };
+    expect(mergeRecords(played, { ...record, watchProgress: { watchedSeconds: 0, percent: 0 } }).watchProgress).toEqual({ watchedSeconds: 12, percent: 25 });
+    expect(mergeRecords(played, { ...record, watchProgress: { watchedSeconds: 30, percent: 62.5 } }).watchProgress).toEqual({ watchedSeconds: 30, percent: 62.5 });
+  });
 });
 
 describe("matchDouyinEndpoint", () => {
