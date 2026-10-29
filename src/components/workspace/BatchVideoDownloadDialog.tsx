@@ -86,6 +86,8 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
         <Text accessibilityRole="header" style={styles.title}>批量下载视频</Text>
         <Text accessibilityLiveRegion="polite" style={styles.meta}>共 {items.length} 个 · 已完成 {complete} · 失败 {failed} · 待下载 {pending}</Text>
         <Text style={styles.hint}>每批最多 50 个、合计 500 MB。下载完成后保存 ZIP；请保持此页面打开。</Text>
+        <Text style={styles.hint}>下载时会重新检查当前详情；公开且仍可访问的旧作品不受“发布后三小时”限制。约 3/24 小时是单条签名地址的估算有效期。详情拒绝时会停止，不复用旧地址；请确认自己有权保存和使用这些内容。</Text>
+        <Text style={styles.hint}>ZIP 会附带脱敏的请求证据 `evidence.json`，不含签名 URL 或 Cookie；作品变为不可访问后的应急取回不在本功能范围内。</Text>
         <View accessibilityRole="progressbar" accessibilityLabel="批量下载进度" accessibilityValue={{ min: 0, max: items.length, now: complete + failed }} aria-valuemin={0} aria-valuemax={items.length} aria-valuenow={complete + failed} style={styles.progress}>
           <View style={[styles.progressFill, { width: `${(complete + failed) / items.length * 100}%` }]} />
         </View>

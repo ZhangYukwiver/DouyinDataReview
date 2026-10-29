@@ -7,6 +7,14 @@ export const MAX_BATCH_VIDEOS = 50;
 export const MAX_BATCH_BYTES = 500 * 1024 * 1024;
 const BATCH_FULL = "本批已满 500 MB，请先保存 ZIP，剩下的放到下一批。";
 const ALONE_ONLY = "这个视频超过 500 MB，请单独下载。";
+const VIDEO_EVIDENCE_LIMITATIONS = [
+  "证据只记录本次进程观察到的详情与媒体响应，不代表平台的完整日志或授权证明。",
+  "每次下载会按当前登录会话重新检查详情；这不要求作品在发布后三小时内下载。约 3/24 小时指报告样本中单条签名媒体地址的有效期估算，不是作品期限。",
+  "详情拒绝、缺失或作品 ID 不匹配时停止；本实现不保存或复用旧签名地址，因此不支持作品变为不可访问后的应急取回。",
+  "签名媒体地址、Cookie、认证头、Referer 和完整查询参数不会写入证据文件。",
+  "过期时间仅按已识别的 expire 查询参数或 zjcdn 路径格式估算；其他格式可能无法识别。",
+  "CDN 缓存响应头只能说明本次响应的观测值，不能单独证明源站行为、缓存层级或内容权限。",
+];
 // 单个视频自己超限只算它失败，后面的照常下；只有「本批已满」才是队列级的
 const sizeLimit = (bytes: number) => bytes > MAX_BATCH_BYTES ? new LocalCollectorError("video_too_large", ALONE_ONLY) : new LocalCollectorError("batch_size_limit", BATCH_FULL);
 // 这两种失败和某个视频本身无关，再往下排只会逐个失败（还会白白重下一遍），所以停队列等用户处理
@@ -67,7 +75,7 @@ export async function loadBatchVideoFile(connection: ExploreConnection, record: 
   if (job.bytes !== null && job.bytes > remainingBytes) throw sizeLimit(job.bytes);
   const file = await fetchCollectorVideoFile(connection.baseUrl, connection.token, job.id, Math.max(1, deadline - Date.now()), signal);
   if (file.blob.size > remainingBytes) throw sizeLimit(file.blob.size);
-  return { ...file, fileName: file.fileName ?? job.fileName };
+  return { ...file, fileName: file.fileName ?? job.fileName, evidence: job.evidence ?? [] };
 }
 
 /** One active request at a time. A stop finishes the current file and preserves successes. */
@@ -123,6 +131,20 @@ export async function createVideoBatchZip(items: BatchItem[]): Promise<Blob> {
       }
       entry.push(new Uint8Array(0), true);
     } finally { reader.releaseLock(); }
+  }
+  const evidenceDownloads = items.flatMap((item) => item.status === "complete" && item.file?.evidence?.length
+    ? [{ fileName: item.file.fileName, bytes: item.file.blob.size, evidence: item.file.evidence }]
+    : []);
+  if (evidenceDownloads.length) {
+    const manifest = {
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      limitations: VIDEO_EVIDENCE_LIMITATIONS,
+      downloads: evidenceDownloads,
+    };
+    const entry = new ZipPassThrough("evidence.json");
+    zip.add(entry);
+    entry.push(new TextEncoder().encode(JSON.stringify(manifest, null, 2)), true);
   }
   zip.end();
   if (zipError) throw zipError;

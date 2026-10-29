@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { unzipSync } from "fflate";
@@ -208,6 +209,57 @@ describe("media candidate selection", () => {
     expect(result.media.url).toBe("https://v3-dy-o.zjcdn.com/video/1.mp4"); expect(context.newPage).not.toHaveBeenCalled();
     await expect(discoverDouyinVideo(context, "https://www.douyin.com/video/2345678901")).rejects.toMatchObject({ code: "content_unavailable" });
   });
+
+  it("stops on a private detail response instead of using a media URL observed on that page", async () => {
+    let responseHandler;
+    const evidence = vi.fn();
+    const oldSignedUrl = "https://p3.douyinvod.com/aweme/v1/play/video.mp4?expire=1790682605&signature=secret";
+    const page = {
+      addInitScript: async () => {},
+      context: () => ({ newCDPSession: async () => ({ on() {}, send: async () => {} }) }),
+      on: (_event, handler) => { responseHandler = handler; },
+      off: () => undefined,
+      goto: async () => {
+        await responseHandler({
+          url: () => "https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id=1234567890",
+          status: () => 200,
+          headers: () => ({ "content-type": "application/json" }),
+          ok: () => true,
+          json: async () => ({ aweme_detail: null, filter_reason: "status_self_see" }),
+        });
+        await responseHandler({
+          url: () => oldSignedUrl,
+          status: () => 206,
+          headers: () => ({ "content-type": "video/mp4" }),
+          ok: () => true,
+          json: async () => null,
+        });
+      },
+      url: () => "https://www.douyin.com/video/1234567890",
+      title: async () => "测试作品",
+      evaluate: async () => [{ url: oldSignedUrl, source: "performance-resource" }],
+      locator: () => null,
+      close: async () => undefined,
+    };
+
+    await expect(discoverDouyinVideo({ newPage: async () => page }, "https://www.douyin.com/video/1234567890", { onEvidence: evidence }))
+      .rejects.toMatchObject({ code: "content_unavailable" });
+    expect(evidence).toHaveBeenCalledWith(expect.objectContaining({ kind: "detail", accessible: false, reason: "visibility_restricted" }));
+    expect(JSON.stringify(evidence.mock.calls)).not.toContain("signature");
+  });
+
+  it("records a denied direct detail lookup and does not fall back to cached media", async () => {
+    const evidence = vi.fn();
+    const context = {
+      directApi: true,
+      request: vi.fn(async () => ({ aweme_detail: null, filter_reason: "status_self_see", status_code: 0 })),
+      newPage: vi.fn(),
+    };
+    await expect(discoverDouyinVideo(context, "https://www.douyin.com/video/1234567890", { onEvidence: evidence }))
+      .rejects.toMatchObject({ code: "content_unavailable" });
+    expect(evidence).toHaveBeenCalledWith(expect.objectContaining({ kind: "detail", accessible: false }));
+    expect(context.newPage).not.toHaveBeenCalled();
+  });
 });
 
 describe("fetchMediaStream", () => {
@@ -254,7 +306,57 @@ describe("downloadMediaFile", () => {
     });
     await expect(readFile(result.filePath)).resolves.toEqual(mp4);
     expect(result.fileName).toBe("示例视频-123.mp4");
+    expect(result.evidence).toMatchObject({
+      kind: "media",
+      status: 200,
+      outcome: "downloaded",
+      bytes: mp4.length,
+      declaredBytes: mp4.length,
+      sha256: createHash("sha256").update(mp4).digest("hex"),
+      headers: { "content-type": "video/mp4", "content-length": String(mp4.length) },
+    });
     expect(progress).toHaveBeenCalled();
+  });
+
+  it("rejects a partial 206 response instead of saving it as a complete video", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-video-partial-"));
+    temporaryDirectories.push(directory);
+    const evidence = vi.fn();
+    const partial = Buffer.from("\x00\x00\x00\x18ftypisompartial");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(partial, {
+      status: 206,
+      headers: { "Content-Type": "video/mp4", "Content-Length": String(partial.length), "Content-Range": `bytes 0-${partial.length - 1}/1000` },
+    })));
+
+    await expect(downloadMediaFile({
+      context: { cookies: vi.fn().mockResolvedValue([]) },
+      media: { url: "https://p3.douyinvod.com/aweme/v1/play/partial.mp4?signature=secret" },
+      outputDirectory: directory,
+      fileName: "partial.mp4",
+      onEvidence: evidence,
+    })).rejects.toMatchObject({ code: "media_incomplete_response" });
+    expect(evidence).toHaveBeenCalledWith(expect.objectContaining({ kind: "media", status: 206, outcome: "incomplete_response" }));
+    await expect(readFile(path.join(directory, "partial.mp4"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(JSON.stringify(evidence.mock.calls)).not.toContain("signature");
+  });
+
+  it("accepts a full-file 206 response when Content-Range declares the entire object", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-video-full-range-"));
+    temporaryDirectories.push(directory);
+    const mp4 = Buffer.from("\x00\x00\x00\x18ftypisomfull");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(mp4, {
+      status: 206,
+      headers: { "Content-Type": "video/mp4", "Content-Length": String(mp4.length), "Content-Range": `bytes 0-${mp4.length - 1}/${mp4.length}` },
+    })));
+
+    const result = await downloadMediaFile({
+      context: { cookies: vi.fn().mockResolvedValue([]) },
+      media: { url: "https://p3.douyinvod.com/aweme/v1/play/full.mp4" },
+      outputDirectory: directory,
+      fileName: "full.mp4",
+    });
+    expect(result.bytes).toBe(mp4.length);
+    expect(result.evidence).toMatchObject({ status: 206, outcome: "downloaded", declaredBytes: mp4.length });
   });
 
   it("reuses a valid existing file without another network request", async () => {

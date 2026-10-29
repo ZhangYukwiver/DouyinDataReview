@@ -961,6 +961,7 @@ export class DouyinCollector {
       startedAt: job.startedAt,
       completedAt: job.completedAt,
       ...(job.video ? { video: job.video } : {}),
+      ...(Array.isArray(job.evidence) && job.evidence.length ? { evidence: job.evidence.slice(-20) } : {}),
       ...(job.playback ? { streamKey: job.streamKey } : {}),
       // 图文播放：图片和配乐由播放器直接加载，实况短视频只给个有无，地址走 /stream?live=序号
       ...(job.stream?.images ? {
@@ -998,6 +999,7 @@ export class DouyinCollector {
       updatedAt: now,
       startedAt: null,
       completedAt: null,
+      evidence: [],
     };
     this.videoDownloadJobs.set(job.id, job);
     if (playback) {
@@ -1101,9 +1103,11 @@ export class DouyinCollector {
         outputDirectory: path.join(this.dataDirectory, "downloads"),
         signal: controller.signal,
         onProgress: (bytes) => this.touchVideoDownloadJob(job, { bytes }),
+        onEvidence: (entry) => this.touchVideoDownloadJob(job, { evidence: [...(job.evidence ?? []), entry].slice(-20) }),
       });
       this.touchVideoDownloadJob(job, {
         status: "complete",
+        ...(Array.isArray(result.evidence) && result.evidence.length ? { evidence: result.evidence.slice(-20) } : {}),
         video: result.videoId === undefined ? null : {
           videoId: result.videoId, title: result.title, author: result.author, durationSeconds: result.durationSeconds,
           publishedAt: result.publishedAt, stats: result.stats, tags: result.tags, cover: result.cover,

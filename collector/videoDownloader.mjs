@@ -7,6 +7,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { zipSync } from "fflate";
+import { makeVideoDetailEvidence, makeVideoMediaEvidence } from "./videoEvidence.mjs";
 
 const MAX_SOURCE_URL_LENGTH = 2_048;
 const MAX_TITLE_LENGTH = 90;
@@ -315,8 +316,50 @@ function bodyText(page) {
   return locator.innerText({ timeout: 3_000 }).catch(() => "");
 }
 
+function emitEvidence(onEvidence, evidence) {
+  if (typeof onEvidence !== "function") return;
+  try { onEvidence(evidence); } catch { /* Evidence must never interrupt the download flow. */ }
+}
+
+function videoIdFromUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.pathname.match(VIDEO_ID_PATTERN)?.[1]
+      ?? (/^\d+$/u.test(url.searchParams.get("modal_id") ?? "") ? url.searchParams.get("modal_id") : null);
+  } catch {
+    return null;
+  }
+}
+
+function classifyDetailPayload(payload, expectedVideoId) {
+  if (typeof payload?.status_code === "number" && payload.status_code !== 0) {
+    return { accessible: false, reason: "request_failed" };
+  }
+  const filterReason = String(payload?.filter_reason ?? payload?.aweme_detail?.filter_reason ?? "").toLowerCase();
+  if (/self_see|private|self_only|visibility|permission|forbidden/u.test(filterReason)) {
+    return { accessible: false, reason: "visibility_restricted" };
+  }
+  const detail = Object.hasOwn(payload ?? {}, "aweme_detail") ? payload.aweme_detail : payload;
+  if (!detail || typeof detail !== "object") return { accessible: false, reason: "detail_missing" };
+  const actualId = String(detail.aweme_id ?? detail.item_id ?? "").trim();
+  if (!actualId) return { accessible: false, reason: "detail_missing" };
+  if (expectedVideoId && actualId !== expectedVideoId) return { accessible: false, reason: "id_mismatch" };
+  return { accessible: true, reason: null };
+}
+
+function isCompleteContentRange(status, contentRange, declaredLength) {
+  if (status !== 206) return true;
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+)$/iu.exec(String(contentRange ?? "").trim());
+  if (!match) return false;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = Number(match[3]);
+  return start === 0 && Number.isSafeInteger(end) && Number.isSafeInteger(total)
+    && end + 1 === total && (!declaredLength || declaredLength === total);
+}
+
 /** Resolve through the signed HTTP client after login, without loading a page. */
-async function discoverDirectVideo(api, sourceUrl, { signal } = {}) {
+async function discoverDirectVideo(api, sourceUrl, { signal, onEvidence } = {}) {
   let canonicalUrl = normalizeDouyinVideoUrl(sourceUrl);
   let videoId;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
@@ -333,8 +376,21 @@ async function discoverDirectVideo(api, sourceUrl, { signal } = {}) {
     } finally { await response.dispose(); }
   }
   if (!/^\d{5,30}$/u.test(videoId ?? "")) throw invalidSource("分享链接未返回可识别的作品 ID。");
-  const payload = await api.request("/aweme/v1/web/aweme/detail/", { query: { aweme_id: videoId }, referer: canonicalUrl, signal });
-  if (String(payload.aweme_detail?.aweme_id) !== videoId) throw new VideoDownloadError("content_unavailable", "接口未返回这条作品，可能已删除或当前不可访问。", { retryable: false });
+  let payload;
+  try {
+    payload = await api.request("/aweme/v1/web/aweme/detail/", { query: { aweme_id: videoId }, referer: canonicalUrl, signal });
+  } catch (error) {
+    emitEvidence(onEvidence, makeVideoDetailEvidence({ observedAt: new Date().toISOString(), reason: "request_failed" }));
+    throw error;
+  }
+  const detailAccess = classifyDetailPayload(payload, videoId);
+  emitEvidence(onEvidence, makeVideoDetailEvidence({
+    observedAt: new Date().toISOString(),
+    accessible: detailAccess.accessible,
+    reason: detailAccess.reason,
+    businessStatus: typeof payload?.status_code === "number" ? payload.status_code : undefined,
+  }));
+  if (!detailAccess.accessible) throw new VideoDownloadError("content_unavailable", "当前详情接口未确认该作品可访问，已停止下载。", { retryable: false });
   const metadata = extractDouyinMetadata(payload, canonicalUrl);
   const candidates = collectDouyinMediaCandidates(payload);
   const album = extractDouyinAlbum(payload);
@@ -347,8 +403,9 @@ export async function discoverDouyinVideo(context, sourceUrl, {
   pageTimeoutMs = DEFAULT_PAGE_TIMEOUT_MS,
   mediaWaitMs = DEFAULT_MEDIA_WAIT_MS,
   signal,
+  onEvidence,
 } = {}) {
-  if (context?.directApi) return discoverDirectVideo(context, sourceUrl, { signal });
+  if (context?.directApi) return discoverDirectVideo(context, sourceUrl, { signal, onEvidence });
   signal?.throwIfAborted();
   const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
   if (!context || typeof context.newPage !== "function") {
@@ -362,20 +419,56 @@ export async function discoverDouyinVideo(context, sourceUrl, {
   const pending = new Set();
   let detailMeta = {};
   let album = null;
+  let detailAccess = "unknown";
   const add = (candidate) => pushCandidate(candidates, candidate);
   const onResponse = (response) => {
     const task = (async () => {
       const responseUrl = response.url();
       const headers = typeof response.headers === "function" ? response.headers() : {};
       const contentType = headers?.["content-type"] ?? "";
-      if (DETAIL_PATH_PATTERN.test(responseUrl) && response.ok()) {
-        const declaredLength = numberOrZero(headers?.["content-length"]);
-        if (declaredLength <= 24 * 1024 * 1024) {
-          const payload = await response.json().catch(() => null);
-          if (payload) {
-            collectDouyinMediaCandidates(payload, candidates);
-            detailMeta = { ...detailMeta, ...extractDouyinMetadata(payload, page.url()) };
-            album ??= extractDouyinAlbum(payload);
+      if (DETAIL_PATH_PATTERN.test(responseUrl)) {
+        const requestUrl = new URL(responseUrl);
+        const expectedVideoId = videoIdFromUrl(normalizedSourceUrl) || videoIdFromUrl(page.url());
+        const requestVideoId = requestUrl.searchParams.get("aweme_id")
+          ?? requestUrl.searchParams.get("item_id")
+          ?? requestUrl.searchParams.get("modal_id");
+        if (requestVideoId && expectedVideoId && requestVideoId !== expectedVideoId) return;
+        const responseStatus = typeof response.status === "function" ? response.status() : null;
+        const observedAt = new Date().toISOString();
+        if (!response.ok()) {
+          detailAccess = "denied";
+          emitEvidence(onEvidence, makeVideoDetailEvidence({
+            observedAt,
+            status: responseStatus,
+            accessible: false,
+            reason: "request_failed",
+          }));
+        } else {
+          const declaredLength = numberOrZero(headers?.["content-length"]);
+          if (declaredLength <= 24 * 1024 * 1024) {
+            const payload = await response.json().catch(() => null);
+            if (payload) {
+              const access = classifyDetailPayload(payload, expectedVideoId);
+              emitEvidence(onEvidence, makeVideoDetailEvidence({
+                observedAt,
+                status: responseStatus,
+                accessible: access.accessible,
+                reason: access.reason,
+                businessStatus: typeof payload?.status_code === "number" ? payload.status_code : undefined,
+              }));
+              if (!access.accessible) {
+                detailAccess = "denied";
+              } else if (detailAccess !== "denied") {
+                detailAccess = "accessible";
+                collectDouyinMediaCandidates(payload, candidates);
+                detailMeta = { ...detailMeta, ...extractDouyinMetadata(payload, page.url()) };
+                album ??= extractDouyinAlbum(payload);
+              }
+            } else {
+              emitEvidence(onEvidence, makeVideoDetailEvidence({ observedAt, status: responseStatus, reason: "detail_unconfirmed" }));
+            }
+          } else {
+            emitEvidence(onEvidence, makeVideoDetailEvidence({ observedAt, status: responseStatus, reason: "detail_unconfirmed" }));
           }
         }
       }
@@ -430,6 +523,10 @@ export async function discoverDouyinVideo(context, sourceUrl, {
     }
     await Promise.allSettled([...pending]);
     signal?.throwIfAborted();
+
+    if (detailAccess !== "accessible") {
+      throw new VideoDownloadError("content_unavailable", "当前详情接口未确认该作品对登录账号可访问，已停止下载。", { retryable: false });
+    }
 
     for (const candidate of await runtimeMediaCandidates(page)) add(candidate);
     const canonicalUrl = page.url();
@@ -530,6 +627,7 @@ export async function downloadMediaFile({
   userAgent,
   signal,
   onProgress,
+  onEvidence,
   maxBytes = MAX_MEDIA_BYTES,
   timeoutMs = DEFAULT_DOWNLOAD_TIMEOUT_MS,
 } = {}) {
@@ -564,8 +662,34 @@ export async function downloadMediaFile({
   const timer = setTimeout(() => controller.abort(new Error("download_timeout")), timeoutMs);
   const temporaryPath = `${finalPath}.${process.pid}.${Date.now()}.part`;
   let bytes = 0;
+  let requestStartedAt = null;
+  let responseReceivedAt = null;
+  let responseStatus = null;
+  let responseHeaders = null;
+  let declaredBytes = null;
+  let evidenceOutcome = "network_error";
+  let evidence = null;
+  const recordEvidence = (outcome = evidenceOutcome, sha256 = null) => {
+    if (evidence) return evidence;
+    evidence = makeVideoMediaEvidence({
+      mediaUrl: media.url,
+      mediaSource: media.source,
+      requestStartedAt,
+      responseReceivedAt,
+      responseStatus,
+      responseHeaders,
+      outcome,
+      bytes,
+      declaredBytes,
+      sha256,
+    });
+    emitEvidence(onEvidence, evidence);
+    return evidence;
+  };
+  let digest = null;
   try {
     const cookies = await fetchCookieHeader(context, media.url);
+    requestStartedAt = new Date().toISOString();
     const response = await fetch(media.url, {
       redirect: "follow",
       signal: controller.signal,
@@ -576,18 +700,34 @@ export async function downloadMediaFile({
         ...(cookies ? { Cookie: cookies } : {}),
       },
     });
+    responseReceivedAt = new Date().toISOString();
+    responseStatus = response.status;
+    responseHeaders = response.headers;
     if (!response.ok || !response.body) {
+      evidenceOutcome = "http_error";
+      await response.body?.cancel().catch(() => undefined);
       throw new VideoDownloadError("media_http_error", `抖音媒体地址返回 HTTP ${response.status}。`);
     }
     const resolvedMediaUrl = response.url || media.url;
     if (!isAllowedMediaUrl(resolvedMediaUrl)) {
+      evidenceOutcome = "redirect_blocked";
+      await response.body.cancel().catch(() => undefined);
       throw new VideoDownloadError("media_redirect_blocked", "抖音媒体地址重定向到了不受支持的域名。", { retryable: false });
     }
     const declaredLength = numberOrZero(response.headers.get("content-length"));
+    declaredBytes = declaredLength || null;
+    if (!isCompleteContentRange(response.status, response.headers.get("content-range"), declaredLength)) {
+      evidenceOutcome = "incomplete_response";
+      await response.body.cancel().catch(() => undefined);
+      throw new VideoDownloadError("media_incomplete_response", "媒体服务只返回了部分内容，未将其保存为完整视频。", { retryable: true });
+    }
     if (declaredLength > maxBytes) {
+      evidenceOutcome = "media_too_large";
+      await response.body.cancel().catch(() => undefined);
       throw new VideoDownloadError("media_too_large", "视频文件超过本地安全大小限制。", { retryable: false });
     }
 
+    const hash = createHash("sha256");
     const limiter = new Transform({
       transform(chunk, encoding, callback) {
         bytes += chunk.length;
@@ -595,6 +735,7 @@ export async function downloadMediaFile({
           callback(new VideoDownloadError("media_too_large", "视频文件超过本地安全大小限制。", { retryable: false }));
           return;
         }
+        hash.update(chunk);
         onProgress?.(bytes);
         callback(null, chunk, encoding);
       },
@@ -605,20 +746,28 @@ export async function downloadMediaFile({
       createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 }),
     );
     if (!(await hasVideoSignature(temporaryPath))) {
+      evidenceOutcome = "invalid_media";
       throw new VideoDownloadError("invalid_media", "下载结果不是可识别的视频文件。", { retryable: false });
     }
+    digest = hash.digest("hex");
     await rm(finalPath, { force: true });
     await rename(temporaryPath, finalPath);
-    return { filePath: finalPath, fileName: safeName, bytes, skipped: false };
+    evidenceOutcome = "downloaded";
+    recordEvidence(evidenceOutcome, digest);
+    return { filePath: finalPath, fileName: safeName, bytes, skipped: false, evidence };
   } catch (error) {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
+    if (evidenceOutcome === "network_error" && error instanceof VideoDownloadError) evidenceOutcome = error.code;
     if (error instanceof VideoDownloadError) throw error;
     if (controller.signal.aborted) {
       const code = controller.signal.reason?.message === "download_timeout" ? "download_timeout" : "download_aborted";
+      evidenceOutcome = code;
       throw new VideoDownloadError(code, code === "download_timeout" ? "视频下载超时，请稍后重试。" : "视频下载已取消。");
     }
+    evidenceOutcome = "network_error";
     throw new VideoDownloadError("media_download_failed", "视频文件下载失败，请稍后重试。");
   } finally {
+    recordEvidence();
     clearTimeout(timer);
     signal?.removeEventListener("abort", abortFromCaller);
   }
@@ -667,8 +816,9 @@ export async function downloadDouyinVideo({
   pageTimeoutMs,
   mediaWaitMs,
   timeoutMs,
+  onEvidence,
 } = {}) {
-  const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal });
+  const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal, onEvidence });
   signal?.throwIfAborted();
   const fileName = makeVideoFileName({
     title: parsed.title,
@@ -678,7 +828,7 @@ export async function downloadDouyinVideo({
   const referer = parsed.canonicalUrl || "https://www.douyin.com/";
   const downloaded = parsed.images
     ? await downloadImageAlbum({ images: parsed.images, outputDirectory, fileName: fileName.replace(/\.mp4$/u, ".zip"), referer, signal, onProgress })
-    : await downloadMediaFile({ context, media: parsed.media, outputDirectory, fileName, referer, signal, onProgress, timeoutMs });
+    : await downloadMediaFile({ context, media: parsed.media, outputDirectory, fileName, referer, signal, onProgress, onEvidence, timeoutMs });
   return { ...parsed, ...downloaded };
 }
 
