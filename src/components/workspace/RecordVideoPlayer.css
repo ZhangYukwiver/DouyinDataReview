@@ -5,7 +5,9 @@
 .rv-backdrop button:focus-visible, .rv-backdrop input:focus-visible, .rv-backdrop video:focus-visible, .rv-comment-list:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
 .rv-layout { width: min(1180px,100%); height: min(900px,calc(100dvh - 48px)); overflow: hidden; border-radius: 18px; background: #101013; box-shadow: 0 24px 100px #000; }
 .rv-viewer { display: flex; position: relative; justify-content: center; height: 100%; overflow: clip; touch-action: pan-x pinch-zoom; }
-.rv-ambient { position: absolute; inset: -50px; background-size: cover; background-position: center; filter: blur(35px) brightness(.22); pointer-events: none; }
+/* 黑底数据流：画在 canvas 上，再盖一层遮罩把画面附近压暗，加一点扫描线 */
+.rv-stream { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.rv-stream-veil { background: linear-gradient(90deg, #0000 0%, #050507b3 38%, #050507 46%, #050507 54%, #050507b3 62%, #0000 100%), repeating-linear-gradient(0deg, #ffffff04 0 1px, #0000 1px 3px); }
 .rv-stage { position: relative; flex-shrink: 1; height: 100%; aspect-ratio: 9 / 16; min-width: 0; max-width: 100%; background: #000; animation: rv-enter .2s ease-out; user-select: none; }
 .rv-stage video { display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
 .rv-album { position: absolute; inset: 0; cursor: pointer; }

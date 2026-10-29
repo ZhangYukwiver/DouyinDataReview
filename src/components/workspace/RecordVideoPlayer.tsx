@@ -25,11 +25,23 @@ type Props = {
   commentsConnection?: ExploreConnection | null;
   onOpenRecord?: (url: string) => Promise<void>;
   onClose: () => void;
+  /** 推荐流：快到末尾时要下一批，records 里新来的接在后面 */
+  onReachEnd?: () => void;
+  /** 顶栏「工作台」后面那几个字 */
+  title?: string;
 };
 
-export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnection = null, onOpenRecord, onClose }: Props) {
-  // Freeze the opened list so background collection cannot reorder a playing feed.
-  const [feed] = useState(() => buildVideoFeed(records ?? [record], record));
+export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnection = null, onOpenRecord, onClose, onReachEnd, title = "当前列表" }: Props) {
+  // Freeze the opened list so background collection cannot reorder a playing feed; a growing feed only appends.
+  const [feed, setFeed] = useState(() => buildVideoFeed(records ?? [record], record));
+  useEffect(() => {
+    if (!onReachEnd || !records) return;
+    setFeed((current) => {
+      const ids = new Set(current.map((item) => item.id));
+      const added = buildVideoFeed(records, record).filter((item) => !ids.has(item.id));
+      return added.length ? [...current, ...added] : current;
+    });
+  }, [records]);
   const [index, setIndex] = useState(() => Math.max(0, feed.findIndex((item) => item.id === record.id)));
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -51,6 +63,7 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
   };
   useEffect(() => { rootRef.current?.focus(); }, []);
   useEffect(() => { setShareOpen(false); }, [index]);
+  useEffect(() => { if (index >= feed.length - 3) onReachEnd?.(); }, [index, feed.length]);
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -121,16 +134,18 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
             event.preventDefault();
             event.stopPropagation();
           }}>
-          {active.coverUrl ? <div className="rv-ambient" style={{ backgroundImage: `url(${JSON.stringify(active.coverUrl)})` }} aria-hidden="true" /> : null}
+          <DataStream />
           {/* The next video mounts hidden so it is resolved and buffering before the switch; anything else unmounts and is released. */}
           {feed.slice(index, index + 2).map((item, offset) => <Playback key={item.id} active={offset === 0} record={item} onLoadVideo={onLoadVideo}
             muted={muted} onToggleMute={() => setMuted((value) => !value)} commentsOpen={commentsOpen} onToggleComments={toggleComments} onOpenRecord={onOpenRecord}
             shareOpen={shareOpen} onToggleShare={toggleShare}
-            commentsConnection={commentsConnection} position={`${index + offset + 1} / ${feed.length}`} onClose={onClose} />)}
+            commentsConnection={commentsConnection} position={`${index + offset + 1} / ${feed.length}`} title={title} onClose={onClose} />)}
           <nav className="rv-navigation" aria-label="切换视频">
             <button className="rv-icon-button" aria-label="上一个视频" disabled={index === 0} onClick={() => move(-1)}><ChevronUp color="#fff" size={24} /></button>
-            <button className="rv-icon-button" aria-label="下一个视频" disabled={index === feed.length - 1} onClick={() => move(1)}><ChevronDown color="#fff" size={24} /></button>
-            <span>{index === feed.length - 1 ? "已到最后" : "上下滑动"}</span>
+            {/* 推荐流到底时点「下一个」再要一次，上一批没要到也能重试 */}
+            <button className="rv-icon-button" aria-label="下一个视频" disabled={index === feed.length - 1 && !onReachEnd}
+              onClick={() => index === feed.length - 1 ? onReachEnd?.() : move(1)}><ChevronDown color="#fff" size={24} /></button>
+            <span>{index < feed.length - 1 ? "上下滑动" : onReachEnd ? "正在加载更多" : "已到最后"}</span>
           </nav>
         </div>
       </div>
@@ -138,10 +153,74 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
   </Modal>;
 }
 
-function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, shareOpen, onToggleShare, commentsConnection, position, onClose, onOpenRecord }: {
+const HEX = "0123456789abcdef";
+const pick = (from: string) => from[Math.floor(Math.random() * from.length)]!;
+type Drop = { x: number; head: number; speed: number; length: number; binary: boolean; tint: boolean; glyphs: string[] };
+type Dump = { x: number; y: number; text: string; life: number };
+
+// 播放器底下的黑底数据流：纯装饰。字压得很暗、越靠近画面越淡（遮罩在 CSS）。字本来就一行一行跳，12.5 帧一秒就够，减少动态时只画一帧不动。
+function DataStream() {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = ref.current, context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    const COLUMN = 20, ROW = 15;
+    let width = 0, height = 0, drops: Drop[] = [], dumps: Dump[] = [], frame = 0, last = 0;
+    const glyph = (binary: boolean) => binary ? pick("01") : pick(HEX) + pick(HEX);
+    const drop = (x: number, top = false): Drop => {
+      const binary = Math.random() < 0.3;
+      return { x, binary, tint: Math.random() < 0.05, head: top ? -Math.random() * 30 : Math.random() * height / ROW,
+        speed: 0.1 + Math.random() * 0.35, length: 6 + Math.floor(Math.random() * 18),
+        glyphs: Array.from({ length: 48 }, () => glyph(binary)) };
+    };
+    const resize = () => {
+      // 只是暗底纹，按 1 倍像素画，字略软反而不抢眼，也省一大半填充
+      width = canvas.width = canvas.clientWidth; height = canvas.height = canvas.clientHeight;
+      // 画面正后方的列看不见，不画；其余每列两三股错开往下流：铺得密，但每个字都很暗
+      const stage = Math.min(width, height * 9 / 16), left = (width - stage) / 2;
+      const xs = Array.from({ length: Math.ceil(width / COLUMN) }, (_, i) => i * COLUMN + 3).filter((x) => x + COLUMN < left || x > left + stage);
+      drops = Array.from({ length: Math.ceil(xs.length * 2.4) }, (_, i) => drop(xs[i % xs.length]!));
+      dumps = [];
+    };
+    const draw = () => {
+      context.fillStyle = "#050507"; context.fillRect(0, 0, width, height);
+      context.font = '11px ui-monospace, "SF Mono", Menlo, Consolas, monospace'; context.textBaseline = "top";
+      for (const [i, item] of drops.entries()) {
+        item.head += item.speed;
+        if ((item.head - item.length) * ROW > height) { drops[i] = drop(item.x, true); continue; }
+        if (Math.random() < 0.03) item.glyphs[Math.floor(Math.random() * 48)] = glyph(item.binary);
+        for (let k = 0; k < item.length; k += 1) {
+          const row = Math.floor(item.head) - k;
+          if (row < 0) break;
+          const fade = 1 - k / item.length;
+          context.fillStyle = k === 0 ? item.tint ? "rgba(120,210,255,.5)" : "rgba(225,230,238,.42)" : `rgba(200,206,216,${(0.19 * fade).toFixed(3)})`;
+          context.fillText(item.glyphs[row % 48]!, item.x, row * ROW);
+        }
+      }
+      // 偶尔横着打出一行内存转储，慢慢淡掉
+      if (Math.random() < 0.05) dumps.push({ x: Math.random() * width * 0.7, y: Math.floor(Math.random() * height / ROW) * ROW, life: 1,
+        text: `0x${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0")}  ${Array.from({ length: 6 + Math.floor(Math.random() * 10) }, () => glyph(false)).join(" ")}` });
+      dumps = dumps.filter((line) => (line.life -= 0.02) > 0);
+      for (const line of dumps) { context.fillStyle = `rgba(200,206,216,${(0.17 * line.life).toFixed(3)})`; context.fillText(line.text, line.x, line.y); }
+    };
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const loop = (now: number) => {
+      frame = requestAnimationFrame(loop);
+      if (now - last >= 80) { last = now; draw(); }
+    };
+    const observer = new ResizeObserver(() => { resize(); draw(); });
+    observer.observe(canvas);
+    if (!still) frame = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); };
+  }, []);
+  // 遮罩单独一层紧跟在 canvas 后面，才会在画面底下而不是盖在画面上
+  return <><canvas ref={ref} className="rv-stream" aria-hidden="true" /><div className="rv-stream rv-stream-veil" aria-hidden="true" /></>;
+}
+
+function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, shareOpen, onToggleShare, commentsConnection, position, title, onClose, onOpenRecord }: {
   active: boolean; record: PersonalVideoRecord; onLoadVideo: RecordVideoLoader; muted: boolean; onToggleMute: () => void;
   commentsOpen: boolean; onToggleComments: () => void; shareOpen: boolean; onToggleShare: () => void; commentsConnection: ExploreConnection | null;
-  position: string; onClose: () => void; onOpenRecord?: (url: string) => Promise<void>;
+  position: string; title: string; onClose: () => void; onOpenRecord?: (url: string) => Promise<void>;
 }) {
   const [media, setMedia] = useState<PlaybackMedia | null>(null);
   const [slide, setSlide] = useState(0);
@@ -256,7 +335,7 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
       </div> : paused ? <button className="rv-play-overlay" aria-label="开始播放" onClick={toggle}><Play color="#fff" fill="#fff" size={48} /></button> : null}
       <header className="rv-topbar">
         <button className="rv-icon-button" aria-label="关闭视频" onClick={onClose}><X color="#fff" size={24} /></button>
-        <span className="rv-heading">工作台<span>当前列表</span></span>
+        <span className="rv-heading">工作台<span>{title}</span></span>
         <span className="rv-position" aria-live="polite" aria-label="当前视频序号">{position}</span>
       </header>
       <aside className="rv-actions" aria-label="作品信息与操作">

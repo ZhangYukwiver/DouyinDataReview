@@ -16,7 +16,7 @@ export interface ExploreComment {
 }
 /** Someone in the site's "分享给朋友" list; groups share the same id space as people. */
 export interface ExploreSharee { id: string; name: string; avatar: string | null; group: boolean | null; shared: boolean }
-export type ExploreKind = "users" | "videos" | "profile" | "detail" | "comments" | "sharees";
+export type ExploreKind = "users" | "videos" | "profile" | "detail" | "comments" | "sharees" | "feed";
 export interface ExploreQuery { kind: ExploreKind; query?: string; id?: string; sessionId?: string }
 export interface ExplorePage {
   sessionId: string; kind: ExploreKind; items: Array<ExploreUser | ExploreVideo | ExploreComment | ExploreSharee>;

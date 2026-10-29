@@ -51,6 +51,18 @@ describe("code-based exploration", () => {
     await expect(value.read({ kind: "detail", id: "1234567890" })).rejects.toMatchObject({ code: "schema_changed" });
     expect(value.sessions.size).toBe(1);
   });
+  it("pages the home feed by refresh index and leaves out lives and ads", async () => {
+    const playable = (videoId, extra = {}) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } }, ...extra });
+    const { value, api } = explorer(async (_path, { query }) => ({ status_code: 0, has_more: 1, aweme_list: [
+      playable(`${query.refresh_index}000000000000000001`), playable(`${query.refresh_index}000000000000000002`, { is_ads: true }),
+      { ...rawVideo(`${query.refresh_index}000000000000000003`), cell_room: {} }] }));
+    const first = await value.read({ kind: "feed" });
+    const second = await value.read({ kind: "feed", sessionId: first.sessionId });
+    expect(second.items.map((item) => item.videoId)).toEqual(["1000000000000000001", "2000000000000000001"]);
+    expect(api.request.mock.calls.map(([pathname, { query }]) => [pathname, query.refresh_index, query.pull_type]))
+      .toEqual([["/aweme/v1/web/tab/feed/", "1", "0"], ["/aweme/v1/web/tab/feed/", "2", "2"]]);
+    expect(second.hasMore).toBe(true);
+  });
   it("does not expand comment replies any more", async () => {
     const { value, api } = explorer(async () => ({ status_code: 0, comments: [{ cid: "1234567890", text: "评论" }], has_more: 0 }));
     const comments = await value.read({ kind: "comments", id });
