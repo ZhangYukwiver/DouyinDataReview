@@ -17,7 +17,7 @@ it("uses the real story sources with safely embedded data and self-contained off
     expect(html).not.toContain("这台电脑");
     expect(html).toContain("\\u003c/script> $& $$");
     expect(/^[ \t]*<script src=/mu.test(html)).toBe(false);
-    for (const [, source] of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/giu)) expect(() => new Script(source!)).not.toThrow();
+    for (const [, source] of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/giu)) expect(() => new Script(source!)).not.toThrow();
     if (page === "story-entry.html") expect(html).toContain("LOCAL SNAPSHOT");
     if (page === "story-draft_副本.html") expect(html).toContain('"sky-s0-dawn":"data:image/jpeg;base64,');
   }
