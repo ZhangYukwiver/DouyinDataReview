@@ -119,12 +119,7 @@ export async function listBrowserSources(sources = browserDirectories()) {
   }));
 }
 
-export function openBrowserDebuggingPage(source, options) {
-  return openBrowserPage(source, "inspect", options);
-}
-
-// 在用户的浏览器里开一个新窗口打开它自己的内部页：inspect = 远程调试开关页，extensions = 扩展页
-export async function openBrowserPage(source, page, {
+export async function openBrowserDebuggingPage(source, {
   platform = process.platform, env = process.env, run = runFile,
   fileExists = file => stat(file).then(value => value.isFile(), () => false),
 } = {}) {
@@ -137,8 +132,7 @@ export async function openBrowserPage(source, page, {
     throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge 或受支持的 Comet。", 400);
   const application = applications[source.id];
   // Both the browser and URL are fixed locally, never supplied by an API caller.
-  const extensions = page === "extensions";
-  const inspectUrl = extensions ? `${source.id}://extensions` : `${source.id}://inspect/#remote-debugging`;
+  const inspectUrl = `${source.id}://inspect/#remote-debugging`;
   try {
     if (platform === "darwin") {
       const script = `tell application "${application.mac}"
@@ -156,9 +150,8 @@ end tell`;
       const executable = application.windows.at(-1);
       const candidates = [...new Set(roots.map(root => path.win32.join(root, ...application.windows)))];
       const openSettings = async file => {
-        const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", debuggingScriptPath, "-Browser", source.id, "-Executable", file,
-          ...(extensions ? ["-Page", "extensions"] : [])], { timeout: 15_000, maxBuffer: 16 * 1024, windowsHide: true });
-        if (stdout.trim() !== (extensions ? "extensions_page_opened" : "debugging_page_opened")) throw new Error("settings_page_not_opened");
+        const { stdout } = await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", debuggingScriptPath, "-Browser", source.id, "-Executable", file], { timeout: 15_000, maxBuffer: 16 * 1024, windowsHide: true });
+        if (stdout.trim() !== "debugging_page_opened") throw new Error("settings_page_not_opened");
       };
       for (const file of candidates) {
         if (await fileExists(file)) { await openSettings(file); return; }
@@ -176,7 +169,6 @@ end tell`;
       }
     }
   } catch { /* Fall back to an actionable manual URL instead of OS diagnostics. */ }
-  if (extensions) throw new BrowserConnectionError("browser_extensions_unavailable", `没能自动打开 ${source.label} 的扩展页，请在 ${source.label} 地址栏打开 ${inspectUrl}。`);
   throw new BrowserConnectionError("browser_debugging_disabled", `未能自动打开 ${source.label} 的调试设置页。请在 ${source.label} 中打开 ${inspectUrl}，勾选允许远程调试后再连接。`);
 }
 

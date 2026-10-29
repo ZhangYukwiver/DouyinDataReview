@@ -1043,7 +1043,7 @@ async function requestJson(
           ? "自动获取配对码仅支持当前电脑，请输入采集器显示的配对码。"
         : errorCode === "not_paired"
           ? "连接已过期，请重新配对。"
-          : (["download_start_failed", "import_busy", "import_failed", "collector_busy", "settings_save_failed", "feed_filter_failed"].includes(errorCode) || errorCode.startsWith("account_") || errorCode.startsWith("browser_")) && serverMessage
+          : (["download_start_failed", "import_busy", "import_failed", "collector_busy", "settings_save_failed"].includes(errorCode) || errorCode.startsWith("account_") || errorCode.startsWith("browser_")) && serverMessage
             ? serverMessage
           : errorCode === "collector_busy"
             ? "采集器正在忙，等它做完再试。"
@@ -1311,79 +1311,6 @@ export async function collectorWrites(baseUrl: string, token: string, enabled?: 
     enabled === undefined ? {} : { method: "POST", body: JSON.stringify({ enabled }) }, token);
   if (!isObject(value) || typeof value.enabled !== "boolean") throw new LocalCollectorError("invalid_response", "采集服务没返回操作开关。");
   return value.enabled;
-}
-
-export type FeedFilterMode = "off" | "observe" | "hide" | "dislike";
-/** 浏览器扩展的状态：lastSeenAt = 扩展最近一次来对接（每分钟一次，没装或已移除是 null）；removing = 点了移除、等扩展自己卸载 */
-export interface FeedExtensionStatus {
-  lastSeenAt: number | null;
-  removing: boolean;
-}
-export interface FeedFilterSettings {
-  rules: string;
-  mode: FeedFilterMode;
-  extension: FeedExtensionStatus;
-}
-export interface FeedFilterEvent {
-  t: number;
-  id: string;
-  desc: string;
-  author: string;
-  matched: string[];
-  action: "observed" | "hidden" | "disliked" | "dislike_failed" | "unreadable";
-}
-const FEED_FILTER_MODES: readonly string[] = ["off", "observe", "hide", "dislike"];
-const FEED_FILTER_ACTIONS: readonly string[] = ["observed", "hidden", "disliked", "dislike_failed", "unreadable"];
-
-function parseFeedExtension(value: unknown): FeedExtensionStatus {
-  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务没返回扩展状态。");
-  return { lastSeenAt: typeof value.lastSeenAt === "number" && Number.isFinite(value.lastSeenAt) ? value.lastSeenAt : null, removing: value.removing === true };
-}
-
-/** 推荐流过滤的词条、过滤方式和扩展状态；带上 change 就是改 */
-export async function collectorFeedFilter(baseUrl: string, token: string, change?: Partial<Pick<FeedFilterSettings, "rules" | "mode">>): Promise<FeedFilterSettings> {
-  const value = await requestJson(baseUrl, "/v1/feed-filter", change ? { method: "POST", body: JSON.stringify(change) } : {}, token);
-  if (!isObject(value) || typeof value.rules !== "string" || !FEED_FILTER_MODES.includes(String(value.mode)))
-    throw new LocalCollectorError("invalid_response", "采集服务没返回推荐流过滤的设置。");
-  return { rules: value.rules, mode: value.mode as FeedFilterMode, extension: parseFeedExtension(value.extension) };
-}
-
-/** 叫扩展下次来对接时把自己卸载掉；remove 为 false 是取消 */
-export async function collectorRemoveFeedExtension(baseUrl: string, token: string, remove: boolean): Promise<FeedExtensionStatus> {
-  const value = await requestJson(baseUrl, "/v1/feed-filter/remove", { method: "POST", body: JSON.stringify({ remove }) }, token);
-  if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务没返回扩展状态。");
-  return parseFeedExtension(value.extension);
-}
-
-/** 在用户的浏览器（chrome / edge / comet）里开一个新窗口打开扩展页 */
-export async function collectorOpenBrowserExtensions(baseUrl: string, token: string, browser: string): Promise<void> {
-  await requestJson(baseUrl, "/v1/feed-filter/open-extensions", { method: "POST", body: JSON.stringify({ browser }) }, token, 30_000);
-}
-
-const FEED_VIDEO_ACTIONS: readonly string[] = ["observed", "hidden", "disliked", "dislike_failed"];
-
-/** 内容库「推荐流挡掉的」：扩展在抖音网页里碰到的命中视频，和观看记录同一个格式，多带命中的词条和处置结果（旧的在前） */
-export async function collectorFeedFilteredVideos(baseUrl: string, token: string): Promise<PersonalVideoRecord[]> {
-  const value = await requestJson(baseUrl, "/v1/feed-filter/videos", {}, token);
-  if (!isObject(value) || !Array.isArray(value.videos)) throw new LocalCollectorError("invalid_response", "采集服务没返回挡掉的视频。");
-  return value.videos.flatMap((item): PersonalVideoRecord[] => {
-    const record = parseRecord(item, "platform_action");
-    const mark = isObject(item) && isObject(item.feedFilter) ? item.feedFilter : null;
-    if (!record || !mark || !FEED_VIDEO_ACTIONS.includes(String(mark.action))) return [];
-    const matched = Array.isArray(mark.matched) ? mark.matched.filter((rule): rule is string => typeof rule === "string").slice(0, 5) : [];
-    return [{ ...record, feedFilter: { action: mark.action as NonNullable<PersonalVideoRecord["feedFilter"]>["action"], matched } }];
-  });
-}
-
-/** 扩展送来的处置记录（旧的在前）；clear 为 true 时清空 */
-export async function collectorFeedFilterEvents(baseUrl: string, token: string, clear = false): Promise<FeedFilterEvent[]> {
-  const value = await requestJson(baseUrl, "/v1/feed-filter/events", clear ? { method: "DELETE" } : {}, token);
-  if (clear) return [];
-  if (!isObject(value) || !Array.isArray(value.events)) throw new LocalCollectorError("invalid_response", "采集服务没返回处置记录。");
-  return value.events.flatMap((item): FeedFilterEvent[] => isObject(item) && FEED_FILTER_ACTIONS.includes(String(item.action)) && typeof item.t === "number"
-    ? [{ t: item.t, id: String(item.id ?? ""), desc: String(item.desc ?? ""), author: String(item.author ?? ""),
-      matched: Array.isArray(item.matched) ? item.matched.map(String) : [], action: item.action as FeedFilterEvent["action"] }]
-    : []);
 }
 
 export async function stopCollectorChatObservation(baseUrl: string, token: string): Promise<CollectorStatus> {

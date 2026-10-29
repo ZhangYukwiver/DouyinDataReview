@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { browserDirectories, connectExternalBrowser, discoverBrowser, endpointOwnedByBrowser, listBrowserSources, localBrowserEndpoint, openBrowserDebuggingPage, openBrowserPage } from "./browserConnection.mjs";
+import { browserDirectories, connectExternalBrowser, discoverBrowser, endpointOwnedByBrowser, listBrowserSources, localBrowserEndpoint, openBrowserDebuggingPage } from "./browserConnection.mjs";
 import { closeContextWithin, DouyinCollector } from "./douyinCollector.mjs";
 
 const directories = [];
@@ -118,18 +118,6 @@ describe("opening the selected browser's debugging settings", () => {
     expect(run.mock.calls[0][0]).toBe("/usr/bin/osascript");
     expect(run.mock.calls[0][1][1]).toContain(`tell application "${application}"`);
     expect(run.mock.calls[0][1][1]).toContain(`set URL of active tab of settingsWindow to "${id}://inspect/#remote-debugging"`);
-  });
-  it("opens the extensions page the same way, and names it in the manual fallback", async () => {
-    const mac = vi.fn(async () => ({ stdout: "chrome://extensions\n" }));
-    await openBrowserPage({ id: "chrome", label: "Chrome" }, "extensions", { platform: "darwin", run: mac });
-    expect(mac.mock.calls[0][1][1]).toContain('set URL of active tab of settingsWindow to "chrome://extensions"');
-    const executable = "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe";
-    const windows = vi.fn(async () => ({ stdout: "extensions_page_opened\r\n" }));
-    await openBrowserPage({ id: "edge", label: "Edge" }, "extensions", { platform: "win32", env: { ProgramFiles: "C:\\Program Files" }, fileExists: async (file) => file === executable, run: windows });
-    expect(windows.mock.calls[0][1].slice(-6)).toEqual(["-Browser", "edge", "-Executable", executable, "-Page", "extensions"]);
-    await expect(openBrowserPage({ id: "edge", label: "Edge" }, "extensions", { platform: "linux", run: vi.fn() })).rejects.toMatchObject({
-      code: "browser_extensions_unavailable", message: expect.stringContaining("edge://extensions"),
-    });
   });
   it("provides a manual URL when the platform has no supported settings opener", async () => {
     const run = vi.fn();

@@ -24,7 +24,7 @@
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/">国内下载（加速线路）</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/#demo">在线看示例报告</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
 
-**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它通过本人登录账号的会话读取抖音观看历史、喜欢、收藏和好友聊天记录，在本机保存为 JSON，并生成持续报告与抖音年度报告（Douyin Wrapped）。工作台还提供视频下载、实时聊天、内容搜索、创作者中心、热点榜、直播观看和抖音推荐流过滤。AI 视频工作台已经拆成独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)，内容库和探索页里可以一键送过去。
+**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它通过本人登录账号的会话读取抖音观看历史、喜欢、收藏和好友聊天记录，在本机保存为 JSON，并生成持续报告与抖音年度报告（Douyin Wrapped）。工作台还提供视频下载、实时聊天、内容搜索、创作者中心、热点榜和直播观看。AI 视频工作台已经拆成独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)，内容库和探索页里可以一键送过去。
 
 适合备份个人抖音记录、管理收藏内容、查看创作者数据，以及制作自己的年度回顾。项目面向抖音（Douyin，中国版），不支持国际版 TikTok；提供 Windows x64 和 macOS Apple Silicon 安装包。它是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。
 
@@ -48,17 +48,16 @@
 | --- | --- | --- |
 | 抖音数据采集与导出 | 完整或增量读取观看历史、喜欢和收藏，保存好友聊天记录，导出 JSON；支持导入本应用备份和抖音官方个人信息下载的 JSON / ZIP | 在线采集需要导入本人登录凭据；官方档案可离线导入；群聊正文不写入备份 |
 | 多账号与后台补读 | 各账号分别保存登录会话和个人记录；读取进行中新记录边读边出，报告等读完再更新；前台自动补读，桌面版关闭窗口后留在托盘或菜单栏，每 3 小时补读一次，可选开机后台运行 | 凭据需保持有效；在设置中控制自动补读 |
-| 内容库与视频下载 | 观看历史、直播、喜欢、收藏和推荐流挡掉的视频收在一页，用页签切换；按标题、作者、话题、音乐搜索本地记录；应用内播放、读评论、发评论和转发；单条下载或多选打包 ZIP，图文作品下载全部图片 | 在线播放、评论和下载需要网络及有效会话；发评论要先在「设置 → 隐私」打开「允许在抖音上操作」；观看过的直播单独展示 |
+| 内容库与视频下载 | 观看历史、直播、喜欢和收藏收在一页，用页签切换；按标题、作者、话题、音乐搜索本地记录；应用内播放、读评论、发评论和转发；单条下载或多选打包 ZIP，图文作品下载全部图片 | 在线播放、评论和下载需要网络及有效会话；发评论要先在「设置 → 隐私」打开「允许在抖音上操作」；观看过的直播单独展示 |
 | 实时聊天与续火花 | 接收新消息，回复好友与群聊，查看官方火花天数；给勾选对象一键发送续火花消息 | 续火花一次最多发 10 位；发送由用户主动触发；发送成功不代表火花天数增加，以抖音官方状态为准 |
 | 创作者中心 | 查看本人账号的数据总览、作品数据、粉丝数据与画像，以及作品流量、观众和评论分析 | 读取抖音创作者中心接口，按当前账号权限返回数据；只读 |
 | 内容探索与抖音指数 | 搜索用户和作品，点赞、收藏、关注、评论；下载用户主页作品；查看实时热点、飙升热点，以及达人指标、逐日趋势、近 30 天作品和粉丝画像 | 复用当前账号会话；点赞、收藏、关注、评论要先在「设置 → 隐私」打开「允许在抖音上操作」；达人指标与画像来自官方接口，显示范围受接口权限影响 |
 | 直播观看与弹幕 | 查看正在直播的关注列表，在应用内观看直播；调整弹幕透明度、字号、速度、区域和屏蔽词 | 只观看和接收，不发弹幕、不送礼物、不点赞 |
-| 推荐流过滤 | 在自己的 Chrome、Edge 里刷抖音网页时，按词条（文案、作者、话题、配乐、正则）过滤推荐：只记录、隐藏，或隐藏后替你点「不感兴趣」；挡掉的视频进内容库，能播放、能下载 | 在「设置 → 推荐流」把扩展图标拖进浏览器扩展页装一次，需打开扩展页的开发者模式；应用没开时扩展照常过滤；打开页面时的第一屏拦不到；点「不感兴趣」每分钟最多 6 条 |
 | 持续报告与抖音年度报告 | 比较最近 30 天与上一时段，样本不足时回退到 90 天；年度回顾提供内容年志、档案馆、海报，可导出独立 HTML 和 1080 × 1440 PNG 分享图 | 基于本机已保存的记录生成；展示数据覆盖情况，不补造缺失记录 |
 
 AI 视频工作台已经拆成独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)，内容库/探索页里可以一键送过去：点视频上的「送去」按钮，视频下好后直接进拆片工坊的素材库（需要桌面版，图文作品送不了）。
 
-界面默认使用白底细线的极简风格。「设置」集中管理界面风格、自动补读、隐私模式、账号、推荐流过滤、数据导出与清除和应用更新。
+界面默认使用白底细线的极简风格。「设置」集中管理界面风格、自动补读、隐私模式、账号、数据导出与清除和应用更新。
 
 ## 实现方式
 
@@ -83,7 +82,6 @@ DouyinDataReview 由 **React / React Native / Expo 工作台、Node.js 本地采
 | 搜索与互动 | HTTP 查询用户、作品和评论；用户触发点赞、收藏、关注、评论等写入，消息和分享通过 IM 接口发送 | [内容探索](collector/directExplorer.mjs)、[互动请求](collector/directWrites.mjs) |
 | 聊天与直播 | HTTP 获取历史与房间信息；`ws` 接收 WebSocket 推送，解析二进制协议；直播弹幕仅在内存保留最近 300 条 | [聊天客户端](collector/directChat.mjs)、[直播客户端](collector/directLive.mjs)、[协议解析](collector/directProto.mjs) |
 | 创作者与达人数据 | 通过当前账号会话读取创作者中心和抖音指数接口，整理指标与图表 | [创作者中心](collector/creatorCenter.mjs)、[抖音指数服务](src/services/douyinIndex.ts) |
-| 推荐流过滤 | 浏览器扩展在推荐数据进页面前按词条拿掉命中的视频，必要时调用「不感兴趣」接口；词条、过滤方式和记录都存在采集器，扩展的令牌只能读设置、回传记录；应用带了新版扩展时扩展自己升级 | [浏览器扩展](extension/)、[过滤设置与记录](collector/feedFilter.mjs) |
 | 视频播放与下载 | HTTP 获取作品详情和媒体地址，由本地接口提供播放与下载；批量视频通过 `fflate` 打包 ZIP | [媒体下载](collector/videoDownloader.mjs)、[批量打包](src/services/batchVideoDownload.ts) |
 | 报告与档案导入 | TypeScript 计算年度与持续报告，标注日期来源和覆盖率；解析本应用备份及官方 JSON / ZIP；年度页面导出 HTML 与 PNG | [年度统计](src/domain/annualReport.ts)、[持续报告](src/domain/livingReport.ts)、[档案解析](src/domain/personalArchiveParser.ts)、[汇总快照](src/services/storyData.ts)、[报告导出](prototype/story-export.js) |
 
@@ -141,7 +139,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 2. 启动「DouyinDataReview」。桌面版会在后台自动连上自带的采集器（从源码在浏览器里打开时点「连接采集器」，配对码自动获取），之后默认在前台自动读取新记录，也可以手动点「增量读取」。关掉窗口应用会留在托盘里接着每 3 小时读一次，要完全退出就在托盘图标的菜单里点「退出」。
 3. 首次使用在首屏「数据来源」里点二维码位置的遮罩「点击显示二维码」（二维码已在后台备好，遮罩一点就消失），用抖音 App 扫码并在手机上确认，核对昵称，勾选读取视频、读取聊天后点「确认导入」，读取会自动开始，只读所选类型。也可以点「改用 Chrome / Edge / Comet 导入」。凭据失效或需要调整读取权限时重新登录并导入。
-4. 进入内容库，用页签在观看历史、直播、喜欢、收藏和「推荐流挡掉的」之间切换，聊天和持续报告在侧栏；在「设置」里换界面风格、选报告用哪一套，点「打开报告」看年度回顾。
+4. 进入内容库，用页签在观看历史、直播、喜欢和收藏之间切换，聊天和持续报告在侧栏；在「设置」里换界面风格、选报告用哪一套，点「打开报告」看年度回顾。
 
 ### 在应用里登录（桌面版默认）
 
@@ -192,7 +190,6 @@ Windows 上 Cookie 库用 DPAPI（当前用户）解开的密钥做 AES-256-GCM 
 - `.local-data/records.json` 保存归一化记录；新增账号各自保存在 `.local-data/accounts/<12 位编号>/`，账号列表在 `.local-data/accounts.json`。
 - 桌面版应用内登录的网页登录状态在应用数据目录的 `Partitions/douyin-login/`，所有账号共用一份，不包含在安装包中。
 - 应用内登录碰到身份验证时，验证框的页面结构会去掉脚本、连续数字打码后存成采集器数据目录下的 `diagnostics/verify-*.html`，只在本机，首屏的短信验证码是按页面上的文字找选项、输入框和按钮的，认不出来时退回窗口；这些文件用来对照真实结构调整。
-- 推荐流过滤的词条、过滤方式、处置记录和挡掉的视频（最多 1000 条）在 `.local-data/feed-filter.json`，所有账号共用。
 - 内容年志只把汇总快照写入浏览器本地，不含原始记录、Cookie 或 Token。
 - 「清除本地记录」只删除当前账号的归一化记录和汇总快照，不清除登录状态，也不修改抖音账号里的观看、点赞或收藏状态。
 
@@ -204,7 +201,6 @@ Windows 上 Cookie 库用 DPAPI（当前用户）解开的密钥做 AES-256-GCM 
 - 记录与账号：`/v1/status`、`/v1/records*`、`/v1/accounts*`；支持按账号操作，切换冲突时返回 `409`。
 - 聊天与探索：`/v1/chat/*`、`/v1/explore/*`；聊天通过 HTTP 整理历史、WebSocket 实时接收，发消息和转发走 IM 接口，其他探索操作走 HTTP；发送由用户触发并校验回执，结果不明时不自动重发。
 - 创作者与直播：`/v1/creator/read`、`/v1/live/*`；按需通过 HTTP 查询，直播弹幕通过 WebSocket 接收，正在直播的关注列表缓存 30 秒；群聊、火花和直播数据不写入记录文件。
-- 推荐流过滤：`/v1/feed-filter*`；读写词条与过滤方式、处置记录和挡掉的视频，打开浏览器扩展页、移除扩展；浏览器扩展用单独范围的令牌，只能读设置和回传记录。
 - 视频下载：`/v1/downloads*`；下载和播放由用户触发，播放地址使用独立密钥。桌面版的「送去拆片工坊」不走接口：主进程把下好的视频复制进拆片工坊的收件箱。
 - 浏览器凭据：`/v1/browser/sources`、`/v1/browser/connect`、`/v1/browser/confirm`、DELETE `/v1/browser/pending`、`/v1/browser/disconnect`；桌面版的来源列表第一项是 `app`（应用内扫码登录），`connect` 传 `{"browser":"app"}` 会在后台打开抖音网页（再加 `"fresh":true` 先清掉后台网页的登录状态，用来换号），等待期间 `/v1/browser/login-qrcode` 返回登录二维码（data URL）和码上的提示，POST `/v1/browser/login-window` 把后台网页窗口显示出来做验证，从源码单独跑采集器时没有这一项；Windows 和 macOS 上还会多一项 `{"browser":"desktop"}`（抖音电脑客户端），它不打开页面也不连调试端口，只读本机客户端数据目录里的登录态，识别账号后同样进入待确认、确认后导入并自动读取；仅本机可用，未登录时等待最多五分钟，取消请求会释放连接；登录后预览账号，本人确认才导出凭据并自动断开，成功后新账号启动一次完整读取、已有账号只读新增；待确认连接两分钟后释放，断开连接保留有效凭据及接口任务。
 
@@ -248,10 +244,6 @@ Windows 上 Cookie 库用 DPAPI（当前用户）解开的密钥做 AES-256-GCM 
 能。内容库里点「批量下载」进入多选，选好的视频会打包成 ZIP 存到本机；探索页进到某个用户的主页，也能单条或多选下载这个用户的作品。图文作品会下载全部图片。
 
 每次下载都会按当前登录会话检查作品详情；对仍可访问的旧作品，不要求在发布后三小时内下载。报告样本中的约 3 小时或 24 小时是单条签名媒体地址的有效期估算，不是作品本身的期限。详情被拒绝、没有返回作品或作品 ID 不匹配时会停止；本实现不保存或复用旧签名地址，因此不支持作品变为不可访问后的应急取回。批量 ZIP 内的 `evidence.json` 记录脱敏后的响应状态、允许列表中的缓存响应头、字节数和 SHA-256；不会保存签名媒体 URL、Cookie 或完整查询参数。证据仅描述本次客户端观察，签名过期时间可能无法识别，CDN 缓存头也不能证明源站权限或内容授权。
-
-### 能屏蔽抖音推荐里不想看的视频吗？
-
-能。DouyinDataReview 在「设置 → 推荐流」提供一个浏览器扩展，拖进 Chrome 或 Edge 的扩展页装一次，写好词条（关键词、作者、话题、正则都行），以后在抖音网页刷推荐时，命中的视频可以只记录、直接隐藏，或隐藏后替你点「不感兴趣」。挡掉的视频会出现在内容库的「推荐流挡掉的」里，误杀了回头改词条就行。只对网页版生效，手机 App 里的推荐不受影响。
 
 ### 收费吗？数据会传到哪里？
 
@@ -401,7 +393,6 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 - Search saved content, play videos, download individual videos or image posts, and batch-download videos as ZIP files.
 - Search Douyin users and posts, interact on request (likes, favorites, follows and comments stay off until you turn on "允许在抖音上操作" in Settings → Privacy), and view hot lists, Creator Center stats and Douyin Index metrics through the current account's access.
 - Watch live streams with configurable live comments; live comments are received only.
-- Filter the Douyin web recommendation feed in Chrome or Edge with a browser extension you install once from Settings: match keywords, authors, hashtags, music or regex, then log, hide, or hide and send "not interested". Filtered videos show up in the library.
 - Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports.
 - The AI video workbench now lives in a separate app, [ReelLab](https://github.com/ZhangYukwiver/ReelLab); on the desktop app, the "送去" (send) button on a video in the library or the explore page sends it over in one click.
 

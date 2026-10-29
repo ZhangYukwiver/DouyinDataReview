@@ -95,7 +95,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     "collector/directExplorer.mjs", "collector/directLive.mjs", "collector/directProto.mjs",
     "collector/directWrites.mjs", "collector/nativeSignature.mjs", "collector/sm3.mjs",
     "collector/browserConnection.mjs", "collector/readPermissions.mjs", "collector/openBrowserDebugging.ps1", "collector/server.mjs",
-    "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs", "desktop/inAppBrowser.mjs", "desktop/feedExtension.mjs",
+    "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs", "desktop/inAppBrowser.mjs",
     "node_modules/ws/index.js",
     "node_modules/ws/wrapper.mjs", "node_modules/ws/lib/websocket.js",
   ]) {
@@ -133,17 +133,9 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     assert.deepEqual(await readFile(path.join(resources, "app.asar.unpacked", relative)), await readFile(path.join(sourceDirectory, relative)));
   }
 
-  const packagedFiles = await filesUnder(resources);
-  for (const relative of ["manifest.json", "filter.js", "page.js", "bridge.js", "background.js"])
-    assert(packagedFiles.includes(`extension/${relative}`), `Feed filter extension is missing ${relative}`);
-  for (const relative of packagedFiles) {
+  for (const relative of await filesUnder(resources)) {
     assertPublicPackagePath(relative);
-    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("extension/"), `Unexpected resource: ${relative}`);
-    // 推荐流过滤扩展原样带上（浏览器从拷出去的这份加载），不许多出或改动文件
-    if (relative.startsWith("extension/")) {
-      assert(!relative.endsWith(".test.mjs"), `Test file in package: ${relative}`);
-      assert.deepEqual(await readFile(path.join(resources, relative)), await readFile(path.join(sourceDirectory, relative)), `Extension file differs from source: ${relative}`);
-    }
+    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/"), `Unexpected resource: ${relative}`);
     if (relative === "app-update.yml") {
       assertPublicUpdateMetadata(await readFile(path.join(resources, relative), "utf8"), sourcePackage.name);
     }

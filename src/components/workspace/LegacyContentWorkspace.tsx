@@ -29,7 +29,6 @@ import {
   FolderInput,
   FolderMinus,
   FolderPlus,
-  Funnel,
   Heart,
   History,
   LayoutGrid,
@@ -66,7 +65,7 @@ import type {
   PersonalRecordType,
   PersonalVideoRecord,
 } from "../../domain/personalRecords";
-import { collectorFeedFilteredVideos, type CollectorStatus } from "../../services/localCollector";
+import type { CollectorStatus } from "../../services/localCollector";
 import type { ExploreConnection } from "../../services/explorer";
 import { DEFAULT_APP_STYLE, DEFAULT_STORY_STYLE, resolveStoryStyle, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import Svg, { Circle } from "react-native-svg";
@@ -103,7 +102,7 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "summary" | "highlights" | "chat" | "explore" | "creator";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "summary" | "highlights" | "chat" | "explore" | "creator";
 
 export interface ContentWorkspaceProps {
   explore?: React.ReactNode;
@@ -165,15 +164,14 @@ const navItems: NavItem[] = [
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
   { id: "favorite_videos", label: "收藏", icon: Bookmark, accent: color.amber },
-  { id: "feed_filtered", label: "推荐流挡掉的", icon: Funnel, accent: color.green },
   { id: "chat", label: "聊天", icon: MessageCircle, accent: color.cyan },
   { id: "summary", label: "持续报告", icon: LayoutDashboard, accent: color.green },
   { id: "highlights", label: "变化线索", icon: Star, accent: color.cyan },
 ];
 
 
-// 观看历史、直播、喜欢、收藏、推荐流挡掉的是同一种记录列表：侧栏只占「内容库」一项，进去用页签切换
-const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered"];
+// 观看历史、直播、喜欢、收藏是同一种记录列表：侧栏只占「内容库」一项，进去用页签切换
+const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos"];
 const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
 type SideKey = WorkspaceViewKey | "library";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
@@ -299,7 +297,6 @@ export function ContentWorkspace({
   const [watchedVideos, watchedLives] = useMemo(() => splitLive(records.watch_history), [records.watch_history]);
   const [incomingVideos, incomingLives] = useMemo(() => splitLive(liveRecords?.watch_history ?? NO_RECORDS), [liveRecords?.watch_history]);
   const folders = useRecordFolders(commentsConnection, status?.account?.id);
-  const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
   const counts: Record<SideKey, number> = {
     explore: 0,
     creator: 0,
@@ -307,7 +304,6 @@ export function ContentWorkspace({
     live: watchedLives.length + incomingLives.length,
     liked_videos: records.liked_videos.length + (liveRecords?.liked_videos.length ?? 0),
     favorite_videos: records.favorite_videos.length + (liveRecords?.favorite_videos.length ?? 0),
-    feed_filtered: feedVideos.length,
     library: 0,
     chat: countChatMessages(chatMessages, chatConversations),
     summary: model.unique || totalRecords,
@@ -548,14 +544,12 @@ export function ContentWorkspace({
               : <HighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={report} />
         ) : (
           <RecordsGallery
-            activeType={activeView === "live" || activeView === "feed_filtered" ? "watch_history" : activeView}
+            activeType={activeView === "live" ? "watch_history" : activeView}
             compactHeader={appStyle === "minimal"}
             live={activeView === "live"}
-            feedFiltered={activeView === "feed_filtered"}
-            onOpenPreferences={onOpenPreferences}
-            folders={activeView === "live" || activeView === "feed_filtered" || Platform.OS !== "web" ? null : folders.lists?.[activeView] ?? null}
-            folderError={activeView === "feed_filtered" ? null : folders.error}
-            onChangeFolders={activeView === "live" || activeView === "feed_filtered" ? undefined : (update) => folders.change(activeView, update)}
+            folders={activeView === "live" || Platform.OS !== "web" ? null : folders.lists?.[activeView] ?? null}
+            folderError={folders.error}
+            onChangeFolders={activeView === "live" ? undefined : (update) => folders.change(activeView, update)}
             onRetryFolders={folders.retry}
             label={currentNav.label}
             downloadStates={downloadStates}
@@ -569,8 +563,8 @@ export function ContentWorkspace({
             onOpenRecord={onOpenRecord}
             onOpenSettings={onOpenSettings}
             privacy={privacy}
-            records={activeView === "live" ? watchedLives : activeView === "feed_filtered" ? feedVideos : activeView === "watch_history" ? watchedVideos : records[activeView]}
-            incoming={activeView === "live" ? incomingLives : activeView === "feed_filtered" ? undefined : activeView === "watch_history" ? incomingVideos : liveRecords?.[activeView]}
+            records={activeView === "live" ? watchedLives : activeView === "watch_history" ? watchedVideos : records[activeView]}
+            incoming={activeView === "live" ? incomingLives : activeView === "watch_history" ? incomingVideos : liveRecords?.[activeView]}
             sourceLabel={sourceLabel}
             status={status}
             width={mainWidth}
@@ -711,26 +705,6 @@ function NavButton({
  * 文件夹跟着采集器的当前账号走：改动先在界面上生效，再按先后顺序整份存回采集器。
  * 存不上就退回上一次存好的样子并说明，排在后面的改动也一起作废，免得界面上看着放好了、其实没存。
  */
-// 内容库「推荐流挡掉的」：浏览器扩展送进采集器的命中视频，新的在前。开着这一栏时隔半分钟刷一次，
-// 别的时候只在连上采集器时读一次（侧栏要显示条数）
-function useFeedFilteredVideos(connection: ExploreConnection | null | undefined, active: boolean) {
-  const [videos, setVideos] = useState<PersonalVideoRecord[]>([]);
-  const baseUrl = connection?.baseUrl, token = connection?.token;
-  useEffect(() => {
-    if (!baseUrl || !token) { setVideos([]); return undefined; }
-    let alive = true;
-    const load = () => collectorFeedFilteredVideos(baseUrl, token).then((list) => { if (alive) setVideos(list.reverse()); }, () => undefined);
-    void load();
-    const timer = active ? setInterval(load, 30_000) : null;
-    return () => { alive = false; if (timer) clearInterval(timer); };
-  }, [active, baseUrl, token]);
-  return videos;
-}
-
-const FEED_ACTION_LABEL: Record<NonNullable<PersonalVideoRecord["feedFilter"]>["action"], string> = {
-  observed: "只记录", hidden: "已隐藏", disliked: "已反馈", dislike_failed: "反馈没成功",
-};
-
 function useRecordFolders(connection: ExploreConnection | null | undefined, accountId: string | undefined) {
   const owner = connection ? `${connection.baseUrl}|${accountId ?? ""}` : null;
   const [state, setState] = useState<{ owner: string; lists: RecordFolders } | null>(null);
@@ -988,8 +962,6 @@ function RecordsGallery({
   activeType,
   compactHeader = false,
   live = false,
-  feedFiltered = false,
-  onOpenPreferences,
   folders,
   folderError,
   onChangeFolders,
@@ -1017,9 +989,6 @@ function RecordsGallery({
   compactHeader?: boolean;
   /** 直播一栏：卡片进直播间，页头能粘贴直播间链接 */
   live?: boolean;
-  /** 「推荐流挡掉的」一栏：记录来自浏览器扩展，没有文件夹，空的时候指去设置 →「推荐流」 */
-  feedFiltered?: boolean;
-  onOpenPreferences?: () => void;
   /** 这一栏的文件夹；没连采集器（或采集器太旧）时为 null，不显示文件夹 */
   folders?: RecordFolderList | null;
   folderError?: string | null;
@@ -1239,7 +1208,6 @@ function RecordsGallery({
     ? `在 ${folderRecords.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
     : currentFolder ? `「${nameOf(currentFolder)}」里放了 ${folderCounts?.get(currentFolder.id) ?? 0} 条，全部一共 ${records.length} 条`
     : folderFilter === UNFILED ? `还有 ${folderCounts?.get(UNFILED) ?? 0} 条没放进文件夹`
-    : feedFiltered ? `浏览器扩展在抖音网页里碰到的 ${records.length} 条，新的在前`
     : `${sourceLabel} · ${status?.message ?? `${records.length} 条本地记录`}`;
   const folderBar = list && folderCounts && records.length > 0 ? (
     <FolderBar
@@ -1400,23 +1368,6 @@ function RecordsGallery({
           >
             <Text style={styles.emptyButtonText}>看全部</Text>
           </Pressable>
-        </View>
-      ) : feedFiltered ? (
-        <View {...fx({ motion: "rise" })} style={styles.emptyState} testID="feed-filtered-empty">
-          <View {...ws("w-emptyicon")} style={styles.emptyIcon}><Funnel color={color.cyan} size={24} /></View>
-          <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>还没有挡掉的视频</Text>
-          <Text style={styles.emptyDetail}>到设置里的「推荐流」装好浏览器扩展、写好词条，以后在抖音网页里命中的视频会出现在这里，和观看记录一样能播放、能下载。</Text>
-          {onOpenPreferences ? (
-            <Pressable
-              {...ws("btn-solid")}
-              accessibilityRole="button"
-              onPress={onOpenPreferences}
-              style={({ pressed }) => [styles.emptyButton, pressed && styles.buttonPressed, webPointer]}
-            >
-              <Settings color={color.black} size={18} />
-              <Text style={styles.emptyButtonText}>打开设置</Text>
-            </Pressable>
-          ) : null}
         </View>
       ) : (
         <View {...fx({ motion: "rise" })} style={styles.emptyState}>
@@ -1693,7 +1644,6 @@ const RecordTile = memo(function RecordTile({
             <View style={[styles.tileTopLeft, selection && styles.tileTopLeftSelecting]}>
               <View {...ws("w-type")} style={[styles.typeBadge, { backgroundColor: accent }]} />
               {folderName ? <Text {...ws("stamp w-folder")} numberOfLines={1} style={[styles.durationBadge, styles.folderBadge]}>{folderName}</Text> : null}
-              {record.feedFilter ? <Text {...ws("stamp")} numberOfLines={1} style={[styles.durationBadge, styles.folderBadge]}>{FEED_ACTION_LABEL[record.feedFilter.action]}</Text> : null}
             </View>
             {record.durationSeconds ? <Text {...ws("stamp")} style={styles.durationBadge}>{formatDuration(record.durationSeconds)}</Text> : null}
           </View>
@@ -1712,9 +1662,6 @@ const RecordTile = memo(function RecordTile({
           <Text numberOfLines={1} style={styles.tileAuthor}>{privacy ? "创作者已隐藏" : record.author ?? "未知创作者"}</Text>
           <Text {...ws("mono")} style={styles.tileDate}>{formatShortDate(record.occurredAt)}</Text>
         </View>
-        {record.feedFilter?.matched.length ? (
-          <Text numberOfLines={1} style={styles.tileFeedRule}>命中：{privacy ? "词条已隐藏" : record.feedFilter.matched.join("、")}</Text>
-        ) : null}
       </Pressable>
       {showActions ? (
         <View {...fx({ motion: "fade", ws: "w-overlay" })} pointerEvents="auto" style={styles.tileActionsOverlay}>
@@ -1836,11 +1783,6 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
           {record.durationSeconds ? <Text {...ws("mono")} style={styles.rowMetaText}>{formatDuration(record.durationSeconds)}</Text> : null}
           {record.topics?.[0] ? <Text {...ws("stamp-sig")} style={[styles.rowTopic, { color: accent }]}>#{privacy ? "话题" : record.topics[0]}</Text> : null}
           {folderName ? <View style={styles.rowFolder}><Folder color={color.textMuted} size={11} /><Text numberOfLines={1} style={styles.rowMetaText}>{folderName}</Text></View> : null}
-          {record.feedFilter ? (
-            <Text numberOfLines={1} style={styles.rowMetaText}>
-              {FEED_ACTION_LABEL[record.feedFilter.action]}{record.feedFilter.matched.length ? ` · 命中：${privacy ? "词条已隐藏" : record.feedFilter.matched.join("、")}` : ""}
-            </Text>
-          ) : null}
         </View>
       </View>
       {record.url && !selection ? <ArrowUpRight color={color.textMuted} size={19} /> : null}
@@ -2302,7 +2244,6 @@ const styles = StyleSheet.create({
   tileMetaRow: { minHeight: 20, flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 },
   tileAuthor: { flex: 1, color: color.textMuted, fontSize: 10 },
   tileDate: { color: color.textMuted, fontSize: 9 },
-  tileFeedRule: { color: color.textMuted, fontSize: 10, marginTop: 1 },
   tileActionsOverlay: {
     position: "absolute",
     top: 0,

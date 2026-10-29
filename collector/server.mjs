@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
-import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources, openBrowserPage } from "./browserConnection.mjs";
+import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources } from "./browserConnection.mjs";
 import { DesktopClientError, desktopDataDirectory, readDesktopIdentity, readDesktopSession } from "./desktopClient.mjs";
 import { BROWSER_LOGIN_TIMEOUT_MS, readLoginQrCode, waitForBrowserLogin } from "./browserLogin.mjs";
 import { importedReadPermissions, parseReadPermissions, PUBLIC_ACTIONS, readPermissionForRequest, WRITES_DISABLED_MESSAGE } from "./readPermissions.mjs";
@@ -23,13 +23,14 @@ import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
-import { FEED_FILTER_MODES, FEED_FILTER_ORIGINS, FeedFilterStore } from "./feedFilter.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
 
 const DEFAULT_PORT = 4765;
 const MAX_BODY_BYTES = 4 * 1024;
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const DOWNLOAD_JOB_ID_PATTERN = /^[0-9a-f-]{20,}$/iu;
+// 已删掉的推荐流过滤扩展（固定 ID），只认它来领令牌、好叫它卸载自己
+const OLD_FEED_EXTENSION_ORIGINS = ["chrome-extension://phliimhdokpkdhmeofkpbcnkncknjkka", "extension://phliimhdokpkdhmeofkpbcnkncknjkka"];
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(moduleDirectory, "..");
 
@@ -114,7 +115,7 @@ class PairingManager {
     return this.issue();
   }
 
-  // scope：app = 工作台；extension = 推荐流过滤扩展，只能用放给它的几个接口
+  // scope：app = 工作台；extension = 已删的推荐流过滤扩展，只够它卸载自己
   issue(scope = "app") {
     const token = randomBytes(32).toString("base64url");
     this.sessions.set(token, { expiry: Date.now() + SESSION_TTL_MS, scope });
@@ -138,8 +139,7 @@ class PairingManager {
 function isAllowedOrigin(origin, explicitOrigins) {
   if (!origin) return true;
   if (/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/iu.test(origin)) return true;
-  // 推荐流过滤扩展（固定 ID）；它能用的接口在下面另外收窄
-  if (FEED_FILTER_ORIGINS.includes(origin)) return true;
+  if (OLD_FEED_EXTENSION_ORIGINS.includes(origin)) return true;
   return explicitOrigins.includes(origin);
 }
 
@@ -241,10 +241,8 @@ async function readJsonBody(request, limit = MAX_BODY_BYTES) {
 export async function startCollectorServer({
   lan = false,
   port = DEFAULT_PORT,
-  // 固定端口被占时改用随机端口（桌面版用）：应用照常能用，只是推荐流过滤扩展找不到它
+  // 固定端口被占时改用随机端口（桌面版用）
   randomPortFallback = false,
-  // 扩展文件夹里装的推荐流过滤扩展版本（桌面版给）；扩展发现比自己新就重新加载
-  feedExtensionVersion = null,
   origins = [],
   dataDirectory = path.join(projectDirectory, ".local-data"),
   browserSources = browserDirectories(),
@@ -270,8 +268,6 @@ export async function startCollectorServer({
   // 点赞、收藏、关注、评论要先在设置里打开；所有账号共用这一个开关，默认关
   const writeSettingsFile = path.join(dataDirectory, "write-actions.json");
   let writesEnabled = await readFile(writeSettingsFile, "utf8").then((text) => JSON.parse(text).enabled === true).catch(() => false);
-  // 推荐流控制：词条、过滤方式和处置记录所有账号共用；浏览器里由扩展照着做
-  const feedFilter = new FeedFilterStore(dataDirectory);
   // 每个账号一个采集器，各用自己目录里的登录态和记录；同一时间只开当前这一个
   const openCollector = async (account) => {
     const directory = accounts.directory(account);
@@ -460,9 +456,8 @@ export async function startCollectorServer({
     }
 
     if (request.method === "POST" && url.pathname === "/v1/pair") {
-      // 推荐流过滤扩展不用配对码：配对码用一次就换，扩展抢先用掉会让应用自己那次配对失败。
-      // 来源是固定的扩展 ID（网页伪造不了 Origin），而且它拿到的令牌只能用下面放给它的几个接口
-      if (FEED_FILTER_ORIGINS.includes(origin)) {
+      // 旧的推荐流过滤扩展不用配对码（配对码用一次就换，别抢掉应用自己那次）；来源是固定的扩展 ID，网页伪造不了
+      if (OLD_FEED_EXTENSION_ORIGINS.includes(origin)) {
         if (!isLoopbackAddress(request.socket.remoteAddress ?? "")) sendJson(response, 403, { error: "loopback_only" });
         else sendJson(response, 200, { token: pairing.issue("extension"), expiresInSeconds: SESSION_TTL_MS / 1000 });
         return;
@@ -510,12 +505,12 @@ export async function startCollectorServer({
       sendJson(response, 401, { error: "not_paired" });
       return;
     }
-    // 扩展只能拉设置、送处置记录、报自己已移除，别的接口（记录、聊天、账号）一律不给。按令牌认，
-    // 不按 Origin：浏览器扩展后台发的 GET 不带 Origin
-    const fromExtension = scope === "extension" || FEED_FILTER_ORIGINS.includes(origin);
-    if (fromExtension && !((request.method === "GET" && url.pathname === "/v1/feed-filter")
-      || (request.method === "POST" && ["/v1/feed-filter/events", "/v1/feed-filter/removed"].includes(url.pathname)))) {
-      sendJson(response, 403, { error: "extension_not_allowed" });
+    // ponytail: 推荐流过滤已删（抖音 App 自带屏蔽词）。旧扩展每分钟来拉一次设置，回 remove 它就报一声再卸载自己；
+    // 按令牌认（扩展后台的 GET 不带 Origin）。装过旧扩展的都升级过来以后，连同上面的配对放行一起删
+    if (scope === "extension" || OLD_FEED_EXTENSION_ORIGINS.includes(origin)) {
+      if (request.method === "GET" && url.pathname === "/v1/feed-filter") sendJson(response, 200, { remove: true });
+      else if (request.method === "POST" && url.pathname === "/v1/feed-filter/removed") sendJson(response, 200, { ok: true });
+      else sendJson(response, 403, { error: "extension_not_allowed" });
       return;
     }
 
@@ -524,7 +519,7 @@ export async function startCollectorServer({
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
     const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
     // 操作开关存在根目录、所有账号共用，换号时也能读改
-    const accountFree = url.pathname === "/v1/settings/writes" || url.pathname.startsWith("/v1/feed-filter");
+    const accountFree = url.pathname === "/v1/settings/writes";
     if (!readable && !loginWait && !accountFree && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
@@ -893,73 +888,6 @@ export async function startCollectorServer({
         writesEnabled = body.enabled;
       }
       sendJson(response, 200, { enabled: writesEnabled });
-    } else if (url.pathname.startsWith("/v1/feed-filter")) {
-      const extensionState = ({ lastSeenAt, remove }) => ({ lastSeenAt, removing: remove });
-      try {
-        if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
-          if (fromExtension) {
-            const { rules, mode, remove } = await feedFilter.touch();
-            sendJson(response, 200, { rules, mode, remove, version: feedExtensionVersion });
-          } else {
-            const value = await feedFilter.read();
-            sendJson(response, 200, { rules: value.rules, mode: value.mode, extension: extensionState(value) });
-          }
-        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter") {
-          let body;
-          try { body = await readJsonBody(request, 64 * 1024); } catch { body = null; }
-          if ((body?.rules !== undefined && typeof body.rules !== "string") || (body?.mode !== undefined && !FEED_FILTER_MODES.includes(body.mode))) {
-            sendJson(response, 400, { error: "invalid_request" });
-            return;
-          }
-          const value = await feedFilter.setSettings(body);
-          sendJson(response, 200, { rules: value.rules, mode: value.mode, extension: extensionState(value) });
-        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/remove") {
-          // 点了移除：扩展下次来对接（一分钟内）时自己卸载；remove=false 是取消
-          let body;
-          try { body = await readJsonBody(request); } catch { body = null; }
-          if (typeof body?.remove !== "boolean") {
-            sendJson(response, 400, { error: "invalid_request" });
-            return;
-          }
-          sendJson(response, 200, { extension: extensionState(await feedFilter.requestRemove(body.remove)) });
-        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/removed") {
-          await feedFilter.removed();
-          sendJson(response, 200, { ok: true });
-        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/open-extensions") {
-          // 在用户的浏览器里打开扩展页：浏览器和网址都是本机写死的，和浏览器登录一样只许本机来
-          if (!isLoopbackAddress(request.socket.remoteAddress)) {
-            sendJson(response, 403, { error: "loopback_only", message: "只能在当前电脑上打开浏览器。" });
-            return;
-          }
-          let body;
-          try { body = await readJsonBody(request); } catch { body = null; }
-          const source = browserSources.find((item) => !item.inApp && item.id === body?.browser);
-          if (!source) throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge 或 Comet。", 400);
-          await openBrowserPage(source, "extensions");
-          sendJson(response, 200, { ok: true });
-        } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/events") {
-          // 每条带着视频信息（一两 KB），扩展一批最多送 20 条
-          let body;
-          try { body = await readJsonBody(request, 256 * 1024); } catch { body = null; }
-          if (!Array.isArray(body?.events) || body.events.length > 50) {
-            sendJson(response, 400, { error: "invalid_request" });
-            return;
-          }
-          await feedFilter.addEvents(body.events);
-          sendJson(response, 200, { ok: true });
-        } else if (request.method === "GET" && url.pathname === "/v1/feed-filter/events") {
-          sendJson(response, 200, { events: (await feedFilter.read()).events });
-        } else if (request.method === "GET" && url.pathname === "/v1/feed-filter/videos") {
-          // 内容库「推荐流挡掉的」：和观看记录一样的记录，多带命中的词条和处置结果
-          sendJson(response, 200, { videos: (await feedFilter.read()).videos });
-        } else if (request.method === "DELETE" && url.pathname === "/v1/feed-filter/events") {
-          await feedFilter.clearEvents();
-          sendJson(response, 200, { ok: true });
-        } else sendJson(response, 404, { error: "not_found" });
-      } catch (error) {
-        if (error instanceof BrowserConnectionError) sendJson(response, error.status, { error: error.code, message: error.message });
-        else sendJson(response, 500, { error: "feed_filter_failed", message: "推荐流过滤的设置没读写成功，请稍后再试。" });
-      }
     } else if (request.method === "GET" && url.pathname === "/v1/status") {
       const requestedRevision = url.searchParams.get("afterRevision");
       if (requestedRevision === null) sendJson(response, 200, collector.getStatus());

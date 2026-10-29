@@ -1,14 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
-import { Check, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
+import { Check, Download, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
-import { canDragDesktopExtension, getDesktopOpenAtLogin, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
+import { getDesktopOpenAtLogin, setDesktopOpenAtLogin, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import {
-  collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites,
-  findTwinAccount, formatAccountAddedDay, getBrowserLoginSources,
-  type BrowserLoginSource, type CollectorAccounts, type FeedExtensionStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings,
+  collectorAccountName, collectorWrites, findTwinAccount, formatAccountAddedDay, type CollectorAccounts,
 } from "../../services/localCollector";
 import { ease, revealFrom, ws } from "./motion";
 import { RELEASE_NOTES } from "./releaseNotes";
@@ -16,7 +14,7 @@ import { appUpdateAction } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
 
-export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "feed" | "about";
+export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "about";
 
 export interface SettingsDialogProps {
   visible: boolean;
@@ -70,7 +68,6 @@ const SECTIONS: ReadonlyArray<{ key: SettingsSection; title: string }> = [
   { key: "privacy", title: "隐私" },
   { key: "account", title: "账号" },
   { key: "data", title: "数据" },
-  { key: "feed", title: "推荐流" },
   { key: "about", title: "关于" },
 ];
 
@@ -172,7 +169,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 : tab === "privacy" ? <Privacy {...props} />
                   : tab === "account" ? <Account {...props} />
                     : tab === "data" ? <Data {...props} />
-                      : tab === "feed" ? <FeedFilter {...props} />
                       : <About {...props} />}
           </ScrollView>
         </View>
@@ -391,166 +387,6 @@ function Data({ appStyle, canClear, connected, onClearCache, onExportData }: Set
       <View style={styles.row}>
         <RowCopy detail="只清掉这台电脑上存的观看、喜欢和收藏记录，抖音账号和登录都不受影响，下次读取会重新拿回来。" title="清除本地记录" />
         <Button appStyle={appStyle} disabled={!canClear} icon={Trash2} kind="danger" label="清除本地记录" onPress={onClearCache} testID="settings-clear" />
-      </View>
-    </>
-  );
-}
-
-const FEED_MODES: ReadonlyArray<{ key: FeedFilterMode; label: string; detail: string }> = [
-  { key: "off", label: "关", detail: "扩展停着什么都不碰，推荐流照原样；再选别的马上恢复。" },
-  { key: "observe", label: "只记录", detail: "命中的视频照样刷得到，只记在下面。先用它看看词条会不会误杀。" },
-  { key: "hide", label: "隐藏", detail: "命中的视频在推荐数据进页面之前就被拿掉，刷不到。" },
-  { key: "dislike", label: "隐藏并反馈", detail: "拿掉以后再替你点「不感兴趣」，以后少推这类。用的是你自己的抖音号，每分钟最多点 6 条，多出来的只隐藏。" },
-];
-const FEED_ACTIONS: Record<FeedFilterEvent["action"], string> = {
-  observed: "只记录", hidden: "已隐藏", disliked: "已反馈", dislike_failed: "已隐藏，反馈没成功", unreadable: "这一页推荐数据读不了，原样放过了",
-};
-
-function extensionText(extension: FeedExtensionStatus, canDrag: boolean): string {
-  if (extension.removing) return "等扩展自己移除：浏览器开着的话一分钟内完成，没开的话下次打开时完成。";
-  if (extension.lastSeenAt !== null) {
-    const minutes = Math.floor((Date.now() - extension.lastSeenAt) / 60_000);
-    const since = minutes < 1 ? "刚刚" : minutes < 60 ? `${minutes} 分钟前` : minutes < 1440 ? `${Math.floor(minutes / 60)} 小时前` : `${Math.floor(minutes / 1440)} 天前`;
-    return `扩展已装好，${since}和应用对过一次（浏览器开着时每分钟一次）。应用带了新版扩展时，它会自己升级。`;
-  }
-  return canDrag
-    ? "装一次就一直有效：先点右边打开浏览器的扩展页，第一次要打开扩展页右上角的「开发者模式」，再把下面的图标拖进扩展页。"
-    : "扩展在项目的 extension 文件夹里：在浏览器扩展页打开「开发者模式」，点「加载已解压的扩展程序」，选中它。";
-}
-
-function eventTime(at: number): string {
-  const date = new Date(at);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getMonth() + 1}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-/** 推荐流过滤：浏览器扩展装一次，按这里定的词条和过滤方式改抖音网页的推荐数据；处置记录也存在采集器里 */
-function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
-  const baseUrl = collector?.baseUrl, token = collector?.token;
-  const [settings, setSettings] = useState<FeedFilterSettings | null>(null);
-  const [draft, setDraft] = useState("");
-  const [events, setEvents] = useState<FeedFilterEvent[]>([]);
-  const [browsers, setBrowsers] = useState<BrowserLoginSource[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [opening, setOpening] = useState<string | null>(null);
-  const canDrag = web && canDragDesktopExtension();
-  const fail = (value: unknown) => setError(value instanceof Error ? value.message : "没存上，请稍后再试。");
-  useEffect(() => {
-    setSettings(null);
-    if (!baseUrl || !token) return;
-    let live = true;
-    Promise.all([collectorFeedFilter(baseUrl, token), collectorFeedFilterEvents(baseUrl, token), getBrowserLoginSources(baseUrl, token).catch(() => [])])
-      .then(([value, history, sources]) => {
-        if (!live) return;
-        setSettings(value);
-        setDraft(value.rules);
-        setEvents(history);
-        setBrowsers(sources.filter((source) => source.id !== "app" && source.available));
-      }, (value: unknown) => { if (live) fail(value); });
-    // 开着这一页时隔几秒刷一下扩展状态和新记录：刚拖进去装好、点了移除，这里很快就跟上
-    const timer = setInterval(() => {
-      Promise.all([collectorFeedFilter(baseUrl, token), collectorFeedFilterEvents(baseUrl, token)]).then(([value, history]) => {
-        if (!live) return;
-        setSettings((current) => (current ? { ...current, extension: value.extension } : value));
-        setEvents(history);
-      }, () => undefined);
-    }, 3000);
-    return () => { live = false; clearInterval(timer); };
-  }, [baseUrl, token]);
-  if (!baseUrl || !token) {
-    return <View style={styles.row}><RowCopy detail="先在采集器页连上采集器，才能改这一页。" title="推荐流过滤" /></View>;
-  }
-  const save = (change: Partial<Pick<FeedFilterSettings, "rules" | "mode">>) => {
-    setSaving(true);
-    setError(null);
-    collectorFeedFilter(baseUrl, token, change).then((value) => {
-      setSettings(value);
-      setDraft(value.rules);
-    }, fail).finally(() => setSaving(false));
-  };
-  const openExtensions = (browser: string) => {
-    setOpening(browser);
-    setError(null);
-    collectorOpenBrowserExtensions(baseUrl, token, browser).catch(fail).finally(() => setOpening(null));
-  };
-  const remove = (value: boolean) => {
-    setError(null);
-    collectorRemoveFeedExtension(baseUrl, token, value).then((extension) => setSettings((current) => (current ? { ...current, extension } : current)), fail);
-  };
-  const mode = FEED_MODES.find((item) => item.key === settings?.mode);
-  const extension = settings?.extension;
-  const installed = extension ? extension.lastSeenAt !== null : false;
-  return (
-    <>
-      <View style={[styles.row, styles.rowIntro]}>
-        <Text style={styles.detail}>装一次浏览器扩展，以后你在 Chrome、Edge 里刷抖音网页时，命中词条的视频在推荐数据进页面之前就被拿掉。词条、过滤方式和记录都在这里管；应用没开时扩展按上次的词条照常过滤，记录等应用开着时补传。已经显示的首屏和作品详情只能记录命中，后续加载的推荐列表才会过滤。</Text>
-        {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
-      </View>
-      <View style={[styles.row, styles.rowStacked]}>
-        <View style={styles.rowHead}>
-          <View style={styles.copy}>
-            <Text style={styles.rowTitle}>浏览器扩展</Text>
-            <Text style={styles.detail} testID="settings-feed-extension">{extension ? extensionText(extension, canDrag) : "正在读取…"}</Text>
-          </View>
-          <View style={styles.actions}>
-            {extension?.removing
-              ? <Button appStyle={appStyle} label="取消移除" onPress={() => remove(false)} testID="settings-feed-remove-cancel" />
-              : installed ? <Button appStyle={appStyle} icon={Trash2} kind="danger" label="移除扩展" onPress={() => remove(true)} testID="settings-feed-remove" /> : null}
-          </View>
-        </View>
-        {browsers.length ? (
-          <View style={styles.choices}>
-            {browsers.map((source) => (
-              <Button key={source.id} appStyle={appStyle} busy={opening === source.id} disabled={opening !== null} label={`打开 ${source.label} 扩展页`}
-                onPress={() => openExtensions(source.id)} testID={`settings-feed-open-${source.id}`} />
-            ))}
-          </View>
-        ) : null}
-        {canDrag && !installed ? (
-          // 拖动交给桌面外壳：它把扩展文件夹交给系统拖放，放进开了开发者模式的扩展页就装上了
-          <div draggable onDragStart={(event) => { event.preventDefault(); startDesktopExtensionDrag(); }} data-testid="settings-feed-drag"
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", cursor: "grab", userSelect: "none",
-              border: `1px dashed ${color.border}`, borderRadius: radius.small as string, background: color.surfaceMuted }}>
-            <Puzzle color={color.accent} size={22} strokeWidth={1.8} />
-            <Text style={styles.rowTitle}>推荐流过滤扩展</Text>
-            <Text style={styles.detail}>按住拖进浏览器的扩展页</Text>
-          </div>
-        ) : null}
-      </View>
-      <View style={[styles.row, styles.rowStacked]}>
-        <RowCopy detail={mode?.detail ?? "正在读取…"} title="过滤方式" />
-        <View style={styles.choices}>
-          {FEED_MODES.map((item) => (
-            <Button key={item.key} appStyle={appStyle} disabled={!settings || saving} kind={item.key === settings?.mode ? "primary" : "secondary"}
-              label={item.label} onPress={() => { if (item.key !== settings?.mode) save({ mode: item.key }); }} testID={`settings-feed-mode-${item.key}`} />
-          ))}
-        </View>
-      </View>
-      <View style={[styles.row, styles.rowStacked]}>
-        <RowCopy detail="一行一条，# 开头的是注释。只写词就在文案、作者、话题和配乐里都找；也可以写 author:昵称或抖音号、tag:话题、desc:文案里的词、/正则/i；末尾加 @0.5 这种权重，几条加起来到 1 才算命中。" title="词条" />
-        <TextInput accessibilityLabel="词条" editable={Boolean(settings) && !saving} multiline onChangeText={setDraft} spellCheck={false}
-          style={styles.rulesInput} testID="settings-feed-rules" value={draft} />
-        <View style={styles.actions}>
-          <Button appStyle={appStyle} busy={saving} disabled={!settings || saving || draft === settings.rules} kind="primary" label="保存词条"
-            onPress={() => save({ rules: draft })} testID="settings-feed-save" />
-        </View>
-      </View>
-      <View style={[styles.row, styles.rowStacked]}>
-        <View style={styles.rowHead}>
-          <RowCopy detail={events.length ? `最近 ${events.length} 条，新的在上面。误杀的话回头改词条。` : "还没有记录。先用「只记录」刷一会儿，命中的会记在这里。"} title="处置记录" />
-          <Button appStyle={appStyle} disabled={!events.length} icon={Trash2} kind="danger" label="清空"
-            onPress={() => void collectorFeedFilterEvents(baseUrl, token, true).then(setEvents, fail)} testID="settings-feed-clear" />
-        </View>
-        {events.slice(-100).reverse().map((event, index) => (
-          <View key={`${event.t}-${event.id}-${index}`} style={styles.feedEvent}>
-            <Text numberOfLines={1} style={styles.detail}>
-              <Text style={styles.value}>{eventTime(event.t)}</Text>{`  ${FEED_ACTIONS[event.action]}  `}
-              <Text style={styles.rowTitle}>{event.desc || (event.id ? "（没有文案）" : "")}</Text>{event.author ? `  @${event.author}` : ""}
-            </Text>
-            {event.matched.length ? <Text numberOfLines={1} style={styles.detail}>命中：{event.matched.join("、")}</Text> : null}
-          </View>
-        ))}
       </View>
     </>
   );
@@ -875,11 +711,6 @@ const styles = StyleSheet.create({
   currentTag: { flexShrink: 0, paddingHorizontal: 9, paddingVertical: 3, borderRadius: radius.pill, backgroundColor: color.surfaceMuted },
   currentText: { fontFamily: font.sans, color: color.textSecondary, fontSize: 12, fontWeight: "500" },
   actions: { flexDirection: "row", flexShrink: 0, gap: 8 },
-  choices: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  rowHead: { flexDirection: "row", alignItems: "center", gap: 16 },
-  rulesInput: { minHeight: 132, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: color.border, borderRadius: radius.small,
-    backgroundColor: color.surface, color: color.text, fontFamily: font.mono, fontSize: 12.5, lineHeight: 19, textAlignVertical: "top" },
-  feedEvent: { gap: 1 },
   // 按钮：次按钮白底细描边，主按钮实底，危险操作红字红描边；禁用 40%
   button: { minHeight: 32, flexShrink: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   buttonHover: { backgroundColor: color.surfaceMuted },

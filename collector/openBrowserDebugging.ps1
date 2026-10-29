@@ -1,7 +1,6 @@
 param(
   [Parameter(Mandatory = $true)][ValidateSet('chrome', 'edge')][string]$Browser,
-  [Parameter(Mandatory = $true)][string]$Executable,
-  [ValidateSet('inspect', 'extensions')][string]$Page = 'inspect'
+  [Parameter(Mandatory = $true)][string]$Executable
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,9 +18,7 @@ $processName = if ($Browser -eq 'chrome') { 'chrome' } else { 'msedge' }
 $expectedExecutable = "$processName.exe"
 $resolvedExecutable = (Resolve-Path -LiteralPath $Executable).Path
 if ([IO.Path]::GetFileName($resolvedExecutable) -ne $expectedExecutable) { throw 'Unsupported browser executable.' }
-$inspectUrl = if ($Page -eq 'extensions') { "${Browser}://extensions" } else { "${Browser}://inspect/#remote-debugging" }
-$titlePattern = if ($Page -eq 'extensions') { 'Extensions|\u6269\u5c55' } else { 'Inspect|\u68c0\u67e5|\u8c03\u8bd5|\u5f00\u53d1\u8005' }
-$openedToken = if ($Page -eq 'extensions') { 'extensions_page_opened' } else { 'debugging_page_opened' }
+$inspectUrl = "${Browser}://inspect/#remote-debugging"
 $windowCondition = [System.Windows.Automation.PropertyCondition]::new(
   [System.Windows.Automation.AutomationElement]::ClassNameProperty, 'Chrome_WidgetWin_1')
 $editCondition = [System.Windows.Automation.PropertyCondition]::new(
@@ -74,10 +71,10 @@ if (![BrowserDebuggingWindow]::PostMessage($handle, 0x0100, [IntPtr]13, [IntPtr]
 [void][BrowserDebuggingWindow]::PostMessage($handle, 0x0101, [IntPtr]13, [IntPtr]::new(-1073741823))
 $deadline = [DateTime]::UtcNow.AddSeconds(3)
 while ([DateTime]::UtcNow -lt $deadline) {
-  if ($value.Current.Value -eq $inspectUrl -and $settingsWindow.Current.Name -match $titlePattern) {
-    Write-Output $openedToken
+  if ($value.Current.Value -eq $inspectUrl -and $settingsWindow.Current.Name -match 'Inspect|\u68c0\u67e5|\u8c03\u8bd5|\u5f00\u53d1\u8005') {
+    Write-Output 'debugging_page_opened'
     exit 0
   }
   Start-Sleep -Milliseconds 100
 }
-throw 'The browser page did not open.'
+throw 'The debugging settings page did not open.'

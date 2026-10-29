@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { browserDirectories, connectExternalBrowser } from "../collector/browserConnection.mjs";
 import { startCollectorServer } from "../collector/server.mjs";
 import { createAppUpdateController } from "./appUpdater.mjs";
-import { syncFeedExtension } from "./feedExtension.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
 import { REELLAB_INBOX_URL, REELLAB_PROTOCOL, sendToReelLab } from "./reelLab.mjs";
 import { startStaticServer } from "./staticServer.mjs";
@@ -26,7 +25,7 @@ const LOGIN_ITEM = { args: [HIDDEN_ARG] };
 // 页面的设置（风格、自动补读等）存在 localStorage 里，而 localStorage 按 origin（含端口）分开存：
 // 端口每次随机的话，重启后就读不到上次的设置。所以页面服务优先用固定端口，绑不上（被占用、被系统保留）才退回随机端口。
 const WEB_PORT = 47651;
-// 推荐流过滤扩展按这个端口找采集器；和页面服务的 47651 挨着，被占时退回随机端口（扩展就连不上了）
+// 已删的推荐流过滤扩展按这个端口找采集器、好卸载自己（见采集器 server.mjs）；被占时退回随机端口
 const COLLECTOR_PORT = 47652;
 
 let mainWindow = null;
@@ -262,14 +261,8 @@ async function startDesktopRuntime() {
       mkdirSync(diagnostics, { recursive: true });
       writeFileSync(path.join(diagnostics, `verify-${Date.now()}.html`), `<!-- ${url.replace(/--/gu, "")} -->\n${html}`, { mode: 0o600 });
     } });
-  // 装过扩展的话，应用带了新版本就换进文件夹；文件夹里实际是哪个版本交给采集器，扩展发现比自己新会自己重新加载
-  let feedExtensionVersion = null;
-  if (existsSync(feedExtensionDirectory())) {
-    try { feedExtensionVersion = syncFeedExtension(feedExtensionSource(), feedExtensionDirectory()); } catch { /* 拷不过去就先用旧的那份 */ }
-  }
   const collector = await startCollectorServer({
     port: COLLECTOR_PORT,
-    feedExtensionVersion,
     randomPortFallback: true,
     dataDirectory: path.join(app.getPath("userData"), "collector"),
     // 「在应用里登录」排第一个；Chrome/Edge/Comet 远程调试留作备选
@@ -299,11 +292,6 @@ async function stopDesktopRuntime() {
   desktopRuntime = null;
   await Promise.allSettled([runtime.web.close(), runtime.collector.close()]);
 }
-
-// 推荐流过滤扩展：从应用包里拷到 userData 下一个固定的普通文件夹，浏览器从这里加载。
-// 位置固定才不怕应用挪地方（Mac 上没放进「应用程序」时路径每次都变）
-const feedExtensionDirectory = () => path.join(app.getPath("userData"), "browser-extension");
-const feedExtensionSource = () => path.join(app.isPackaged ? process.resourcesPath : projectDirectory, "extension");
 
 async function launch() {
   // macOS needs an app menu for ⌘Q and ⌘C/⌘V in text fields; Windows keeps no menu bar.
@@ -352,13 +340,6 @@ async function launch() {
     inboxDirectory: path.join(app.getPath("appData"), "ReelLab", "inbox"),
     openInbox: () => shell.openExternal(REELLAB_INBOX_URL),
   }));
-  // 设置页上的扩展图标被拖起来：把扩展文件夹交给系统拖放，用户放进浏览器扩展页就装上了（开发者模式下浏览器认拖进来的文件夹）
-  ipcMain.on("desktop:start-extension-drag", (event) => {
-    try {
-      syncFeedExtension(feedExtensionSource(), feedExtensionDirectory());
-      event.sender.startDrag({ file: feedExtensionDirectory(), icon: nativeImage.createFromPath(path.join(feedExtensionDirectory(), "icon-128.png")).resize({ width: 64 }) });
-    } catch { /* 拖不起来就什么都不做 */ }
-  });
   ipcMain.handle("desktop:get-collector-config", () => ({
     baseUrl: desktopRuntime?.collector.baseUrl,
     pairingCode: desktopRuntime?.collector.getPairingCode(),
