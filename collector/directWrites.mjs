@@ -7,6 +7,8 @@ export const DIRECT_WRITE_PATHS = {
   follow: "/aweme/v1/web/commit/follow/user/", comment: "/aweme/v1/web/comment/publish", deleteComment: "/aweme/v1/web/comment/delete/",
   // 网页每进一条视频就发一次，作品进观看历史；只有自己看得见
   history: "/aweme/v1/web/history/write/",
+  // 离开长视频时存续播点（下次在抖音里打开接着放）
+  progress: "/aweme/v1/web/play/progress/",
 };
 
 export function parseDirectJson(response) {
@@ -52,6 +54,16 @@ export async function directWrite(api, action, input, { onDispatch = () => {} } 
   if (action === "history") {
     if (!/^\d{1,30}$/u.test(input.authorId || "")) throw new DirectHistoryError("invalid_request", "作者标识无效。");
     body = { author_id: input.authorId, aweme_id: awemeId };
+    // 网页切到下一条时顺带说上一条看没看完：看完了抖音把上一条的时间挪到这一刻、标成「已看完」
+    if (input.preItemId != null) {
+      if (!/^\d{5,30}$/u.test(input.preItemId) || typeof input.preItemSeen !== "boolean") throw new DirectHistoryError("invalid_request", "上一条作品标识无效。");
+      Object.assign(body, { pre_item_id: input.preItemId, pre_item_seen: input.preItemSeen ? "1" : "0" });
+    }
+  }
+  if (action === "progress") {
+    if (!Number.isSafeInteger(input.durationMs) || input.durationMs <= 0 || !Number.isSafeInteger(input.positionMs) || input.positionMs < 0 || input.positionMs > input.durationMs)
+      throw new DirectHistoryError("invalid_request", "播放进度无效。");
+    body = { item_duration: String(input.durationMs), item_id: awemeId, item_progress: String(input.positionMs) };
   }
   if (action === "deleteComment") {
     if (!/^\d{5,30}$/u.test(input.commentId || "")) throw new DirectHistoryError("invalid_request", "评论标识无效。");
@@ -61,8 +73,8 @@ export async function directWrite(api, action, input, { onDispatch = () => {} } 
   if (!(api.csrfFreshUntil > Date.now())) { await refreshDirectCsrf(api); api.csrfFreshUntil = Date.now() + 5 * 60_000; }
   // The current PC site's write requests are routed through www-hj. Sending
   // the same write to the page host reaches a different server policy.
-  // 观看历史跟网页一样发到主站（实测主站可写）
-  const url = new URL(pathname, action === "history" ? "https://www.douyin.com" : "https://www-hj.douyin.com");
+  // 观看历史、续播点跟网页一样发到主站（实测主站可写）
+  const url = new URL(pathname, ["history", "progress"].includes(action) ? "https://www.douyin.com" : "https://www-hj.douyin.com");
   for (const [name, value] of Object.entries({ device_platform: "webapp", aid: "6383", channel: "channel_pc_web", ...api.session.values,
     uifid: api.cookie("UIFID"), verifyFp: api.cookie("s_v_web_id"), fp: api.cookie("s_v_web_id"), msToken: security.msToken || api.cookie("msToken") }))
     if (value) url.searchParams.set(name, String(value));

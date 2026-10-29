@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Download, Heart, MessageCircle, Play, Search, Send, Sparkles, UserRound, Users, X } from "lucide-react-native";
-import { closeExplore, interactExplore, markExploreSeen, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo } from "../../services/explorer";
+import { closeExplore, interactExplore, markExploreSeen, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo, type WatchedItem } from "../../services/explorer";
 import { loadCollectorVideo, LocalCollectorError } from "../../services/localCollector";
 import { waitForCollector } from "../../services/videoFeed";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
@@ -351,9 +351,10 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
     {playing && connection ? <RecordVideoPlayer record={playing} records={(profile?.items ?? (results?.kind === "videos" || results?.kind === "feed" ? results.items : [])) as ExploreVideo[]}
       {...results?.kind === "feed" && !profile ? { title: "推荐", feedError: error, onReachEnd: () => void load(results.limited ? { kind: "feed" } : { kind: "feed", sessionId: results.sessionId }, "results", true),
         // 推荐流里看的跟网页一样记进抖音观看历史；记不上不打扰
-        onSeen: (item: PersonalVideoRecord) => {
-          if (item.videoId && /^\d+$/u.test(item.authorId ?? ""))
-            void waitForCollector(() => markExploreSeen(connection, { awemeId: item.videoId!, authorId: item.authorId! }), AbortSignal.timeout(60_000)).catch(() => {});
+        onSeen: (item: PersonalVideoRecord | null, previous: WatchedItem | null) => {
+          const current = item?.videoId && /^\d+$/u.test(item.authorId ?? "") ? { awemeId: item.videoId, authorId: item.authorId! } : null;
+          if (current || previous)
+            void waitForCollector(() => markExploreSeen(connection, { ...current, ...(previous ? { previous } : {}) }), AbortSignal.timeout(60_000)).catch(() => {});
         } } : null}
       commentsConnection={connection} onOpenRecord={onOpenRecord}
       onLoadVideo={(item, signal, onProgress) => loadCollectorVideo(connection.baseUrl, connection.token, item.url!, signal, onProgress)} onClose={() => setPlaying(null)} /> : null}

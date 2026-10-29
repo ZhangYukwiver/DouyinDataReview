@@ -3,7 +3,7 @@ import { Modal } from "react-native";
 import { ArrowUp, ArrowUpRight, Bookmark, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Forward, Heart, Link, Maximize, MessageCircle, Music2, Pause, Play, Search, Smile, Volume2, VolumeX, X } from "lucide-react-native";
 import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
-import type { ExploreComment, ExploreConnection, ExploreOutcome, ExplorePage, ExploreSharee } from "../../services/explorer";
+import type { ExploreComment, ExploreConnection, ExploreOutcome, ExplorePage, ExploreSharee, WatchedItem } from "../../services/explorer";
 import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, reactVideo, waitForCollector } from "../../services/videoFeed";
 import { LocalCollectorError, type PlaybackMedia } from "../../services/localCollector";
 import "./RecordVideoPlayer.css";
@@ -29,8 +29,8 @@ type Props = {
   onReachEnd?: () => void;
   /** 顶栏「工作台」后面那几个字 */
   title?: string;
-  /** 一条视频开始播放时调用（推荐流用它把视频记进抖音观看历史） */
-  onSeen?: (record: PersonalVideoRecord) => void;
+  /** 一条视频开始播放时调用，带上刚离开那条看到哪（推荐流用它记抖音观看历史）；关播放器时 record 为空、只报上一条 */
+  onSeen?: (record: PersonalVideoRecord | null, previous: WatchedItem | null) => void;
   /** 推荐流上一批没要到时的原因，播放器里显示并给重试 */
   feedError?: string | null;
 };
@@ -56,6 +56,16 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
   // 控制栏里的连播 / 清屏 / 倍速，换到下一条也保留
   const [prefs, setPrefs] = useState<PlayerPrefs>({ autoNext: false, clean: false, rate: 1 });
   const active = feed[index]!;
+  // 离开的那条先记着，等下一条开播时一起报；关掉播放器时单独报（放到微任务里，等每条视频自己的收尾都跑完）
+  const left = useRef<WatchedItem | null>(null);
+  const seenRef = useRef(onSeen);
+  seenRef.current = onSeen;
+  const reportSeen = (item: PersonalVideoRecord | null) => {
+    const previous = left.current;
+    left.current = null;
+    if (item || previous) seenRef.current?.(item, previous);
+  };
+  useEffect(() => () => queueMicrotask(() => reportSeen(null)), []);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const swipe = useRef<{ id: number; x: number; y: number; dragged: boolean } | null>(null);
@@ -150,7 +160,7 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
           {/* The next video mounts hidden so it is resolved and buffering before the switch; anything else unmounts and is released. */}
           {feed.slice(index, index + 2).map((item, offset) => <Playback key={item.id} active={offset === 0} record={item} onLoadVideo={onLoadVideo}
             muted={muted} onToggleMute={() => setMuted((value) => !value)} commentsOpen={commentsOpen} onToggleComments={toggleComments} onOpenRecord={onOpenRecord}
-            shareOpen={shareOpen} onToggleShare={toggleShare} prefs={prefs} onPrefs={(patch) => setPrefs((value) => ({ ...value, ...patch }))} onEnded={() => move(1)} onSeen={onSeen}
+            shareOpen={shareOpen} onToggleShare={toggleShare} prefs={prefs} onPrefs={(patch) => setPrefs((value) => ({ ...value, ...patch }))} onEnded={() => move(1)} onSeen={onSeen ? reportSeen : undefined} onLeave={onSeen ? (watch) => { left.current = watch; } : undefined}
             commentsConnection={commentsConnection} title={title} onClose={onClose}
             position={`${index + offset + 1} / ${feed.length}${index + offset < feed.length - 1 ? "" : !onReachEnd ? " · 已到最后" : stalled ? " · 暂时没有更多" : " · 正在加载更多"}`} />)}
           {onReachEnd && stalled && index >= feed.length - 3 ? <div className="rv-feed-status" role="status">
@@ -239,10 +249,10 @@ const RATES = [1, 1.25, 1.5, 2, 0.75];
 const Caption = ({ text }: { text: string }) => <>{text.split(/(#[^#\s,，。！？!?;；~～]+)/u).map((part, i) => part.startsWith("#")
   ? <span className="rv-tag" key={i}>{part}</span> : <EmojiText key={i} text={part} />)}</>;
 
-function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, shareOpen, onToggleShare, prefs, onPrefs, onEnded, onSeen, commentsConnection, position, title, onClose, onOpenRecord }: {
+function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, shareOpen, onToggleShare, prefs, onPrefs, onEnded, onSeen, onLeave, commentsConnection, position, title, onClose, onOpenRecord }: {
   active: boolean; record: PersonalVideoRecord; onLoadVideo: RecordVideoLoader; muted: boolean; onToggleMute: () => void;
   commentsOpen: boolean; onToggleComments: () => void; shareOpen: boolean; onToggleShare: () => void; commentsConnection: ExploreConnection | null;
-  prefs: PlayerPrefs; onPrefs: (patch: Partial<PlayerPrefs>) => void; onEnded: () => void; onSeen?: (record: PersonalVideoRecord) => void;
+  prefs: PlayerPrefs; onPrefs: (patch: Partial<PlayerPrefs>) => void; onEnded: () => void; onSeen?: (record: PersonalVideoRecord) => void; onLeave?: (watch: WatchedItem) => void;
   position: string; title: string; onClose: () => void; onOpenRecord?: (url: string) => Promise<void>;
 }) {
   const [media, setMedia] = useState<PlaybackMedia | null>(null);
@@ -265,6 +275,22 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   const seenRef = useRef(onSeen);
   seenRef.current = onSeen;
   useEffect(() => { if (active && readyToPlay && !error) seenRef.current?.(record); }, [active, readyToPlay]);
+  // 离开时报看到哪、看没看完：网页到过九成多就算看完（拖进度条过去也算），抖音据此标「已看完」、存续播点。
+  // 要排在下面装载视频的 effect 前面：卸载时收尾按声明顺序跑，那边会把视频清空
+  const reached = useRef(0);
+  const leaveRef = useRef(onLeave);
+  leaveRef.current = onLeave;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!active || !readyToPlay || error || !src || !video || !record.videoId) return;
+    reached.current = 0;
+    return () => {
+      const duration = video.duration;
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      leaveRef.current?.({ awemeId: record.videoId!, positionMs: Math.round(video.currentTime * 1000), durationMs: Math.round(duration * 1000),
+        finished: Math.max(reached.current, video.currentTime) >= duration * 0.9 });
+    };
+  }, [active, readyToPlay, error, src]);
   // 点赞 / 收藏：初始状态来自列表（推荐流、探索带着；内容库的「喜欢」「收藏」本来就是点过的）
   const initial = useRef({
     like: (record as { liked?: boolean | null }).liked ?? (record.id.startsWith("liked_videos:") ? true : null),
@@ -376,7 +402,7 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
         onEnded={() => { if (active && prefs.autoNext) onEnded(); }}
         onLoadedData={() => setReadyToPlay(true)}
         onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
-        onTimeUpdate={() => setElapsed(videoRef.current?.currentTime ?? 0)}
+        onTimeUpdate={() => { const at = videoRef.current?.currentTime ?? 0; setElapsed(at); if (active) reached.current = Math.max(reached.current, at); }}
         onDurationChange={() => { const value = videoRef.current?.duration; setDuration(value && Number.isFinite(value) ? value : 0); }}
         onError={() => { if (src) setError("视频无法播放，请重试或打开抖音原视频。"); }} />}
       {(!readyToPlay || error) && record.coverUrl ? <img className="rv-loading-cover" src={record.coverUrl} alt="" referrerPolicy="no-referrer" /> : null}

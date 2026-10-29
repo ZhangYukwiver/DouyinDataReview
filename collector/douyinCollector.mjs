@@ -1591,17 +1591,44 @@ export class DouyinCollector {
     this.watchHistoryTimer.unref?.();
   }
 
+  // 刷推荐时每条什么时候进的、离开时看到哪；读回观看历史时写进本机那条
+  noteFeedWatch({ awemeId, previous }) {
+    const now = Date.now();
+    this.feedWatch ??= new Map();
+    for (const [id, item] of this.feedWatch) if (now - item.enteredAt > 6 * 60 * 60 * 1000) this.feedWatch.delete(id);
+    const left = previous && this.feedWatch.get(String(previous.awemeId));
+    if (left) {
+      const { durationMs, positionMs, finished } = previous;
+      left.left = { moved: finished && Boolean(awemeId), watchCompleted: finished, watchProgress: finished
+        ? { watchedSeconds: durationMs / 1000, percent: 100 }
+        : { watchedSeconds: Math.min(positionMs, durationMs) / 1000, percent: Math.round(Math.min(positionMs, durationMs) / durationMs * 10_000) / 100 } };
+    }
+    if (awemeId) this.feedWatch.set(String(awemeId), { enteredAt: now });
+  }
+
   async refreshWatchHistoryHead() {
     if (this.syncPromise) return;
     const api = await this.ensureDirectApi({ history: true });
     const { records } = normalizeDouyinResponse(matchDouyinEndpoint(DIRECT_HISTORY_ENDPOINT), await this.readDirectHistory(api, "0"));
     if (this.syncPromise) return;
     const known = (snapshot) => new Set(snapshot.records.watch_history.map((item) => item.id));
-    if (!records.some((item) => !known(this.snapshot).has(item.id))) return;
+    const watched = [...(this.feedWatch ?? [])].filter(([, item]) => item.left);
+    if (!watched.length && !records.some((item) => !known(this.snapshot).has(item.id))) return;
     await this.saveSnapshot((snapshot) => {
       const ids = known(snapshot);
       const fresh = records.filter((item) => !ids.has(item.id));
-      return [{ ...snapshot.records, watch_history: [...fresh, ...snapshot.records.watch_history] }, snapshot.warnings,
+      let list = [...fresh, ...snapshot.records.watch_history];
+      for (const [videoId, item] of watched) {
+        const at = (record) => Date.parse(record.occurredAt ?? "") || 0;
+        const own = list.filter((record) => record.videoId === videoId && at(record) >= item.enteredAt - 60_000);
+        const latest = own.reduce((best, record) => (!best || at(record) > at(best) ? record : best), null);
+        // 看完的那条抖音会把时间挪到离开那一刻：等读到挪过的那条（这次新读进来的）再标，进入时那条就作废
+        if (!latest || (item.left.moved && !fresh.includes(latest))) continue;
+        list = list.filter((record) => !own.includes(record) || record === latest)
+          .map((record) => record === latest ? { ...record, watchCompleted: item.left.watchCompleted, watchProgress: item.left.watchProgress } : record);
+        this.feedWatch.delete(videoId);
+      }
+      return [{ ...snapshot.records, watch_history: list }, snapshot.warnings,
         { directSync: snapshot.directSync, chatMessages: snapshot.chatMessages, chatConversations: snapshot.chatConversations }];
     });
   }

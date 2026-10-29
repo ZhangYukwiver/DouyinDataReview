@@ -56,8 +56,10 @@ export async function readExplore(connection: ExploreConnection, query: ExploreQ
     throw new LocalCollectorError("invalid_response", "探索数据格式无效，请更新采集器。");
   return result;
 }
-/** 刷到的视频记进抖音观看历史（网页每进一条视频也会这样记） */
-export async function markExploreSeen(connection: ExploreConnection, input: { awemeId: string; authorId: string }): Promise<void> {
+/** 离开一条视频时看到第几毫秒、多长、看没看完 */
+export type WatchedItem = { awemeId: string; positionMs: number; durationMs: number; finished: boolean };
+/** 刷到的视频记进抖音观看历史，顺带报刚离开那条的看完和续播点（和网页切下一条时一样）；关播放器时只报上一条 */
+export async function markExploreSeen(connection: ExploreConnection, input: { awemeId?: string; authorId?: string; previous?: WatchedItem }): Promise<void> {
   await request(connection, "seen", input);
 }
 /** 播放器里的点赞 / 收藏：只发一个请求，带上想要的状态 */

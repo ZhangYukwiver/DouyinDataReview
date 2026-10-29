@@ -27,6 +27,7 @@ export class ExplorerBridge {
       if (operation === "read") return this.explorer.read(input, { signal });
       if (operation === "seen") {
         const result = await this.explorer.seen(input);
+        this.collector.noteFeedWatch(input);
         this.collector.scheduleWatchHistoryRefresh();
         return result;
       }
