@@ -35,6 +35,9 @@ type Props = {
   feedError?: string | null;
 };
 
+// 往回翻时还留着的条数：画面和视频地址都在，翻回来直接放
+const KEEP_BEHIND = 3;
+
 export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnection = null, onOpenRecord, onClose, onReachEnd, title = "当前列表", onSeen, feedError = null }: Props) {
   // Freeze the opened list so background collection cannot reorder a playing feed; a growing feed only appends.
   const [feed, setFeed] = useState(() => buildVideoFeed(records ?? [record], record));
@@ -157,12 +160,13 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
             event.stopPropagation();
           }}>
           <DataStream />
-          {/* The next video mounts hidden so it is resolved and buffering before the switch; anything else unmounts and is released. */}
-          {feed.slice(index, index + 2).map((item, offset) => <Playback key={item.id} active={offset === 0} record={item} onLoadVideo={onLoadVideo}
+          {/* The next video mounts hidden so it is resolved and buffering before the switch; the last three stay mounted so flicking back
+              plays at once. Anything else unmounts and is released. */}
+          {feed.slice(Math.max(0, index - KEEP_BEHIND), index + 2).map((item, slot) => { const offset = Math.max(0, index - KEEP_BEHIND) + slot - index; return <Playback key={item.id} active={offset === 0} record={item} onLoadVideo={onLoadVideo}
             muted={muted} onToggleMute={() => setMuted((value) => !value)} commentsOpen={commentsOpen} onToggleComments={toggleComments} onOpenRecord={onOpenRecord}
             shareOpen={shareOpen} onToggleShare={toggleShare} prefs={prefs} onPrefs={(patch) => setPrefs((value) => ({ ...value, ...patch }))} onEnded={() => move(1)} onSeen={onSeen ? reportSeen : undefined} onLeave={onSeen ? (watch) => { left.current = watch; } : undefined}
             commentsConnection={commentsConnection} title={title} onClose={onClose}
-            position={`${index + offset + 1} / ${feed.length}${index + offset < feed.length - 1 ? "" : !onReachEnd ? " · 已到最后" : stalled ? " · 暂时没有更多" : " · 正在加载更多"}`} />)}
+            position={`${index + offset + 1} / ${feed.length}${index + offset < feed.length - 1 ? "" : !onReachEnd ? " · 已到最后" : stalled ? " · 暂时没有更多" : " · 正在加载更多"}`} />; })}
           {onReachEnd && stalled && index >= feed.length - 3 ? <div className="rv-feed-status" role="status">
             <span>{feedError ? `推荐没加载出来：${feedError}` : "连着几批都是直播或广告，暂时没有能播的新视频。"}</span>
             <button className="rv-button" onClick={retryFeed}>重试</button>
