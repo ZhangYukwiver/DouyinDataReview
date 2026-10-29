@@ -6,7 +6,7 @@ export type StoryStyle = Exclude<AppStyle, "minimal">;
 // 采集器页在极简下是极简版式，其余三种风格下仍是那套手绘纸面（不跟风格换皮）。
 export const DEFAULT_APP_STYLE: AppStyle = "minimal";
 export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: string }> = [
-  { key: "minimal", label: "极简", detail: "白底细线 · 系统字体" },
+  { key: "minimal", label: "极简", detail: "灰绿纸面 · 森林绿" },
   { key: "trace", label: "内容年志", detail: "墨夜玻璃 · 穿卡入口" },
   { key: "archive", label: "档案馆", detail: "暗室星图卷宗 · 点击翻页" },
   { key: "poster", label: "海报", detail: "黑橙新闻纸 · 硬切长卷" },

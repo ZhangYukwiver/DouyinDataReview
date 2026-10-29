@@ -145,13 +145,13 @@ describe("workspace theme", () => {
       if (/^(?:[\d.]+%\s*,?\s*)+$|^(?:from|to)$/u.test(selector)) continue;
       for (const part of split(selector)) expect(part.trim().startsWith(':root[data-style="minimal"]')).toBe(true);
     }
-    // 极简的语言：不发光、不铺渐变、没有投影（只有 none 和描边用的 inset 1px），字重不超过 600
+    // 极简的语言：不发光、不铺渐变，投影只有 none、描边用的 inset 1px 和主区白面板那一圈环境投影，字重不超过 500
     expect(minimalCss).not.toMatch(/gradient\(/u);
     expect(minimalCss).not.toContain("text-shadow");
     // 只看声明：选择器里认行内重字重的 [style*="font-weight: 700"] 不算
-    expect(rules.map(({ body }) => body).join(";")).not.toMatch(/font-weight:\s*(?:[7-9]00|bold)/u);
-    for (const [, value] of minimalCss.matchAll(/box-shadow:([^;!}]+)/gu)) expect(value!.trim()).toMatch(/^(?:none|inset 0 0 0 1px #[0-9A-F]{6})$/u);
-    // 为衬线调的 700–900 字重在工作台里收成 600：RN-web 打包版的类名只有 r-<哈希>，不带属性名，
+    expect(rules.map(({ body }) => body).join(";")).not.toMatch(/font-weight:\s*(?:[6-9]00|bold)/u);
+    for (const [, value] of minimalCss.matchAll(/box-shadow:([^;!}]+)/gu)) expect(value!.trim()).toMatch(/^(?:none|inset 0 0 0 1px #[0-9A-F]{6}|0 0 48px rgba\(0,0,0,\.04\),0 0 12px rgba\(0,0,0,\.05\))$/u);
+    // 为衬线调的 700–900 字重在工作台里收成 500：RN-web 打包版的类名只有 r-<哈希>，不带属性名，
     // 所以按哈希段认，开发版和打包版两种类名都要写；RN-web 升级后哈希变了，这里会先报错
     for (const weight of ["700", "800", "900", "bold"] as const) {
       const className = String(atomic({ fontWeight: weight })[0].fontWeight);
@@ -167,17 +167,18 @@ describe("workspace theme", () => {
     expect(minimalCss).not.toContain("setup-workspace");
   });
 
-  it("gives the minimal style the same token names as the archive, white ground and one quiet grey for missing covers", () => {
+  it("gives the minimal style the same token names as the archive, grey-green ground and one quiet grey for missing covers", () => {
     const { colors, fonts, radii } = palettes.minimal;
     expect(Object.keys(colors)).toEqual(Object.keys(palettes.archive.colors));
     for (const key of ["heat", "slices", "avatars", "tints"] as const) expect(colors[key]).toHaveLength(palettes.archive.colors[key].length);
     expect(Object.keys(fonts)).toEqual(Object.keys(palettes.archive.fonts));
     expect(Object.keys(radii)).toEqual(Object.keys(palettes.archive.radii));
-    expect(colors.canvas).toBe("#FFFFFF");
+    expect(colors.canvas).toBe("#F2F4F2");
+    expect(colors.surface).toBe("#FFFFFF");
     expect(colors.shadow).toBe("none");
-    expect(new Set(colors.tints)).toEqual(new Set(["#F4F4F5"]));
+    expect(new Set(colors.tints)).toEqual(new Set(["#EFF1EF"]));
     expect(webPalettes.minimal).toBe(palettes.minimal);
-    // 图表分类色不用墨黑（选中、主按钮），也不借绿 / 琥珀 / 红（状态）；创作者中心的图表接的就是这一组
+    // 图表分类色不用墨黑（正文、选中），也不借状态绿 / 琥珀 / 红；创作者中心的图表接的就是这一组
     for (const reserved of [colors.accent, colors.green, colors.amber, colors.danger]) expect(colors.slices).not.toContain(reserved);
     expect(minimalCss).toContain("--ws-chart-0:var(--ws-slices-0)");
   });

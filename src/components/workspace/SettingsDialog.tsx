@@ -709,12 +709,12 @@ function StyleSwatch({ kind }: { kind: AppStyle }) {
   const p = palettes[kind].colors;
   if (kind === "minimal") {
     return (
-      <View style={[styles.swatch, { backgroundColor: p.surface, borderColor: p.border }]}>
-        <View style={[styles.swSide, { backgroundColor: p.sidebar, borderRightColor: p.border }]} />
-        <View style={styles.swMain}>
+      <View style={[styles.swatch, { backgroundColor: p.canvas, borderColor: p.border }]}>
+        <View style={[styles.swSide, { borderRightWidth: 0 }]} />
+        <View style={[styles.swMain, styles.swPanel, { backgroundColor: p.surface, borderColor: p.border }]}>
           <View style={[styles.swBar, { width: 26, height: 4, backgroundColor: p.text }]} />
           <View style={[styles.swBar, { width: "80%", backgroundColor: p.border }]} />
-          <View style={[styles.swBar, { width: "58%", backgroundColor: p.border }]} />
+          <View style={[styles.swBar, { width: 22, height: 6, borderRadius: 3, backgroundColor: p.button }]} />
         </View>
       </View>
     );
@@ -844,6 +844,8 @@ const styles = StyleSheet.create({
   swatch: { height: 54, overflow: "hidden", flexDirection: "row", borderWidth: 1, borderRadius: radius.small },
   swSide: { width: 20, borderRightWidth: 1 },
   swMain: { flex: 1, justifyContent: "center", gap: 6, paddingHorizontal: 9 },
+  // 极简：纸面上浮一块白面板
+  swPanel: { marginVertical: 5, marginRight: 5, borderWidth: 1, borderRadius: 4 },
   swMainWide: { paddingLeft: 4 },
   swMainRing: { paddingLeft: 6 },
   swBar: { height: 3, borderRadius: 2 },
