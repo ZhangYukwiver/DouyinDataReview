@@ -16,7 +16,7 @@
 <title>TRACE · 内容年志</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..700;1,9..144,100..700&family=Inter:wght@400;500;600&family=Noto+Serif+SC:wght@200;300;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..700;1,9..144,100..700&family=Inter:wght@400..600&family=Noto+Serif+SC:wght@200..500&display=swap">
 <style>
 /* ============ tokens: the entry card's ink night, pushed to the edge ============ */
 :root{
@@ -79,9 +79,9 @@ t-d,.tr-d{font-family:"Noto Serif SC","Songti SC","STSong",serif;font-variation-
 .hair{height:1px;background:var(--cream);opacity:.28}
 .halftone{--ht:10px;--ht-c:var(--amber);--ht-r:28%;background-image:radial-gradient(circle,var(--ht-c) 0 var(--ht-r),transparent calc(var(--ht-r) + 6%));background-size:var(--ht) var(--ht)}
 .pill{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:0 14px;border-radius:50px;border:1px solid var(--blue);color:var(--blue);background:transparent;font:500 13px/1 var(--sans);white-space:nowrap;cursor:pointer;transition:background .2s ease}
-.pill:hover{background:rgba(65,161,207,.1)}
+@media (hover:hover){.pill:hover{background:rgba(65,161,207,.1)}}
 .pill.ghost{border-color:rgba(246,241,228,.35);color:var(--cream)}
-.pill.ghost:hover,.pill.ghost[aria-pressed="true"]{background:rgba(246,241,228,.1)}
+.pill.ghost[aria-pressed="true"]{background:rgba(246,241,228,.1)}@media (hover:hover){.pill.ghost:hover{background:rgba(246,241,228,.1)}}
 .pill.sm{min-height:30px;padding:0 11px;font-size:12px}
 .cir{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;border:1px solid currentColor;border-radius:50%;font-size:10px;line-height:1}
 .cue{display:inline-block;animation:cue 2.2s ease-in-out infinite}
@@ -153,7 +153,7 @@ html.arrive #veil{opacity:1;transition:none}
 .brand-name small{display:block;margin-top:1px;font:400 9px var(--mono);letter-spacing:.22em;opacity:.72}
 .nav-idx{display:flex;align-items:center;gap:2px;min-width:0}
 .nav-idx a{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 8px;border-radius:50px;font:400 10px/1 var(--mono);letter-spacing:.14em;opacity:.62;white-space:nowrap;transition:opacity .2s ease,background .2s ease}
-.nav-idx a:hover{opacity:1}
+@media (hover:hover){.nav-idx a:hover{opacity:1}}
 .nav-idx a .n{font:inherit}
 .nav-idx a span:not(.n){display:none;font:500 12px/1 var(--sans);letter-spacing:.02em}
 .nav-idx a.on{opacity:1;background:rgba(246,241,228,.1);color:var(--cream)}
@@ -166,6 +166,8 @@ html.arrive #veil{opacity:1;transition:none}
 .nav,.nav .stamp,.nav .pill,.nav-prog{transition:background-color .6s ease,border-color .6s ease,color .6s ease,box-shadow .6s ease}
 /* light pages (morning / white skies, or a chapter's white-out via body.whiteout): ink on frosted white */
 body[data-sky="morning"] .nav,body[data-sky="white"] .nav,body.whiteout .nav{background:rgba(255,255,255,.66);border-color:rgba(31,31,41,.3);color:var(--ink);box-shadow:rgba(31,31,41,.12) 0 2px 10px}
+/* 手机上导航不做毛玻璃：滚动和会动的场景都会让模糊每帧重算；换成更实的底色 */
+@media (max-width:700px){.nav{-webkit-backdrop-filter:none;backdrop-filter:none;background:rgba(14,17,27,.84)}body[data-sky="morning"] .nav,body[data-sky="white"] .nav,body.whiteout .nav{background:rgba(255,255,255,.9)}}
 body[data-sky="morning"] .nav-idx a,body[data-sky="white"] .nav-idx a,body.whiteout .nav-idx a{opacity:.78}
 body[data-sky="morning"] .nav-idx a.on,body[data-sky="white"] .nav-idx a.on,body.whiteout .nav-idx a.on{opacity:1;background:rgba(31,31,41,.08);color:var(--ink)}
 body[data-sky="morning"] .nav-idx a.on .n,body[data-sky="white"] .nav-idx a.on .n,body.whiteout .nav-idx a.on .n{color:#a9571a}
@@ -176,6 +178,14 @@ body[data-sky="morning"] .nav .pill:not(.ghost),body[data-sky="white"] .nav .pil
 body[data-sky="morning"] .nav-prog,body[data-sky="white"] .nav-prog,body.whiteout .nav-prog{background:#1d6a93}
 @media (max-width:980px){.nav-idx{display:none}.nav{gap:14px}}
 @media (max-width:560px){.brand-name small,.nav-r .stamp{display:none}}
+
+/* ============ phones ============ */
+/* the stage is the small viewport (address bar showing), so a pinned screen never hides its foot under the toolbar,
+   and does not grow and shrink while the bar slides; looping animations stop in scenes that are not on screen (.quiet, phones only) */
+@media (max-width:700px){
+  .stage{height:100svh}
+  .scene.quiet *,.scene.quiet *::before,.scene.quiet *::after{animation-play-state:paused!important}
+}
 
 /* ============ privacy ============ */
 body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privacy-on [data-private] image{filter:blur(22px)}
@@ -196,6 +206,15 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   const query = new URLSearchParams(location.search);
   const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
   const REDUCED = !document.documentElement.classList.contains("motion-full") && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // phones: the address bar sliding in and out only changes the height and fires resize; the layout is built for the
+  // small viewport (svh) already, so on touch phones a height-only resize is swallowed here, before any chapter relayouts
+  const PHONE = matchMedia("(max-width:700px)");
+  const COARSE = matchMedia("(pointer: coarse)");
+  let lastW = innerWidth;
+  addEventListener("resize", (event) => {
+    if (PHONE.matches && COARSE.matches && innerWidth === lastW) { event.stopImmediatePropagation(); return; }
+    lastW = innerWidth;
+  }, true);
 
   // ---------- data ----------
   // 导出的离线文件把数据直接放在 window.__STORY_EXPORT__ 里（见 story-export.js）
@@ -543,6 +562,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     if (scene && scene.p >= 0) { try { fn(scene.p, scene.vis, scene.out, scene.el); } catch (error) { console.error("[onProgress]", error); } }
   }
   // ---------- sky: the entry card's paintings, one per scene (data-sky on the scene or its chapter) ----------
+  const PORTRAIT_SKY = matchMedia("(max-aspect-ratio: 3/4)").matches; // 竖屏只看得到画的中间一条：用裁好的竖版（-m），体积不到一半
   const SKY = { night: "entry-night", dawn: "sky-s0-dawn", morning: "sky-s1-morning", dusk: "sky-s2-dusk", blue: "sky-s3-night", ember: "sky-s4-ember", mix: "entry-mix" };
   let skyKey = null;
   function setSky(key) {
@@ -553,7 +573,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     document.body.dataset.sky = key;
     for (const layer of host.children) {
       const on = layer.dataset.k === key;
-      if (on && !layer.style.backgroundImage && SKY[key]) layer.style.backgroundImage = `url("${(EXPORTED && EXPORTED.assets[SKY[key]]) || `story-images/${SKY[key]}.jpg`}")`;
+      if (on && !layer.style.backgroundImage && SKY[key]) layer.style.backgroundImage = `url("${(EXPORTED && EXPORTED.assets[SKY[key]]) || `story-images/${SKY[key]}${PORTRAIT_SKY ? "-m" : ""}.jpg`}")`;
       layer.classList.toggle("on", on);
     }
   }
@@ -585,10 +605,13 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       m.node.style.maskImage = mask;
     }
   }
-  let navLinks = [], navProg = null, current = null;
+  let navLinks = [], navProg = null, current = null, stageProbe = null;
   function update() {
     // read everything first (scroll position, page height, scene rects), then write: no forced layouts mid-frame
-    const vh = innerHeight;
+    // phones: a pinned stage is 100svh, so progress is measured against it, not against innerHeight (which moves with the address bar)
+    const phone = PHONE.matches;
+    if (phone && !stageProbe) stageProbe = document.querySelector(".stage");
+    const vh = (phone && stageProbe && stageProbe.clientHeight) || innerHeight;
     const y = scrollY;
     const max = document.documentElement.scrollHeight - vh;
     const rects = scenes.map((s) => s.el.getBoundingClientRect());
@@ -624,6 +647,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       if (r.bottom > 0 && r.top < vh) visible.add(s.el);
       const off = !(r.bottom > -vh && r.top < vh * 2);
       if (off !== s.off) { s.off = off; s.el.classList.toggle("off", off); }
+      const quiet = phone && !(r.bottom > 0 && r.top < vh);
+      if (quiet !== s.quiet) { s.quiet = quiet; s.el.classList.toggle("quiet", quiet); }
     }
     scrubMarquees(y, visible);
     // data-sky="auto": the chapter drives the sky itself through __TRACE.setSky (e.g. hour by hour)
@@ -866,6 +891,12 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 /* this side: white paper, a card-shaped hole (clip-path) shows the night sky behind it */
 #arrive .ar-paper{position:absolute;inset:0;z-index:3;background:#fff;color:var(--ink);overflow:hidden}
 #arrive .ar-dim{position:absolute;inset:0;opacity:0;background:radial-gradient(70% 80% at 50% var(--gy,50%),#f8f5ef 0%,#ede7dc 55%,#e3dccf 100%)}
+/* 手机：白纸每帧都按卡片换裁切路径，纸里只要多一层要画的内容，3.5 倍像素下每帧整屏重画追不上，图块一块块露出背后的天空（屏闪）。
+   纸面只留一种纯色就不用光栅化：暗角改成纸自己的底色从白渐变到米色（脚本里按同一进度设） */
+@media (max-width:700px){#arrive .ar-dim{display:none}}
+/* 手机：卡片从铺满整屏缩回来时，will-change:transform 会让它一直按最大那一刻的尺寸光栅化（3.5 倍像素下几千像素见方），
+   图块装不下就一块块闪；交还给浏览器按当前大小重画，实测闪烁归零、帧数还多了 */
+@media (max-width:700px){#arrive .ar-frame{will-change:auto}}
 #arrive .ar-glow,#arrive .ar-aura{position:absolute;left:0;top:0;transform-origin:50% 50%;will-change:transform,opacity;pointer-events:none}
 #arrive .ar-glow{border-radius:var(--r)}
 #arrive .ar-glow::before{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:0 0 150px 26px rgba(238,164,78,.42),0 0 46px 6px rgba(238,164,78,.34);animation:ar-breathe 5s ease-in-out infinite alternate}
@@ -1022,6 +1053,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     // the card's outline in its own coordinates (origin at its centre), rounded corners sampled.
     // The hole in the paper is this outline pushed through the same transform CSS gives the card, so the two always agree.
     const PERSP = 1100;
+    const FLAT = matchMedia("(max-width:700px)"); // see #arrive .ar-dim
     let OUT = [];
     function outline() {
       const a = G.cw / 2, b = G.ch / 2, r = G.r, n = 6, pts = [];
@@ -1058,8 +1090,13 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       const covered = sw < 0.001 && x + k < -1 && y + k < -1 && x + w - k > G.W + 1 && y + h - k > G.H + 1;
       const paperA = REDUCED ? 1 - seg(p, 0.54, 0.7) : 1;
       const paperOn = !covered && paperA > 0.001;
+      // phones: while the white card still fills the screen, show the plain paper instead of the huge 3D card layer —
+      // one solid colour needs no raster tiles, and the scaled card was dropping tiles here (flicker)
+      const fillA = 1 - eio(seg(p, 0.3, 0.42));
+      const solid = FLAT.matches && covered && fillA >= 0.999;
       let holeTop = y;
-      paper.style.visibility = paperOn ? "" : "hidden";
+      paper.style.visibility = paperOn || solid ? "" : "hidden";
+      if (solid) paper.style.clipPath = "none";
       if (paperOn) {
         let d = "";
         holeTop = Infinity;
@@ -1067,7 +1104,9 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
         paper.style.clipPath = `path(evenodd,"M0 0H${f1(G.W)}V${f1(G.H)}H0Z${d}Z")`;
       }
       paper.style.opacity = paperA.toFixed(3);
-      dim.style.opacity = seg(p, 0.08, 0.34).toFixed(3);
+      const dv = seg(p, 0.08, 0.34);
+      dim.style.opacity = dv.toFixed(3);
+      if (FLAT.matches) paper.style.backgroundColor = solid ? "#fff" : `rgb(${Math.round(255 - 19 * dv)},${Math.round(255 - 25 * dv)},${Math.round(255 - 36 * dv)})`; // #fff → #ece6db
       glow.style.transform = tf;
       glow.style.opacity = (Math.min(1, cond * 1.3) * (1 - seg(p, 0.56, 0.7))).toFixed(3);
       aura.style.transform = tf;
@@ -1081,8 +1120,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       // the card clears from the middle outward: the white fill goes first, its rim of light last
       const fo = 1 - seg(p, 0.6, 0.72);
       frame.style.transform = tf;
-      frame.style.visibility = fo <= 0 ? "hidden" : "";
-      const fillA = 1 - eio(seg(p, 0.3, 0.42));
+      frame.style.visibility = fo <= 0 || solid ? "hidden" : "";
       fill.style.opacity = fillA.toFixed(3);
       rimw.style.opacity = (1 - eio(seg(p, 0.35, 0.48))).toFixed(3);
       glass.style.opacity = (seg(p, 0.34, 0.46) * fo).toFixed(3);
@@ -1723,14 +1761,18 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       loupe.style.transform = `translate3d(${(L.sx - lr).toFixed(1)}px,${(L.sy - lr).toFixed(1)}px,0)`;
       lit.style.transform = `translate3d(${(lr - L.sx).toFixed(1)}px,${(lr - L.sy).toFixed(1)}px,0)`;
     }
-    addEventListener("pointermove", (e) => {
+    const aim = (e) => {
       if (!L.raf) return;
       // the camera wrapper is scaled about the centre; map the pointer back into its space
       L.x = W / 2 + (e.clientX - W / 2) / L.k; L.y = Hh / 2 + (e.clientY - Hh / 2) / L.k;
       L.idle = performance.now();
-    }, { passive: true });
+    };
+    addEventListener("pointermove", aim, { passive: true });
+    addEventListener("pointerdown", aim, { passive: true }); // phones have no hover: a tap sends the light there
+    const SLOW = matchMedia("(max-width:700px)"); // phones: the idle wander is slow enough to move at ~30 fps
     function tick(now) {
       L.raf = requestAnimationFrame(tick);
+      if (SLOW.matches && L.prev && now - L.prev < 30) return;
       const dt = Math.min(0.05, Math.max(0.001, (now - (L.prev || now)) / 1000)); L.prev = now;
       if (now - L.idle > 3500) { const k = now * 0.00012; L.x = W * (0.5 + 0.34 * Math.sin(k * 1.3)); L.y = Hh * (0.52 + 0.24 * Math.sin(k * 0.9 + 1.7)); }
       const a = 1 - Math.exp(-dt / 0.11);
@@ -2292,7 +2334,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
         world.style.width = `${W}px`; world.style.height = `${Hh}px`;
         // dots: one canvas, drawn once
         const zoom = narrow ? 1.2 : 1.8;
-        const dpr = Math.min(2, devicePixelRatio || 1) * zoom;
+        const dpr = vw <= 700 ? Math.min(2, (devicePixelRatio || 1) * zoom) : Math.min(2, devicePixelRatio || 1) * zoom; // phones: the whole canvas stays at ≤2×
         const cv = H("canvas", { class: "tc-dots", width: Math.round(W * dpr), height: Math.round(Hh * dpr), "aria-hidden": "true" });
         const g = cv.getContext("2d");
         g.scale(dpr, dpr);
@@ -2619,15 +2661,17 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   };
   const MOB = {
     k0: [pose({ xv: -6, yv: -31, z: 60, rx: 22, ry: 26, rz: -10, s: 0.8 }), pose({ xv: 94, yv: 2, z: 40, rx: -20, ry: -40, rz: 14, hide: 1 }), pose({ xv: 8, yv: 33, z: 60, rx: 26, ry: -24, rz: 12, s: 0.8 })],
-    k1: [pose({ xv: -10, yv: -23, rx: 6, ry: 20, rz: -6, s: 0.8 }), pose({ xv: 10, yv: 3, z: -30, rx: -6, ry: -18, rz: 5, s: 0.8 }), pose({ xv: -8, yv: 28, rx: 8, ry: 16, rz: -4, s: 0.8 })],
+    k1: [pose({ xv: -10, yv: -15, rx: 6, ry: 20, rz: -6, s: 0.72 }), pose({ xv: 10, yv: 2, z: -30, rx: -6, ry: -18, rz: 5, s: 0.72 }), pose({ xv: -8, yv: 20, rx: 8, ry: 16, rz: -4, s: 0.72 })],
     rig: { xv: 0, yv: -9, s: 0.84, rx: 10, ry: -10 },
   };
   // stacked: A top-left, B top-right, C below — every pair and the three together overlap in a rectangle
   const K2 = [pose({ xc: -0.22, yc: -0.2 }), pose({ xc: 0.22, yc: -0.2, z: 8 }), pose({ yc: 0.2, z: 16 })];
   const RIG0 = { xv: 0, yv: 0, s: 1, rx: 0, ry: 0 };
   const f = (v, d = 2) => v.toFixed(d);
-  const cardTf = (q) => `translate3d(calc(${f(q.xv)}vw + ${f(q.xc, 4)} * var(--cw)), calc(${f(q.yv)}vh + ${f(q.yc, 4)} * var(--ch)), ${f(q.z, 1)}px) rotateX(${f(q.rx)}deg) rotateY(${f(q.ry)}deg) rotateZ(${f(q.rz)}deg) scale(${f(q.s, 4)})`;
-  const rigTf = (q) => `translate3d(${f(q.xv)}vw, ${f(q.yv)}vh, 0) rotateX(${f(q.rx)}deg) rotateY(${f(q.ry)}deg) scale(${f(q.s, 4)})`;
+  // phones measure height against the stage (100svh), so the poses do too
+  const VH = () => (MOBILE.matches ? "svh" : "vh");
+  const cardTf = (q) => `translate3d(calc(${f(q.xv)}vw + ${f(q.xc, 4)} * var(--cw)), calc(${f(q.yv)}${VH()} + ${f(q.yc, 4)} * var(--ch)), ${f(q.z, 1)}px) rotateX(${f(q.rx)}deg) rotateY(${f(q.ry)}deg) rotateZ(${f(q.rz)}deg) scale(${f(q.s, 4)})`;
+  const rigTf = (q) => `translate3d(${f(q.xv)}vw, ${f(q.yv)}${VH()}, 0) rotateX(${f(q.rx)}deg) rotateY(${f(q.ry)}deg) scale(${f(q.s, 4)})`;
 
   CH.push({ id: "kept", render(D, el) {
     const c = D.counts, X = D.intersection;
@@ -2699,9 +2743,25 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       return cap;
     });
 
+    // phones: the title plate sits at the top, and the two cards that frame it rest side by side in the room under it,
+    // sized to that room (so a short screen shrinks them instead of pushing one under the nav or onto the copy)
+    const stage = $(".stage", el);
+    let fitKey = "";
+    const fitPhone = () => {
+      const vh = stage.clientHeight || innerHeight, vw = innerWidth, key = `${vw}x${vh}`;
+      if (key === fitKey || !cards[0].offsetHeight) return;
+      fitKey = key;
+      const top = head.offsetTop + head.offsetHeight + 18, room = Math.max(120, vh - 22 - top);
+      const cw = cards[0].offsetWidth, ch = cards[0].offsetHeight;
+      const s = clamp(Math.min((room * 0.86) / ch, (vw - 28) / (cw * 1.86)), 0.42, 0.95);
+      const yv = ((top + room / 2) / vh - 0.5) * 100, xv = ((cw * s * 0.47) / vw) * 100;
+      MOB.k0[0] = pose({ xv: -xv, yv: yv - 1.5, rx: 12, ry: 20, rz: -7, s });
+      MOB.k0[2] = pose({ xv, yv: yv + 1.5, z: 8, rx: 14, ry: -20, rz: 8, s });
+    };
     let lastP = 0, step = -2, introOn = null;
     const apply = (p) => {
       lastP = p;
+      if (MOBILE.matches) fitPhone();
       const m = MOBILE.matches ? MOB : DESK;
       // the title plate is gone (0.015–0.06) before the cards have really left their corners (0.03–0.12):
       // at rest the cards frame the title without touching it, so nothing ever crosses it while it can still be read
@@ -2733,6 +2793,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     };
     onProgress(el, apply);
     MOBILE.addEventListener("change", () => apply(lastP));
+    addEventListener("resize", () => { if (MOBILE.matches) { fitKey = ""; apply(lastP); } });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (MOBILE.matches) { fitKey = ""; apply(lastP); } });
   } });
 
   /* ---------------- scene 2: how far — the card whitens from the edge ---------------- */
@@ -2814,8 +2876,23 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
         card.style.setProperty("--sx", f(sx, 4)); card.style.setProperty("--sy", f(sy, 4)); card.style.setProperty("--sr", `${f(sr, 2)}deg`);
       });
     };
-    place();
-    MOBILE.addEventListener("change", place);
+    // phones: the two rows are centred in the room under the copy and sized to it; the pile stays near the foot of the screen
+    const stage = $(".stage", el);
+    const fitPhone = () => {
+      if (!MOBILE.matches) { for (const k of ["--dw", "--fanY", "--pileDY"]) el.style.removeProperty(k); return; }
+      const vh = stage.clientHeight || innerHeight, vw = innerWidth;
+      const top = head.offsetTop + head.offsetHeight + 14, room = Math.max(160, vh - 18 - top);
+      const rows = Math.ceil(n / 2), span = 1.4 + 1.5 * Math.max(0, rows - 1); // the grid's height, in card widths
+      const dw = Math.min(vw * 0.38, room / span, vh * 0.3), cy = top + room / 2;
+      el.style.setProperty("--dw", `${dw.toFixed(1)}px`);
+      el.style.setProperty("--fanY", `${cy.toFixed(1)}px`);
+      el.style.setProperty("--pileDY", `${Math.max(0, vh * 0.86 - cy).toFixed(1)}px`);
+    };
+    const refit = () => { fitPhone(); place(); };
+    refit();
+    MOBILE.addEventListener("change", refit);
+    addEventListener("resize", () => { if (MOBILE.matches) fitPhone(); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitPhone);
     const dur = 0.26, gap = n > 1 ? (0.74 - dur) / (n - 1) : 0;
     const state = cards.map(() => ({ t: -1, z: "" }));
     onProgress(el, (p) => {
@@ -3345,12 +3422,27 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
         const [x0, y0] = pt(r, a0), [x1, y1] = pt(r, a1);
         return `M${x0} ${y0} A${r.toFixed(1)} ${r.toFixed(1)} 0 0 ${near ? 0 : 1} ${x1} ${y1}`;
       }
+      // phones: the dial is centred and sized to the room between the copy and the card, so the far names stay clear of
+      // the copy and the near one clear of the card (the tilted dial and its names reach about .44R above its centre and .3R below)
+      const fitPhone = () => {
+        const head = $(".tpc-head", el), card = $(".tpc-card", el), vw = innerWidth;
+        if (!matchMedia("(max-width:700px)").matches) { for (const k of ["--R", "--oy", "--s-fit", "--c-fit", "--rc-fit"]) el.style.removeProperty(k); return; }
+        const vh = stage.clientHeight || innerHeight;
+        const top = head.offsetTop + head.offsetHeight + 6, bot = card ? card.offsetTop - 6 : vh - 56;
+        const R = Math.max(vw * 0.36, Math.min(vw * 0.74, (bot - top - 56) / 0.74));
+        el.style.setProperty("--R", `${R.toFixed(1)}px`);
+        el.style.setProperty("--oy", `${Math.min(top + 0.44 * R + 30, bot - 0.3 * R - 26).toFixed(1)}px`);
+        el.style.setProperty("--s-fit", `${(R * 1.16).toFixed(1)}px`);
+        el.style.setProperty("--c-fit", `${(R * 0.3).toFixed(1)}px`);
+        el.style.setProperty("--rc-fit", `${(R * 0.39).toFixed(1)}px`);
+      };
       function layout() {
+        fitPhone();
         const R = plane.clientWidth / 2;
         if (!R) return;
         const mobile = innerWidth < 700;
         svg.setAttribute("viewBox", `${-R} ${-R} ${2 * R} ${2 * R}`);
-        const fmin = mobile ? 17 : Math.max(20, R * 0.036), fmax = mobile ? 34 : Math.max(44, R * 0.13);
+        const fmin = mobile ? Math.min(17, R * 0.085) : Math.max(20, R * 0.036), fmax = mobile ? Math.min(34, R * 0.15) : Math.max(44, R * 0.13); // a short phone's small dial gets smaller names
         const gap = mobile ? 6 : 10, band = R * 0.16;
         for (const rg of rings) {
           const r = rg.r * R, a = (mobile ? ANG_M : ANG_D)[rg.i], near = a > 0 && a < 180;
@@ -3436,12 +3528,31 @@ body.privacy-on #taste-sound .tpm-rt [data-private]{opacity:.4}
       }
 
       // the camera: the record lies on the turntable, then lifts up to face you and keeps turning with the scroll
+      // (phones: it lies only a little lower, so the tilted record stays clear of the list under it)
+      const PHONE_TS = matchMedia("(max-width:700px)");
       onProgress(el, (p) => {
         const e = eOut(clamp(p / 0.55));
         const after = clamp((p - 0.55) / 0.45);
-        disc.style.transform = `translate3d(0,${((1 - e) * 22).toFixed(2)}vh,0) rotateX(${((1 - e) * 64 + 8 * (1 - after)).toFixed(2)}deg) rotateY(${(-6 * (1 - after)).toFixed(2)}deg) scale(${(0.9 + 0.1 * e + 0.04 * after).toFixed(4)})`;
+        disc.style.transform = `translate3d(0,${((1 - e) * (PHONE_TS.matches ? 9 : 22)).toFixed(2)}vh,0) rotateX(${((1 - e) * 64 + 8 * (1 - after)).toFixed(2)}deg) rotateY(${(-6 * (1 - after)).toFixed(2)}deg) scale(${(0.9 + 0.1 * e + 0.04 * after).toFixed(4)})`;
         turn.style.transform = `rotate(${(p * 320).toFixed(1)}deg)`;
       });
+
+      // phones: the title band sits right under the copy and the record fills (and is centred in) what is left above the list
+      const stage = $(".stage", el), head = $(".tpm-head", el);
+      const fitPhone = () => {
+        if (!matchMedia("(max-width:700px)").matches) { for (const k of ["--disc", "--disc-y", "--band-y"]) el.style.removeProperty(k); return; }
+        const vh = stage.clientHeight || innerHeight, vw = innerWidth;
+        const top = head.offsetTop + head.offsetHeight + 2;
+        const bh = band.isConnected ? band.offsetHeight : 0;
+        const y0 = top + bh + 8, y1 = rest.isConnected ? rest.offsetTop - 12 : vh - 24;
+        const d = Math.max(150, Math.min(vw * 0.82, y1 - y0));
+        el.style.setProperty("--band-y", `${top.toFixed(1)}px`);
+        el.style.setProperty("--disc", `${d.toFixed(1)}px`);
+        el.style.setProperty("--disc-y", `${((y0 + y1) / 2).toFixed(1)}px`);
+      };
+      fitPhone();
+      addEventListener("resize", fitPhone);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitPhone);
     },
   });
 })();
@@ -4500,8 +4611,18 @@ CH.push({
     let G = null, lastP = 0;
     const geo = () => {
       const w = innerWidth, h = innerHeight, mobile = w < 700;
-      const R = mobile ? Math.min(w * 0.62, h * 0.34) : Math.min(w * 0.44, h * 0.43);
-      const cy = h * (mobile ? 0.42 : 0.53);
+      let R = mobile ? Math.min(w * 0.62, h * 0.34) : Math.min(w * 0.44, h * 0.43);
+      let cy = h * (mobile ? 0.42 : 0.53);
+      if (mobile) {
+        // phones: the labels hang straight down the rings, so the outer one must clear the forms card at the foot,
+        // while the big number still clears the title at the top
+        const forms = $(".ec-forms", el), hd = $(".ec-head", el), gt = $(".ec-giant", el);
+        if (forms && forms.isConnected && hd) {
+          const cyMin = hd.offsetTop + hd.offsetHeight + (gt && gt.isConnected ? gt.offsetHeight / 2 : 60) + 8, ft = forms.offsetTop - 22;
+          R = Math.max(90, Math.min(R, ft - cyMin));
+          cy = Math.max(cyMin, Math.min(cy, ft - R));
+        }
+      }
       G = { R, cy, ang: mobile ? Math.PI / 2 : -0.5 };
       stage.style.setProperty("--R", `${R.toFixed(1)}px`);
       stage.style.setProperty("--cy", `${cy.toFixed(1)}px`);
@@ -4617,12 +4738,14 @@ CH.push({
           c.style.zIndex = String(depth > 0.5 ? 30 + Math.round(depth * 10) : 10 + Math.round(depth * 10));
         });
       };
+      const SLOW = matchMedia("(max-width:700px)"); // phones: the drift is ~3°/s, ~30 fps is plenty
       const loop = (now) => {
+        raf = requestAnimationFrame(loop);
+        if (SLOW.matches && last && now - last < 30) return;
         const dt = Math.min(64, now - (last || now));
         last = now;
         drift += dt * 0.00005;
         place();
-        raf = requestAnimationFrame(loop);
       };
       resizers.push(() => { ogeo(); place(); });
       onProgress(sec, (p, vis, out) => {
@@ -4670,8 +4793,14 @@ CH.push({
       let P = null, lp = 0;
       const pgeo = () => {
         const w = innerWidth, h = innerHeight, mobile = w < 700;
-        const cw = mobile ? Math.min(w * 0.6, 250) : Math.max(210, Math.min(320, w * 0.21, h * 0.42));
-        const ty = h * (mobile ? 0.36 : 0.47);
+        let cw = mobile ? Math.min(w * 0.6, 250) : Math.max(210, Math.min(320, w * 0.21, h * 0.42));
+        let ty = h * (mobile ? 0.36 : 0.47);
+        if (mobile) {
+          // phones: the card (3:4.3, plus a little for the flight's depth) fits between the nav and the copy at the foot
+          const head = $(".ep-head", sec), sh = st.clientHeight || h, top = 96, bot = head ? head.offsetTop - 14 : sh - 150;
+          cw = Math.max(150, Math.min(cw, ((bot - top) / 1.43) * 0.9));
+          ty = (top + bot) / 2;
+        }
         P = { w, h, cw, mobile, endX: mobile ? 0 : w * 0.2, startX: -(w * 0.5 + cw * 1.2) };
         st.style.setProperty("--cw", `${cw.toFixed(0)}px`);
         st.style.setProperty("--ty", `${ty.toFixed(1)}px`);
@@ -5129,7 +5258,8 @@ CH.push({
         fields.forEach((fd, k) => {
           fd.A = { x: AX[k] * VW, y: AY[k] * VH, z: gap0 + k * gap };
           fd.ch = fd.card.offsetHeight || 320;
-          fd.CO = mobile ? { x: 0, y: VH / 2 - 24 - fd.ch / 2 } : { x: VW * 0.3, y: VH * 0.035 };
+          // phones: the card's foot keeps clear of the screen edge even at the end of a hold, when it has come ~6% closer
+          fd.CO = mobile ? { x: 0, y: VH / 2 - 24 - VH * 0.035 - fd.ch / 2 } : { x: VW * 0.3, y: VH * 0.035 };
           layoutField(fd);
         });
         buildNumeral();
@@ -5216,7 +5346,8 @@ CH.push({
         if (fs >= 6 && s > 0.5) {
           ctx.globalAlpha = a * ss(0.5, 0.75, s);
           const k1 = fs / 9, t1 = -2.2, t2 = 0.75;
-          ctx.drawImage(fd.ring1.c, x + Math.cos(t1) * R * 1.3, y + Math.sin(t1) * R * 1.3 - 8 * k1, fd.ring1.w * k1, 16 * k1);
+          // phones: the rim runs up under the nav and the HUD, and the card below already says which field this is
+          if (!mobile) ctx.drawImage(fd.ring1.c, x + Math.cos(t1) * R * 1.3, y + Math.sin(t1) * R * 1.3 - 8 * k1, fd.ring1.w * k1, 16 * k1);
           if (!mobile) ctx.drawImage(fd.ring2.c, x + Math.cos(t2) * R * 1.3, y + Math.sin(t2) * R * 1.3 - 8 * k1, fd.ring2.w * k1, 16 * k1);
         }
         if (fd.empty) {
@@ -5360,6 +5491,7 @@ CH.push({
 
       // ---------- loop: only while the scene is on screen ----------
       let tp = 0, sp = 0, raf = 0, visible = false, lastT = 0, lastDraw = 0, exitK = 0;
+      const SLOW = matchMedia("(max-width:700px)");
       function frame(now) {
         raf = 0;
         if (!visible) return;
@@ -5370,7 +5502,7 @@ CH.push({
         if (REDUCED || Math.abs(gapT) > 1.6) sp = tp;
         else if (moving) sp += gapT * (1 - Math.exp(-dt / 110));
         else sp = tp;
-        if (moving || now - lastDraw > 48) { draw(sp, now); lastDraw = now; }
+        if (moving || now - lastDraw > (SLOW.matches ? 80 : 48)) { draw(sp, now); lastDraw = now; } // phones: the idle twinkle at ~12 fps
         if (!REDUCED || Math.abs(tp - sp) > 1e-4) raf = requestAnimationFrame(frame);
       }
       function kick(force) {
@@ -6347,7 +6479,7 @@ CH.push({
 /* under the card */
 #sign-card .sgc-act{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;max-width:100%}
 #sign-card .sgc-act .pill{background:rgba(9,12,22,.36)}
-#sign-card .sgc-act .pill:hover{background:rgba(65,161,207,.14)}
+@media (hover:hover){#sign-card .sgc-act .pill:hover{background:rgba(65,161,207,.14)}}
 #sign-card .sgc-act .pill[aria-pressed="true"]{background:rgba(65,161,207,.2);color:#8fcdec}
 #sign-card .sgc-act .pill[aria-pressed="true"] .sgc-pd{background:currentColor}
 #sign-card .sgc-pd{width:7px;height:7px;border-radius:50%;border:1px solid currentColor}
@@ -6622,12 +6754,17 @@ CH.push({
 
     // tilt with the pointer, like the gate (never under reduced motion)
     if (!REDUCED) {
-      addEventListener("pointermove", (e) => {
-        if (!formed || !visible || e.pointerType === "touch") return;
+      const lean = (e) => {
+        if (!formed || !visible) return;
         const ry = Math.max(-12, Math.min(12, ((e.clientX - M.cx) / M.w) * 10));
         const rx = Math.max(-10, Math.min(10, (-(e.clientY - M.cy) / M.h) * 8));
         tilt.style.transform = `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg)`;
-      }, { passive: true });
+      };
+      addEventListener("pointermove", (e) => { if (e.pointerType !== "touch") lean(e); }, { passive: true });
+      // touch: the card leans toward the finger while it is pressed, and settles when it lifts
+      addEventListener("pointerdown", (e) => { if (e.pointerType === "touch") lean(e); }, { passive: true });
+      const settle = (e) => { if (e.pointerType === "touch") tilt.style.transform = ""; };
+      addEventListener("pointerup", settle); addEventListener("pointercancel", settle);
       document.addEventListener("pointerleave", () => { tilt.style.transform = ""; });
     }
   } });
@@ -6637,6 +6774,103 @@ CH.push({
 
 
 </main>
+<style>
+/* =================== phones (≤700px): fit, type floor and load — nothing here reaches the desktop window =================== */
+@media (max-width:700px){
+  /* ---- load: looping paint-heavy effects. The cue arrows get their own layer (otherwise each bounce repaints the halftone
+     behind them); the breathing glows breathe twice when they come on screen and then rest; the foil cards keep their foil
+     but stop sweeping it (background-position / @property animations repaint the whole card every frame) ---- */
+  .cue,#kept .kp-cue,#form .fm-c-bot i{will-change:transform,opacity;animation-iteration-count:6}
+  .breathe::after,#arrive .ar-glow::before,#taste-who .tpc-ring,#sign-card .sgc-glow.on{animation-iteration-count:2}
+  #count-deck .cd-xbox::after,#count-deck .cd-holo,#count-deck .cd-irid,#sign-card .sgc-face::after,#sign-card .sgc-holo,#sign-card .sgc-irid{animation:none}
+
+  /* ---- type floor: small labels ≥10px, sentences ≥12px ---- */
+  .stamp,#arrive .ar-fine,#arrive .ar-lab,#arrive-rows .ar-cue .mono,#arrive-rows .ar-rl .mono,#count .ct-lab .mono,#count .ct-fine,#count-deck .cd-ut,#count-deck .cd-um .en,#count-deck .cd-ub,
+  #time-cal .tc-wd,#time-cal .tc-fin-m,#time-cal .tc-card .mono,#time-cal .tc-giant-u .mono,#kept-depth .kd-lab,#kept-deal .kl-back span,
+  #taste .tp-cue,#taste .tp-card-h,#taste .tp-hud,#taste-who .tpc-card-top .mono,#taste-who .tpc-foot,#taste-sound .tpm-rest .mono,
+  #form .fm-cap .mono,#form-len .fl-tl,#form-heat .fh-tk span,#form-age .fa-t-en,#form-age .fa-cap .mono,
+  #echo .ec-lab .mono,#echo .ec-void .t,#echo .ec-void .m .en,#echo .ec-void .b,#echo-orbit .eo-card .top .mono,#echo-pass .ep-front .mono,#echo-pass .ep-back .by .mono,
+  #words .wd-ct,#words .wd-cbt,#words .wd-ce,#words .wd-ncap,#words .wd-hud span,#words-pair .wp-cap .mono,#words-pair .wp-foot,
+  #proof-time .pt-lab .mono,#proof-note .pn-bid{font-size:10px}
+  #count-deck .cd-gate .cd-ut,#count-deck .cd-gate .cd-ub,#count-deck .cd-gate .cd-um .en{font-size:max(10px,1.9cqw)}
+  #count-deck :is(.cd-gate,.cd-ucard) .cd-ut,#count-deck :is(.cd-gate,.cd-ucard) .cd-ub,#sign-card .sgc-top,#sign-card .sgc-seal{font-size:max(10px,2.8cqw)}
+  #count-deck :is(.cd-gate,.cd-ucard) .cd-ut::after,#kept .kp-tag-en,#sign-card .sgc-top::after{font-size:max(10px,2.2cqw)}
+  #count-deck :is(.cd-gate,.cd-ucard) .cd-um .en,#count-deck :is(.cd-gate,.cd-ucard) .cd-row,#sign-card .sgc-mid .sgc-ve,#sign-card .sgc-rows>span>span{font-size:max(10px,2.5cqw)}
+  #kept .kp-row,#kept .kp-en{font-size:max(10px,2.3cqw)}
+  #kept-deal .kl-no{font-size:max(10px,4.6cqw)}
+  #form .fm-c-top,#form .fm-c-bot{font-size:max(10px,3.3cqw)}
+  #form .fm-c-lab small{font-size:max(10px,2.6cqw)}
+  #taste-sound .tpm-lk,#taste-sound .tpm-la{font-size:max(10px,calc(var(--disc) * .014))}
+  #time .tm-lab{font-size:34px} /* svg units: the dial is drawn at ~.3–.38× on a phone */
+  #echo-orbit .eo-card .eo-say,#words .wd-cf{font-size:12px}
+  #sign-card .sgc-fine{font-size:11px}
+
+  /* ---- 02b time-cal: the year's total sits on a dark foot, so it never reads on top of the bright dots ---- */
+  #time-cal .tc-foot{z-index:2}
+  #time-cal .tc-foot::before{content:"";position:absolute;z-index:-1;left:calc(var(--gut) * -1);right:calc(var(--gut) * -1);top:-48px;bottom:-3vh;background:linear-gradient(180deg,rgba(7,10,18,0) 0%,rgba(7,10,18,.72) 42%,rgba(7,10,18,.86) 100%);pointer-events:none}
+
+  /* ---- 04b taste-who: dial sized in script (fitPhone); a tighter card ---- */
+  #taste-who .tpc-sun{--s:var(--s-fit,86vw)}
+  #taste-who .tpc-core{--c:var(--c-fit,22vw)}
+  #taste-who .tpc-ring{--c:var(--rc-fit,29vw)}
+  #taste-who .tpc-card{gap:8px;padding:14px 16px 16px}
+  #taste-who .tpc-ava{width:46px;height:46px}
+  #taste-who .tpc-ava span{font-size:22px}
+  #taste-who .tpc-card-name{font-size:36px}
+  #taste-who .tpc-card-n b{font-size:46px}
+  #taste-who .tpc-card-top .mono{letter-spacing:.1em}
+
+  /* ---- 04c taste-sound: band and record placed in script (fitPhone) ---- */
+  #taste-sound .tpm-band{top:var(--band-y,calc(60% - var(--disc) / 2 - 23vw))}
+  #taste-sound .tpm-disc{top:var(--disc-y,60%)}
+
+  /* ---- 09 sign: three stacked words share the height left above the copy at the foot ---- */
+  /* ---- 06 echo: the ring labels stack tighter (the rings are sized in script to clear the forms card) ---- */
+  #echo .ec-lab{height:24px}
+
+  /* ---- 07 words: the field HUD is one row of dots with only the field in view named (like the nav) ---- */
+  #words .wd-hud{flex-wrap:nowrap;gap:10px}
+  #words .wd-hud span:not(.on){font-size:0;gap:0}
+  #words .wd-hud span.on{letter-spacing:.16em}
+
+  #sign-card{--cardh:min(58svh,118vw,calc(100svh - var(--safe) - 230px))} /* the card, its buttons and the fine print fit under the nav */
+  #sign .sg-line{--fs:min(21svh,calc((100svh - var(--safe) - 310px) / 3),calc((100vw - 2 * var(--gut)) / var(--c) / .99))}
+
+  /* ---- 03 kept: the title plate moves to the top; the cards rest under it (sized in script, see fitPhone) ---- */
+  #kept{--cw:min(58vw,30svh)}
+  #kept .kp-head{top:calc(var(--safe) + 4px);transform:translate(-50%,calc(var(--hy,0) * 1svh))}
+}
+/* ---- phone: stable layers. On a 3.5x screen, every opacity transition that starts or ends creates or drops a composited
+   layer; while a finger is scrolling, the new layer can reach the screen one frame before its tiles do, and that frame shows
+   the dark page through it (a "flash"). Keep the layers that fade often permanently composited, so a fade only changes
+   opacity, and stop the breathing glows (each one was a 2-screen layer). Measured on a PHK110 with scrcpy: the time
+   chapter went from 8 flashing frames per pass to 0-1. ---- */
+@media (max-width:700px){
+  #sky .l{will-change:opacity}
+  .nav,.nav-prog{will-change:transform}
+  #time .tm-copy>div,#time .tm-read{will-change:opacity,transform}
+  #time .tm-copy::before,#time .tm-read::before{will-change:opacity}
+  .breathe::after{animation:none!important;opacity:.6!important;box-shadow:0 0 56px rgba(238,164,78,.44),0 0 0 1px rgba(254,255,252,.3)}
+  #arrive .ar-glow::before{animation:none!important;opacity:.85;box-shadow:0 0 64px 12px rgba(238,164,78,.42),0 0 24px 4px rgba(238,164,78,.34)}
+  #sign-card .sgc-glow.on{animation:none!important;opacity:.7}
+  .glass.glow{box-shadow:inset 0 0 40px rgba(254,255,252,.08),0 0 48px var(--glow),0 0 0 1px rgba(254,255,252,.22)}
+}
+/* ---- phone re-layout: the type floor above made small cards' labels outgrow their cards; give the words room instead ---- */
+@media (max-width:700px){
+  #arrive .ar-yr3{--yfs:min(70vw,31vh);bottom:21vh} /* the year clears its caption */
+  #count-deck .cd-ucard{--uh:min(42vh,112vw);top:calc(var(--safe) + 17vh)} /* a card big enough for its 10px labels, still above the caption */
+  #count-deck :is(.cd-gate,.cd-ucard) .cd-ut::after,#sign-card .sgc-top::after{display:none} /* the second header line had no room left */
+  /* the small form cards keep only their share and name; an empty one keeps its dashed outline and name (the lede already says "none") */
+  #form .fm-card:nth-child(n+2) .fm-c-top,#form .fm-card:nth-child(n+2) .fm-c-bot,#form .fm-card.zero .fm-c-pct.none{display:none}
+  /* the three length shares as an even legend above the median, instead of pinned to segments too close to share a line */
+  #form-len .fl-segs{position:absolute;left:var(--gut);right:var(--gut);top:-14vh;display:flex;justify-content:space-between;gap:12px}
+  #form-len .fl-seg{position:static;transform:none!important}
+  #taste-sound .tpm-lt,#taste-sound .tpm-la{display:none} /* the record label holds side + count; the title is in the marquee and the lede */
+  #form-heat .fh-head,#form-heat .fh-ratio{background:#fbfaf6} /* the rising rail no longer shows through the words */
+  #kept-deal .kl-no{flex-shrink:0} /* a long name squeezed "03" to "0" */
+  #form-heat .fh-sun-t{max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} /* the hottest title, centred under the sun at 70vw, ran off the right edge */
+}
+</style>
 <script>
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => window.__TRACE.boot());
 else window.__TRACE.boot();

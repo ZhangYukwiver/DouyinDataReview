@@ -10,7 +10,7 @@
 <title>内容年志 · 海报</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400..700&family=Noto+Sans+SC:wght@400..900&display=swap">
 <style>
 /* ============ tokens ============ */
 :root{
@@ -71,9 +71,9 @@ figure{margin:0}
 
 /* ============ button ============ */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:.6em;height:40px;padding:0 16px;border:var(--rule) solid var(--fg);color:var(--fg);background:transparent;font:700 12px/1 var(--mono);text-transform:uppercase;letter-spacing:.1em;cursor:pointer;white-space:nowrap;transition:none}
-.btn:hover,.btn[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.btn[aria-pressed="true"]{background:var(--fg);color:var(--bg)}@media (hover:hover){.btn:hover{background:var(--fg);color:var(--bg)}}
 .btn.sig{background:var(--sig);border-color:var(--sig);color:var(--ink)}
-.btn.sig:hover{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+@media (hover:hover){.btn.sig:hover{background:var(--fg);border-color:var(--fg);color:var(--bg)}}
 
 /* ============ scenes ============ */
 .scene{position:relative;height:var(--len,100vh);--p:0;--vis:0;--out:0}
@@ -119,7 +119,7 @@ figure{margin:0}
 .nav-idx{flex:1;display:flex;justify-content:center;align-items:stretch;min-width:0}
 .nav-idx a{display:flex;align-items:center;gap:6px;padding:0 11px 3px;font:500 13px/1 var(--body);white-space:nowrap}
 .nav-idx a .n{font:700 11px/1 var(--mono);letter-spacing:.04em}
-.nav-idx a:hover{background:var(--paper);color:var(--ink)}
+@media (hover:hover){.nav-idx a:hover{background:var(--paper);color:var(--ink)}}
 .nav-idx a.on{background:var(--sig);color:var(--ink)}
 .nav-r{display:flex;align-items:center;gap:8px;padding:0 var(--gut) 3px 0;white-space:nowrap}
 /* 窄窗口里章节目录放不下：先收起「本机数据」（档案馆也这样），给「导出」腾地方；还放不下的那截压在右边按钮底下 */
@@ -147,6 +147,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   const query = new URLSearchParams(location.search);
   const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
   const REDUCED = !document.documentElement.classList.contains("motion-full") && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // 手机竖屏：版面规则都在 @media (max-width:700px) 里，脚本里凡是只给手机做的事都先问它
+  const PHONE = matchMedia("(max-width:700px)");
 
   // ---------- data ----------
   // 导出的离线文件把数据直接放在 window.__STORY_EXPORT__ 里（见 story-export.js）
@@ -483,10 +485,21 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       if (r.bottom > 0 && r.top < vh) visible.add(s.el);
     }
     scrubMarquees(y, visible);
+    // 手机上看不见的场景打个记号，CSS 据此停掉里面的跑马灯、撤掉合成层
+    if (PHONE.matches) for (const s of scenes) { const v = visible.has(s.el); if (v !== s.live) { s.live = v; s.el.toggleAttribute("data-live", v); } }
     if (now !== current) {
       current = now;
       for (const a of navLinks) a.classList.toggle("on", a.dataset.target === (now && now.id));
+      if (PHONE.matches) centerNav();
     }
+  }
+  // 手机导航放不下全部章节，章节条可以横滑；换章时把当前这一章滑到中间
+  function centerNav() {
+    const idx = document.getElementById("navIdx");
+    const a = navLinks.find((x) => x.classList.contains("on"));
+    if (!idx || !a) return;
+    const ir = idx.getBoundingClientRect(), ar = a.getBoundingClientRect();
+    idx.scrollTo({ left: Math.max(0, idx.scrollLeft + ar.left - ir.left - (ir.width - ar.width) / 2), behavior: REDUCED ? "auto" : "smooth" });
   }
 
   // ---------- privacy ----------
@@ -611,7 +624,9 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     // 封面的标题、导语、年份约 1.5 秒落定，#cover 上的 data-hold 让它完整停一会儿再自己撕页
     // 海报页跟手更紧（阻尼减半），并且连着播：一场播完停一会儿自己去下一场，一直到卷尾
     if (!REDUCED && window.StoryGlide) glide = window.StoryGlide.install({ scenes: () => scenes.map((s) => s.el), tau: 0.07, chain: true });
-    addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { remeasureMarquees(); update(); }, 120); });
+    // 手机地址栏伸缩只改高度：跑马灯只跟宽度有关，宽度没变就不重量
+    let lastW = innerWidth;
+    addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { const wide = innerWidth !== lastW; lastW = innerWidth; if (wide || !PHONE.matches) remeasureMarquees(); update(); }, 120); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { remeasureMarquees(); update(); });
     addEventListener("load", () => { remeasureMarquees(); update(); });
     let wantPrivacy = query.get("privacy") === "1" || Boolean(EXPORTED && EXPORTED.privacy);
@@ -622,7 +637,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   }
 
   Object.assign(window, {
-    D: data, LIVE: live, DEMO, FRAMED, REDUCED,
+    D: data, LIVE: live, DEMO, FRAMED, REDUCED, PHONE,
     H, S, $, $$, fmt, CH, cover, split, countUp, reveal, onReveal, onProgress, goTo, togglePrivacy, toWorkspace,
     __POSTER: { boot, update, remeasureMarquees, scenes, get glide() { return glide; } },
   });
@@ -1547,9 +1562,9 @@ CH.push({
 #kept-recent .kr-meta{flex:none;display:flex;align-items:center;gap:10px;min-height:calc(var(--u)*4.2);padding:6px 0;min-width:0}
 #kept-recent .kr-by{flex:1;min-width:0;font:700 max(13px,calc(var(--u)*1.05))/1.2 var(--body);word-break:break-all}
 #kept-recent .kr-go{flex:none;font:700 11px/1 var(--mono);letter-spacing:.1em;padding:5px 6px 4px;border:2px solid var(--ink)}
-#kept-recent a.kr-card:hover .kr-go,#kept-recent a.kr-card:focus-visible .kr-go{background:var(--ink);color:var(--sig)}
-#kept-recent a.kr-card:hover{background:var(--ink);color:var(--sig)}
-#kept-recent a.kr-card:hover .kr-go{border-color:var(--sig)}
+#kept-recent a.kr-card:focus-visible .kr-go{background:var(--ink);color:var(--sig)}@media (hover:hover){#kept-recent a.kr-card:hover .kr-go{background:var(--ink);color:var(--sig)}}
+@media (hover:hover){#kept-recent a.kr-card:hover{background:var(--ink);color:var(--sig)}}
+@media (hover:hover){#kept-recent a.kr-card:hover .kr-go{border-color:var(--sig)}}
 #kept-recent .kr-fill{grid-column:var(--from) / -1;margin:calc(var(--u)*1.1) calc(var(--u)*1.1) calc(var(--u)*4.2);background:var(--ink);color:var(--paper);display:flex;flex-direction:column;justify-content:space-between;padding:calc(var(--u)*2)}
 #kept-recent .kr-fill p{font:900 calc(var(--u) * (1.2 + var(--span) * .6))/1.3 var(--cjk);max-width:14em;word-break:keep-all}
 #kept-recent .kr-fill .stamp{align-self:flex-start}
@@ -1776,7 +1791,7 @@ CH.push({
 #taste .tt-pct{font-size:max(12px,calc(var(--u)*1.05));font-weight:700}
 #taste .tt-card{flex:none;width:calc(var(--u) * var(--f) * .78);display:block;align-self:center}
 #taste .tt-card .cover{outline:2px solid var(--fg);outline-offset:-2px}
-#taste .tt-card:hover .cover{outline:var(--rule) solid var(--sig);outline-offset:3px}
+@media (hover:hover){#taste .tt-card:hover .cover{outline:var(--rule) solid var(--sig);outline-offset:3px}}
 #taste .tt-name.fx-wipe{transition-delay:calc(var(--d,0ms) + 120ms)}
 #taste .tt-end{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:end;gap:calc(var(--u)*3);padding:calc(var(--u)*3.4) var(--gut) calc(var(--u)*4)}
 #taste .tt-end-n{font-size:calc(var(--u)*25);--stroke:max(3px,calc(var(--u)*.2))}
@@ -1843,8 +1858,8 @@ CH.push({
 #taste-sound .ts-lead{font:500 max(14px,calc(var(--u)*1.18))/1.6 var(--body);max-width:30em;justify-self:end;padding-bottom:.2em}
 #taste-sound .ts-list{display:flex;flex-direction:column;min-height:0}
 #taste-sound .ts-row{flex:1 1 0;min-height:0;display:grid;grid-template-columns:calc(var(--u)*17) minmax(0,1fr) auto;align-items:stretch;border-bottom:var(--rule) solid var(--ink);padding:0 var(--gut);position:relative}
-#taste-sound .ts-row:hover{background:var(--ink);color:var(--sig);--fg:var(--sig)}
-#taste-sound .ts-row:hover .ts-num{--stroke-c:var(--sig)}
+@media (hover:hover){#taste-sound .ts-row:hover{background:var(--ink);color:var(--sig);--fg:var(--sig)}}
+@media (hover:hover){#taste-sound .ts-row:hover .ts-num{--stroke-c:var(--sig)}}
 #taste-sound .ts-no{display:flex;align-items:center;gap:calc(var(--u)*.8);border-right:var(--rule) solid var(--fg);overflow:clip}
 #taste-sound .ts-no .stamp{align-self:flex-start;margin-top:calc(var(--u)*1)}
 #taste-sound .ts-num{font-size:calc(var(--u)*11.5);line-height:.86;--stroke:max(2px,calc(var(--u)*.15));--stroke-c:var(--ink)}
@@ -1918,6 +1933,8 @@ CH.push({
         card);
     });
     list.append(...lis);
+    // 手机上（--u 就是 1vw）按实际像素看：太小的名字不描边
+    if (PHONE.matches) rows.forEach((x, i) => { if (x.f * innerWidth / 100 < 22) lis[i].classList.add("ph-sm"); });
     const sum = topics.reduce((a, t) => a + (t.share || 0), 0);
     if (topics.length > 1) {
       list.append(H("li", { class: "tt-end" },
@@ -1937,7 +1954,9 @@ CH.push({
       el.dataset.play = (1.6 + topics.length * 0.95).toFixed(1);
     }
     const num = $(".tt-ctr-n", el);
-    let cur = 0;
+    let cur = 0, tyAt = -1;
+    // 手机上每一行有最小高度，和按 --u 算的台阶对不齐：直接按这一行实际的位置往上移
+    addEventListener("resize", () => { tyAt = -1; });
     // the staircase climbs one whole row at a time (a stepped jump), so a paused scroll never leaves a row half cut off
     onProgress(el, (p) => {
       if (!(travel > 0)) return;
@@ -1946,7 +1965,8 @@ CH.push({
       let idx = 0;
       for (let i = 0; i < rows.length; i++) if (cum[i] <= pos + rows[i].h * 0.45) idx = i;
       if (idx !== cur) { lis[cur].classList.remove("on"); lis[idx].classList.add("on"); num.textContent = pad(idx + 1); cur = idx; }
-      list.style.setProperty("--y", cum[idx].toFixed(2));
+      if (!PHONE.matches) list.style.setProperty("--y", cum[idx].toFixed(2));
+      else if (tyAt !== idx) { tyAt = idx; list.style.setProperty("--ty", `${-lis[idx].offsetTop}px`); }
     });
   },
 });
@@ -2176,7 +2196,7 @@ CH.push({
 #form-len .fl-lon.hit .fl-mk-t{background:var(--ink);color:var(--sig)}
 #form-len .fl-lon a,#form-len .fl-lon .fl-lon-t{font:500 max(13px,calc(var(--u)*1.1))/1.4 var(--body);min-width:0;text-align:right}
 #form-len .fl-lon a{border-bottom:2px solid var(--ink)}
-#form-len .fl-lon a:hover{background:var(--ink);color:var(--paper)}
+@media (hover:hover){#form-len .fl-lon a:hover{background:var(--ink);color:var(--paper)}}
 #form-len .fl-code{display:grid;grid-template-rows:minmax(0,1fr) auto auto;min-height:0;padding:calc(var(--u)*1.2) 0 calc(var(--u)*1.4);gap:calc(var(--u)*.7)}
 #form-len .fl-bars{display:flex;align-items:flex-end;min-height:calc(var(--u)*4);border-bottom:var(--rule) solid var(--ink)}
 #form-len .fl-bar{flex:1 1 0;height:var(--bh);display:flex;justify-content:center}
@@ -2249,7 +2269,7 @@ CH.push({
 #form-heat .fh-cell.hi b{color:var(--sig)}
 #form-heat .fh-cell p{font:500 max(13px,calc(var(--u)*1.1))/1.45 var(--body)}
 #form-heat .fh-cell a{border-bottom:2px solid var(--paper)}
-#form-heat .fh-cell a:hover{background:var(--paper);color:var(--ink)}
+@media (hover:hover){#form-heat .fh-cell a:hover{background:var(--paper);color:var(--ink)}}
 #form-heat .fh-empty{position:relative;overflow:clip;min-height:0;flex:1 1 auto;align-self:stretch;display:flex;align-items:center;padding:0 0}
 #form-heat .fh-empty b{position:absolute;right:calc(var(--u)*-1.5);bottom:calc(var(--u)*-7);font-size:calc(var(--u)*54);line-height:.86;--stroke:max(3px,calc(var(--u)*.22))}
 #form-heat .fh-empty p{position:relative;word-break:keep-all;font-size:calc(var(--u)*4.4);line-height:1.2;max-width:11em}
@@ -2929,7 +2949,7 @@ CH.push({
 #words .wd .c{font:400 calc(var(--bh) * .19)/1 var(--display);margin:.1em 0 0 .18em;letter-spacing:0}
 #words .wd.r1 .t{color:var(--sig)}
 #words[data-step="1"] .wd.hi .t{background:var(--sig);color:var(--ink)}
-#words .wd:hover .t,#words[data-step="1"] .wd:hover .t{background:var(--fg);color:var(--bg)}
+@media (hover:hover){#words .wd:hover .t,#words[data-step="1"] .wd:hover .t{background:var(--fg);color:var(--bg)}}
 #words .bd-empty{display:flex;align-items:center;padding:0 calc(var(--u) * 1.6);background:repeating-linear-gradient(-45deg, var(--fg) 0 2px, transparent 2px 13px);min-width:0}
 #words .bd-empty span{background:var(--bg);color:var(--fg);font:700 max(14px, calc(var(--u) * 1.3))/1.5 var(--body);padding:.25em .6em;border:var(--rule) solid var(--fg)}
 
@@ -3442,7 +3462,7 @@ CH.push({
 #sign-end .se-acts{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);border-top:var(--rule) solid var(--fg);border-bottom:var(--rule) solid var(--fg)}
 #sign-end .se-act{display:grid;grid-template-rows:auto 1fr;gap:calc(var(--u)*.6);text-align:left;padding:calc(var(--u)*1.1) calc(var(--u)*1.4) calc(var(--u)*1.3);color:var(--paper);min-width:0}
 #sign-end .se-act+.se-act{border-left:var(--rule) solid var(--fg)}
-#sign-end .se-act:hover,#sign-end .se-act:focus-visible{background:var(--sig);color:var(--ink)}
+#sign-end .se-act:focus-visible{background:var(--sig);color:var(--ink)}@media (hover:hover){#sign-end .se-act:hover{background:var(--sig);color:var(--ink)}}
 #sign-end .se-ah{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
 #sign-end .se-at{font-size:calc(var(--u)*2.5);line-height:1.1;white-space:nowrap}
 #sign-end .se-aa{font:400 calc(var(--u)*2.6)/1 var(--display)}
@@ -3608,6 +3628,582 @@ CH.push({
 </script>
 
 </main>
+<style>
+/* ================= 手机竖屏：桌面一条不动，所有规则都在这个断点里 =================
+   一屏的高度按 svh 算（地址栏伸缩时版面不跟着抖）；--u 仍是 1vw，按宽度算好的字号照旧能塞进一行，
+   只是正文、标签另外给了下限；横版的左右分栏改成上下叠。 */
+@media (max-width:700px){
+  :root{--nav-h:44px;--gut:16px;--stage-h:calc(100svh - var(--nav-h));--u:min(1vw,1.6svh)}
+  .stage{height:100svh}
+  .stamp{letter-spacing:.06em}
+  /* 看不见的场景：跑马灯停下，合成层撤掉 */
+  .scene:not([data-live]) .mq-track{animation-play-state:paused;will-change:auto}
+  .ph-x{visibility:hidden}
+  /* 隐私模式的打码：手机上图都小，半径减半一样认不出，栅格化便宜得多 */
+  body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privacy-on [data-private] image{filter:blur(12px)}
+
+  /* ---------- nav：标题 + 可横滑的章节条 + 按钮 ---------- */
+  .nav-l{gap:6px;padding:0 8px 0 var(--gut)}
+  .nav-l .t{font-size:14px;letter-spacing:.02em}
+  .nav-l .y{font-size:19px}
+  .nav-idx{justify-content:flex-start;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 12px,#000 calc(100% - 12px),transparent);mask-image:linear-gradient(90deg,transparent 0,#000 12px,#000 calc(100% - 12px),transparent)}
+  .nav-idx::-webkit-scrollbar{display:none}
+  .nav-idx a{flex:none;padding:0 9px 3px;font-size:13px}
+  .nav-r{gap:6px;padding:0 var(--gut) 3px 6px}
+  .nav-r .btn{height:28px;padding:0 8px}
+  /* 按钮多到三个（本机数据能导出时），只留年份，给当前章节腾出位置 */
+  .nav:has(#navExport:not([hidden])) .nav-l .t{display:none}
+
+  /* ---------- 00 cover ---------- */
+  #cover{--yf:46vw}
+  #cover .cv-head{height:38px}
+  #cover .cv-head>:nth-child(2){display:none}
+  #cover .cv-title{top:50px;font-size:min(20vw,9.5svh)}
+  #cover .cv-lede{left:var(--gut);right:var(--gut);width:auto;top:calc(60px + min(20vw,9.5svh) * 1.05);font:500 13px/1.5 var(--body);padding-top:8px}
+  #cover .cv-tape{bottom:calc(46vw * .76);height:46px}
+  #cover .cv-mi{gap:8px;padding:0 12px}
+  #cover .cv-mi .stamp{font-size:10px}
+  #cover .cv-mi .l,#cover .cv-mi .u{font-size:16px}
+  #cover .cv-mi .n{font-size:28px}
+  #cover .cv-mi .sq{width:10px;height:10px;margin-left:12px}
+  #cover .cv-hint{bottom:12px;font-size:11px}
+  #cover .cv-under{gap:10px}
+  #cover .cv-u-head{top:12px}
+  #cover .cv-u-lead,#cover .cv-u-tail{font-size:18px}
+  #cover .cv-u-num{font-size:min(calc((100vw - 2 * var(--gut)) / var(--ph-em, 2.1)), 30svh)}
+  #cover .cv-u-note{font-size:13px;max-width:26em}
+
+  /* ---------- 01 count：标签在上、大数字在中、四样对照表在下 ---------- */
+  #count .ct-layer{padding:0 var(--gut) 10px}
+  #count .ct-head{height:40px;gap:8px}
+  #count .ct-run{font-size:15px}
+  #count .ct-cells{display:none}
+  #count .ct-idx{font-size:11px}
+  #count .ct-main{display:flex;flex-direction:column;min-height:0}
+  #count .ct-side{display:contents}
+  #count .ct-label{order:1;font-size:min(24vw,11svh);margin-top:14px}
+  #count .ct-say{order:2;font-size:14px;line-height:1.55;margin-top:8px;max-width:none}
+  #count .ct-numcell{order:3;align-self:stretch;margin-top:auto;padding-top:8px}
+  #count .ct-num{font-size:min(calc((100vw - 2 * var(--gut)) / var(--em, 2) * .97), 30svh);margin-bottom:8px}
+  #count .ct-numcell.void{flex:1;min-height:90px;margin:12px 0}
+  #count .ct-none{font-size:22px;padding:10px 12px 10px 0}
+  #count .ct-tab{order:4;margin-top:4px}
+  #count .ct-tab>div{grid-template-columns:44px minmax(0,1fr) auto;column-gap:10px;height:clamp(28px,4.6svh,40px);padding:0 6px}
+  #count .ct-tab .k{font-size:14px}
+  #count .ct-tab .b{height:8px}
+  #count .ct-tab .v{font-size:20px}
+  #count .ct-tab .v.cjk{font-size:13px}
+  #count .ct-strip{height:clamp(42px,8svh,72px)}
+  #count .ct-strip svg{top:6px;height:calc(100% - 6px)}
+  #count .ct-tick{top:-6px}
+  /* 段落标签贴着它那一段，比例尺那句另起一行，窄屏上两者不再撞 */
+  #count .ct-foot{display:block;min-height:0;padding-top:30px}
+  #count .ct-seg{top:6px;font-size:10px}
+  #count .ct-key{display:block;font-size:12px;text-align:right}
+  #count .ct-key.l{text-align:left}
+  #count .ct-sum .ct-main{display:grid;column-gap:16px;padding:12px 0 10px}
+  #count .ct-big{font-size:min(calc((100vw - 2 * var(--gut) - 16px) / var(--ems, 3)), 24svh)}
+  #count .ct-cap{font-size:clamp(16px,2.6svh,22px)}
+  #count .ct-sum .ct-main .ct-say{max-width:none;font-size:13px}
+  #count .ct-ts{padding-top:8px}
+  #count .ct-ts svg{height:clamp(34px,7svh,64px)}
+  #count .ct-legend{grid-template-columns:minmax(0,1fr);margin-top:8px}
+  #count .ct-legend>div{gap:8px;padding:6px 4px}
+  #count .ct-legend>div+div{border-left:0;border-top:1px solid var(--fg)}
+  #count .ct-legend .sw{width:12px;height:12px}
+  #count .ct-legend .t{font-size:13px}
+  #count .ct-legend .v{font-size:20px}
+  #count .ct-legend .v small{font-size:12px}
+  #count .ct-ts .ct-say{font-size:13px}
+
+  /* ---------- 02 time ---------- */
+  #time .tm-head{height:auto;min-height:40px;flex-wrap:wrap;gap:4px 10px;padding:6px var(--gut)}
+  #time .tm-tag{display:none}
+  #time .tm-range{font-size:11px;letter-spacing:.04em;padding-left:10px}
+  #time .tm-run{min-width:0}
+  #time .tm-top{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"t c" "l l";align-items:end;column-gap:12px;row-gap:10px;padding:12px var(--gut) 8px}
+  #time .tm-copy{display:contents}
+  #time .tm-title{grid-area:t;font-size:min(8vw,5svh)}
+  #time .tm-lede{grid-area:l;margin-top:0;font-size:14px;line-height:1.6;max-width:none}
+  #time .tm-count{grid-area:c}
+  #time .tm-num{font-size:min(26vw,15svh);min-width:0}
+  #time .tm-unit .cjk{font-size:20px}
+  #time .tm-unit .mono{font-size:10px}
+  #time .tm-lane{height:30px}
+  #time .tm-call .slab{font-size:13px}
+  #time .tm-code{height:14svh}
+  #time .tm-mon{height:24px}
+  #time .tm-mc{gap:3px;padding-left:3px;font-size:10px;letter-spacing:.02em}
+  #time .tm-mc em{display:none}
+  #time .tm-pil{height:22svh}
+  #time .tm-p{padding:0 1px}
+  #time .tm-pv{font-size:12px;padding-bottom:4px}
+  #time .tm-pb{height:calc(var(--h) * (22svh - 22px))}
+  #time .tm-headbar{height:calc(36svh + 54px)}
+  #time .tm-empty p{font-size:22px}
+
+  /* ---------- 02-B time-hour：24 格尺子折成两排 ---------- */
+  #time-hour .th-head{height:40px}
+  #time-hour .th-band{--row:min(16svh,150px);height:auto;grid-template-columns:repeat(12,minmax(0,1fr));grid-auto-rows:var(--row);row-gap:10px}
+  #time-hour .th-slot:nth-child(12){border-right:1px solid var(--fg)}
+  #time-hour .th-hl{height:20px;font-size:10px}
+  #time-hour .th-tick{height:10px}
+  #time-hour .th-bar{height:calc(var(--h) * (var(--row) - 46px))}
+  #time-hour .th-v{font-size:10px;padding-top:3px}
+  #time-hour .th-low,#time-hour .th-low.flip{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto minmax(0,1fr);grid-template-areas:"t b" "l l" "k k";column-gap:10px;margin-top:10px;padding:0 var(--gut)}
+  #time-hour .th-copy{display:contents}
+  #time-hour .th-title{grid-area:t;align-self:end;font-size:min(7vw,4.4svh);padding-top:10px}
+  #time-hour .th-lede{grid-area:l;margin-top:8px;gap:6px}
+  #time-hour .th-lede p{font-size:14px;line-height:1.5;padding-top:6px}
+  #time-hour .th-key{grid-area:k;align-self:end;font-size:12px;padding:8px 0 10px}
+  #time-hour .th-big,#time-hour .th-low.flip .th-big{grid-area:b;justify-content:flex-end;padding:8px 0 0}
+  #time-hour .th-num{font-size:min(30vw,16svh);-webkit-text-stroke-width:2px}
+  #time-hour .th-dian{font-size:22px}
+  #time-hour .th-empty{grid-area:b}
+  #time-hour .th-empty p{font-size:20px}
+
+  /* ---------- 03 kept：文字在上，黑块从数字这一行开始往下，方格还是跨着黑块的边 ---------- */
+  #kept .kp{--B:62vw;--cg:calc((62vw - 14px) / 30);--c:calc(var(--cg) * .78);--g:calc(var(--cg) * .22)}
+  #kept .kp-ink{display:none}
+  #kept .kp-head{height:40px}
+  #kept .kp-tag-l{color:var(--ink)}
+  #kept .kp-body{grid-template-columns:var(--B) minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);grid-template-areas:"r r" "l ."}
+  #kept .kp-right{grid-area:r;padding:12px var(--gut)}
+  #kept .kp-title{font-size:min(6vw,3.6svh)}
+  #kept .kp-lede{font-size:13px;line-height:1.55;max-width:none;margin-top:8px}
+  #kept .kp-all{font-size:14px;margin-top:8px}
+  #kept .kp-left{grid-area:l;justify-content:flex-end;gap:6px;padding:12px var(--gut) 8px;background:linear-gradient(var(--ink),var(--ink)) 0 0/calc(100% * var(--vis)) 100% no-repeat}
+  #kept .kp-num{font-size:min(26vw,9svh)}
+  #kept .kp-num.long{font-size:min(11vw,7svh)}
+  #kept .kp-cap{font-size:13px}
+  #kept .kp-rows{gap:8px;padding-bottom:10px;background:linear-gradient(var(--ink),var(--ink)) 0 0/calc(var(--B) * var(--vis)) 100% no-repeat}
+  #kept .kp-row{height:calc(58px + var(--r) * var(--cg))}
+  #kept .kp-lab{left:calc(var(--B) + 10px);height:auto;flex-wrap:wrap;align-items:baseline;gap:2px 8px;white-space:normal}
+  #kept .kp-lab .display{font-size:22px}
+  #kept .kp-lab p{flex-basis:100%;font-size:12px;line-height:1.35;white-space:normal}
+  #kept .kp-grid{top:58px}
+  #kept .kp-none{top:58px;left:calc(var(--B) + 10px);font-size:13px}
+  #kept .kp-rest{position:relative;left:auto;top:auto;width:calc(var(--B) - var(--gut) - 8px);margin-left:var(--gut);display:flex;align-items:baseline;gap:8px}
+  #kept .kp-rest b{font-size:26px}
+  #kept .kp-rest p{margin-top:0;font-size:12px}
+  #kept .kp-empty{width:auto}
+  #kept .kp-empty p{font-size:22px}
+
+  /* ---------- 03-B kept-depth ---------- */
+  #kept-depth .kd-head{height:40px}
+  #kept-depth .kd-top{grid-template-columns:minmax(0,1fr);gap:8px;padding:14px var(--gut) 12px}
+  #kept-depth .kd-title{font-size:min(10vw,6svh)}
+  #kept-depth .kd-lede{font-size:14px;line-height:1.55;max-width:none}
+  #kept-depth .kd-row{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  #kept-depth .kd-lab{flex-direction:row;align-items:baseline;justify-content:space-between;padding:8px var(--gut) 6px;border-right:0;border-bottom:1px solid var(--fg)}
+  #kept-depth .kd-lab .cjk{font-size:16px}
+  #kept-depth .kd-v{font-size:min(14vw,7svh)}
+  #kept-depth .kd-v.inside{left:var(--gut)}
+  #kept-depth .kd-v.outside{left:calc(var(--s) * 100% + 12px)}
+  #kept-depth .kd-empty p{font-size:20px}
+  #kept-depth .kd-keys{grid-template-columns:minmax(0,1fr)}
+  #kept-depth .kd-key{border-left:0}
+  #kept-depth .kd-key+.kd-key{border-top:var(--rule) solid var(--fg)}
+  #kept-depth .kd-key b{font-size:18px}
+
+  /* ---------- 03-C kept-recent：四张海报排成两行 ---------- */
+  #kept-recent .kr-head{height:40px}
+  #kept-recent .kr-top{grid-template-columns:minmax(0,1fr);gap:8px;padding:12px var(--gut)}
+  #kept-recent .kr-title{font-size:min(8vw,4.6svh)}
+  #kept-recent .kr-lede{font-size:14px;line-height:1.55;max-width:none}
+  #kept-recent .kr-cards{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(0,1fr)}
+  #kept-recent .kr-card{padding:8px 8px 0}
+  #kept-recent .kr-card:nth-child(odd){border-left:0}
+  #kept-recent .kr-cards>:nth-child(n+3){border-top:var(--rule) solid var(--ink)}
+  #kept-recent .kr-idx{font-size:20px}
+  #kept-recent .kr-meta{flex-wrap:wrap;min-height:34px;gap:4px 6px;padding:5px 0}
+  #kept-recent .kr-by{font-size:12px}
+  #kept-recent .kr-go{display:none}
+  /* 不满四条时的补位块：按前面有几张卡，补成整齐的两行两列 */
+  #kept-recent .kr-fill{margin:8px;padding:12px}
+  #kept-recent .kr-fill:first-child{grid-column:1 / -1;grid-row:1 / 3}
+  #kept-recent .kr-fill:nth-child(2){grid-column:2;grid-row:1 / 3}
+  #kept-recent .kr-fill:nth-child(3){grid-column:1 / -1;grid-row:2}
+  #kept-recent .kr-fill:nth-child(4){grid-column:2;grid-row:2}
+  #kept-recent .kr-fill p{font-size:16px}
+  #kept-recent .kr-mq{height:44px;font-size:20px;margin-bottom:8px}
+  #kept-recent .kr-mq span{padding-right:14px}
+  #kept-recent .kr-mq b{width:10px;height:10px;margin-right:14px}
+
+  /* ---------- 04 taste：说明挪到标题下面一整行 ---------- */
+  #taste .tt-head{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"hl ctr" "lead lead";gap:8px 12px;padding:12px var(--gut) 10px}
+  #taste .tt-hl{grid-area:hl;gap:8px}
+  #taste .tt-title{font-size:min(9vw,5.4svh)}
+  #taste .tt-lead{grid-area:lead;font-size:13px;line-height:1.55;max-width:none}
+  #taste .tt-ctr{grid-area:ctr}
+  #taste .tt-ctr-n{font-size:min(14vw,8svh)}
+  #taste .tt-ctr-of{font-size:12px}
+  #taste .tt-list{transform:translate3d(0,var(--ty,0px),0)}
+  #taste .tt-row{height:max(42px,calc(var(--u) * var(--h)));gap:calc(var(--u) * .8)}
+  #taste .tt-rk{width:24px;font-size:11px;margin-top:6px;padding:.25em 0 .15em}
+  #taste .tt-name{-webkit-text-stroke-width:clamp(1.5px,calc(var(--u) * var(--f) * .055),3px)}
+  /* 名字被挤到二十来像素时描边字认不清，改成实心字 */
+  #taste .tt-row.ph-sm .tt-name{color:var(--fg);-webkit-text-stroke:0}
+  /* 行尾的小封面只有手指宽：有图就只放图，没图的那张（只剩挤成几个字的标题）不放 */
+  #taste .tt-card .cover-k{display:none}
+  #taste .tt-card:has(.cover.no-img){display:none}
+  #taste .tt-meta{min-width:40px;margin-top:6px;gap:2px}
+  #taste .tt-n{font-size:max(15px,calc(var(--u) * max(3, var(--f) * .3)))}
+  #taste .tt-x{font-size:12px}
+  #taste .tt-pct{font-size:11px}
+  #taste .tt-end{grid-template-columns:minmax(0,1fr);gap:8px;padding:18px var(--gut) 24px}
+  #taste .tt-end-n{font-size:min(24vw,14svh)}
+  #taste .tt-end-say{font-size:16px}
+  #taste .tt-empty b{font-size:60vw}
+  #taste .tt-empty p{font-size:22px}
+
+  /* ---------- 04B taste-who ---------- */
+  #taste-who .tw{padding:0 var(--gut) 10px}
+  #taste-who .tw-head{grid-template-columns:minmax(0,1fr);gap:8px;padding:12px 0 10px}
+  #taste-who .tw-title{font-size:min(8.4vw,5svh)}
+  #taste-who .tw-lead{justify-self:start;font-size:13px;line-height:1.55;max-width:none}
+  #taste-who .tw-row{grid-template-columns:40px minmax(0,1fr) 62px 48px;grid-template-rows:minmax(0,1fr) auto;grid-template-areas:"rk nm ct sh" "rk bar bar bar"}
+  #taste-who .tw-row>*{padding:0 6px}
+  #taste-who .tw-row.k{grid-template-rows:minmax(0,1fr);grid-template-areas:none;height:24px}
+  #taste-who .tw-row.k>*{font-size:10px;letter-spacing:.06em}
+  #taste-who .tw-row.k>:last-child{display:none}
+  #taste-who .tw-row.k>:nth-child(4){border-right:0}
+  #taste-who .tw-rk{grid-area:rk}
+  #taste-who .tw-rk b{font-size:max(20px,calc(var(--u) * var(--h) * .82))}
+  #taste-who .tw-nm{grid-area:nm;gap:8px;padding-top:6px}
+  #taste-who .tw-name{font-size:max(15px,calc(var(--u) * var(--f)));white-space:normal}
+  #taste-who .tw-say{font-size:12px}
+  #taste-who .tw-ct{grid-area:ct}
+  #taste-who .tw-ct b{font-size:max(17px,calc(var(--u) * var(--cf)))}
+  #taste-who .tw-ct span{font-size:12px}
+  #taste-who .tw-sh{grid-area:sh;font-size:12px;border-right:0}
+  #taste-who .tw-row>.tw-bar{grid-area:bar;border-right:0;padding:0 6px 8px}
+  #taste-who .tw-bar i{height:6px}
+  #taste-who .tw-foot{padding-top:10px;gap:6px}
+  #taste-who .tw-code{height:20px}
+  #taste-who .tw-code-k{font-size:10px;letter-spacing:.04em}
+  #taste-who .tw-empty b{font-size:60vw}
+  #taste-who .tw-empty p{font-size:22px}
+
+  /* ---------- 04C taste-sound ---------- */
+  #taste-sound .ts-head{grid-template-columns:minmax(0,1fr);gap:8px;padding:12px var(--gut) 10px}
+  #taste-sound .ts-title{font-size:min(8.4vw,5svh)}
+  #taste-sound .ts-lead{justify-self:start;font-size:13px;line-height:1.55;max-width:none}
+  #taste-sound .ts-row{grid-template-columns:54px minmax(0,1fr) auto}
+  #taste-sound .ts-no{flex-direction:column;align-items:flex-start;justify-content:center;gap:6px}
+  #taste-sound .ts-no .stamp{margin-top:0}
+  #taste-sound .ts-num{font-size:min(10vw,6svh);--stroke:2px}
+  #taste-sound .ts-t{gap:4px;padding:0 12px}
+  #taste-sound .ts-name{font-size:max(19px,calc(var(--u) * var(--f)));white-space:normal}
+  #taste-sound .ts-by{font-size:13px}
+  #taste-sound .ts-c{padding-left:4px}
+  #taste-sound .ts-cnt{font-size:min(9vw,5svh)}
+  #taste-sound .ts-x{font-size:14px}
+  #taste-sound .ts-mq{height:48px}
+  #taste-sound .ts-mi{gap:14px;padding-right:14px;font-size:20px}
+  #taste-sound .ts-mi i{width:10px;height:10px}
+  #taste-sound .ts-empty b{font-size:60vw}
+  #taste-sound .ts-empty p{font-size:22px}
+
+  /* ---------- 05 form 的五张：标题和说明上下叠 ---------- */
+  #form .fm-head,#form-time .ft-head{grid-template-columns:minmax(0,1fr);gap:8px;padding:12px var(--gut) 10px}
+  #form-heat .fh-head,#form-age .fa-head{grid-template-columns:minmax(0,1fr);gap:8px;padding:12px 0 10px}
+  #form .fm-title,#form-len .fl-title,#form-time .ft-title,#form-heat .fh-title,#form-age .fa-title{font-size:min(8.4vw,5svh)}
+  #form .fm-lead,#form-len .fl-lead,#form-time .ft-lead,#form-heat .fh-lead,#form-age .fa-lead{justify-self:start;font-size:13px;line-height:1.55;max-width:none}
+  #form .fm-col.wide .fm-lab{left:12px;top:12px;font-size:min(9vw,18cqw)}
+  #form .fm-col.wide .fm-pct{left:8px;font-size:min(44cqw,70cqh)}
+  #form .fm-col.thin{padding:12px 0 10px}
+  #form .fm-empty b,#form-len .fl-empty b,#form-time .ft-empty b,#form-heat .fh-empty b,#form-age .fa-empty b{font-size:60vw}
+  #form .fm-empty p,#form-len .fl-empty p,#form-time .ft-empty p,#form-heat .fh-empty p,#form-age .fa-empty p{font-size:22px}
+
+  #form-len .fl-head{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"s s" "t m" "l l";gap:8px 12px;padding:12px 0 10px}
+  #form-len .fl-hl{display:contents}
+  #form-len .fl-hl>.stamp{grid-area:s;justify-self:start}
+  #form-len .fl-title{grid-area:t;align-self:end}
+  #form-len .fl-lead{grid-area:l}
+  #form-len .fl-med{grid-area:m;align-self:end;display:grid;grid-auto-flow:column;grid-template-rows:auto auto;align-items:baseline;column-gap:2px;margin-bottom:0}
+  #form-len .fl-med .stamp{grid-row:1;grid-column:1 / -1;justify-self:end;margin:0 0 6px}
+  #form-len .fl-med b{grid-row:2;font-size:min(13vw,8svh)}
+  #form-len .fl-med span{grid-row:2;font-size:16px;margin-right:4px}
+  #form-len .fl-ruler{padding:12px 0 4px}
+  #form-len .fl-marks{height:34px}
+  #form-len .fl-mk .fl-mk-t,#form-len .fl-lon .fl-mk-t{font-size:13px}
+  #form-len .fl-mk i{height:8px}
+  #form-len .fl-track{height:36px}
+  #form-len .fl-scale{height:22px}
+  #form-len .fl-scale span{top:5px;font-size:10px}
+  #form-len .fl-lon{flex-wrap:wrap;gap:4px 8px;margin-top:2px}
+  #form-len .fl-lon a,#form-len .fl-lon .fl-lon-t{font-size:12px}
+  #form-len .fl-code{padding:10px 0 12px;gap:6px}
+  #form-len .fl-bars{min-height:56px}
+  #form-len .fl-key{flex-wrap:wrap;gap:0 .4em}
+  #form-len .fl-key b{font-size:22px}
+  #form-len .fl-key span{font-size:12px}
+  #form-len .fl-say{font-size:13px;line-height:1.55}
+
+  #form-time .ft-bars{padding:14px var(--gut) 0}
+  #form-time .ft-big{padding:10px var(--gut) 0}
+  #form-time .ft-num{font-size:min(calc((100vw - 2 * var(--gut)) / var(--em) * .94), 30svh)}
+
+  #form-heat .fh,#form-age .fa{padding:0 var(--gut) 10px}
+  #form-heat .fh-hero,#form-age .fa-hero{flex-direction:column;align-items:flex-start;justify-content:flex-end;gap:8px}
+  /* 中位数占满整行，单位和标记挪到它下面 */
+  #form-heat .fh-num,#form-age .fa-num{flex-wrap:wrap;row-gap:6px}
+  #form-heat .fh-num b{font-size:min(calc(var(--u) * var(--F) * 1.7),60cqh)}
+  #form-heat .fh-u{flex-basis:100%;flex-direction:row;align-items:center;gap:8px;padding-bottom:0}
+  #form-heat .fh-unit{font-size:18px}
+  #form-heat .fh-say,#form-age .fa-say{font-size:15px;max-width:none}
+  #form-heat .fh-ruler{padding-top:24px}
+  #form-heat .fh-track{height:30px}
+  #form-heat .fh-range{height:6px}
+  #form-heat .fh-mk i{left:-7px;width:14px;height:12px}
+  #form-heat .fh-mk.med i{left:-9px;width:18px;height:16px}
+  #form-heat .fh-scale,#form-age .fa-scale{height:22px}
+  #form-heat .fh-scale span,#form-age .fa-scale span{top:5px;font-size:10px}
+  #form-heat .fh-cells{margin-top:6px}
+  #form-heat .fh-cell{grid-template-columns:minmax(0,1fr);row-gap:6px;padding:10px 10px 0 0}
+  #form-heat .fh-cell+.fh-cell{padding-left:10px}
+  #form-heat .fh-cell b{font-size:min(7vw,4svh)}
+  #form-heat .fh-cell b small{font-size:12px}
+  #form-heat .fh-cell p{font-size:12px}
+
+  #form-age .fa-num b{font-size:min(calc(var(--u) * var(--F) * 1.7),60cqh)}
+  #form-age .fa-unit{font-size:min(9vw,20cqh)}
+  #form-age .fa-days{padding-top:8px}
+  #form-age .fa-marks{height:30px}
+  #form-age .fa-mk .t{font-size:13px}
+  #form-age .fa-mk i{height:34px;margin-bottom:-28px}
+  #form-age .fa-cells{height:30px}
+  #form-age .fa-bar{height:34px}
+  #form-age .fa-seg{padding:0 6px}
+  #form-age .fa-seg b{font-size:18px}
+  #form-age .fa-note{font-size:13px;line-height:1.55}
+
+  /* ---------- 06 echo ---------- */
+  #echo .ec-pl{padding:10px var(--gut) 12px}
+  #echo .ec-top{gap:8px;padding-bottom:6px}
+  #echo .ec-tag{font-size:10px;letter-spacing:.06em}
+  #echo .ec-p0{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto minmax(0,1fr) auto}
+  #echo .ec-p0 .ec-h{grid-column:1 / -1;font-size:min(10vw,6svh);margin-top:14px}
+  #echo .ec-p0 .ec-lede{grid-column:1 / -1;align-self:start;margin-top:10px;font-size:14px;line-height:1.75}
+  #echo .ec-idx{position:static;grid-column:1 / -1;align-self:end;width:auto;margin:12px 34px 10px 0}
+  #echo .ec-idx li{font-size:10px;letter-spacing:.06em;padding:5px 0}
+  #echo .ec-big{font-size:min(calc((100vw - 2 * var(--gut) - 34px) / var(--emw, 1.5)), 30svh);margin-bottom:calc(-12px - .02em)}
+  #echo .ec-vert{bottom:12px;font-size:10px;letter-spacing:.2em}
+  #echo .ec-head{grid-template-columns:minmax(0,1fr);row-gap:8px;padding:12px 0}
+  #echo .ec-head .ec-h{grid-column:1 / -1;font-size:min(8.4vw,5svh)}
+  #echo .ec-head .ec-lede{grid-column:1 / -1;font-size:13px;line-height:1.55}
+  #echo .ec-row{grid-template-columns:96px minmax(0,1fr) 58px}
+  #echo .ec-lab{gap:4px;padding-right:8px}
+  #echo .ec-lab b{font-size:15px}
+  #echo .ec-lab .stamp{font-size:10px;padding:4px 5px 3px;letter-spacing:.02em}
+  #echo .ec-track{gap:6px;padding:0 8px}
+  #echo .ec-code{width:calc(var(--s) * (100% - 50px))}
+  #echo .ec-key{font-size:12px;white-space:nowrap}
+  #echo .ec-zero{font-size:12px}
+  #echo .ec-pct{font-size:28px}
+  #echo .ec-bout{grid-template-columns:44px 56px minmax(0,1fr) 56px 44px;grid-template-rows:auto auto;grid-template-areas:"rd who who who av" "rd me bars ot ot";column-gap:8px;row-gap:8px;align-content:center}
+  #echo .ec-rd{grid-area:rd;gap:4px}
+  #echo .ec-rd .stamp{font-size:10px;padding:3px 4px 2px}
+  #echo .ec-rd b{font-size:26px;-webkit-text-stroke-width:1.5px}
+  #echo .ec-side.me{grid-area:me}
+  #echo .ec-bout>.ec-side:not(.me){grid-area:ot}
+  #echo .ec-side b{font-size:min(7vw,calc(52px / var(--emw, 1)))}
+  #echo .ec-side span{font-size:12px;white-space:normal}
+  #echo .ec-bars{grid-area:bars;height:18px;min-height:0}
+  #echo .ec-who{grid-area:who;flex-direction:row;flex-wrap:wrap;align-items:center;gap:4px 8px}
+  #echo .ec-who b{font-size:max(16px,calc(var(--u) * var(--nf, 3.4) * 1.4))}
+  #echo .ec-av{grid-area:av;width:44px}
+  #echo .ec-av>span{font-size:18px}
+  #echo .ec-p3{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr)}
+  #echo .ec-call{grid-column:1 / -1;justify-content:flex-start;gap:8px;padding-top:12px}
+  #echo .ec-call .ec-h{font-size:min(8.4vw,5svh)}
+  #echo .ec-dur{--F:min(calc((100vw - 2 * var(--gut) - 54px * var(--units, 2)) / var(--emw, 1)), 15svh)}
+  #echo .ec-dur span{font-size:18px;margin-right:6px}
+  #echo .ec-call .ec-lede{font-size:13px;line-height:1.55}
+  #echo .ec-nocall{gap:12px;padding-top:8px}
+  #echo .ec-box{grid-column:1 / -1;margin:12px 0 -12px;padding:12px 14px 14px;gap:8px}
+  #echo .ec-box .ec-h{font-size:18px}
+  #echo .ec-cnt{padding:6px 0 4px}
+  #echo .ec-cnt b{font-size:min(12vw,calc(150px / var(--emw, 1)))}
+  #echo .ec-cnt span{font-size:16px}
+  #echo .ec-box .ec-lede{font-size:13px;line-height:1.55}
+  #echo .ec-card{gap:12px}
+  #echo .ec-meta .t{font-size:15px}
+  #echo .ec-meta .a{font-size:13px}
+  #echo .ec-void{min-height:72px;padding:10px}
+  #echo .ec-note{font-size:13px}
+  #echo .ec-solo{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto auto minmax(0,1fr)}
+  #echo .ec-solo .ec-h{font-size:min(8.4vw,5svh)}
+  #echo .ec-solo .ec-lede{grid-column:1 / -1;font-size:15px}
+  #echo .ec-would{grid-column:1 / -1;grid-row:4}
+  #echo .ec-would p{font-size:13px}
+  #echo .ec-would li{font-size:17px}
+  #echo .ec-solo .ec-ghost{grid-column:1 / -1;grid-row:5;font-size:min(56vw,30svh)}
+
+  /* ---------- 07 words：每一栏的名字和说明压成一行放在条带上面 ---------- */
+  #words .wd-wall{--hd:min(166px,28svh)}
+  #words .wd-hd{grid-template-columns:minmax(0,1fr);row-gap:8px;align-content:end;padding:10px var(--gut)}
+  #words .wd-h{font-size:min(8vw,4.8svh)}
+  #words .wd-cap{justify-self:stretch;width:auto;font-size:13px;line-height:1.55}
+  #words .wd-bands{--bh:calc((var(--stage-h) - var(--hd)) / 5 - 34px)}
+  #words .bd{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  #words .bd-lab{flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;min-height:30px;padding:5px var(--gut) 3px;border-right:0}
+  #words .bd-name{flex:none;gap:6px}
+  #words .bd-name b{font-size:14px}
+  #words .bd-name .stamp{font-size:10px;padding:3px 5px 2px}
+  #words .bd-s{min-width:0;font-size:12px;line-height:1.3}
+  #words .bd-s>span>span{display:inline;white-space:normal}
+  #words .wd .c{font-size:max(10px,calc(var(--bh) * .19))}
+  #words .bd-empty{padding:0 var(--gut)}
+  #words .bd-empty span{font-size:12px}
+
+  #words-vs .vs{padding:10px var(--gut) 0}
+  #words-vs .vs-top .mono{font-size:10px;letter-spacing:.06em}
+  #words-vs .vs-head{grid-template-columns:minmax(0,1fr);row-gap:8px;padding:12px 0}
+  #words-vs .vs-h{grid-column:1 / -1;font-size:min(8vw,5svh)}
+  #words-vs .vs-lede{grid-column:1 / -1;font-size:13px;line-height:1.55}
+  #words-vs .vs-ch{flex-direction:column;align-items:flex-start;gap:6px;padding:8px 6px}
+  #words-vs .vs-ch b{font-size:14px}
+  #words-vs .vs-ch .stamp{margin-left:0;font-size:10px;letter-spacing:.02em;padding:4px 5px 3px}
+  #words-vs .vs-list{gap:4px;padding:10px 6px}
+  #words-vs .vs-t{font-size:min(calc(var(--u) * 8),calc((var(--cw) - 12px) * .92 / var(--nc)))}
+  #words-vs .vs-none{padding:10px 6px 0}
+  #words-vs .vs-note{font-size:12px;padding:.3em .45em}
+  #words-vs .vs-zero{font-size:min(28vw,calc(var(--stage-h) * .3))}
+  #words-vs .vs-arrow{width:44px;height:44px;margin-top:-22px}
+
+  /* ---------- 08 proof：内容比一屏多，手机上不钉住，跟着往下读；盖章挪到清单后面 ---------- */
+  #proof{height:auto}
+  #proof .stage{position:relative;height:auto}
+  #proof .pf{height:auto;min-height:var(--stage-h);grid-template-columns:minmax(0,1fr);grid-template-rows:none}
+  #proof .pf-head{display:contents}
+  #proof .pf-hl{order:1;padding:12px 0 10px;border-bottom:var(--rule) solid var(--fg)}
+  #proof .pf-title{font-size:min(8vw,5svh)}
+  #proof .pf-l{order:2;padding:12px 0 14px}
+  #proof .pf-lk{font-size:10px}
+  #proof .pf-big{flex:none;height:min(28vw,16svh);margin-top:8px}
+  #proof .pf-lead{font-size:17px;margin-top:10px}
+  #proof .pf-bar{height:12px}
+  #proof .pf-srct{font-size:13px}
+  #proof .pf-led{order:3;border-left:0;border-top:var(--rule) solid var(--fg);padding:0}
+  #proof .pf-th{font-size:10px;padding:10px 0 6px}
+  #proof .pf-th,#proof .pf-row{grid-template-columns:2.2em minmax(0,1fr) auto 3.4em;column-gap:8px}
+  #proof .pf-rows{flex:none;grid-template-rows:repeat(var(--rows,7),42px)}
+  #proof .pf-row{row-gap:5px}
+  #proof .pf-no{font-size:18px}
+  #proof .pf-lab{gap:6px}
+  #proof .pf-lab b{font-size:15px}
+  #proof .pf-ok{font-size:10px}
+  #proof .pf-pcn{font-size:22px}
+  #proof .pf-trk{height:6px}
+  #proof .pf-scan{left:0}
+  #proof .pf-scan .stamp{left:auto;right:0;transform:translate(0,-50%)}
+  #proof .pf-sum{font-size:13px;padding-top:10px}
+  #proof .pf-empty{font-size:17px}
+  #proof .pf-hr{order:4;justify-content:flex-start;padding:28px 0 18px}
+  #proof .pf-slot{width:100%;height:56px;margin:0}
+  #proof .pf-sk2{font-size:13px}
+  #proof .pf-vt{font-size:20px}
+  #proof .pf-foot{order:5;grid-template-columns:repeat(2,minmax(0,1fr))}
+  #proof .pf-cell{padding:10px 10px 12px}
+  #proof .pf-cell:nth-child(odd){padding-left:0;border-left:0}
+  #proof .pf-cell:nth-child(n+3){border-top:1px solid var(--fg)}
+  #proof .pf-cell p{font-size:12px}
+
+  /* ---------- 09 sign ---------- */
+  #sign .sg-wtop,#sign .sg-top{padding:12px 0 8px}
+  #sign .sg-wix{font-size:22px}
+  #sign .sg-wmeta{grid-template-columns:minmax(0,1fr);gap:8px;padding:10px 0 12px}
+  #sign .sg-wen{font-size:15px}
+  #sign .sg-wr{font-size:14px;line-height:1.6}
+  #sign .sg-mq{height:40px}
+  #sign .sg-mq span{font-size:16px}
+  #sign .sg-cell{padding:8px 8px 10px}
+  #sign .sg-ck{font-size:10px;letter-spacing:.1em}
+  #sign .sg-cw{font-size:min(6vw,22px);white-space:normal}
+  #sign .sg-ce{font-size:10px;letter-spacing:.04em}
+  #sign .sg-foot{grid-template-columns:minmax(0,1fr);gap:8px;padding:10px 0 14px}
+  #sign .sg-ent{font-size:16px}
+  #sign .sg-read{font-size:14px;line-height:1.65}
+
+  /* ---------- 09 sign-end：跟着内容长，按钮排成两列 ---------- */
+  #sign-end{height:auto}
+  #sign-end .stage{position:relative;height:auto}
+  #sign-end .se{height:auto;min-height:var(--stage-h)}
+  #sign-end .se-top{flex-wrap:wrap;gap:8px;padding:12px 0 10px}
+  #sign-end .se-title{font-size:min(7vw,26px)}
+  #sign-end .se-yearbox{min-height:min(50vw,34svh)}
+  #sign-end .se-acts{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr))}
+  #sign-end .se-act{padding:10px 10px 12px}
+  #sign-end .se-act:nth-child(odd){border-left:0}
+  #sign-end .se-act:nth-child(n+3){border-top:var(--rule) solid var(--fg)}
+  #sign-end .se-at{font-size:15px;white-space:normal}
+  #sign-end .se-aa{font-size:20px}
+  #sign-end .se-ad{font-size:12px}
+  #sign-end .se-pv{font-size:10px}
+  #sign-end .se-colo{font-size:12px;padding:10px 0 14px}
+}
+/* ============ 手机：挤在一起的几处再松开 ============ */
+@media (max-width:700px){
+  /* the cover's year and torn halves move with every scroll frame: keep them on their own layers, or a frame can show the paper through them */
+  #cover .cv-year,#cover .cv-piece{will-change:transform}
+  /* the chapter strip had ~70px left between the title and the buttons, showing a cut-off tab: show the current chapter only */
+  .nav-idx{-webkit-mask-image:none;mask-image:none}
+  .nav-idx a:not(.on){display:none}
+  /* in the app there are three buttons; the tab would be a cut-off sliver, and each page already carries its FIG. label */
+  .nav:has(#navWs:not([hidden])) .nav-idx{visibility:hidden}
+  /* proof rows: name, bar, count on three lines; the badge no longer runs into the count */
+  #proof .pf-th,#proof .pf-row{grid-template-columns:2.2em minmax(0,1fr) 3.4em}
+  #proof .pf-row{grid-template-areas:"no lab pc" "no bar pc" "no cnt pc";grid-template-rows:auto auto auto;row-gap:4px}
+  #proof .pf-rows{grid-template-rows:repeat(var(--rows,7),58px)}
+  #proof .pf-cnt{justify-self:start;text-align:left}
+  #proof .pf-th>:nth-child(3){display:none}
+  #proof .pf-scan .stamp{display:none} /* the travelling SCAN tag sat on the percentages */
+  /* a narrow share (13%) had a 22px number in a ~40px key */
+  #form-len .fl-key b{font-size:clamp(13px,calc(var(--n) * 1.1px + 6px),22px)}
+}
+</style>
+<script>
+// 手机上的两件小事：尺子下面的刻度字挤在一起时让一让；封面总数按位数定字号
+(() => {
+  "use strict";
+  const PHONE = window.PHONE;
+  if (!PHONE) return;
+  // 刻度字从两头往中间排：首尾一定留着，中间和已留下的相碰就先藏起来（只在手机上）
+  let hid = false;
+  function declutter() {
+    if (!PHONE.matches && !hid) return;
+    for (const box of document.querySelectorAll(".fl-scale, .fh-scale, .fa-scale")) {
+      const spans = Array.from(box.children);
+      spans.forEach((s) => s.classList.remove("ph-x"));
+      if (!PHONE.matches || spans.length < 3) continue;
+      hid = true;
+      const kept = [spans[0], spans[spans.length - 1]].map((s) => s.getBoundingClientRect());
+      for (const s of spans.slice(1, -1)) {
+        const r = s.getBoundingClientRect();
+        if (kept.some((k) => r.left < k.right + 6 && r.right > k.left - 6)) s.classList.add("ph-x");
+        else kept.push(r);
+      }
+    }
+  }
+  function fitCover() {
+    const n = document.querySelector("#cover .cv-u-num");
+    const b = n && n.querySelector("b");
+    if (!b || b.dataset.count == null) return;
+    const text = new Intl.NumberFormat("en-US").format(Math.round(Number(b.dataset.count) || 0));
+    const em = Array.from(text).reduce((w, c) => w + (c === "1" ? 0.331 : c === "," ? 0.236 : 0.494) - 0.02, 0) + 0.06;
+    n.style.setProperty("--ph-em", em.toFixed(3));
+  }
+  let w = innerWidth, t = 0;
+  const run = () => { declutter(); };
+  const start = () => { if (PHONE.matches) fitCover(); run(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(run); };
+  if (window.__booted) start(); else addEventListener("DOMContentLoaded", () => setTimeout(start, 0));
+  addEventListener("load", run);
+  addEventListener("resize", () => { if (innerWidth === w) return; w = innerWidth; clearTimeout(t); t = setTimeout(run, 150); });
+  PHONE.addEventListener("change", () => { if (PHONE.matches) fitCover(); run(); });
+})();
+</script>
 <script>
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => window.__POSTER.boot());
 else window.__POSTER.boot();
