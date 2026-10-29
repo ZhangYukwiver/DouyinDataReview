@@ -12,7 +12,8 @@ const targets = [path.join(root, "public", "story"), path.join(root, "docs", "de
 const PAGES = ["story-entry.html", "story-draft_副本.html", "story-poster.html", "story-archive.html"];
 // 长卷共用的粘滞滚动 + 自动播放；三个正文页共用的导出和分享图
 const SCRIPTS = ["story-glide.js", "story-export.js", "story-card.js"];
-const IMAGE = /^(sky-s\d-[a-z]+|entry-night|entry-mix)\.jpg$|^entry-textures\.js$/u;
+// -m 是竖屏用的中间一条（1080×1440），手机上省一半流量
+const IMAGE = /^(sky-s\d-[a-z]+|entry-night|entry-mix)(-m)?\.jpg$|^entry-textures\.js$/u;
 
 const images = readdirSync(path.join(root, "jimeng", "story-images")).filter((name) => IMAGE.test(name));
 for (const target of targets) {

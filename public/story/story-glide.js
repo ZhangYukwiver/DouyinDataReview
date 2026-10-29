@@ -26,7 +26,7 @@
     const root = document.documentElement;
     let cur = scrollY, target = scrollY, lastSet = -1, raf = 0, lastT = 0;
     let lastWheel = 0, lastDy = 0, swallowDir = 0, pull = 0, pullDir = 0, gestureFrom = 0;
-    let lastInput = -1e9, arrivedAt = 0, playing = null, rewound = false, snapAt = 0, held = false;
+    let lastInput = -1e9, arrivedAt = 0, playing = null, rewound = false, snapAt = 0, held = false, touching = false;
     let detents = [], scenesInfo = [], tops = new Map(), stale = true;
 
     const vh = () => innerHeight;
@@ -101,11 +101,11 @@
     }
 
     function wantsPlay(now) {
-      if (playing || document.hidden || rewound || held) return false;
+      if (playing || document.hidden || rewound || held || touching) return false;
       return Boolean(pinnedAt(target) || chainFrom(target)) && Math.abs(target - cur) < 2;
     }
     function autoplay(now, dt) {
-      if (document.hidden || held) return;
+      if (document.hidden || held || touching) return;
       if (playing) {
         if (now - lastInput < RESUME) { playing = null; return; }
         target = Math.min(playing.end, target + playing.speed * dt);
@@ -219,6 +219,12 @@
       const d = dir > 0 ? detents.find((y) => y > base + 1) : [...detents].reverse().find((y) => y < base - 1);
       to(d === undefined ? (dir > 0 ? maxY() : 0) : d);
     });
+
+    // 触屏照常原生滚动：手指按在屏幕上时不自动播，松手后的惯性滚动由下面的 scroll 监听接住
+    addEventListener("touchstart", () => { touching = true; playing = null; lastInput = performance.now(); }, { passive: true });
+    const untouch = () => { touching = false; lastInput = performance.now(); kick(); };
+    addEventListener("touchend", untouch, { passive: true });
+    addEventListener("touchcancel", untouch, { passive: true });
 
     // 滚动条拖动、页内查找之类不经过这里的滚动：跟上它，别跟它抢
     addEventListener("scroll", () => {

@@ -2,13 +2,17 @@
   "expo": {
     "name": "DouyinDataReview",
     "slug": "douyin-content-insights",
-    "version": "1.30.0",
+    "version": "1.31.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "contentinsights",
     "icon": "./build/icon.png",
     "android": {
-      "usesCleartextTraffic": true
+      "package": "com.zhangyukwiver.douyindatareview.proof",
+      "versionCode": 3,
+      "allowBackup": false,
+      "usesCleartextTraffic": false,
+      "blockedPermissions": ["android.permission.RECORD_AUDIO", "android.permission.CAMERA", "android.permission.SYSTEM_ALERT_WINDOW", "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"]
     },
     "ios": {
       "infoPlist": {

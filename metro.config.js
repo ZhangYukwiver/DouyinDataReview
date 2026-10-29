@@ -4,6 +4,11 @@ const { getDefaultConfig } = require("expo/metro-config");
 
 const config = getDefaultConfig(__dirname);
 
+// Android APK packaging shares memory with Gradle and the native compiler.
+if (process.argv.includes("export:embed") && process.argv.includes("android")) {
+  config.maxWorkers = 2;
+}
+
 // 设置「关于」里的本版更新：发版只写 .github/release-notes.md，这里把原文带进包里，由 releaseNotes.ts 解析
 process.env.EXPO_PUBLIC_RELEASE_NOTES = fs.readFileSync(path.join(__dirname, ".github/release-notes.md"), "utf8");
 

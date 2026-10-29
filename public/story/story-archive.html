@@ -9,7 +9,7 @@
 <script src="story-card.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600&family=Noto+Serif+SC:wght@200;400;500;600;700;900&family=Noto+Sans+SC:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300..700;1,300..600&family=Noto+Serif+SC:wght@200..900&family=Noto+Sans+SC:wght@400..500&display=swap">
 <style>
 /* ============ tokens：档案馆自己的语言——冷调近黑的观测室、羊皮纸色字、暖金、冷青、1px 青铜细线、纸纹、暗角 ============ */
 :root{
@@ -93,10 +93,10 @@ figure{margin:0}
 
 /* ============ 按钮：细金线，悬停时金色填满 ============ */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:.7em;height:46px;padding:0 22px;border:1px solid var(--gold);color:var(--gold-hi);background:transparent;font:500 15px/1 var(--serif);letter-spacing:.12em;cursor:pointer;white-space:nowrap;transition:background .3s,color .3s}
-.btn:hover,.btn[aria-pressed="true"]{background:var(--gold-deep);border-color:var(--gold-hi);color:var(--gold-hi)}
+.btn[aria-pressed="true"]{background:var(--gold-deep);border-color:var(--gold-hi);color:var(--gold-hi)}@media (hover:hover){.btn:hover{background:var(--gold-deep);border-color:var(--gold-hi);color:var(--gold-hi)}}
 /* 主按钮也不平涂：金框 + 一层很淡的深金底，悬停时框和字更亮 */
 .btn.solid{background:var(--gold-deep);border-color:var(--gold-hi);color:var(--gold-hi)}
-.btn.solid:hover{background:#4A3920;border-color:#F3DDBE;color:#F3DDBE}
+@media (hover:hover){.btn.solid:hover{background:#4A3920;border-color:#F3DDBE;color:#F3DDBE}}
 
 /* ============ 书：一页一屏，叠在一起，只显示当前页 ============ */
 #book{position:fixed;left:0;right:0;top:var(--nav-h);bottom:0;overflow:hidden;background:var(--night);cursor:e-resize;user-select:none;-webkit-user-select:none}
@@ -158,12 +158,12 @@ figure{margin:0}
 .nav-idx{flex:1;display:flex;justify-content:center;align-items:stretch;min-width:0;overflow:hidden}
 .nav-idx a{position:relative;display:flex;align-items:center;gap:7px;padding:0 11px;font:400 13px/1 var(--serif);white-space:nowrap;color:var(--mute);transition:color .3s}
 .nav-idx a .n{font:italic 500 15px/1 var(--display);color:var(--dim);transition:color .3s}
-.nav-idx a:hover{color:var(--paper)} .nav-idx a:hover .n{color:var(--gold)}
+@media (hover:hover){.nav-idx a:hover{color:var(--paper)}} @media (hover:hover){.nav-idx a:hover .n{color:var(--gold)}}
 .nav-idx a.on{color:var(--gold-hi)} .nav-idx a.on .n{color:var(--gold)}
 .nav-idx a.on::after{content:"";position:absolute;left:50%;bottom:6px;width:5px;height:5px;margin-left:-2.5px;background:var(--gold);transform:rotate(45deg)}
 .nav-r{display:flex;align-items:center;gap:10px;padding:0 var(--gut) 0 0;white-space:nowrap}
 .nav-r .btn{height:28px;padding:0 12px;font-size:12px;letter-spacing:.14em;border-color:var(--line-2);color:var(--paper-2)}
-.nav-r .btn:hover,.nav-r .btn[aria-pressed="true"]{background:transparent;border-color:var(--gold);color:var(--gold-hi)}
+.nav-r .btn[aria-pressed="true"]{background:transparent;border-color:var(--gold);color:var(--gold-hi)}@media (hover:hover){.nav-r .btn:hover{background:transparent;border-color:var(--gold);color:var(--gold-hi)}}
 .nav-r .btn.solid{border-color:var(--gold);color:var(--gold-hi)}
 .nav-src{font:italic 500 13px/1 var(--display);letter-spacing:.06em;color:var(--mute)}
 .nav-src.demo{color:var(--gold)}
@@ -185,6 +185,34 @@ figure{margin:0}
 @media (max-width:1400px){.nav-src{display:none}}
 @media (max-width:1300px){.nav-idx a{padding:0 7px}.nav-idx a .nm{display:none}.nav-l{padding-right:14px}}
 @media (max-width:1000px){.flip-hint span{display:none}.nav-src{display:none}}
+/* ============ 手机竖屏（≤700px）：全书的手机规则只写在这类块里，桌面一条不动 ============
+   书的高度钉在 100svh（地址栏展开时的可视高度），地址栏伸缩时版面不跟着抖；--page-h 是一页的高。 */
+@media (max-width:700px){
+  :root{--nav-h:44px;--gut:16px;--page-h:calc(100svh - var(--nav-h))}
+  #book{bottom:auto;height:var(--page-h);cursor:default;touch-action:pan-y pinch-zoom}
+  #book.back{cursor:default}
+  .flip-light{bottom:auto;height:var(--page-h)}
+  .plate{inset:8px}
+  .plate::before,.plate::after,.plate>.corner-tr,.plate>.corner-bl{width:14px;height:14px}
+  /* 导航：左边馆名年份，中间只留当前这一章，右边页码和按钮；按钮多的时候章名收起来只留罗马数字 */
+  .nav-l{padding:0 8px 0 14px;align-items:center;gap:7px}
+  .nav-l .t{font-size:14px;letter-spacing:.22em}
+  .nav-l .y{font-size:19px}
+  .nav-idx{justify-content:flex-start}
+  .nav-idx a{display:none;padding:0 6px;gap:6px;font-size:12px}
+  .nav-idx a.on{display:flex}
+  .nav-idx a .nm{display:inline}
+  .nav:has(#navExport:not([hidden])) .nav-idx a .nm,.nav:has(#navCard:not([hidden])) .nav-idx a .nm,.nav:has(#navWs:not([hidden])) .nav-idx a .nm{display:none}
+  .nav-idx a.on::after{bottom:5px}
+  .nav-r{gap:6px;padding:0 10px 0 0}
+  .nav-r .btn{height:28px;padding:0 8px;font-size:11px;letter-spacing:.08em}
+  .flip-hint{display:none}
+  .nav-no{min-width:0;font-size:14px}
+  /* 负载：逐字显影去掉每个字上的模糊（几十上百个字各开一层滤镜），只留逐字淡入 */
+  .fx-ink .ch{filter:none;transition:opacity .7s var(--slow);transition-delay:calc(var(--i,0) * var(--stagger,45ms))}
+  /* 纸纹：整屏 soft-light 混合层在手机上换成普通叠加，颗粒照旧、不再逐帧混合 */
+  body::after{mix-blend-mode:normal;opacity:.035}
+}
 
 /* ============ 封面图：细金线框的藏品图 ============ */
 .cover{position:relative;display:block;width:100%;aspect-ratio:var(--ar,3/4);overflow:hidden;background:linear-gradient(160deg,#1F2426,#121516);outline:1px solid var(--line-2);outline-offset:4px;container-type:inline-size}
@@ -215,6 +243,8 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   const query = new URLSearchParams(location.search);
   const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
   const REDUCED = !document.documentElement.classList.contains("motion-full") && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // 手机竖屏：和 CSS 里的 @media (max-width:700px) 同一条线；各章要分手机排法时读 MOBILE.matches
+  const MOBILE = matchMedia("(max-width:700px)");
 
   // ---------- data ----------
   // 导出的离线文件把数据直接放在 window.__STORY_EXPORT__ 里（见 story-export.js）
@@ -611,14 +641,21 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
     if (instant) { play(to); finish(); return; }
     busy = true;
     // 一道金色细光扫过：新页在光的身后亮起来，旧页沉进暗处、往后退一点
-    const W = innerWidth, D = 980;
+    const W = innerWidth, D = MOBILE.matches ? 760 : 980;
     const opt = { duration: D, easing: "cubic-bezier(.65,0,.3,1)", fill: "forwards" };
     const clip = dir > 0 ? ["inset(0 0 0 100%)", "inset(0 0 0 0%)"] : ["inset(0 100% 0 0)", "inset(0 0% 0 0)"];
-    const run = [
-      to.el.animate({ clipPath: clip, filter: ["brightness(1.6)", "brightness(1)"] }, opt),
-      slab.animate({ transform: dir > 0 ? [`translateX(${W}px)`, "translateX(-2px)"] : ["translateX(-2px)", `translateX(${W}px)`], opacity: [0, 1, 1, 0], offset: undefined }, opt),
-    ];
-    if (from) run.push(from.el.animate({ transform: ["scale(1)", "scale(.985)"], filter: ["brightness(1)", "brightness(.35)"] }, opt));
+    const sweep = slab.animate({ transform: dir > 0 ? [`translateX(${W}px)`, "translateX(-2px)"] : ["translateX(-2px)", `translateX(${W}px)`], opacity: [0, 1, 1, 0], offset: undefined }, opt);
+    let run;
+    if (MOBILE.matches) {
+      // 手机：整页的 clip-path / brightness 每帧都要重画，换成只动 opacity / transform（合成器上跑）；
+      // 新页从翻来的方向滑进一小段并亮起，旧页从手指拽到的位置接着退、沉暗
+      const fx = Number(opts.fromX) || 0;
+      run = [to.el.animate({ opacity: [0, 1], transform: [`translateX(${dir * 36}px)`, "translateX(0)"] }, opt), sweep];
+      if (from) run.push(from.el.animate({ opacity: [1, 0.3], transform: [`translateX(${fx}px)`, `translateX(${fx - dir * 24}px) scale(.985)`] }, opt));
+    } else {
+      run = [to.el.animate({ clipPath: clip, filter: ["brightness(1.6)", "brightness(1)"] }, opt), sweep];
+      if (from) run.push(from.el.animate({ transform: ["scale(1)", "scale(.985)"], filter: ["brightness(1)", "brightness(.35)"] }, opt));
+    }
     setTimeout(() => play(to), 360);
     Promise.all(run.map((a) => a.finished.catch(() => null))).then(() => { run.forEach((a) => a.cancel()); finish(); });
     setTimeout(() => { if (busy) { run.forEach((a) => a.cancel()); finish(); } }, D + 400); // 后台标签页里动画不跑，照样收尾
@@ -630,8 +667,10 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   const PREV_ZONE = 0.16, WHEEL_FLIP = 120;
   function interactive(target) { return Boolean(target.closest && target.closest("a,button,input,textarea,select,label,summary,[data-noflip],[role=button]")); }
   function bindInput() {
+    let noClickUntil = 0; // 手机上刚滑过一页：滑动收尾偶尔还会补一个 click，别再翻第二页
     book.addEventListener("click", (event) => {
       if (event.button !== 0 || interactive(event.target)) return;
+      if (performance.now() < noClickUntil) return;
       if (String(getSelection && getSelection()).trim()) return;
       if (event.clientX < innerWidth * PREV_ZONE) prev(); else next();
     });
@@ -676,6 +715,49 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
       tug(-dir * Math.min(acc, WHEEL_FLIP) * 0.16);
       springTimer = setTimeout(release, 200);
     }, { passive: false });
+    // 手机：左右滑翻页。水平位移明显大于垂直、超过 50px 才算；手指拖动时当前页跟着被拽一点（到头了拽不动）；
+    // 起点在页里能横向滚的小框里就交给它；滑过之后 450ms 内的 click 不再翻页
+    const SWIPE = 50;
+    let sw = null;
+    const swTug = (px) => { const p = pages[index]; if (p && !busy) { p.el.style.transition = "none"; p.el.style.transform = px ? `translateX(${px}px)` : ""; } };
+    const swRelease = () => { const p = pages[index]; if (!p || busy || !p.el.style.transform) return; p.el.style.transition = "transform .45s cubic-bezier(.2,1.3,.4,1)"; p.el.style.transform = ""; setTimeout(() => { if (p.el.style.transform === "") p.el.style.transition = ""; }, 480); };
+    book.addEventListener("touchstart", (event) => {
+      sw = null;
+      if (!MOBILE.matches || event.touches.length !== 1) return;
+      for (let n = event.target; n && n !== book && n.nodeType === 1; n = n.parentElement) {
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName)) return;
+        const cs = getComputedStyle(n);
+        if (/(auto|scroll)/.test(cs.overflowX) && n.scrollWidth > n.clientWidth + 1) return;
+      }
+      const t = event.touches[0];
+      sw = { x: t.clientX, y: t.clientY, dx: 0, dy: 0, horiz: null, page: index };
+    }, { passive: true });
+    book.addEventListener("touchmove", (event) => {
+      if (!sw || event.touches.length !== 1) { if (sw) { sw = null; swRelease(); } return; }
+      const t = event.touches[0];
+      sw.dx = t.clientX - sw.x; sw.dy = t.clientY - sw.y;
+      if (sw.horiz === null && Math.hypot(sw.dx, sw.dy) > 10) sw.horiz = Math.abs(sw.dx) > Math.abs(sw.dy) * 1.2;
+      if (!sw.horiz || busy || index !== sw.page) return;
+      const can = pages[index + (sw.dx < 0 ? 1 : -1)];
+      sw.tug = Math.sign(sw.dx) * Math.min(Math.abs(sw.dx), 240) * (can ? 0.22 : 0.06);
+      swTug(sw.tug);
+    }, { passive: true });
+    book.addEventListener("touchend", (event) => {
+      if (!sw) return;
+      const s = sw; sw = null;
+      const t = event.changedTouches[0];
+      if (t) { s.dx = t.clientX - s.x; s.dy = t.clientY - s.y; }
+      const ok = s.horiz && Math.abs(s.dx) > SWIPE && Math.abs(s.dx) > Math.abs(s.dy) * 1.5;
+      if (ok) noClickUntil = performance.now() + 450;
+      const dir = s.dx < 0 ? 1 : -1;
+      if (ok && !busy && index === s.page && pages[index + dir]) {
+        const fromX = s.tug || 0;
+        const p = pages[index]; p.el.style.transition = "";
+        go(index + dir, { fromX });
+      } else if (ok && busy) { swRelease(); go(index + dir); }
+      else swRelease();
+    }, { passive: true });
+    book.addEventListener("touchcancel", () => { if (sw) { sw = null; swRelease(); } }, { passive: true });
   }
 
   // ---------- 导航 ----------
@@ -762,7 +844,7 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
   }
 
   Object.assign(window, {
-    D: data, LIVE: live, DEMO, FRAMED, REDUCED,
+    D: data, LIVE: live, DEMO, FRAMED, REDUCED, MOBILE,
     H, S, $, $$, fmt, CH, cover, split, countUp, resetCount, onEnter, onLeave, onResize, togglePrivacy, toWorkspace, easeOut, easeInOut,
     __ARCHIVE: { boot, go, next, prev, goChapter, pages, get index() { return index; }, get busy() { return busy; } },
   });
@@ -884,10 +966,10 @@ body.privacy-on img[data-private],body.privacy-on [data-private] img,body.privac
 #cover .ix-gone-t{display:flex;align-items:baseline;gap:.7em;white-space:nowrap}
 #cover .ix-gone-t .obs{font-size:clamp(13px,calc(var(--u)*1.2),17px);line-height:1.2}
 /* 悬停 / 聚焦：这一行亮起来，星放大一点 */
-#cover .ix-row:not(:disabled):hover .ix-no,#cover .ix-row:not(:disabled):focus-visible .ix-no{color:var(--gold-hi)}
-#cover .ix-row:not(:disabled):hover .ix-nm,#cover .ix-row:not(:disabled):focus-visible .ix-nm{color:var(--gold-hi)}
-#cover .ix-row:not(:disabled):hover .ix-say,#cover .ix-row:not(:disabled):focus-visible .ix-say{color:var(--paper)}
-#cover .ix-row:not(:disabled):hover .ix-star svg,#cover .ix-row:not(:disabled):focus-visible .ix-star svg{transform:scale(1.35)}
+#cover .ix-row:not(:disabled):focus-visible .ix-no{color:var(--gold-hi)}@media (hover:hover){#cover .ix-row:not(:disabled):hover .ix-no{color:var(--gold-hi)}}
+#cover .ix-row:not(:disabled):focus-visible .ix-nm{color:var(--gold-hi)}@media (hover:hover){#cover .ix-row:not(:disabled):hover .ix-nm{color:var(--gold-hi)}}
+#cover .ix-row:not(:disabled):focus-visible .ix-say{color:var(--paper)}@media (hover:hover){#cover .ix-row:not(:disabled):hover .ix-say{color:var(--paper)}}
+#cover .ix-row:not(:disabled):focus-visible .ix-star svg{transform:scale(1.35)}@media (hover:hover){#cover .ix-row:not(:disabled):hover .ix-star svg{transform:scale(1.35)}}
 #cover .ix-row:focus-visible{outline:1px solid var(--gold-lo);outline-offset:-1px}
 #cover .ix-row:disabled{cursor:default}
 #cover .ix-row:disabled .ix-no{color:var(--mute);opacity:.85}
@@ -2778,7 +2860,7 @@ CH.push({
 #kept .k3-meta{display:flex;align-items:baseline;gap:.9em;flex-wrap:wrap;font:500 clamp(12px,calc(var(--u)*1.02),14px)/1.4 var(--serif);color:var(--mute)}
 #kept .k3-meta .kd{color:var(--gold);letter-spacing:.2em}
 #kept .k3-go{font:italic 500 clamp(12px,calc(var(--u)*1.1),15px)/1 var(--display);color:var(--teal-hi);letter-spacing:.06em;border-bottom:1px solid var(--teal-lo);padding-bottom:1px}
-#kept .k3-go:hover{color:var(--gold-hi);border-color:var(--gold)}
+@media (hover:hover){#kept .k3-go:hover{color:var(--gold-hi);border-color:var(--gold)}}
 #kept .k3-by{font:600 clamp(14px,calc(var(--u)*1.45),21px)/1.35 var(--serif);color:var(--paper);overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow-wrap:anywhere;text-wrap:balance}
 #kept .k3-tt{font:400 clamp(12px,calc(var(--u)*1.05),15px)/1.55 var(--serif);color:var(--paper-2);overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:var(--lc,1);word-break:break-all}
 #kept .k3-e.first .k3-by{font-size:clamp(17px,calc(var(--u)*2),30px)}
@@ -3284,10 +3366,12 @@ CH.push({
     const kindsL = Object.keys(tally).filter((k) => tally[k]).sort((a, b) => tally[b] - tally[a]);
     const kindSay = n <= 1 ? "" : kindsL.length === 1 ? { liked: `这${cnum(n)}条都是点了喜欢的。`, favorite: `这${cnum(n)}条都收进了收藏夹。`, watch: `这${cnum(n)}条都是最近看过的。` }[kindsL[0]]
       : kindsL.map((k) => `${cnum(tally[k])}条${PH[k]}`).join("，") + "。";
+    const solo = MOBILE.matches; // phones show the catalogue alone; the enlarged exhibit has no room (see the phone CSS)
     const lead3 = !n ? ["这份记录里还没有喜欢、收藏或看过的内容。"]
-      : n === 1 ? (kept ? ["这是", nw("最近一次"), list[0].kind === "favorite" ? nw("收进收藏夹的") : nw("点了喜欢的"), "内容，挂在右边。"] : ["这份记录里没有喜欢或收藏，右边挂的是", nw("最近看过的"), "一条。"])
+      : n === 1 ? (kept ? ["这是", nw("最近一次"), list[0].kind === "favorite" ? nw("收进收藏夹的") : nw("点了喜欢的"), solo ? "内容。" : "内容，挂在右边。"]
+        : solo ? ["这份记录里没有喜欢或收藏，这是", nw("最近看过的"), "一条。"] : ["这份记录里没有喜欢或收藏，右边挂的是", nw("最近看过的"), "一条。"])
       : [...(kept === n ? [kindSay] : kept ? [nw("喜欢和收藏"), "不够四条，用", nw("最近看过的"), "补上了。"] : ["这份记录里没有喜欢或收藏，摆的是", nw("最近看过的。")]),
-        nw("最近的一条"), nw("挂在右边，"), nw(`往前${rest}条`), nw("收在目录里。")];
+        ...(solo ? [nw("从最近的一条"), nw("往前排。")] : [nw("最近的一条"), nw("挂在右边，"), nw(`往前${rest}条`), nw("收在目录里。")])];
     $(".k3-lead", p3).append(...lead3);
     const NOBODY = "没有作者名";
     const link = (c) => (c.url ? H("a", { class: "k3-go", href: c.url, target: "_blank", rel: "noopener noreferrer" }, "打开 ↗") : null);
@@ -3930,6 +4014,8 @@ CH.push({
         drawGrid(W, Hh, u);
         const hd = relRect(p1, head);
         const L = hd.l;
+        // 手机：标题和导语占满一行，星只排在它下面那一段
+        const SKY0 = MOBILE.matches ? hd.b + 2 * u : 0;
         // 代表作藏品签：贴着左下角，顶端不许碰到标题下面那段字；空间不够先不写标题，再不够就把封面缩小
         let cd = null;
         if (cardEl) {
@@ -3995,13 +4081,13 @@ CH.push({
           const lw = lb.offsetWidth, lh = lb.offsetHeight, gap = r * 0.7 + 0.9 * u;
           const ga = prev.a ? R2 + 0.6 * u : prev.r * 0.55 + 0.7 * u, gb = r * 0.55 + 0.7 * u;
           // 在固定位置附近上下左右挪一挪，给每个候选打分：压到字或星最重，连线穿字次之，挪得越远扣得越多；取分最低的
-          const tx = Math.min(W - L - r, Math.max(L + r, nx * W)), ty = ny * Hh;
+          const tx = Math.min(W - L - r, Math.max(L + r, nx * W)), ty = SKY0 ? Math.max(SKY0, k === 0 ? ny * Hh : SKY0 + ny * (Hh - SKY0)) : ny * Hh;
           const prefer = tx > W * 0.8 ? -1 : 1;
           // 往前看一步：下一颗星大致会落在哪；标签别放在朝它的那一侧，免得下一段连线只能穿过这个标签
           const nxt = k + 1 < nT ? { x: Math.min(W - L, Math.max(L, TEMPLATE[k + 1][0] * W)), y: TEMPLATE[k + 1][1] * Hh } : null;
           let best = null;
           for (const dxk of [0, -1, 1, -2, 2, -3, 3]) for (const dyk of [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6]) {
-            const x = Math.min(W - L - r, Math.max(L + r, tx + dxk * 2.4 * u)), y = Math.min(Hh - 4 * u, Math.max(6 * u, ty + dyk * 2.4 * u));
+            const x = Math.min(W - L - r, Math.max(L + r, tx + dxk * 2.4 * u)), y = Math.min(Hh - 4 * u, Math.max(SKY0 || 6 * u, ty + dyk * 2.4 * u));
             const starBox = { l: x - r, r: x + r, t: y - r, b: y + r };
             const d = Math.hypot(x - prev.x, y - prev.y) || 1;
             const a0 = { x: prev.x + ((x - prev.x) / d) * ga, y: prev.y + ((y - prev.y) / d) * ga }, b0 = { x: x - ((x - prev.x) / d) * gb, y: y - ((y - prev.y) / d) * gb };
@@ -5285,7 +5371,10 @@ CH.push({
         const W = P3.clientWidth, Hh = P3.clientHeight; if (!W || !Hh) return;
         const u = vu(), gut = vgut();
         sky.setAttribute("viewBox", `0 0 ${W} ${Hh}`);
-        const O = { x: W - gut - u * 2.4, y: Hh - gut - u * 1.8 };
+        // 手机：说明铺满底下一整行，星空的原点抬到说明上面，不再和三层标签叠在一起
+        const M = MOBILE.matches, left = gut + innerWidth * 0.016;
+        if (M) { foot.style.width = `${(W - left * 2).toFixed(1)}px`; foot.style.bottom = `${gut.toFixed(1)}px`; }
+        const O = M ? { x: W - gut - u * 4, y: foot.offsetTop - u * 3.4 } : { x: W - gut - u * 2.4, y: Hh - gut - u * 1.8 };
         const R = Math.min(W * 0.6, Hh * 0.98);
         const r0 = Math.max(u * 2.6, R * 0.07), r7 = R * 0.34, r90 = R * 0.7;
         const rOf = (d) => d <= 7 ? r0 + ((r7 - r0) * Math.log1p(Math.max(0, d))) / Math.log(8)
@@ -5319,17 +5408,20 @@ CH.push({
         grad.setAttribute("x1", f1(a.x)); grad.setAttribute("y1", f1(a.y)); grad.setAttribute("x2", f1(b.x)); grad.setAttribute("y2", f1(b.y));
         // 三层标签
         const ranges = [[r0 + u * 1.2, r7], [r7, r90], [r90, R]];
+        let lift = 0; // phones: rings too close, each label sits above the ones before it
         spans.forEach((lab, k) => {
           const [ri, ro] = ranges[k];
           let cx = O.x - (ri + ro) / 2;
           cx = Math.max(gut + lab.offsetWidth / 2, cx);
-          lab.style.left = `${f1(cx)}px`; lab.style.top = `${f1(O.y - u * 0.8)}px`;
+          lab.style.left = `${f1(cx)}px`; lab.style.top = `${f1(O.y - u * 0.8 - lift)}px`;
+          if (M) lift += lab.offsetHeight + 6;
         });
         // 左侧：说明贴着底线，宽度不越过最外一层
-        const left = gut + innerWidth * 0.016;
-        const fw = Math.max(230, Math.min(u * 44, O.x - R - u * 3.2 - left));
-        foot.style.width = `${f1(fw)}px`;
-        foot.style.bottom = `${f1(Hh - O.y)}px`;
+        if (!M) {
+          const fw = Math.max(230, Math.min(u * 44, O.x - R - u * 3.2 - left));
+          foot.style.width = `${f1(fw)}px`;
+          foot.style.bottom = `${f1(Hh - O.y)}px`;
+        }
         // 读数：左侧中段，竖直方向尽量和星对齐
         const head = $(".fm3-head", P3);
         const hb = head.offsetTop + head.offsetHeight, ft = foot.offsetTop;
@@ -5867,7 +5959,18 @@ CH.push({
       const u = unitPx(), gut = gutPx();
       const mx = gut + innerWidth * 0.016;
       const top = Math.max(30, Hh * 0.08), bot = Math.max(28, Hh * 0.075);
-      const avail = Hh - top - bot;
+      // 手机：右半屏放不下标题，标题在上、条数在下铺满整行，纸带和台账夹在中间那一段
+      const M = MOBILE.matches;
+      let tTop = top, tBot = bot;
+      if (M) {
+        for (const [k, v] of [["--mx", mx], ["--rx", mx], ["--top", top], ["--bot", bot]]) p1.style.setProperty(k, pxs(v));
+        const unitW = $(".e1-u", p1).getBoundingClientRect().width, em = widthOf(fmt.n(friend), "100px") / 100 || 1.5;
+        p1.style.setProperty("--nf", pxs(Math.max(48, Math.min(u * 12, (W - 2 * mx - unitW - u * 1.2 - 4) / em))));
+        tTop = top + $(".e1-hd", p1).offsetHeight + u * 2.4;
+        tBot = bot + $(".e1-foot", p1).offsetHeight + u * 2.4;
+        p1.style.setProperty("--ftop", pxs(tTop));
+      }
+      const avail = Hh - tTop - tBot;
       const pitch = Math.min(avail / nRows, Math.max(12, u * 1.6));
       const tw = cols * pitch, th = nRows * pitch;
       // 台账数字列宽按数完的终值量；台账这一栏按最宽的一行定宽，上头那句「哪种最多」也按这个宽换行
@@ -5879,9 +5982,9 @@ CH.push({
       const gapB = Math.max(6, pitch * 0.55), gapL = Math.max(34, u * 3.6), gapR = Math.max(40, u * 4.6);
       // 纸带立在左边五分之一处；右半屏至少要放得下一行标题，窄屏时纸带往左让
       const minR = Math.max($(".e1-hd .ec-t", p1).offsetWidth + 8, u * 32);   // 标题按内容收窄（align-self），量到的就是一行标题的宽
-      const room = W - mx - minR - gapR - colW - gapL - gapB - tw;
+      const room = M ? W - 2 * mx - colW - gapL - gapB - tw : W - mx - minR - gapR - colW - gapL - gapB - tw;
       const tx = Math.round(Math.max(mx + Math.max(56, u * 6), Math.min(W * 0.19, room)));
-      const ty = top + (avail - th) / 2;
+      const ty = tTop + (avail - th) / 2;
       Object.assign(G1, { tx, ty, tw, th, pitch });
       const bx = tx + tw + gapB;
       const lx = bx + gapL;
@@ -5889,7 +5992,7 @@ CH.push({
       p1.style.setProperty("--mx", pxs(mx));
       p1.style.setProperty("--top", pxs(top));
       p1.style.setProperty("--bot", pxs(bot));
-      p1.style.setProperty("--rx", pxs(rx));
+      if (!M) p1.style.setProperty("--rx", pxs(rx));
       p1.style.setProperty("--fx", pxs(lx));
       p1.style.setProperty("--fw", pxs(colW));
       tape.setAttribute("transform", `translate(${f1(tx)},${f1(ty)}) scale(${pitch.toFixed(4)})`);
@@ -5908,15 +6011,15 @@ CH.push({
       end.setAttribute("d", `M${f1(rx0 - 8)},${f1(ty - pitch * 0.7)}H${f1(rx0 + 8)}M${f1(rx0 - 8)},${f1(ty + th + pitch * 0.7)}H${f1(rx0 + 8)}`);
       scan.setAttribute("x1", f1(rx0 - 6));
       scan.setAttribute("x2", f1(tx + tw + pitch * 0.2));
-      if (uo) { uo.style.setProperty("--ux", pxs(tx - 30)); uo.style.setProperty("--uy", pxs(top)); uo.style.setProperty("--uw", pxs(tw + 60)); uo.style.setProperty("--uh", pxs(avail)); }
+      if (uo) { uo.style.setProperty("--ux", pxs(tx - 30)); uo.style.setProperty("--uy", pxs(tTop)); uo.style.setProperty("--uw", pxs(tw + 60)); uo.style.setProperty("--uh", pxs(avail)); }
       // 巨大的条数：按右半屏的宽、和标题导语以外剩下的高收放
-      const rw = W - mx - rx;
+      const rw = M ? W - 2 * mx : W - mx - rx;
       const unitW = $(".e1-u", p1).getBoundingClientRect().width;
       const em = widthOf(fmt.n(friend), "100px") / 100 || 1.5;
       let nf = Math.max(48, Math.min(u * 26, (rw - unitW - u * 1.2 - 4) / em));
-      p1.style.setProperty("--nf", pxs(nf));
+      if (!M) p1.style.setProperty("--nf", pxs(nf));
       const hdEl = $(".e1-hd", p1), footEl = $(".e1-foot", p1);
-      for (let k = 0; k < 3; k++) {
+      for (let k = 0; k < 3 && !M; k++) {
         const over = hdEl.offsetHeight + footEl.offsetHeight + u * 2.4 + 6 - avail;
         if (over <= 0 || nf <= 48) break;
         nf = Math.max(48, nf - over / 0.78 - 1);
@@ -5932,7 +6035,7 @@ CH.push({
         const head = $(".e1-lb-h", L.node).offsetHeight;
         items.push({ L, y0, y1: Math.max(y0 + 0.5, y1), ym, want: ym, anchor: head / 2, h: L.node.offsetHeight });
       }
-      spread(items, rTop, Hh - bot + pitch * 0.7, Math.max(8, u * 1));
+      spread(items, rTop, Hh - (M ? tBot : bot) + pitch * 0.7, Math.max(8, u * 1));
       for (const it of items) {
         const { L } = it;
         L.node.style.top = pxs(it.y);
@@ -7349,20 +7452,28 @@ CH.push({
       const W = p1.clientWidth, Ph = p1.clientHeight;
       if (!W || !Ph) return;
       const u = unit(), gl = gutter() + u * 1.5;
-      const xb = Math.round(Math.max(W * 0.31, gl + 180 + u * 6));
+      // 手机：题目和导语占满上面一行，细线束挪到左边，三站的注记才有地方写
+      const M = MOBILE.matches;
       const Wb = Math.min(120, Math.max(60, u * 7.5));
-      const yo = Math.round(Ph * 0.095), y1 = Math.round(Ph * 0.285), ys = Math.round(Ph * 0.47);
-      const x0 = Math.round(xb + Wb / 2 + u * 4.6);
+      const xb = M ? Math.round(W * 0.24) : Math.round(Math.max(W * 0.31, gl + 180 + u * 6));
+      let yo, y1, ys;
+      if (M) {
+        Object.assign(head.style, { left: `${gl}px`, top: `${Math.round(Ph * 0.03)}px`, width: `${W - gl * 2}px` });
+        yo = Math.round(head.offsetTop + head.offsetHeight + u * 3 + 12); ys = Math.round(Ph * 0.62); y1 = Math.round((yo + ys) / 2);
+      } else {
+        yo = Math.round(Ph * 0.095); y1 = Math.round(Ph * 0.285); ys = Math.round(Ph * 0.47);
+      }
+      const x0 = Math.round(xb + Wb / 2 + u * (M ? 3 : 4.6));
       svg1.setAttribute("viewBox", `0 0 ${W} ${Ph}`);
       const xs = lines.map((l, i) => Math.round(lines.length > 1 ? xb - Wb / 2 + (i * Wb) / (lines.length - 1) : xb) + 0.5);
       // 题目和导语：左上，宽到细线束左边
-      Object.assign(head.style, { left: `${gl}px`, top: `${yo - 9}px`, width: `${Math.max(150, xb - Wb / 2 - u * 3.6 - gl)}px` });
+      if (!M) Object.assign(head.style, { left: `${gl}px`, top: `${yo - 9}px`, width: `${Math.max(150, xb - Wb / 2 - u * 3.6 - gl)}px` });
       Object.assign(fol.style, { right: `${gl}px`, top: `${yo - 10}px` });
       // 注记：各站右边
       const capW = Math.min(W - x0 - gl, u * 46);
       for (const [node, y] of [[stO, yo], [stA, y1], [stB, ys]]) Object.assign(node.style, { left: `${x0}px`, top: `${y - 9}px`, maxWidth: `${capW}px` });
       // 焦点和大数字
-      const Fy = Math.round(Ph * 0.775), Fx = Math.round(x0 + u * 1.2);
+      const Fy = Math.round(Ph * (M ? 0.84 : 0.775)), Fx = Math.round(x0 + u * 1.2);
       const bigL = Fx + u * 2.6;
       big.style.fontSize = "100px";
       big.textContent = finalBig;
@@ -7376,7 +7487,7 @@ CH.push({
       big.style.left = `${bigL.toFixed(1)}px`;
       big.style.top = `${(Fy - fs * 0.4135).toFixed(1)}px`;
       const bw = big.getBoundingClientRect().width;
-      Object.assign(bl.style, { left: `${(bigL + fs * 0.02).toFixed(1)}px`, top: `${(Fy + fs * 0.315 + u * 1.3).toFixed(1)}px`, width: `${Math.max(bw - fs * 0.04, 160).toFixed(1)}px` });
+      Object.assign(bl.style, { left: `${(bigL + fs * 0.02).toFixed(1)}px`, top: `${(Fy + fs * 0.315 + u * 1.3).toFixed(1)}px`, width: `${(M ? Math.min(W - gl - bigL, Math.max(bw - fs * 0.04, 160)) : Math.max(bw - fs * 0.04, 160)).toFixed(1)}px` });
       if (G && G.shown != null) big.textContent = G.shown; else big.textContent = total ? "0%" : finalBig;
       // 星与光
       const sO = Math.max(18, u * 2.5), sF = Math.max(22, u * 3.6), gw = Math.max(150, u * 20);
@@ -7417,7 +7528,7 @@ CH.push({
         c.setAttribute("r", (0.5 + rnd() * 0.9).toFixed(2));
         c.setAttribute("fill-opacity", (0.18 + rnd() * 0.55).toFixed(2));
       });
-      if (lostT) Object.assign(lostT.style, { left: `${gl}px`, top: `${Math.round(Math.max(dB + u * 2.4, Ph * 0.83))}px`, maxWidth: `${Math.max(200, bigL - gl - u * 3)}px` });
+      if (lostT) Object.assign(lostT.style, { left: `${gl}px`, top: `${Math.round(Math.max(dB + u * 2.4, Ph * 0.83))}px`, maxWidth: `${M ? bigL - gl - u * 2.4 : Math.max(200, bigL - gl - u * 3)}px` });
       // 闸和引线
       const gx0 = xb - Wb / 2 - u * 2.2, gx1 = xb + Wb / 2 + u * 2.2;
       for (const [g, y] of [[gateA, y1], [gateB, ys]]) {
@@ -7725,15 +7836,98 @@ CH.push({
 #sign .se-cardrow{display:flex;justify-content:center;margin-top:calc(var(--u)*1.2)}
 #sign .se-cardrow:has(>[hidden]){display:none}
 #sign .se-cardrow .se-card{height:38px;border-color:var(--line-2);color:var(--paper-2);font-size:14px}
-#sign .se-cardrow .se-card:hover,#sign .se-cardrow .se-card:focus-visible{background:rgba(59,45,25,.35);border-color:var(--gold);color:var(--gold-hi)}
+#sign .se-cardrow .se-card:focus-visible{background:rgba(59,45,25,.35);border-color:var(--gold);color:var(--gold-hi)}@media (hover:hover){#sign .se-cardrow .se-card:hover{background:rgba(59,45,25,.35);border-color:var(--gold);color:var(--gold-hi)}}
 #sign .se-acts .btn .ar{font:400 18px/1 var(--display);letter-spacing:0}
 /* 按钮也是细线的：主按钮金色细框 + 深金淡底，悬停时底色亮一档；次按钮青铜细框、不填底，悬停时框和字转金。
    全书不留整块金色平涂 */
 #sign .se-acts .btn.solid{border-color:var(--gold);background:var(--gold-deep);color:var(--gold-hi)}
-#sign .se-acts .btn.solid:hover,#sign .se-acts .btn.solid:focus-visible{background:#4D3B21;border-color:var(--gold-hi);color:var(--gold-hi)}
+#sign .se-acts .btn.solid:focus-visible{background:#4D3B21;border-color:var(--gold-hi);color:var(--gold-hi)}@media (hover:hover){#sign .se-acts .btn.solid:hover{background:#4D3B21;border-color:var(--gold-hi);color:var(--gold-hi)}}
 #sign .se-acts .btn.se-back{border-color:var(--line-2);color:var(--paper-2)}
-#sign .se-acts .btn.se-back:hover,#sign .se-acts .btn.se-back:focus-visible{background:rgba(59,45,25,.35);border-color:var(--gold);color:var(--gold-hi)}
+#sign .se-acts .btn.se-back:focus-visible{background:rgba(59,45,25,.35);border-color:var(--gold);color:var(--gold-hi)}@media (hover:hover){#sign .se-acts .btn.se-back:hover{background:rgba(59,45,25,.35);border-color:var(--gold);color:var(--gold-hi)}}
 #sign .se-note{margin-top:calc(var(--u)*2.2);max-width:25em;text-wrap:balance}
+/* ============ 手机竖屏：各章重排（对开的版式压到手机宽度会挤成一条或出屏，这里改成上下排） ============ */
+@media (max-width:700px){
+  /* folio marks ("Fol. III · b") are page-corner decoration; on a phone they sit on top of the headings */
+  #book .obs.dim[class*="fol"],#book .tq-folio{display:none}
+  /* 序 · cover: words on top across the page, the constellation under them */
+  #cover .cv-l{left:var(--gut);right:var(--gut);width:auto;top:8%}
+  #cover .cv-t br{display:none}
+  #cover .cv-chart{right:auto;left:50%;top:auto;bottom:118px;width:min(62vw,30vh);transform:translateX(-50%)}
+  /* III · how far: heading, then the sentence under it */
+  #kept .k2-hd{flex-direction:column;align-items:flex-start;gap:10px}
+  #kept .k2-title{white-space:normal}
+  #kept .k2-lead{max-width:none}
+  /* IV · creators: the total under the heading */
+  #taste .tq2-hd{flex-direction:column;align-items:flex-start;gap:6px}
+  #taste .tq2-h{white-space:normal}
+  /* VII · lexicon: heading, then the note */
+  #words .wd-hd{flex-direction:column;align-items:flex-start;gap:10px}
+  #words .wd-hr{flex:none;width:100%}
+  /* VIII · calibration: one column; the exception register scrolls under the table */
+  #proof .pc{display:flex;flex-direction:column;overflow-y:auto;gap:22px}
+  #proof .pc-l,#proof .pc-r{flex:none}
+
+  #kept .k2-notes{height:124px}
+  #kept .k2-note .nm{flex-direction:column;align-items:flex-start;gap:3px}
+  #kept .k2-note.n2 .nm{flex-direction:column;align-items:flex-end}
+  #kept .k2-note .nm span{white-space:nowrap}
+  #taste .tq2-low{grid-template-columns:minmax(0,1fr);row-gap:14px}
+  /* the lexicon: four even columns (an empty stream has nothing to list here), tighter gaps */
+  #words .wd-col.un{display:none}
+  #words .wd-field{grid-template-columns:none!important;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);column-gap:10px}
+  #words .wd-ch .cap{letter-spacing:.12em}
+  #proof .pc-tab{flex:none;grid-template-rows:auto repeat(var(--rows,7),40px)}
+
+  /* III · accessions: the list across the page; the big exhibit is the first entry enlarged, no room for both */
+  #kept .k3{grid-template-columns:minmax(0,1fr)}
+  #kept .k3-ex{display:none}
+  #kept .k3-title{white-space:normal;flex-wrap:wrap}
+  /* IX · signature: star map, the name scroll, then the letter, one under another; the page scrolls inside */
+  #sign .s1{display:flex;flex-direction:column;gap:26px;overflow-y:auto;padding:22px var(--gut) 40px}
+  #sign .sg-atlas{flex:none;height:min(48vh,460px)}
+  #sign .sg-hd{max-width:100%}
+  #sign .sg-slip{flex:none;align-self:center;width:var(--slw,140px);height:230px}
+  /* IX · colophon: the ring up top, the words and buttons under it (inside the ring they ran into the ticks) */
+  #sign .se-ring{--rs:min(62vw,34vh);top:calc(18px + var(--rs) / 2)}
+  #sign .se-mid{top:calc(18px + var(--rs,34vh) + 26px);transform:translateX(-50%);width:calc(100% - 2 * var(--gut))}
+  #sign .se-h{white-space:normal}
+  /* III · cross index: words, the circles, the ledger, the figure note — one under another */
+  #kept .k1{display:flex;flex-direction:column;gap:18px;overflow-y:auto;padding:18px var(--gut) 28px}
+  #kept .k1-l{display:contents}
+  #kept .k1-hd{order:1}#kept .k1-c{order:2;flex:none;height:min(76vw,40vh)}#kept .k1-r{order:3}#kept .k1-how{order:4;max-width:none}
+  #kept .k1-title{font-size:26px}
+  #kept .k1-lead{max-width:none}
+  #kept .k1-cat{padding-top:0}
+  #kept .k1-link{display:none} /* its line was drawn for the side-by-side layout */
+  /* IV · topic sky: the lead across the page instead of a 120px column */
+  #taste .tq1-head{width:calc(100% - 2 * var(--L))}
+  #echo .e1-f{top:var(--ftop,var(--top))}
+  #echo .e1-lb .small{white-space:normal;max-width:calc(100vw - var(--lx,0px) - var(--gut) - 4px)}
+  #kept .k1-r{flex:none}
+  #sign .sg-letter{flex:none}
+
+  #proof .pf-t br{display:none}
+  #proof .pf-ld .nw{white-space:normal}
+
+  #kept .k3-l{justify-content:flex-start;gap:30px}
+  #cover .cv-chart{width:min(70vw,34vh);bottom:110px}
+  #cover .cv-star.cold .cv-lab{transform:translate(-50%,14px)} /* the chats label sat on the saved one */
+  /* II · months: title, the legend, the wheel, then the two footnotes, top to bottom */
+  #time .t1{display:flex;flex-direction:column;gap:14px;padding:18px var(--gut) 22px;overflow-y:auto;--wd:min(64vw,32vh);--cx:50%}
+  #time .t1-side,#time .t1-wheel{position:relative;left:auto;right:auto;top:auto;bottom:auto;width:auto;max-width:none;flex:none}
+  #time .t1-wheel{width:var(--wd);height:var(--wd);align-self:center;margin:6px 0}
+  #time .t1-tl{order:1}#time .t1-tr{order:2}#time .t1-wheel{order:3}#time .t1-bl{order:4}#time .t1-br{order:5}
+  #time .t1-title{font-size:26px}
+  #time .t1-lead{font-size:14px}
+  /* II · days: the title across, the brightest day under it */
+  #time .t2-top{flex-direction:column;align-items:stretch;gap:16px}
+  #time .t2-hd{max-width:none;flex:none}
+  #time .t2-pk{align-items:flex-start;text-align:left}
+  #form .fm3-head{width:auto;right:var(--gut)}
+
+  #proof .pf-lost-t .nw{white-space:normal}
+  #proof .pf-blc{flex-wrap:wrap;row-gap:4px;white-space:normal}
+}
 </style>
 <section class="chapter" id="sign" data-label="09 落款">
   <article class="page" id="sign-1" data-dur="6700">

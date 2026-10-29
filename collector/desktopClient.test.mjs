@@ -117,6 +117,49 @@ it("reads the webid the client page leaves in local storage", async () => {
   expect(await readDesktopWebId(path.join(directory, "missing"))).toBeNull();
 });
 
+it("uses the newest web SDK user_unique_id from compressed storage instead of stale web_id values", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "dy-webid-compressed-"));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const leveldb = path.join(directory, "Local Storage", "leveldb");
+  await mkdir(leveldb, { recursive: true });
+  await writeFile(path.join(leveldb, "000001.log"), 'x\x00"webid":"7272714522396821031"\x00y');
+
+  const varint = (value) => {
+    const bytes = [];
+    do { const byte = value & 127; value = Math.floor(value / 128); bytes.push(byte | (value ? 128 : 0)); } while (value);
+    return Buffer.from(bytes);
+  };
+  const block = (pairs) => Buffer.concat([
+    ...pairs.map(([key, value]) => Buffer.concat([varint(0), varint(key.length), varint(value.length), key, value])),
+    Buffer.from([0, 0, 0, 0, 1, 0, 0, 0]), // one restart at offset 0
+  ]);
+  const entry = (origin, appId, id, timestamp) => [
+    Buffer.concat([Buffer.from(`_${origin}\x00\x01__tea_cache_tokens_${appId}`, "latin1"),
+      Buffer.from([1, timestamp, 0, 0, 0, 0, 0, 0])]), // LevelDB internal key trailer
+    Buffer.concat([Buffer.from([1]), Buffer.from(JSON.stringify({
+      web_id: "7272714522396821031", user_unique_id: id, timestamp,
+    }))]),
+  ];
+  const data = block([
+    entry("https://www.douyin.com", "6383", "7570000000000000002", 20),
+    entry("https://www.douyin.com", "6383", "7570000000000000001", 10),
+    entry("https://live.douyin.com", "6383", "7570000000000000003", 30),
+    entry("https://www.douyin.com", "1300", "7570000000000000004", 40),
+  ]);
+  // Snappy literal with a two-byte length, followed by an uncompressed SSTable index.
+  const length = Buffer.alloc(2); length.writeUInt16LE(data.length - 1);
+  const compressed = Buffer.concat([varint(data.length), Buffer.from([61 << 2]), length, data]);
+  const index = block([[Buffer.from("index"), Buffer.concat([varint(0), varint(compressed.length)])]]);
+  const footer = Buffer.alloc(48);
+  Buffer.concat([varint(0), varint(0), varint(compressed.length + 5), varint(index.length)]).copy(footer);
+  Buffer.from("57fb808b247547db", "hex").copy(footer, 40);
+  await writeFile(path.join(leveldb, "000002.ldb"), Buffer.concat([
+    compressed, Buffer.from([1, 0, 0, 0, 0]), index, Buffer.alloc(5), footer,
+  ]));
+
+  expect(await readDesktopWebId(directory)).toBe("7570000000000000002");
+});
+
 it("builds a request template the direct reader itself accepts", async () => {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "dy-template-"));
   cleanup.push(() => rm(dataDirectory, { recursive: true, force: true }));
