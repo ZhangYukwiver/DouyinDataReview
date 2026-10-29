@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { captureDirectHistoryTemplate } from "./directHistory.mjs";
+import { readLocalStorage } from "./desktopSecurity.mjs";
 import { nativeSignedUrl } from "./nativeSignature.mjs";
 
 // 抖音电脑客户端的采集来源：客户端是 Electron（8.x 起），主窗口就是 www.douyin.com，
@@ -188,9 +189,25 @@ export async function readDesktopCookies({ directory = desktopDataDirectory(), k
   } finally { await rm(workspace, { recursive: true, force: true }).catch(() => undefined); }
 }
 
-// webid 是请求签名的一部分，客户端页面把它放在 Local Storage 里；逐段扫 leveldb 的文本
+// 接口 webid 对应 SDK 当前的 user_unique_id，缓存可能存于压缩的 SSTable。
+// 同一缓存里的 web_id 和 SysInfo.webid 可能仍是旧值，不能替代当前标识。
 export async function readDesktopWebId(directory, { list = readdir, read = readFile } = {}) {
   const root = path.join(directory, STORAGE_DIRECTORY);
+  let latest = null;
+  try {
+    for (const [key, value] of readLocalStorage(root)) {
+      // SSTable 的内部键还带着 8 字节的序号/类型，WriteBatch 的键没有这个尾部。
+      if (key !== "https://www.douyin.com|__tea_cache_tokens_6383"
+        && !/^https:\/\/www\.douyin\.com\|__tea_cache_tokens_6383\x01[\s\S]{7}$/u.test(key)) continue;
+      try {
+        const cached = JSON.parse(value);
+        if (typeof cached.user_unique_id !== "string" || !/^\d{6,30}$/u.test(cached.user_unique_id)
+          || !Number.isFinite(cached.timestamp)) continue;
+        if (!latest || cached.timestamp > latest.timestamp) latest = cached;
+      } catch { /* 写到一半或旧格式的缓存继续跳过。 */ }
+    }
+  } catch { /* 存储暂时读不到时保留旧客户端的回退方式。 */ }
+  if (latest) return latest.user_unique_id;
   let names;
   try { names = await list(root); } catch { return null; }
   for (const name of names) {
