@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ExploreError } from "./explorer.mjs";
@@ -20,10 +21,31 @@ export class ExplorerBridge {
     return Boolean(this.collector.syncPromise || this.collector.hasActiveVideoDownload());
   }
   async run(input, operation = "read", signal) {
+    // 推荐翻页、点赞收藏、记观看历史都是互不相干的单个请求：不跟视频准备和别的探索排队，只在整份读取时让路
+    if (operation === "react" || operation === "seen" || (operation === "read" && input?.kind === "feed")) {
+      if (this.collector.syncPromise) throw new ExploreError("collector_busy", "采集器正在读取记录，请稍后再试。");
+      if (operation === "read") return this.explorer.read(input, { signal });
+      if (operation === "seen") {
+        const result = await this.explorer.seen(input);
+        this.collector.scheduleWatchHistoryRefresh();
+        return result;
+      }
+      const result = await this.explorer.react(input);
+      if (result.outcome === "confirmed") void this.syncReaction(input).catch(() => {});
+      return result;
+    }
     if (this.busy || this.collectorBusy()) throw new ExploreError("collector_busy", "采集器正在执行任务，请停止采集或等待完成后再探索。");
-    const work = Promise.resolve().then(() => operation === "interact" ? this.explorer.interact(input) : operation === "video" ? this.video(input, signal) : this.explorer.read(input, { signal }));
+    const work = Promise.resolve().then(() => operation === "interact" ? this.explorer.interact(input) : operation === "seen" ? this.explorer.seen(input) : operation === "video" ? this.video(input, signal) : this.explorer.read(input, { signal }));
     this.pending = work;
     try { return await work; } finally { if (this.pending === work) this.pending = null; }
+  }
+  /** 点赞 / 收藏成功后在后台读一次作品详情，放进或移出本机「喜欢」「收藏」，内容库不用等下次读取 */
+  async syncReaction({ action, awemeId, desired }) {
+    await delay(1_000);
+    const api = await this.collector.ensureDirectApi({});
+    const detail = (await api.request("/aweme/v1/web/aweme/detail/", { query: { aweme_id: awemeId }, referer: `https://www.douyin.com/video/${awemeId}` })).aweme_detail;
+    if (String(detail?.aweme_id ?? "") !== awemeId) return;
+    await this.collector.syncInteraction(action === "like" ? "liked_videos" : "favorite_videos", detail, desired);
   }
   async video(input, signal) {
     const session = this.explorer.sessions.get(input?.sessionId);

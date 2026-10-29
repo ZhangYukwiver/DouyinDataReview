@@ -5,6 +5,8 @@ import { directSecurityHeaders, refreshDirectCsrf, requireDirectCredentials } fr
 export const DIRECT_WRITE_PATHS = {
   like: "/aweme/v1/web/commit/item/digg/", collect: "/aweme/v1/web/aweme/collect/",
   follow: "/aweme/v1/web/commit/follow/user/", comment: "/aweme/v1/web/comment/publish", deleteComment: "/aweme/v1/web/comment/delete/",
+  // 网页每进一条视频就发一次，作品进观看历史；只有自己看得见
+  history: "/aweme/v1/web/history/write/",
 };
 
 export function parseDirectJson(response) {
@@ -47,15 +49,20 @@ export async function directWrite(api, action, input, { onDispatch = () => {} } 
     body = { aweme_id: awemeId, ...(input.replyTo ? { reply_id: input.replyTo } : {}), comment_send_celltime: "0", comment_video_celltime: "0",
       one_level_comment_rank: "-1", paste_edit_method: "non_paste", text: content, text_extra: "[]" };
   }
+  if (action === "history") {
+    if (!/^\d{1,30}$/u.test(input.authorId || "")) throw new DirectHistoryError("invalid_request", "作者标识无效。");
+    body = { author_id: input.authorId, aweme_id: awemeId };
+  }
   if (action === "deleteComment") {
     if (!/^\d{5,30}$/u.test(input.commentId || "")) throw new DirectHistoryError("invalid_request", "评论标识无效。");
     body = { cid: input.commentId, aweme_id: awemeId };
   }
-  // Refresh CSRF before dispatch. No write is retried after a transport error.
-  await refreshDirectCsrf(api);
+  // 操作令牌 5 分钟内复用，省掉每次点赞先多跑一趟；抖音不认就作废，下一次重新取。No write is retried after a transport error.
+  if (!(api.csrfFreshUntil > Date.now())) { await refreshDirectCsrf(api); api.csrfFreshUntil = Date.now() + 5 * 60_000; }
   // The current PC site's write requests are routed through www-hj. Sending
   // the same write to the page host reaches a different server policy.
-  const url = new URL(pathname, "https://www-hj.douyin.com");
+  // 观看历史跟网页一样发到主站（实测主站可写）
+  const url = new URL(pathname, action === "history" ? "https://www.douyin.com" : "https://www-hj.douyin.com");
   for (const [name, value] of Object.entries({ device_platform: "webapp", aid: "6383", channel: "channel_pc_web", ...api.session.values,
     uifid: api.cookie("UIFID"), verifyFp: api.cookie("s_v_web_id"), fp: api.cookie("s_v_web_id"), msToken: security.msToken || api.cookie("msToken") }))
     if (value) url.searchParams.set(name, String(value));
@@ -64,6 +71,9 @@ export async function directWrite(api, action, input, { onDispatch = () => {} } 
     append: { uid: createHash("md5").update(api.session.uid).digest("hex") } });
   const headers = { ...directSecurityHeaders(api.session, pathname), Origin: "https://www.douyin.com" };
   onDispatch();
-  const response = await api.raw(signed, { method: "POST", body: encoded, headers, referer: "https://www.douyin.com/" });
-  return parseDirectJson(response);
+  const response = await api.raw(signed, { method: "POST", body: encoded, headers, referer: "https://www.douyin.com/" })
+    .catch((error) => { api.csrfFreshUntil = 0; throw error; });
+  const value = parseDirectJson(response);
+  if (value.status_code !== 0) api.csrfFreshUntil = 0;
+  return value;
 }

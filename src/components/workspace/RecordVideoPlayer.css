@@ -1,56 +1,81 @@
-.rv-backdrop { display: flex; align-items: center; justify-content: center; box-sizing: border-box; width: 100%; height: 100dvh; padding: 24px; background: rgba(0,0,0,.9); color: #fff; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; outline: none; }
+.rv-backdrop { display: flex; align-items: center; justify-content: center; box-sizing: border-box; width: 100%; height: 100dvh; padding: 12px; background: rgba(0,0,0,.9); color: #fff; font: 14px/1.5 "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; outline: none; }
 .rv-backdrop * { box-sizing: border-box; }
 .rv-backdrop button { display: inline-flex; align-items: center; justify-content: center; color: inherit; font: inherit; border: 0; cursor: pointer; }
 .rv-backdrop button:disabled { opacity: .3; cursor: default; }
 .rv-backdrop button:focus-visible, .rv-backdrop input:focus-visible, .rv-backdrop video:focus-visible, .rv-comment-list:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
-.rv-layout { width: min(1180px,100%); height: min(900px,calc(100dvh - 48px)); overflow: hidden; border-radius: 18px; background: #101013; box-shadow: 0 24px 100px #000; }
+/* 抖音电脑端那样：一张铺满窗口的圆角大卡片，画面完整显示（横屏不再挤成竖条），底下 48px 控制栏 */
+.rv-layout { width: 100%; height: 100%; overflow: hidden; border-radius: 16px; background: #0b0b0e; box-shadow: 0 24px 100px #000; }
+.rv-layout:fullscreen { border-radius: 0; }
 .rv-viewer { display: flex; position: relative; justify-content: center; height: 100%; overflow: clip; touch-action: pan-x pinch-zoom; }
 /* 黑底数据流：画在 canvas 上，再盖一层遮罩把画面附近压暗，加一点扫描线 */
 .rv-stream { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .rv-stream-veil { background: linear-gradient(90deg, #0000 0%, #050507b3 38%, #050507 46%, #050507 54%, #050507b3 62%, #0000 100%), repeating-linear-gradient(0deg, #ffffff04 0 1px, #0000 1px 3px); }
-.rv-stage { position: relative; flex-shrink: 1; height: 100%; aspect-ratio: 9 / 16; min-width: 0; max-width: 100%; background: #000; animation: rv-enter .2s ease-out; user-select: none; }
-.rv-stage video { display: block; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
-.rv-album { position: absolute; inset: 0; cursor: pointer; }
+.rv-stage { position: relative; flex: 1; min-width: 0; height: 100%; animation: rv-enter .2s ease-out; user-select: none; }
+.rv-stage > video { display: block; width: 100%; height: calc(100% - 48px); object-fit: contain; cursor: pointer; }
+.rv-album { position: absolute; inset: 0 0 48px; cursor: pointer; }
 .rv-album img, .rv-album video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .rv-album img[hidden] { display: none; }
-.rv-album-dots { display: flex; gap: 4px; margin-top: 4px; }
+.rv-album-dots { position: absolute; left: 0; right: 0; top: -7px; display: flex; gap: 3px; }
 .rv-album-dots button { flex: 1; height: 14px; padding: 5px 0; border-radius: 0; background: #ffffff4d content-box; }
 .rv-album-dots button.rv-on { background-color: #fff; }
-.rv-loading-cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
-.rv-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg,rgba(0,0,0,.52),transparent 18%,transparent 48%,rgba(0,0,0,.72) 89%,rgba(0,0,0,.88)); }
+.rv-loading-cover { position: absolute; inset: 0 0 48px; width: 100%; height: calc(100% - 48px); object-fit: contain; pointer-events: none; }
+.rv-shade { position: absolute; inset: 0 0 48px; pointer-events: none; background: linear-gradient(180deg,rgba(0,0,0,.45),transparent 14%,transparent 60%,rgba(0,0,0,.62)); }
 .rv-topbar { position: absolute; inset: 12px 12px auto; display: flex; align-items: center; gap: 12px; text-shadow: 0 1px 8px #000; }
 .rv-icon-button { width: 40px; height: 40px; flex-shrink: 0; padding: 0; border-radius: 50%; background: rgba(30,30,35,.5); }
 .rv-icon-button:hover:not(:disabled) { background: rgba(90,90,98,.6); }
 .rv-heading { flex: 1; font-size: 16px; font-weight: 700; }
 .rv-heading span { margin-left: 12px; color: #ffffff9c; font-size: 12px; font-weight: 400; }
 .rv-position { font-variant-numeric: tabular-nums; font-size: 12px; color: #ddd; }
-.rv-actions { position: absolute; right: 12px; bottom: clamp(96px, calc(100% - 470px), 194px); display: flex; flex-direction: column; align-items: center; gap: 19px; text-shadow: 0 1px 6px #0009; }
+.rv-actions { position: absolute; right: 20px; top: calc((100% - 48px) / 2); transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 22px; filter: drop-shadow(0 1px 3px #0009); }
 .rv-avatar { display: flex; justify-content: center; align-items: center; width: 44px; height: 44px; border: 2px solid white; border-radius: 50%; background: #444; overflow: hidden; }
 .rv-avatar img, .rv-comment-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .rv-stat { display: flex; flex-direction: column; align-items: center; min-width: 44px; gap: 3px; padding: 0; background: transparent; }
-.rv-stat span { font-size: 11px; font-weight: 600; }
+.rv-stat span { font-size: 13px; font-weight: 500; }
 .rv-selected { color: #ff2c55 !important; }
-.rv-caption { position: absolute; bottom: 82px; left: 18px; right: 73px; pointer-events: none; text-shadow: 0 1px 6px #0009; }
-.rv-caption strong { font-size: 17px; font-weight: 650; }
-.rv-caption p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin: 7px 0; line-height: 1.55; overflow-wrap: anywhere; }
-.rv-caption small { color: #ddd; font-size: 11px; }
-.rv-music { display: flex; align-items: center; gap: 6px; margin: 8px 0 3px; font-size: 12px; }
+.rv-starred { color: #face15 !important; }
+.rv-backdrop .rv-stat:disabled { opacity: 1; cursor: default; }
+/* 推荐流没要到下一批：底部一条提示加重试 */
+.rv-feed-status { position: absolute; left: 50%; bottom: 64px; z-index: 2; display: flex; align-items: center; gap: 12px; transform: translateX(-50%); max-width: min(560px, 90%); padding: 8px 8px 8px 16px; border-radius: 10px; background: #000d; font-size: 13px; }
+.rv-feed-status .rv-button { min-height: 32px; padding: 4px 14px; flex-shrink: 0; }
+/* 点赞收藏没成功时的提示，几秒后自己消失 */
+.rv-toast { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); max-width: min(420px, 80%); margin: 0; padding: 8px 14px; border-radius: 8px; background: #000c; color: #fff; font-size: 13px; text-align: center; animation: rv-pop .16s ease-out; pointer-events: none; }
+.rv-caption { position: absolute; bottom: 66px; left: 24px; right: 110px; max-width: 640px; pointer-events: none; text-shadow: 0 1px 6px #0009; }
+.rv-caption strong { font-size: 16px; font-weight: 600; }
+.rv-caption strong small { color: #ffffffb3; font-size: 12px; font-weight: 400; }
+.rv-tag { color: #face15; }
+.rv-caption p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 6px 0; color: #ffffffe6; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.rv-music { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #ffffffcc; font-size: 12px; }
 .rv-music span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rv-controls { position: absolute; bottom: 16px; left: 16px; right: 16px; }
-.rv-control-row { display: flex; align-items: center; gap: 7px; font-size: 11px; font-variant-numeric: tabular-nums; }
-.rv-control-row .rv-icon-button { background: transparent; width: 34px; height: 32px; }
+.rv-controls { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: #121216; }
+.rv-control-row { display: flex; align-items: center; gap: 14px; height: 100%; padding: 0 92px 0 12px; color: #e4e4e6; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.rv-time i { margin: 0 2px; color: #ffffff80; font-style: normal; }
+/* 连播、清屏是带小开关的文字按钮，开着时开关变红 */
+.rv-backdrop .rv-toggle, .rv-backdrop .rv-text-control { gap: 6px; padding: 0; background: transparent; color: #e4e4e6; white-space: nowrap; }
+.rv-text-control { min-width: 34px; }
+.rv-toggle i { position: relative; width: 26px; height: 14px; border-radius: 7px; background: #ffffff40; transition: background .15s; }
+.rv-toggle i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.rv-toggle[aria-pressed="true"] i { background: #fe2c55; }
+.rv-toggle[aria-pressed="true"] i::after { transform: translateX(12px); }
+.rv-toggle:hover, .rv-text-control:hover { color: #fff; }
+.rv-control-row .rv-icon-button, .rv-navigation .rv-icon-button { width: 32px; height: 32px; border-radius: 6px; background: transparent; }
 .rv-control-spacer { flex: 1; }
-.rv-controls input { display: block; margin: 4px 0 0; width: 100%; height: 14px; cursor: pointer; accent-color: #fe2c55; }
-.rv-message { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 80px 64px; background: #0009; }
+/* 进度是控制栏顶上的一条细线，鼠标放上去变粗、出现圆点 */
+.rv-controls input[type="range"] { position: absolute; left: 0; right: 0; top: -6px; width: 100%; height: 12px; margin: 0; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; }
+.rv-controls input[type="range"]::-webkit-slider-runnable-track { height: 2px; background: linear-gradient(90deg, #fe2c55 var(--rv-played, 0%), #ffffff38 var(--rv-played, 0%)); transition: height .12s; }
+.rv-controls input[type="range"]:hover::-webkit-slider-runnable-track { height: 4px; }
+.rv-controls input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 10px; margin-top: -4px; border-radius: 50%; background: #fff; opacity: 0; transition: opacity .12s; }
+.rv-controls input[type="range"]:hover::-webkit-slider-thumb { opacity: 1; }
+.rv-message { position: absolute; inset: 0 0 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 80px 64px; background: #0009; }
 .rv-message p { max-width: 280px; margin: 0; line-height: 1.7; }
 .rv-button { min-height: 38px; padding: 8px 20px; border-radius: 8px; background: #fe2c55; }
 .rv-text-button { padding: 8px; background: transparent; text-decoration: underline; }
-.rv-play-overlay { position: absolute; left: 50%; top: 43%; transform: translate(-50%,-50%); width: 80px; height: 80px; padding: 0; background: transparent; filter: drop-shadow(0 2px 8px #0005); }
+.rv-play-overlay { position: absolute; left: 50%; top: calc((100% - 48px) / 2); transform: translate(-50%,-50%); width: 80px; height: 80px; padding: 0; background: transparent; filter: drop-shadow(0 2px 8px #0005); }
 .rv-spinner { display: inline-block; width: 25px; height: 25px; border: 2px solid #ffffff30; border-top-color: #fe2c55; border-radius: 50%; animation: rv-spin .8s linear infinite; }
-.rv-navigation { position: absolute; right: 18px; top: 45%; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-.rv-navigation span { color: #aaa; font-size: 10px; }
+.rv-navigation { position: absolute; right: 12px; bottom: 8px; display: flex; gap: 4px; }
+/* 清屏：只留画面、关闭按钮和控制栏 */
+.rv-clean .rv-caption, .rv-clean .rv-actions, .rv-clean .rv-shade, .rv-clean .rv-heading, .rv-clean .rv-position { display: none; }
 .rv-viewer:has(.rv-comments) { padding-right: 350px; }
-.rv-viewer:has(.rv-comments) .rv-navigation { right: 365px; }
+.rv-viewer:has(.rv-comments) .rv-navigation { right: 362px; }
 .rv-comments { display: flex; flex-direction: column; position: absolute; right: 0; top: 0; bottom: 0; width: 350px; background: #18181c; border-left: 1px solid #ffffff12; touch-action: auto; }
 .rv-comments-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 18px 8px; }
 .rv-comments-header h2 { font-size: 17px; font-weight: 600; margin: 0; }
@@ -101,7 +126,7 @@
 .rv-emoji-panel button { aspect-ratio: 1; padding: 4px; border-radius: 6px; background: transparent; }
 .rv-emoji-panel button:hover { background: #ffffff14; }
 .rv-emoji-panel img { width: 100%; height: 100%; object-fit: contain; }
-.rv-share { position: absolute; right: 66px; bottom: 96px; z-index: 3; display: flex; flex-direction: column; width: min(300px, calc(100% - 78px)); max-height: min(470px, calc(100% - 150px)); overflow: hidden; border-radius: 12px; background: #25252c; box-shadow: 0 16px 60px #000c; animation: rv-pop .16s ease-out; }
+.rv-share { position: absolute; right: 80px; bottom: 64px; z-index: 3; display: flex; flex-direction: column; width: min(300px, calc(100% - 78px)); max-height: min(470px, calc(100% - 150px)); overflow: hidden; border-radius: 12px; background: #25252c; box-shadow: 0 16px 60px #000c; animation: rv-pop .16s ease-out; }
 .rv-share-search { display: flex; align-items: center; gap: 7px; height: 34px; margin: 12px 12px 4px; padding: 0 10px; border-radius: 8px; background: #33333b; }
 .rv-share-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: #f0f0f3; font: inherit; font-size: 13px; user-select: text; }
 .rv-share-search input::placeholder { color: #85858f; }
@@ -143,7 +168,7 @@
   .rv-comments-footer { padding-bottom: max(12px,env(safe-area-inset-bottom)); }
 }
 @media (max-height: 600px) and (min-width: 761px) {
-  .rv-actions { bottom: 160px; gap: 8px; }
+  .rv-actions { gap: 10px; }
   .rv-avatar { display: none; }
   .rv-caption p { -webkit-line-clamp: 2; }
 }

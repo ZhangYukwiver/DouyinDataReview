@@ -1,5 +1,5 @@
 import type { PersonalVideoRecord } from "../domain/personalRecords";
-import { closeExplore, interactExplore, readExplore, type ExploreConnection, type ExploreOutcome, type ExplorePage } from "./explorer";
+import { closeExplore, interactExplore, reactExplore, readExplore, type ExploreConnection, type ExploreOutcome, type ExplorePage } from "./explorer";
 import { LocalCollectorError } from "./localCollector";
 
 export function buildVideoFeed(records: PersonalVideoRecord[], initial: PersonalVideoRecord): PersonalVideoRecord[] {
@@ -90,6 +90,15 @@ export function createVideoCommentsSession(connection: ExploreConnection, record
     },
     close() { disposed = true; controller.abort(); if (!pending) release(); },
   };
+}
+
+/** 播放器里的点赞 / 收藏：只发一个请求、带上想要的状态（点两次也不会重复）；没开「允许在抖音上操作」时采集器拦下并说明，抖音拒了就抛错让界面退回 */
+export async function reactVideo(connection: ExploreConnection, record: PersonalVideoRecord, action: "like" | "collect", desired: boolean, signal: AbortSignal): Promise<ExploreOutcome> {
+  const id = videoIdOf(record);
+  if (!id) throw new Error("这条记录缺少作品 ID，请在抖音原页操作。");
+  const outcome = await waitForCollector(() => reactExplore(connection, { awemeId: id, action, desired }), signal);
+  if (outcome.outcome === "rejected") throw new Error(outcome.message);
+  return outcome;
 }
 
 /** The "分享给朋友" list lives in its own tab of the video page, released when the panel closes. */

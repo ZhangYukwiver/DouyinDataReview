@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Download, Heart, MessageCircle, Play, Search, Send, Sparkles, UserRound, Users, X } from "lucide-react-native";
-import { closeExplore, interactExplore, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo } from "../../services/explorer";
+import { closeExplore, interactExplore, markExploreSeen, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo } from "../../services/explorer";
 import { loadCollectorVideo, LocalCollectorError } from "../../services/localCollector";
 import { waitForCollector } from "../../services/videoFeed";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
+import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
 import { DarenCard } from "./DarenCard";
 import { HotTopicsCard } from "./HotTopicsCard";
@@ -254,7 +255,7 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
         {value === "users" ? <Users size={17} color={mode === value ? color.text : color.textMuted} /> : value === "videos" ? <Play size={17} color={mode === value ? color.text : color.textMuted} /> : <Sparkles size={17} color={mode === value ? color.text : color.textMuted} />}<Text style={[styles.tabText, mode === value && styles.selectedText]}>{value === "users" ? "搜索用户" : value === "videos" ? "搜索内容" : "刷推荐"}</Text>
       </Pressable>)}</View>
       {mode === "feed" ? <View {...ws("e-searchrow")} style={styles.searchRow}>
-        <Text style={[styles.muted, { flex: 1 }]}>当前登录账号的首页推荐，直播和广告不放进来；在这里看的不会回报给抖音，推荐不会跟着变。</Text>
+        <Text style={[styles.muted, { flex: 1 }]}>当前登录账号的首页推荐，直播和广告不放进来；刷到的视频会像在抖音网页上一样记进观看历史。</Text>
         <Button label="换一批" disabled={busy || !connection} onPress={() => void load({ kind: "feed" }, "results")} />
         <Button label="开始刷" primary disabled={busy || !results?.items.length} onPress={() => results?.items[0] && setPlaying(results.items[0] as ExploreVideo)}><Play size={15} color={color.buttonText} fill={color.buttonText} /></Button>
       </View> : <View {...ws("e-searchrow")} style={styles.searchRow}><Search size={19} color={color.textMuted} /><TextInput accessibilityLabel="搜索关键词或抖音链接" value={query} onChangeText={setQuery} onSubmitEditing={search} editable={!busy} maxLength={300} placeholder={mode === "users" ? "昵称、抖音号或用户主页链接" : "内容关键词、作品链接或作品 ID"} placeholderTextColor={color.textMuted} returnKeyType="search" style={styles.searchInput} />
@@ -348,7 +349,12 @@ export function ExploreWorkspace({ connection, collectorBusy, onOpenSettings, on
       if (done.length) { setSaved((current) => new Set([...current, ...done.flatMap((record) => videoDownloadKey(record) ?? [])])); setSelected(new Set()); }
     }} /> : null}
     {playing && connection ? <RecordVideoPlayer record={playing} records={(profile?.items ?? (results?.kind === "videos" || results?.kind === "feed" ? results.items : [])) as ExploreVideo[]}
-      {...results?.kind === "feed" && !profile ? { title: "推荐", onReachEnd: () => void load(results.limited ? { kind: "feed" } : { kind: "feed", sessionId: results.sessionId }, "results", true) } : null}
+      {...results?.kind === "feed" && !profile ? { title: "推荐", feedError: error, onReachEnd: () => void load(results.limited ? { kind: "feed" } : { kind: "feed", sessionId: results.sessionId }, "results", true),
+        // 推荐流里看的跟网页一样记进抖音观看历史；记不上不打扰
+        onSeen: (item: PersonalVideoRecord) => {
+          if (item.videoId && /^\d+$/u.test(item.authorId ?? ""))
+            void waitForCollector(() => markExploreSeen(connection, { awemeId: item.videoId!, authorId: item.authorId! }), AbortSignal.timeout(60_000)).catch(() => {});
+        } } : null}
       commentsConnection={connection} onOpenRecord={onOpenRecord}
       onLoadVideo={(item, signal, onProgress) => loadCollectorVideo(connection.baseUrl, connection.token, item.url!, signal, onProgress)} onClose={() => setPlaying(null)} /> : null}
   </ScrollView>;

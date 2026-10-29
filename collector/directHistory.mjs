@@ -377,7 +377,7 @@ export const DIRECT_API_PATHS = new Set([
   "/aweme/v1/web/comment/list/",
   "/aweme/v1/web/discover/search/", "/aweme/v1/web/search/item/", "/aweme/v1/web/tab/feed/",
   "/aweme/v1/web/commit/item/digg/", "/aweme/v1/web/aweme/collect/",
-  "/aweme/v1/web/comment/publish", "/aweme/v1/web/comment/delete/", "/aweme/v1/web/commit/follow/user/",
+  "/aweme/v1/web/comment/publish", "/aweme/v1/web/comment/delete/", "/aweme/v1/web/commit/follow/user/", "/aweme/v1/web/history/write/",
   "/passport/safe/get_identity_security_token/",
 ]);
 export const DIRECT_IM_PATHS = new Set(["/v1/message/send", "/v1/message/get_message_by_init", "/v1/message/get_user_message",
