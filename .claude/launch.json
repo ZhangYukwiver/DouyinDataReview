@@ -30,6 +30,131 @@
         "prototype"
       ],
       "port": 8891
+    },
+    {
+      "name": "minimal-base-8097",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/a0000/Desktop/dy2-minimal-base && EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4799 npx expo start --web --port 8097"
+      ],
+      "port": 8097,
+      "autoPort": false
+    },
+    {
+      "name": "minimal-8096",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/a0000/Desktop/dy2-minimal && npx expo start --web --port 8096"
+      ],
+      "port": 8096,
+      "autoPort": false
+    },
+    {
+      "name": "ai-look-8098",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/a0000/Desktop/dy 2' && CI=1 EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4781 npx expo start --web --port 8098"
+      ],
+      "port": 8098
+    },
+    {
+      "name": "film-8102",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/a0000/Desktop/dy 2' && EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4785 npx expo start --web --port 8102"
+      ],
+      "port": 8102
+    },
+    {
+      "name": "timeline-8106",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/a0000/Desktop/dy2-timeline-tools' && EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4788 npx expo start --web --port 8106"
+      ],
+      "port": 8106
+    },
+    {
+      "name": "gen-8108",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/a0000/Desktop/dy2-timeline-tools' && EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4791 npx expo start --web --port 8108"
+      ],
+      "port": 8108
+    },
+    {
+      "name": "ai-ui-8099",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/a0000/Desktop/dy 2' && EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4781 npx expo start --web --port 8099"
+      ],
+      "port": 8099
+    },
+    {
+      "name": "jy-catalog-8104",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/a0000/Desktop/dy 2' && EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4789 npx expo start --web --port 8104"
+      ],
+      "port": 8104
+    },
+    {
+      "name": "cred-collector-4811",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "/private/tmp/claude-501/-Users-a0000-Desktop-dy-2/ea26e601-6944-482d-85bb-3604c30e840f/scratchpad/e2e/cred-collector.mjs"
+      ],
+      "port": 4811,
+      "autoPort": false
+    },
+    {
+      "name": "cred-web-8121",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/a0000/Desktop/dy 2' && CI=1 EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4811 npx expo start --web --port 8121"
+      ],
+      "port": 8121,
+      "autoPort": false
+    },
+    {
+      "name": "green-collector-4823",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/a0000/Desktop/dy2-green && node collector/server.mjs --port 4823 --origin http://localhost:8133"
+      ],
+      "port": 4823,
+      "autoPort": false
+    },
+    {
+      "name": "green-8133",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/a0000/Desktop/dy2-green && CI=1 EXPO_PUBLIC_COLLECTOR_BASE_URL=http://127.0.0.1:4823 exec node node_modules/expo/bin/cli start --web --port 8133"
+      ],
+      "port": 8133,
+      "autoPort": false
+    },
+    {
+      "name": "demo-static-8893",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8893",
+        "--directory",
+        "docs/demo"
+      ],
+      "port": 8893
     }
   ]
 }
