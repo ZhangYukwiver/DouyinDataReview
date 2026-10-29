@@ -156,54 +156,55 @@ const poster: WorkspacePalette = {
   tints: ["#F1EEE6", "#FFFFFF", "#E4E0D4", "#FF4A1C", "#F1EEE6", "#FFFFFF"],
 };
 
-// 极简：白底、#E7E7E7 发丝线、系统字体；墨黑是选中和主按钮，蓝只给数据和可点的字，
-// 绿 / 琥珀 / 红只在状态上出现。不铺纹理、不发光、不投影，和另外三套（暗色玻璃 / 暗室卷宗 / 新闻纸）都不一样。
+// 极简：灰绿纸面 #F2F4F2 上浮一块白色圆角面板，#E6E6E6 发丝线、系统字体、标题只用 500；
+// 森林绿 #255A41 是主按钮、数据和可点的字，墨黑只做正文和选中，琥珀 / 红只在状态上出现。
+// 不铺纹理、不发光，和另外三套（暗色玻璃 / 暗室卷宗 / 新闻纸）都不一样。
 const minimal: WorkspacePalette = {
-  canvas: "#FFFFFF",
-  sidebar: "#FAFAFA",
+  canvas: "#F2F4F2",
+  sidebar: "#F2F4F2",
   surface: "#FFFFFF",
-  surfaceRaised: "#FAFAFA",
-  surfaceMuted: "#F4F4F5",
-  border: "#E4E4E7",
-  borderSoft: "#EFEFF1",
-  frame: "#D4D4D8",
-  text: "#18181B",
-  textSecondary: "#3F3F46",
-  // #71717A 在白底上约 4.8:1，小字也够读
-  textMuted: "#71717A",
-  accent: "#18181B",
-  accentPressed: "#000000",
-  accentAction: "#2563EB",
-  accentSoft: "#F1F1F3",
-  figure: "#18181B",
-  cyan: "#2563EB",
-  cyanSoft: "#EEF3FE",
-  green: "#15803D",
-  greenSoft: "#EBF6EE",
-  amber: "#B45309",
-  amberSoft: "#FDF4E6",
+  surfaceRaised: "#F9F9F9",
+  surfaceMuted: "#EFF1EF",
+  border: "#E6E6E6",
+  borderSoft: "#EFEFEF",
+  frame: "#D9D9D7",
+  text: "#141414",
+  textSecondary: "#3D3C3A",
+  // 暖灰 #6B6A67：白底 5.4:1、纸面 4.9:1，小字也够读
+  textMuted: "#6B6A67",
+  accent: "#141414",
+  accentPressed: "#1C4632",
+  accentAction: "#255A41",
+  accentSoft: "#EEF0EE",
+  figure: "#141414",
+  cyan: "#255A41",
+  cyanSoft: "#E6EFE7",
+  green: "#2F7A4A",
+  greenSoft: "#E6EFE7",
+  amber: "#A6620A",
+  amberSoft: "#FBF1E2",
   danger: "#C9372C",
   dangerSoft: "#FCEDEB",
   white: "#FFFFFF",
-  black: "#18181B",
-  scrim: "rgba(24,24,27,0.28)",
-  button: "#18181B",
+  black: "#141414",
+  scrim: "rgba(20,20,20,0.28)",
+  button: "#255A41",
   buttonText: "#FFFFFF",
-  signal: "#15803D",
-  // 漏斗四档：浅蓝 → 中蓝 → cyan → 深蓝（第四档组件里取 accent，minimalCss 在漏斗格里把它换成 #1E40AF），单调加深
-  funnel0: "#DBEAFE",
-  funnel1: "#93C5FD",
-  vennWatch: "#2563EB",
-  vennFavorite: "#93C5FD",
+  signal: "#3E9B57",
+  // 漏斗四档：浅绿 → 嫩绿 → 中绿（minimalCss 在漏斗格里把 cyan 换成 #4C8F5C）→ 森林绿（accent 换成 #255A41），单调加深
+  funnel0: "#DDEBD8",
+  funnel1: "#A9D39C",
+  vennWatch: "#255A41",
+  vennFavorite: "#A9D39C",
   shadow: "none",
   // 第 5 档上压的字由 minimalCss 改成白色
-  heat: ["#F4F4F5", "#DBEAFE", "#BFDBFE", "#93C5FD", "#3B82F6", "#1D4ED8"],
-  // 蓝的深浅档交替，最后两档是中性灰；墨黑只留给选中和主按钮。创作者中心的图表也取这一组（minimalCss 的 --ws-chart-N）
-  slices: ["#2563EB", "#93C5FD", "#1E40AF", "#BFDBFE", "#A1A1AA", "#D4D4D8"],
+  heat: ["#EFF1EF", "#DDEBD8", "#B9DCAE", "#80C776", "#3F8A55", "#255A41"],
+  // 绿的深浅档交替，最后两档是暖灰；墨黑只留给正文和选中。创作者中心的图表也取这一组（minimalCss 的 --ws-chart-N）
+  slices: ["#255A41", "#80C776", "#3F8A55", "#B9DCAE", "#A3A29F", "#D6D5D2"],
   // 头像缩写既当前景又在自己 19% 的底上，所以都取深色
-  avatars: ["#1D4ED8", "#18181B", "#3F3F46", "#1E3A8A", "#52525B", "#27272A"],
+  avatars: ["#255A41", "#141414", "#3D3C3A", "#1C4632", "#5C5B58", "#2A2927"],
   // 封面缺图时的底：一律同一块浅灰，不分色
-  tints: ["#F4F4F5", "#F4F4F5", "#F4F4F5", "#F4F4F5", "#F4F4F5", "#F4F4F5"],
+  tints: ["#EFF1EF", "#EFF1EF", "#EFF1EF", "#EFF1EF", "#EFF1EF", "#EFF1EF"],
 };
 
 // 档案馆（只在 web）：就是上面这套近黑纸面 + 暖金 + 冷青（主题色块、热力、饼图照旧用 slices / heat / tints）。
@@ -257,7 +258,7 @@ const minimalFonts: typeof archiveFonts = { serif: minimalSans, didot: minimalSa
 // 档案页面是直角的；年志跟入口卡：卡片 24、按钮是胶囊
 const archiveRadii = { small: 0, medium: 0, large: 0, pill: 0 };
 const traceRadii: typeof archiveRadii = { small: 10, medium: 16, large: 24, pill: 50 };
-const minimalRadii: typeof archiveRadii = { small: 6, medium: 10, large: 12, pill: 999 };
+const minimalRadii: typeof archiveRadii = { small: 6, medium: 10, large: 16, pill: 999 };
 
 export const palettes: Record<AppStyle, { colors: WorkspacePalette; fonts: typeof archiveFonts; radii: typeof archiveRadii }> = {
   minimal: { colors: minimal, fonts: minimalFonts, radii: minimalRadii },

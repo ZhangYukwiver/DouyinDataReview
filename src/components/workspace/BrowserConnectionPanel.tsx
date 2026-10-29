@@ -238,11 +238,15 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
         {renderStart({ title: "扫码登录抖音", done: loggedIn && !revealed, busy: false, revealed, verify: false, sms: null, onSms, image: waitingForScan ? qrcode?.image ?? null : null,
           disabled: (blocked && !connecting) || !source?.available,
           onStart: () => { setRevealed(true); if (!connecting) void connect(); },
-          actions: revealed ? [
-            { kind: "window", label: "在窗口里登录", testID: "browser-login-show-window", onPress: openVerifyWindow },
-            { kind: "cancel", label: "取消", testID: "browser-login-cancel-connect", onPress: () => connectControllerRef.current?.abort() },
-          ] : sources.length > 1 ? [{ kind: "other", label: "改用 Chrome / Edge / Comet 或抖音桌面端导入", testID: "browser-login-other",
-            onPress: () => { connectControllerRef.current?.abort(); setShowOther(true); } }] : [],
+          // 「改用别的方式导入」码亮着时也给，不用先取消
+          actions: [
+            ...(revealed ? [
+              { kind: "window" as const, label: "在窗口里登录", testID: "browser-login-show-window", onPress: openVerifyWindow },
+              { kind: "cancel" as const, label: "取消", testID: "browser-login-cancel-connect", onPress: () => connectControllerRef.current?.abort() },
+            ] : []),
+            ...(sources.length > 1 ? [{ kind: "other" as const, label: "改用 Chrome / Edge / Comet 或抖音桌面端导入", testID: "browser-login-other",
+              onPress: () => { connectControllerRef.current?.abort(); setShowOther(true); } }] : []),
+          ],
           label: loggedIn ? "点击重新扫码登录" : "点击显示二维码",
           detail: revealed ? qrcode?.hint || "打开抖音 App，点左上角的扫一扫，扫完在手机上确认。"
             : loggedIn ? `已登录${name}。凭据失效或要调整读取权限时，再扫一次就行。` : "用抖音 App 扫一扫，核对账号后自动开始读取。" })}

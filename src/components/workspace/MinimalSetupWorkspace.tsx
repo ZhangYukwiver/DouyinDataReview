@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -18,7 +18,6 @@ import {
   type ViewStyle,
 } from "react-native";
 import {
-  AppWindow,
   ArrowRight,
   CircleCheck,
   Database,
@@ -44,8 +43,8 @@ import {
 
 import type { CollectorStatus } from "../../services/localCollector";
 import type { SetupWorkspaceProps } from "./SourceWorkspace";
-import { FirstScreenLogin, type LoginStartAction, type LoginStartProps } from "./BrowserConnectionPanel";
-import { ease, useCountUp } from "./motion";
+import { FirstScreenLogin, type LoginStartProps } from "./BrowserConnectionPanel";
+import { ease, fx, useCountUp } from "./motion";
 import {
   activeAccountLabel,
   deriveSetup,
@@ -68,7 +67,7 @@ import {
 import { dayWindow, digestRecords, type RecordDigest, type SetupRecordKind } from "./setupSketch";
 import { alpha, workspaceColors as color, workspaceFonts as font } from "./workspaceTheme";
 
-// 极简风格的采集器页：白底、发丝线、一种系统字体；墨黑是主按钮和选中，蓝只给数据和可点的字，
+// 极简风格的采集器页：灰绿纸面上的白色圆角面板、发丝线、一种系统字体；森林绿是主按钮、数据和可点的字，墨黑是选中，
 // 绿只说「已连接」。和手绘版吃同一份 props、同一套规则（setupModel），一屏放下不滚动。
 // 账号、导出、清除、应用更新收在设置里：顶栏的账号名和「有新版本」直接打开设置的对应一节。
 
@@ -144,6 +143,7 @@ export function MinimalSetupWorkspace({
   const roomy = height >= 880 && width >= 1300;
   const leftW = narrow ? 312 : width >= 1600 ? 380 : 344;
   const gutter = narrow ? 20 : roomy ? 40 : 32;
+  const gap = narrow ? 16 : roomy ? 24 : 20;
 
   const counts = { watch: records.watch_history.length, liked: records.liked_videos.length, favorite: records.favorite_videos.length, chat: chatCount ?? 0 };
   const total = counts.watch + counts.liked + counts.favorite + counts.chat;
@@ -152,9 +152,19 @@ export function MinimalSetupWorkspace({
   const actions = readActions({ connected, busy, chatCollecting, chatBusy, stoppingSync, switchingAccount, stoppingChat }, setup);
   const run = (command: ReadCommand) => runReadCommand(command, { onStartIncrementalSync, onStartFullSync, onStopSync, onStopChatObservation, onStartChatObservation, onCollectChatHistory, setStoppingChat });
   const digest = useMemo(() => digestRecords(records, 24), [records]);
-  // 用着导入文件时，下面档案卡的说明已经讲清楚怎么换回采集器，状态提示就不再重复这句
-  const tips = tipNotes({ fromArchive: setup.fromArchive, connected, loginNeeded: setup.loginNeeded || desktopLoginNeeded(desktopLogin, connected, status), syncing: setup.syncing, ready: setup.ready, autoSyncEnabled: autoSyncEnabled && setup.videosAllowed, desktop: Boolean(desktopLogin) }, "minimal")
-    .filter((tip) => !(archive && setup.fromArchive && tip.key === "tip"));
+  // 桌面版：没登录就整页换成登录页（像别的要登录的软件那样），登录好了工作台上只留一张账号卡
+  const loginNeeded = desktopLoginNeeded(desktopLogin, connected, status);
+  const credentials = status?.browserSource?.credentials;
+  const loggedIn = connected && (credentials === "ready" || credentials === "exporting");
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [skipLogin, setSkipLogin] = useState(false);
+  const showLogin = Boolean(desktopLogin) && !setup.fromArchive && (loginOpen || (loginNeeded && !skipLogin));
+  // 登录（或换号）导入完就回到工作台
+  const login = desktopLogin ? { ...desktopLogin, onChange: async (change: Parameters<typeof desktopLogin.onChange>[0]) => { await desktopLogin.onChange(change); setLoginOpen(false); } } : null;
+  // 用着导入文件时，下面档案卡的说明已经讲清楚怎么换回采集器，状态提示就不再重复这句；
+  // 桌面版没登录时账号卡自己写着「还没登录」，「扫码以后」这句也不要
+  const tips = tipNotes({ fromArchive: setup.fromArchive, connected, loginNeeded: setup.loginNeeded || loginNeeded, syncing: setup.syncing, ready: setup.ready, autoSyncEnabled: autoSyncEnabled && setup.videosAllowed, desktop: Boolean(desktopLogin) }, "minimal")
+    .filter((tip) => !(tip.key === "tip" && ((archive && setup.fromArchive) || (desktopLogin && (loginNeeded || setup.loginNeeded)))));
   const accountName = activeAccountLabel(connected, status, accounts);
   const statusMessage = switchingAccount ? (desktopLogin?.loggingIn ? null : "正在切换抖音账号，等旧账号的浏览器关好就换过去。") : status?.message?.trim() || null;
   const [rightSize, onRightLayout] = useSize();
@@ -197,22 +207,56 @@ export function MinimalSetupWorkspace({
       {/* 整页锁在一屏里：两栏按剩下的高度伸缩，图表和提示按量到的空间决定画多少；ScrollView 只是兜底 */}
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingHorizontal: gutter }, short && styles.scrollShort, roomy && styles.scrollRoomy]} showsVerticalScrollIndicator={false} style={styles.scroll}>
         <View style={styles.page}>
-          <View style={[styles.columns, narrow && styles.columnsNarrow, roomy && styles.columnsRoomy]}>
-            {/* 左栏：数据从哪来 */}
-            <View style={[styles.panel, pad, { width: leftW }]}>
-              <PanelHead detail={short ? undefined : "本机采集器读取，不经过云端"} title="数据来源" />
-              {desktopLogin ? <FirstScreenLogin busy={busy} login={desktopLogin} onConnect={() => void onConnect()} renderStart={(start) => <LoginStart {...start} />} status={status} /> : <>
-              <Field accessibilityLabel="采集服务地址" autoCapitalize="none" autoCorrect={false} dim={connected} editable={!connected && !busy} inline={short} label="服务地址" onChangeText={onChangeCollectorUrl} placeholder="http://127.0.0.1:4765" value={collectorUrl} />
-              {/* 配对码先挑出数字再截 8 位：粘贴带空格或前缀的也认得出来 */}
-              {!connected ? <Field accessibilityLabel="8 位配对码" editable={!busy} icon={LockKeyhole} inline={short} keyboardType="number-pad" label="配对码" onChangeText={(value) => onChangePairingCode(value.replace(/\D/gu, "").slice(0, 8))} placeholder="连接时自动获取" value={pairingCode} /> : null}
-              <Button busy={busy} disabled={busy} full icon={connected ? Unplug : Link2} kind={connected ? "secondary" : "primary"} label={connected ? "断开连接" : "连接采集器"} onPress={() => void (connected ? onDisconnect() : onConnect())} />
-              </>}
-              {/* 状态、报错和提示共用按钮下面这块地方：报错先排，然后是采集器的原话（至少一行），剩下的再放提示 */}
-              <FitSlot style={styles.slotMessages}>{(size) => <Messages error={error} size={size} status={statusMessage} tips={tips} />}</FitSlot>
-              <View style={[styles.rule, short && styles.ruleShort]} />
-              <View testID="archive-card">
+          {/* 四张卡排成两行两列：上一行吃掉剩下的高度，下一行两张一样高、上沿对齐 */}
+          <View style={[styles.grid, { gap }]}>
+            <View style={[styles.gridRow, styles.grow, { gap }]}>
+              {/* 数据从哪来：桌面版是账号卡（扫码在登录页），浏览器版是采集器地址和配对码 */}
+              <View style={[styles.panel, pad, { width: leftW }]}>
+                {desktopLogin ? <>
+                <PanelHead title="抖音账号" />
+                <View style={styles.accountCard}>
+                  <View style={styles.avatar}><Glyph icon={UserRound} size={18} tint={color.textSecondary} /></View>
+                  <View style={styles.flex}>
+                    <Text numberOfLines={1} style={styles.strong}>{accountName}</Text>
+                    <View style={styles.accountState}>
+                      <View style={[styles.dot, loggedIn && styles.dotOn]} />
+                      <Text numberOfLines={1} style={[styles.meta, styles.flex]}>{!connected ? (busy ? "正在连接本机采集器…" : "本机采集器还没连上") : loggedIn ? "已登录，可以读取" : "还没登录，扫码后才能读新记录"}</Text>
+                    </View>
+                  </View>
+                </View>
+                {connected
+                  ? <Button disabled={switchingAccount} full icon={QrCode} kind={loggedIn ? "secondary" : "primary"} label={loggedIn ? "重新扫码登录" : "扫码登录"} onPress={() => setLoginOpen(true)} testID="account-login" />
+                  : <Button busy={busy} disabled={busy} full icon={Link2} kind="primary" label="重新连接采集器" onPress={() => void onConnect()} />}
+                </> : <>
+                <PanelHead detail={short ? undefined : "本机采集器读取，不经过云端"} title="数据来源" />
+                <Field accessibilityLabel="采集服务地址" autoCapitalize="none" autoCorrect={false} dim={connected} editable={!connected && !busy} inline={short} label="服务地址" onChangeText={onChangeCollectorUrl} placeholder="http://127.0.0.1:4765" value={collectorUrl} />
+                {/* 配对码先挑出数字再截 8 位：粘贴带空格或前缀的也认得出来 */}
+                {!connected ? <Field accessibilityLabel="8 位配对码" editable={!busy} icon={LockKeyhole} inline={short} keyboardType="number-pad" label="配对码" onChangeText={(value) => onChangePairingCode(value.replace(/\D/gu, "").slice(0, 8))} placeholder="连接时自动获取" value={pairingCode} /> : null}
+                <Button busy={busy} disabled={busy} full icon={connected ? Unplug : Link2} kind={connected ? "secondary" : "primary"} label={connected ? "断开连接" : "连接采集器"} onPress={() => void (connected ? onDisconnect() : onConnect())} />
+                </>}
+                {/* 状态、报错和提示共用按钮下面这块地方：报错先排，然后是采集器的原话（至少一行），剩下的再放提示 */}
+                <FitSlot style={styles.slotMessages}>{(size) => <Messages error={error} size={size} status={statusMessage} tips={tips} />}</FitSlot>
+              </View>
+              {/* 读到了什么 */}
+              <View style={[styles.panel, styles.right, pad]}>
+                <View style={styles.recordHead}>
+                  <Text numberOfLines={1} style={styles.panelTitle}>内容记录</Text>
+                  <Text numberOfLines={1} style={[styles.meta, styles.flex]}>{recordSummary(total, digest.first)}</Text>
+                  {snapshotUpdatedAt && !narrow ? <Text numberOfLines={1} style={styles.fine}>更新于 {formatDate(snapshotUpdatedAt)}</Text> : null}
+                </View>
+                <View style={[styles.counts, short && styles.countsShort]}>
+                  <Count first label="观看历史" size={numberSize} value={counts.watch} />
+                  <Count label="喜欢" size={numberSize} value={counts.liked} />
+                  <Count label="收藏" size={numberSize} value={counts.favorite} />
+                  <Count label="聊天" size={numberSize} value={counts.chat} />
+                </View>
+                <FitSlot style={[styles.slotData, short && styles.slotDataShort]}>{(size) => <DataArea digest={digest} roomy={roomy} size={size} />}</FitSlot>
+              </View>
+            </View>
+            <View style={[styles.gridRow, { gap }]}>
+              <View style={[styles.panel, pad, { width: leftW }]} testID="archive-card">
                 <View style={styles.archiveHead}>
-                  <Text numberOfLines={1} style={styles.sectionTitle}>或者导入个人档案</Text>
+                  <Text numberOfLines={1} style={styles.panelTitle}>或者导入个人档案</Text>
                   {archive?.loaded ? <Text numberOfLines={1} style={styles.inUse}>正在使用</Text> : null}
                 </View>
                 {archive ? <Text numberOfLines={1} style={styles.archiveName}>{archive.name}</Text> : null}
@@ -224,38 +268,44 @@ export function MinimalSetupWorkspace({
                   {archive && !pickingArchive ? <Button compact={narrow} icon={X} label="移除" onPress={onRemoveArchive} size="small" /> : null}
                 </View>
               </View>
-            </View>
-
-            {/* 右栏：读到了什么、怎么读 */}
-            <View onLayout={onRightLayout} style={[styles.panel, styles.right, pad]}>
-              <View style={styles.recordHead}>
-                <Text numberOfLines={1} style={styles.panelTitle}>内容记录</Text>
-                <Text numberOfLines={1} style={[styles.meta, styles.flex]}>{recordSummary(total, digest.first)}</Text>
-                {snapshotUpdatedAt && !narrow ? <Text numberOfLines={1} style={styles.fine}>更新于 {formatDate(snapshotUpdatedAt)}</Text> : null}
+              {/* 怎么读 */}
+              <View onLayout={onRightLayout} style={[styles.panel, styles.right, pad]}>
+                <ChatProgress progress={setup.chatProgress} />
+                <ReadButtons actions={actions} oneRow={oneRow} onRun={run} />
+                <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在设置 → 账号中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
+                <View style={[styles.rule, short && styles.ruleShort]} />
+                <Pressable accessibilityRole="switch" disabled={!setup.videosAllowed} accessibilityState={{ checked: autoSyncEnabled && setup.videosAllowed, disabled: !setup.videosAllowed }} aria-checked={autoSyncEnabled && setup.videosAllowed} onPress={onToggleAutoSync} style={(state) => [styles.auto, pointer, state.pressed && styles.autoPressed]}>
+                  <View style={styles.flex}>
+                    <Text style={styles.strong}>自动补读新记录</Text>
+                    {tight ? null : <Text numberOfLines={1} style={styles.fine}>应用回到前台时，自动读取新增的记录。</Text>}
+                  </View>
+                  <Text style={[styles.autoState, autoSyncEnabled && setup.videosAllowed && styles.autoStateOn]}>{!setup.videosAllowed ? "未授权" : autoSyncEnabled ? "已开启" : "已暂停"}</Text>
+                  <Switch on={autoSyncEnabled && setup.videosAllowed} />
+                </Pressable>
               </View>
-              <View style={[styles.counts, short && styles.countsShort]}>
-                <Count first label="观看历史" size={numberSize} value={counts.watch} />
-                <Count label="喜欢" size={numberSize} value={counts.liked} />
-                <Count label="收藏" size={numberSize} value={counts.favorite} />
-                <Count label="聊天" size={numberSize} value={counts.chat} />
-              </View>
-              <FitSlot style={[styles.slotData, short && styles.slotDataShort]}>{(size) => <DataArea digest={digest} roomy={roomy} size={size} />}</FitSlot>
-              <ChatProgress progress={setup.chatProgress} />
-              <ReadButtons actions={actions} oneRow={oneRow} onRun={run} />
-              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在设置 → 账号中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
-              <View style={[styles.rule, short && styles.ruleShort]} />
-              <Pressable accessibilityRole="switch" disabled={!setup.videosAllowed} accessibilityState={{ checked: autoSyncEnabled && setup.videosAllowed, disabled: !setup.videosAllowed }} aria-checked={autoSyncEnabled && setup.videosAllowed} onPress={onToggleAutoSync} style={(state) => [styles.auto, pointer, state.pressed && styles.autoPressed]}>
-                <View style={styles.flex}>
-                  <Text style={styles.strong}>自动补读新记录</Text>
-                  {tight ? null : <Text numberOfLines={1} style={styles.fine}>应用回到前台时，自动读取新增的记录。</Text>}
-                </View>
-                <Text style={[styles.autoState, autoSyncEnabled && setup.videosAllowed && styles.autoStateOn]}>{!setup.videosAllowed ? "未授权" : autoSyncEnabled ? "已开启" : "已暂停"}</Text>
-                <Switch on={autoSyncEnabled && setup.videosAllowed} />
-              </Pressable>
             </View>
           </View>
         </View>
       </ScrollView>
+
+      {/* 桌面版没登录（或点了「重新扫码登录」）：一个小窗口浮在采集器页上，后面的记录照样看得见 */}
+      {showLogin && login ? (
+        <View style={styles.loginLayer} testID="login-screen">
+          <View {...fx({ motion: "rise" })} accessibilityViewIsModal style={[styles.loginWindow, short && styles.loginWindowShort]}>
+            <Pressable accessibilityLabel={loginOpen ? "关闭，回到采集器页" : "先不登录，看已有记录"} accessibilityRole="button" onPress={() => (loginOpen ? setLoginOpen(false) : setSkipLogin(true))}
+              style={(state) => [styles.loginClose, hovered(state) && styles.loginCloseHover, pointer, ease("background-color", 140)]} testID="login-close">
+              <Glyph icon={X} size={16} tint={color.textMuted} />
+            </Pressable>
+            {/* 采集器那边的报错（多半是「凭据失效，请重新扫码」）在这里不再重复，登录本身的报错由登录块自己显示 */}
+            <FirstScreenLogin busy={busy} login={login} onConnect={() => void onConnect()} renderStart={(start) => <LoginStart {...start} small={short} />} status={status} />
+            <View style={styles.loginFoot}>
+              <Glyph icon={LockKeyhole} size={13} tint={color.textMuted} />
+              <Text numberOfLines={1} style={[styles.fine, styles.flex]}>记录只存在这台电脑上，不上传</Text>
+              <TextLink disabled={pickingArchive} label={pickingArchive ? "正在读取文件…" : "导入个人档案"} onPress={() => void onPickArchive()} testID="login-import-archive" />
+            </View>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -336,13 +386,25 @@ function Field({ dim, icon, inline, label, ...input }: Omit<TextInputProps, "sty
 }
 
 // 首屏扫码登录：标题一句话，下面一个和二维码一样大的框。没点之前蒙着浅色遮罩（底下隐约是已经备好的码），点了遮罩消失
-function LoginStart({ title, detail, label, busy, disabled, done, revealed, image, verify, sms, onSms, onStart, actions }: LoginStartProps) {
+/**
+ * 桌面版登录小窗口的内容：标题、一句说明、浅底板上的二维码，其他方式收成一行文字链接。
+ * 码在后台早就备好了，进来直接亮出来，不用再点一下；点过「取消」才蒙回遮罩，不再自动亮。矮窗口（small）码缩一号。
+ */
+function LoginStart({ title, detail, label, busy, disabled, done, revealed, image, verify, sms, onSms, onStart, actions, small }: LoginStartProps & { small?: boolean }) {
   const [code, setCode] = useState("");
+  const shown = useRef(false);
+  useEffect(() => {
+    if (revealed) { shown.current = true; return; }
+    if (shown.current || disabled || busy || verify) return;
+    shown.current = true;
+    onStart();
+  // onStart 每次渲染都是新的，不放进依赖
+  }, [revealed, disabled, busy, verify]);
   return (
     <View style={styles.loginStart} testID="login-start">
-      <View>
-        <Text style={styles.strong}>{title}</Text>
-        <Text numberOfLines={4} style={styles.meta}>{detail}</Text>
+      <View style={styles.loginHead}>
+        <Text style={styles.loginTitle}>{title}</Text>
+        <Text numberOfLines={3} style={styles.meta}>{detail}</Text>
       </View>
       {verify && sms ? (
         <View style={styles.smsBox} testID="sms-verify">
@@ -356,8 +418,8 @@ function LoginStart({ title, detail, label, busy, disabled, done, revealed, imag
             {sms.error ? <Text style={styles.smsError}>{sms.error}</Text> : null}
           </>}
         </View>
-      ) : <Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
-        style={(state) => [styles.qrBox, !revealed && hovered(state) && styles.qrBoxHover, !revealed && pointer, ease("border-color", 140)]} testID="login-start-button">
+      ) : <View style={[styles.qrPad, small && styles.qrPadSmall]}><Pressable accessibilityLabel={revealed ? "抖音登录二维码" : label} accessibilityRole={revealed ? "image" : "button"} disabled={disabled || revealed} onPress={onStart}
+        style={(state) => [styles.qrBox, small && styles.qrBoxSmall, !revealed && hovered(state) && styles.qrBoxHover, !revealed && pointer, ease("border-color", 140)]} testID="login-start-button">
         {image ? <Image source={{ uri: image }} style={styles.qrImage} testID={revealed ? "browser-login-qrcode" : undefined} /> : null}
         {revealed ? (image ? null : <ActivityIndicator color={color.textMuted} size="small" />) : (
           <View style={styles.qrMask}>
@@ -365,19 +427,19 @@ function LoginStart({ title, detail, label, busy, disabled, done, revealed, imag
             <Text style={styles.qrMaskText}>{label}</Text>
           </View>
         )}
-      </Pressable>}
-      {actions.length ? <View style={styles.loginActions}>{actions.map(action => <LoginAction key={action.testID} {...action} />)}</View> : null}
+      </Pressable></View>}
+      {/* 「取消」不放：离开登录页就收掉了 */}
+      {actions.length ? <View style={styles.loginLinks}>{actions.filter((action) => action.kind !== "cancel").map((action) => <TextLink key={action.testID} {...action} />)}</View> : null}
     </View>
   );
 }
 
-function LoginAction({ kind, label, onPress, testID }: LoginStartAction) {
-  if (kind === "other") return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={(state) => [pointer, hovered(state) && styles.linkHover]} testID={testID}>
+function TextLink({ disabled, label, onPress, testID }: { disabled?: boolean; label: string; onPress: () => void; testID?: string }) {
+  return (
+    <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={(state) => [!disabled && pointer, hovered(state) && styles.linkHover, disabled && styles.disabled]} testID={testID}>
       <Text style={styles.link}>{label}</Text>
     </Pressable>
   );
-  return <Button icon={kind === "window" ? AppWindow : X} label={label} onPress={onPress} size="small" testID={testID} />;
 }
 
 function PanelHead({ detail, title }: { detail?: string; title: string }) {
@@ -606,7 +668,7 @@ function Charts({ digest, height, roomy, width }: { digest: RecordDigest; height
   );
 }
 
-/** 一排细柱：灰色，最高那天和今天用蓝；最高那根头上写条数，零值不画。 */
+/** 一排细柱：灰色，最高那天和今天用数据色；最高那根头上写条数，零值不画。 */
 function Bars({ height, highlight, today, values, width }: { height: number; highlight: number; today: number; values: number[]; width: number }) {
   const max = Math.max(1, ...values);
   const slot = width / values.length;
@@ -661,7 +723,7 @@ function HourChart({ barsHeight = 0, hours, mode, width }: { barsHeight?: number
       ) : (
         <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.strip}>
           {values.map((value, index) => {
-            // 最多的那个钟点用最深的一档，其余按比例落在浅蓝四档里
+            // 最多的那个钟点用最深的一档，其余按比例落在浅色四档里
             const level = !max || !value ? 0 : index === peak ? 5 : Math.min(4, 1 + Math.floor((value / max) * 3.999));
             return <View key={index} style={[styles.cell, { backgroundColor: color.heat[level] }]} />;
           })}
@@ -738,14 +800,28 @@ const styles = StyleSheet.create({
   base: { fontFamily: sans, color: color.textSecondary },
   root: { flex: 1, minHeight: "100%", backgroundColor: color.canvas },
   flex: { flex: 1, minWidth: 0 },
-  loginStart: { gap: 12 },
-  qrBox: { width: 180, height: 180, borderRadius: 10, borderWidth: 1, borderColor: color.border, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  // 登录小窗口：盖住整页的半透明底，正中一个带投影的白窗口；右上角关闭，底下一条页脚
+  // 遮罩只压一层很淡的墨色，后面的采集器页看得清；窗口和工作台的白面板一样：发丝线 + 一圈环境投影，不铺底色块
+  loginLayer: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 10, alignItems: "center", justifyContent: "center", padding: 24, backgroundColor: alpha(color.text, 0.12) },
+  loginWindow: { width: 380, maxWidth: "100%", paddingTop: 24, paddingHorizontal: 24, borderWidth: 1, borderColor: color.border, borderRadius: 16, backgroundColor: color.surface, boxShadow: "0 0 48px rgba(0,0,0,0.08), 0 0 12px rgba(0,0,0,0.06)" },
+  loginWindowShort: { paddingTop: 18 },
+  loginClose: { position: "absolute", top: 14, right: 14, zIndex: 1, width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },
+  loginCloseHover: { backgroundColor: color.surfaceMuted },
+  loginStart: { gap: 14 },
+  loginHead: { gap: 4 },
+  loginTitle: { paddingRight: 32, color: color.text, fontSize: 17, lineHeight: 24, fontWeight: "500" },
+  // 二维码就放在白底上，一圈发丝线，上下留白
+  qrPad: { alignItems: "center", paddingVertical: 8 },
+  qrPadSmall: { paddingVertical: 2 },
+  loginFoot: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 18, marginHorizontal: -24, paddingHorizontal: 24, paddingVertical: 14, borderTopWidth: 1, borderTopColor: color.borderSoft },
+  loginLinks: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", columnGap: 20, rowGap: 6 },
+  qrBox: { width: 200, height: 200, borderRadius: 12, borderWidth: 1, borderColor: color.border, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  qrBoxSmall: { width: 160, height: 160 },
   qrBoxHover: { borderColor: color.textMuted },
   qrImage: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%" },
   qrMask: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: alpha(color.surfaceMuted, 0.97) },
-  link: { color: color.textSecondary, fontSize: 12, lineHeight: 18, textDecorationLine: "underline" },
+  link: { color: color.accentAction, fontSize: 13, lineHeight: 20 },
   linkHover: { opacity: 0.7 },
-  loginActions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
   smsBox: { gap: 10, padding: 14, borderRadius: 10, borderWidth: 1, borderColor: color.border, backgroundColor: color.surfaceMuted },
   smsRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   smsError: { color: color.danger, fontSize: 12, lineHeight: 18 },
@@ -756,7 +832,7 @@ const styles = StyleSheet.create({
   topbar: { height: 56, borderBottomWidth: 1, borderBottomColor: color.border, backgroundColor: color.canvas },
   topInner: { flex: 1, width: "100%", alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 14 },
   topInnerNarrow: { gap: 10 },
-  brand: { flexShrink: 0, color: color.text, fontSize: 15, lineHeight: 22, fontWeight: "600" },
+  brand: { flexShrink: 0, color: color.text, fontSize: 15, lineHeight: 22, fontWeight: "500" },
   topDivider: { width: 1, height: 16, backgroundColor: color.border },
   topStatus: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: color.frame, flexShrink: 0 },
@@ -771,8 +847,8 @@ const styles = StyleSheet.create({
   pillText: { color: color.accentAction, fontSize: 12, lineHeight: 16, fontWeight: "500" },
   topActions: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: 8 },
 
-  // 按钮：主 = 墨黑实底，次 = 白底发丝描边
-  button: { height: 34, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1 },
+  // 按钮：胶囊。主 = 森林绿实底（token button），次 = 白底发丝描边
+  button: { height: 34, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1 },
   buttonSmall: { height: 30, gap: 5, paddingHorizontal: 10 },
   buttonCompact: { gap: 4, paddingHorizontal: 8 },
   primary: { backgroundColor: color.button, borderColor: color.button },
@@ -799,16 +875,19 @@ const styles = StyleSheet.create({
   noteWarn: { color: color.amber },
 
   // 两栏
-  columns: { flex: 1, minHeight: 0, flexDirection: "row", gap: 20 },
-  columnsNarrow: { gap: 16 },
-  columnsRoomy: { gap: 24 },
-  panel: { minHeight: 0, padding: 20, borderWidth: 1, borderColor: color.border, borderRadius: 12, backgroundColor: color.surface },
+  grid: { flex: 1, minHeight: 0 },
+  gridRow: { minHeight: 0, flexDirection: "row" },
+  panel: { minHeight: 0, padding: 20, borderWidth: 1, borderColor: color.border, borderRadius: 16, backgroundColor: color.surface },
   panelTight: { padding: 16 },
   panelRoomy: { padding: 24 },
   right: { flex: 1, minWidth: 0 },
+  // 桌面版左上的账号卡
+  accountCard: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 14 },
+  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: color.surfaceMuted },
+  accountState: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 },
+  grow: { flex: 1 },
   panelHead: { marginBottom: 14, gap: 2 },
-  panelTitle: { flexShrink: 0, color: color.text, fontSize: 15, lineHeight: 22, fontWeight: "600" },
-  sectionTitle: { flexShrink: 1, color: color.text, fontSize: 13, lineHeight: 20, fontWeight: "600" },
+  panelTitle: { flexShrink: 0, color: color.text, fontSize: 15, lineHeight: 22, fontWeight: "500" },
   label: { color: color.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: "500", marginBottom: 6 },
   meta: { color: color.textMuted, fontSize: 12, lineHeight: 18 },
   fine: { flexShrink: 0, color: color.textMuted, fontSize: 12, lineHeight: 18, ...tabular },
@@ -833,10 +912,10 @@ const styles = StyleSheet.create({
   messages: { gap: MESSAGE_GAP },
   statusMessage: { color: color.textSecondary, fontSize: 13, lineHeight: 20 },
   error: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, backgroundColor: color.dangerSoft },
-  errorTitle: { color: color.danger, fontSize: 13, lineHeight: 20, fontWeight: "600", marginBottom: 2 },
+  errorTitle: { color: color.danger, fontSize: 13, lineHeight: 20, fontWeight: "500", marginBottom: 2 },
   errorText: { color: color.textSecondary, fontSize: 12, lineHeight: 18 },
   errorInline: { color: color.danger, fontSize: 12, lineHeight: 18 },
-  tipTitle: { color: color.text, fontSize: 13, lineHeight: 20, fontWeight: "600", marginBottom: 2 },
+  tipTitle: { color: color.text, fontSize: 13, lineHeight: 20, fontWeight: "500", marginBottom: 2 },
   tipBody: { color: color.textMuted, fontSize: 13, lineHeight: 20 },
   noteTitle: { color: color.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: "500", marginBottom: 2 },
   noteBody: { color: color.textMuted, fontSize: 12, lineHeight: 18 },
@@ -854,7 +933,7 @@ const styles = StyleSheet.create({
   count: { flex: 1, minWidth: 0, gap: 2 },
   countRule: { borderLeftWidth: 1, borderLeftColor: color.borderSoft, paddingLeft: 16 },
   countLabel: { color: color.textMuted, fontSize: 12, lineHeight: 18 },
-  countValue: { color: color.text, fontWeight: "600", ...tabular },
+  countValue: { color: color.text, fontWeight: "500", ...tabular },
   slotData: { marginTop: 22, marginBottom: 18 },
   slotDataShort: { marginTop: 16, marginBottom: 14 },
   dataArea: { flexDirection: "row" },
@@ -867,7 +946,7 @@ const styles = StyleSheet.create({
   bar: { borderTopLeftRadius: 2, borderTopRightRadius: 2, backgroundColor: color.frame },
   barOn: { backgroundColor: color.accentAction },
   barGhost: { backgroundColor: color.surfaceMuted },
-  barValue: { color: color.accentAction, fontSize: 11, lineHeight: 14, fontWeight: "600", marginBottom: 2, ...tabular },
+  barValue: { color: color.accentAction, fontSize: 11, lineHeight: 14, fontWeight: "500", marginBottom: 2, ...tabular },
   axis: { height: AXIS_H },
   axisText: { position: "absolute", bottom: 0, textAlign: "center", color: color.textMuted, fontSize: 11, lineHeight: 14, ...tabular },
   strip: { height: 18, marginTop: 6, flexDirection: "row", gap: 2 },

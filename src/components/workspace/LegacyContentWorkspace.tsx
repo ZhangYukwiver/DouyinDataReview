@@ -346,6 +346,34 @@ export function ContentWorkspace({
     setSidebarCollapsed((collapsed) => !collapsed);
   };
 
+  // 极简：内容库的页签直接放进顶栏，替掉和选中页签重复的标题，少一行横条
+  const tabsInTop = appStyle === "minimal" && !mobile;
+  const libraryTabs = isLibraryView(activeView) ? (
+    <View {...ws("w-libtabs")} accessibilityRole="tablist" style={[styles.libraryTabs, mobile && styles.libraryTabsMobile]}>
+      {libraryItems.map((item) => {
+        const on = item.id === activeView;
+        const Icon = item.icon;
+        return (
+          <Pressable
+            key={item.id}
+            accessibilityLabel={`${item.label}，${counts[item.id]} 条`}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: on }}
+            aria-selected={on}
+            {...fx({ hover: "tint", ws: on ? "c-filter on" : "c-filter" })}
+            onPress={() => changeView(item.id)}
+            style={({ pressed }) => [styles.libraryTab, on && { backgroundColor: alpha(item.accent, 0.13) }, pressed && styles.buttonPressed, webPointer]}
+            testID={`library-tab-${item.id}`}
+          >
+            <Icon color={on ? item.accent : color.textMuted} size={15} strokeWidth={on ? 2.4 : 2} />
+            <Text numberOfLines={1} style={[styles.libraryTabText, on && styles.libraryTabTextOn]}>{item.label}</Text>
+            <Text {...ws("mono")} style={[styles.libraryTabCount, on && { color: item.accent }]}>{formatCompactNumber(counts[item.id])}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  ) : null;
+
   return (
     <View {...fx({ motion: "fade" })} testID="content-workspace" style={[styles.root, mobile && styles.rootMobile]}>
       <View {...ws("w-stage")} style={[styles.stage, mobile && styles.stageMobile]}>
@@ -422,12 +450,14 @@ export function ContentWorkspace({
       <View style={[styles.main, mobile && styles.mainMobile]}>
         <View {...ws("w-top")} testID="workspace-topbar" style={[styles.topbar, mobile && styles.topbarMobile]}>
           <View style={styles.topbarHeading}>
+            {tabsInTop && libraryTabs ? libraryTabs : <>
             {/* 极简不要装饰性的英文眉题 */}
             {appStyle !== "minimal" ? <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : archive ? "CONTENT ARCHIVE" : "CONTENT STREAMS"}</Text> : null}
             <View style={styles.topbarTitleRow}>
               <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{currentNav.label}</Text>
               {!toolView(activeView) ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
             </View>
+            </>}
           </View>
           <View style={styles.topbarActions}>
             {mobile ? (
@@ -475,31 +505,7 @@ export function ContentWorkspace({
           </View>
         </View>
 
-        {isLibraryView(activeView) ? (
-          <View {...ws("w-libtabs")} accessibilityRole="tablist" style={[styles.libraryTabs, mobile && styles.libraryTabsMobile]}>
-            {libraryItems.map((item) => {
-              const on = item.id === activeView;
-              const Icon = item.icon;
-              return (
-                <Pressable
-                  key={item.id}
-                  accessibilityLabel={`${item.label}，${counts[item.id]} 条`}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: on }}
-                  aria-selected={on}
-                  {...fx({ hover: "tint", ws: on ? "c-filter on" : "c-filter" })}
-                  onPress={() => changeView(item.id)}
-                  style={({ pressed }) => [styles.libraryTab, on && { backgroundColor: alpha(item.accent, 0.13) }, pressed && styles.buttonPressed, webPointer]}
-                  testID={`library-tab-${item.id}`}
-                >
-                  <Icon color={on ? item.accent : color.textMuted} size={15} strokeWidth={on ? 2.4 : 2} />
-                  <Text numberOfLines={1} style={[styles.libraryTabText, on && styles.libraryTabTextOn]}>{item.label}</Text>
-                  <Text {...ws("mono")} style={[styles.libraryTabCount, on && { color: item.accent }]}>{formatCompactNumber(counts[item.id])}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
+        {tabsInTop ? null : libraryTabs}
 
         {reportView && reportUpdateNotice ? (
           <Pressable
@@ -543,6 +549,7 @@ export function ContentWorkspace({
         ) : (
           <RecordsGallery
             activeType={activeView === "live" || activeView === "feed_filtered" ? "watch_history" : activeView}
+            compactHeader={appStyle === "minimal"}
             live={activeView === "live"}
             feedFiltered={activeView === "feed_filtered"}
             onOpenPreferences={onOpenPreferences}
@@ -979,6 +986,7 @@ function FolderDialog({
 
 function RecordsGallery({
   activeType,
+  compactHeader = false,
   live = false,
   feedFiltered = false,
   onOpenPreferences,
@@ -1005,6 +1013,8 @@ function RecordsGallery({
   width,
 }: {
   activeType: PersonalRecordType;
+  /** 极简：文件夹芯片和搜索、整理、下载并成一行；来源这句状态不再单占一行，只在搜索 / 文件夹里有话可说时出现 */
+  compactHeader?: boolean;
   /** 直播一栏：卡片进直播间，页头能粘贴直播间链接 */
   live?: boolean;
   /** 「推荐流挡掉的」一栏：记录来自浏览器扩展，没有文件夹，空的时候指去设置 →「推荐流」 */
@@ -1225,6 +1235,30 @@ function RecordsGallery({
     };
   };
 
+  const galleryMeta = searching
+    ? `在 ${folderRecords.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
+    : currentFolder ? `「${nameOf(currentFolder)}」里放了 ${folderCounts?.get(currentFolder.id) ?? 0} 条，全部一共 ${records.length} 条`
+    : folderFilter === UNFILED ? `还有 ${folderCounts?.get(UNFILED) ?? 0} 条没放进文件夹`
+    : feedFiltered ? `浏览器扩展在抖音网页里碰到的 ${records.length} 条，新的在前`
+    : `${sourceLabel} · ${status?.message ?? `${records.length} 条本地记录`}`;
+  const folderBar = list && folderCounts && records.length > 0 ? (
+    <FolderBar
+      active={folderFilter}
+      counts={folderCounts}
+      error={folderError}
+      list={list}
+      nameOf={nameOf}
+      onChipMenu={openChipMenu}
+      onCreate={() => setFolderDialog({ mode: "create" })}
+      onDelete={(folder) => setFolderDialog({ mode: "delete", folder, count: folderCounts.get(folder.id) ?? 0 })}
+      onRename={(folder) => setFolderDialog({ mode: "rename", folder })}
+      onSelect={setActiveFolder}
+      privacy={privacy}
+      total={records.length}
+    />
+  ) : null;
+  const inlineFolders = compactHeader && folderBar !== null;
+
   return (
     <>
     {selectMode === "folder" ? <View {...ws("w-batch")} style={styles.batchToolbar}>
@@ -1269,15 +1303,12 @@ function RecordsGallery({
       ListHeaderComponent={(
         <>
         <View {...fx({ motion: "rise", ws: "w-ghead" })} style={styles.galleryHeader}>
-          <View style={styles.galleryHeaderCopy}>
-            <Text {...ws("w-gtitle")} style={styles.galleryTitle}>{label}</Text>
-            <Text {...ws("mono")} style={styles.galleryMeta}>{searching
-              ? `在 ${folderRecords.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
-              : currentFolder ? `「${nameOf(currentFolder)}」里放了 ${folderCounts?.get(currentFolder.id) ?? 0} 条，全部一共 ${records.length} 条`
-              : folderFilter === UNFILED ? `还有 ${folderCounts?.get(UNFILED) ?? 0} 条没放进文件夹`
-              : feedFiltered ? `浏览器扩展在抖音网页里碰到的 ${records.length} 条，新的在前`
-              : `${sourceLabel} · ${status?.message ?? `${records.length} 条本地记录`}`}</Text>
-          </View>
+          {inlineFolders ? <View style={styles.galleryHeaderCopy}>{folderBar}</View> : (
+            <View style={styles.galleryHeaderCopy}>
+              <Text {...ws("w-gtitle")} style={styles.galleryTitle}>{label}</Text>
+              <Text {...ws("mono")} style={styles.galleryMeta}>{galleryMeta}</Text>
+            </View>
+          )}
           {records.length > 0 && !privacy ? (
             <View {...ws("c-search")} style={styles.searchBox}>
               <Search size={14} color={color.textMuted} />
@@ -1317,23 +1348,9 @@ function RecordsGallery({
             </Pressable>
           </View>
         </View>
+        {inlineFolders && (searching || currentFolder || folderFilter === UNFILED) ? <Text {...ws("mono w-gmeta")} style={[styles.galleryMeta, styles.galleryMetaBelow]}>{galleryMeta}</Text> : null}
         {live && Platform.OS === "web" && !privacy && commentsConnection ? <FollowingLiveRow connection={commentsConnection} onEnter={setLiveTarget} /> : null}
-        {list && folderCounts && records.length > 0 ? (
-          <FolderBar
-            active={folderFilter}
-            counts={folderCounts}
-            error={folderError}
-            list={list}
-            nameOf={nameOf}
-            onChipMenu={openChipMenu}
-            onCreate={() => setFolderDialog({ mode: "create" })}
-            onDelete={(folder) => setFolderDialog({ mode: "delete", folder, count: folderCounts.get(folder.id) ?? 0 })}
-            onRename={(folder) => setFolderDialog({ mode: "rename", folder })}
-            onSelect={setActiveFolder}
-            privacy={privacy}
-            total={records.length}
-          />
-        ) : !list && folderError && onChangeFolders && Platform.OS === "web" && records.length > 0 ? (
+        {folderBar ? (inlineFolders ? null : folderBar) : !list && folderError && onChangeFolders && Platform.OS === "web" && records.length > 0 ? (
           // 文件夹第一次就没读到：说一声，给个重读，不然文件夹整个不见了也不知道为什么
           <View style={[styles.folderBar, styles.folderRetry]}>
             <Text accessibilityRole="alert" style={styles.folderRetryText}>{folderError}</Text>
@@ -2239,6 +2256,7 @@ const styles = StyleSheet.create({
   selectionMark: { width: 26, height: 26, borderWidth: 1, borderColor: color.textMuted, borderRadius: 6, backgroundColor: color.surface, alignItems: "center", justifyContent: "center" },
   selectionChecked: { backgroundColor: color.button, borderColor: color.button },
   galleryHeaderCopy: { flex: 1, minWidth: 180 },
+  galleryMetaBelow: { marginTop: -6, marginBottom: 12 },
   liveEntry: { flexDirection: "row", alignItems: "center", gap: 8 },
   followLive: { gap: 10, marginBottom: 18 },
   followLiveHead: { flexDirection: "row", alignItems: "center", gap: 8 },
