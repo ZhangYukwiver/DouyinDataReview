@@ -561,24 +561,19 @@ function AppContent() {
     });
   }, [collectionState, displaySnapshot?.records, displaySnapshot?.source, displaySnapshot?.updatedAt, displaySnapshot?.warnings]);
 
+  // 只在打开时读一次；切走再回到窗口不自动读
   useEffect(() => {
-    const trigger = () => autoSyncTriggerRef.current();
-    if (Platform.OS === "web") {
-      if (typeof document === "undefined") return undefined;
-      const onVisibilityChange = () => {
-        if (document.visibilityState !== "visible") return;
-        flushBrokenNotice();
-        trigger();
-      };
-      document.addEventListener("visibilitychange", onVisibilityChange);
-      if (document.visibilityState === "visible") trigger();
-      return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    if (Platform.OS !== "web") {
+      if (AppState.currentState === "active") autoSyncTriggerRef.current();
+      return undefined;
     }
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") trigger();
-    });
-    if (AppState.currentState === "active") trigger();
-    return () => subscription.remove();
+    if (typeof document === "undefined") return undefined;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") flushBrokenNotice();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    if (document.visibilityState === "visible") autoSyncTriggerRef.current();
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, []);
 
   // 配对闲置过期（电脑睡过一夜）时悄悄重新配对，不用用户先断开再连
@@ -601,11 +596,8 @@ function AppContent() {
     if (isDesktopApp()) void connectCollector({ automaticPairing: true, revealSources: false });
   }, []);
   useEffect(() => subscribeDesktopBackgroundSync((manual) => autoSyncTriggerRef.current({ manual, timer: !manual })), []);
-  // 从托盘叫回窗口等于回到前台；开机后台启动时窗口一直不出来，也要先连上采集器读一次
-  useEffect(() => trackDesktopWindowVisibility(() => {
-    flushBrokenNotice();
-    autoSyncTriggerRef.current();
-  }, () => autoSyncTriggerRef.current()), []);
+  // 从托盘叫回窗口不自动读；开机后台启动时窗口一直不出来，要先连上采集器读一次
+  useEffect(() => trackDesktopWindowVisibility(flushBrokenNotice, () => autoSyncTriggerRef.current()), []);
 
   useEffect(() => {
     if (shouldSuppressBrowserLoginAutoSync(skipBrowserLoginAutoSyncRef.current, false)) return;
