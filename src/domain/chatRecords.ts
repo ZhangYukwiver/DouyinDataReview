@@ -44,6 +44,8 @@ export interface ChatMessage {
   text: string | null;
   mediaUrl: string | null;
   share: ChatShare | null;
+  /** Export-time transcription returned by Douyin; `text` holds the result. */
+  voiceTranscription?: { status: "done" | "unavailable" | "failed"; reason?: string };
   /** Comment-specific fields, absent in older snapshots. `share` holds the source video. */
   comment?: ChatComment | null;
   /** 通话时长（秒）；接口未提供时保持 null，不从相邻消息时间推断。 */

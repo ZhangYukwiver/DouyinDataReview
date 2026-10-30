@@ -108,7 +108,7 @@ import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/s
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
 import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
-import { buildDataExport, type DataExportSelection } from "./src/services/exportData";
+import { buildDataExportWithVoice, type DataExportSelection } from "./src/services/exportData";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 // @ts-expect-error react-native-web 没给内部模块出类型
 import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
@@ -263,6 +263,18 @@ function AppContent() {
   useEffect(() => { if (!loginExpired) setLoginNoticeHidden(false); }, [loginExpired]);
   const [collectorSnapshot, setCollectorSnapshot] = useState<CollectorSnapshot | null>(null);
   const [exportSnapshot, setExportSnapshot] = useState<CollectorSnapshot | null>(null);
+  const [exportProgress, setExportProgress] = useState<{ completed: number; total: number } | null>(null);
+  const exportControllerRef = useRef<AbortController | null>(null);
+  const exportAccountRef = useRef<string | null>(null);
+  const currentExportAccountRef = useRef<string | null>(null);
+  currentExportAccountRef.current = collectorStatus?.account?.id ?? null;
+  useEffect(() => {
+    exportControllerRef.current?.abort();
+    exportControllerRef.current = null;
+    setExportProgress(null);
+    setExportSnapshot(null);
+    return () => { exportControllerRef.current?.abort(); };
+  }, [collectorStatus?.account?.id, collectorUrl]);
   const [collectorBusy, setCollectorBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
@@ -1569,8 +1581,11 @@ function AppContent() {
   // 导出直接找采集器要最新的一份：界面这会儿可能在看导入的文件，或者采集中用的是冻结的旧样本
   async function exportCurrentData() {
     if (!collectorToken) return;
+    const accountId = currentExportAccountRef.current;
     try {
       const snapshot = await getCollectorRecords(collectorUrl, collectorToken);
+      if (accountId !== currentExportAccountRef.current) return;
+      exportAccountRef.current = accountId;
       setPreferences(null);
       setExportSnapshot(snapshot);
     } catch (error) {
@@ -1578,13 +1593,34 @@ function AppContent() {
     }
   }
 
-  function exportSelectedData(selection: DataExportSelection) {
-    if (!exportSnapshot) return;
+  function closeDataExport() {
+    exportControllerRef.current?.abort();
+    exportControllerRef.current = null;
+    setExportProgress(null);
+    setExportSnapshot(null);
+  }
+
+  async function exportSelectedData(selection: DataExportSelection) {
+    if (!exportSnapshot || exportControllerRef.current) return;
+    const controller = new AbortController();
+    exportControllerRef.current = controller;
     try {
-      const data = buildDataExport(exportSnapshot, selection);
+      const data = await buildDataExportWithVoice(exportSnapshot, selection, {
+        connection: collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null,
+        accountId: exportAccountRef.current, signal: controller.signal,
+        onProgress: setExportProgress,
+      });
+      controller.signal.throwIfAborted();
       triggerBrowserDownload(new Blob([JSON.stringify(data)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
       setExportSnapshot(null);
-    } catch (error) { showAlert("无法导出数据", collectorErrorMessage(error)); }
+      if (data.warnings.length) showAlert("已导出，部分语音未转写", data.warnings.join("\n"));
+    } catch (error) { if (!controller.signal.aborted) showAlert("无法导出数据", collectorErrorMessage(error)); }
+    finally {
+      if (exportControllerRef.current === controller) {
+        exportControllerRef.current = null;
+        setExportProgress(null);
+      }
+    }
   }
 
   async function openRecord(url: string) {
@@ -2029,7 +2065,7 @@ function AppContent() {
         onShowLogin={isDesktopApp() ? openLogin : undefined}
         loginExpired={loginExpired}
       />
-      {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={() => setExportSnapshot(null)} onExport={exportSelectedData} /> : null}
+      {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={closeDataExport} onExport={exportSelectedData} progress={exportProgress} /> : null}
     </SafeAreaView>
   );
 }

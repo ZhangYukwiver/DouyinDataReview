@@ -5,10 +5,11 @@ import type { DataExportSelection } from "../../services/exportData";
 import { ease, useCountUp } from "./motion";
 import { workspaceColors as color } from "./workspaceTheme";
 
-export function DataExportDialog({ snapshot, onClose, onExport }: {
+export function DataExportDialog({ snapshot, onClose, onExport, progress = null }: {
   snapshot: CollectorSnapshot;
   onClose: () => void;
   onExport: (selection: DataExportSelection) => void;
+  progress?: { completed: number; total: number } | null;
 }) {
   const [selection, setSelection] = useState<DataExportSelection>({ watch_history: true, liked_videos: true, favorite_videos: true, chat: false });
   const parts = [
@@ -18,25 +19,27 @@ export function DataExportDialog({ snapshot, onClose, onExport }: {
     { key: "chat", label: "聊天数据", count: snapshot.chatMessages.length, detail: `${snapshot.chatMessages.length} 条好友消息 · ${snapshot.chatConversations.length} 个会话（含群聊统计）` },
   ] as const;
   const empty = !Object.values(selection).some(Boolean);
+  const exporting = progress !== null;
   // 勾选和导出按钮联动：按钮上直接写要导出多少条，勾一项数字滚一次
   const total = useCountUp(parts.reduce((sum, part) => sum + (selection[part.key] ? part.count : 0), 0), 360);
   return <Modal transparent visible animationType="fade" onRequestClose={onClose}>
     <View style={styles.backdrop}>
       <View accessibilityViewIsModal style={styles.dialog} testID="data-export-dialog">
         <Text accessibilityRole="header" style={styles.title}>选择导出数据</Text>
-        <Text style={styles.detail}>只导出勾选的本地数据，不触发抖音联网读取。文件可重新导入；未勾选的内容不会写入文件。</Text>
+        <Text style={styles.detail}>只导出勾选的本地数据。聊天中的语音会通过抖音转成文字，需要联网；未能转写的语音会保留原消息并注明原因。文件可重新导入。</Text>
         {parts.map(({ key, label, detail }) => <Pressable key={key} accessibilityRole="checkbox" accessibilityLabel={label}
-          accessibilityState={{ checked: selection[key] }} aria-checked={selection[key]}
+          accessibilityState={{ checked: selection[key], disabled: exporting }} aria-checked={selection[key]} disabled={exporting}
           onPress={() => setSelection(current => ({ ...current, [key]: !current[key] }))}
           style={[styles.option, selection[key] && styles.selected, ease("background-color,border-color", 160)]} testID={`data-export-${key}`}>
           <Text style={styles.text}>{selection[key] ? "✓ " : "○ "}{label}</Text><Text style={styles.detail}>{detail}</Text>
         </Pressable>)}
         {selection.chat ? <Text style={styles.detail}>聊天文件包含消息正文和会话信息，请确认保存位置。</Text> : null}
         {empty ? <Text style={styles.detail}>请至少选择一部分数据。</Text> : null}
+        {progress ? <Text accessibilityLiveRegion="polite" style={styles.detail}>正在转写语音 {progress.completed} / {progress.total}…</Text> : null}
         <View style={styles.actions}>
           <Pressable accessibilityRole="button" onPress={onClose} style={styles.button} testID="data-export-cancel"><Text style={styles.text}>取消</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="导出所选数据" accessibilityState={{ disabled: empty }} disabled={empty}
-            onPress={() => onExport(selection)} style={[styles.button, styles.selected, empty && { opacity: 0.4 }]} testID="data-export-confirm"><Text style={styles.text}>{empty ? "导出所选数据" : `导出 ${total.toLocaleString("zh-CN")} 条`}</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="导出所选数据" accessibilityState={{ disabled: empty || exporting }} disabled={empty || exporting}
+            onPress={() => onExport(selection)} style={[styles.button, styles.selected, (empty || exporting) && { opacity: 0.4 }]} testID="data-export-confirm"><Text style={styles.text}>{exporting ? "正在导出…" : empty ? "导出所选数据" : `导出 ${total.toLocaleString("zh-CN")} 条`}</Text></Pressable>
         </View>
       </View>
     </View>
