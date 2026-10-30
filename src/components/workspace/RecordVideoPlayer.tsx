@@ -166,9 +166,9 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
             muted={muted} onToggleMute={() => setMuted((value) => !value)} commentsOpen={commentsOpen} onToggleComments={toggleComments} onOpenRecord={onOpenRecord}
             shareOpen={shareOpen} onToggleShare={toggleShare} prefs={prefs} onPrefs={(patch) => setPrefs((value) => ({ ...value, ...patch }))} onEnded={() => move(1)} onSeen={onSeen ? reportSeen : undefined} onLeave={onSeen ? (watch) => { left.current = watch; } : undefined}
             commentsConnection={commentsConnection} title={title} onClose={onClose}
-            position={`${index + offset + 1} / ${feed.length}${index + offset < feed.length - 1 ? "" : !onReachEnd ? " · 已到最后" : stalled ? " · 暂时没有更多" : " · 正在加载更多"}`} />; })}
+            position={`${index + offset + 1} / ${feed.length}`} />; })}
           {onReachEnd && stalled && index >= feed.length - 3 ? <div className="rv-feed-status" role="status">
-            <span>{feedError ? `推荐没加载出来：${feedError}` : "连着几批都是直播或广告，暂时没有能播的新视频。"}</span>
+            <span>{feedError ?? "暂时没有更多视频"}</span>
             <button className="rv-button" onClick={retryFeed}>重试</button>
           </div> : null}
           {/* 上下切换放在控制栏最右边；推荐流到底时点「下一个」再要一次，上一批没要到也能重试 */}
@@ -247,6 +247,14 @@ function DataStream() {
   return <><canvas ref={ref} className="rv-stream" aria-hidden="true" /><div className="rv-stream rv-stream-veil" aria-hidden="true" /></>;
 }
 
+// 视频加载：抖音的红、青两段光沿播放三角的轮廓互相追，三角本身轻轻呼吸；不配文字
+const PLAY_PATH = "M24 17.5 46 32 24 46.5Z";
+const VideoLoader = () => <svg className="rv-loader" viewBox="0 0 64 64" aria-hidden="true">
+  <path className="rv-loader-core" d={PLAY_PATH} />
+  <path className="rv-loader-trail rv-loader-cyan" d={PLAY_PATH} pathLength={100} />
+  <path className="rv-loader-trail" d={PLAY_PATH} pathLength={100} />
+</svg>;
+
 type PlayerPrefs = { autoNext: boolean; clean: boolean; rate: number };
 const RATES = [1, 1.25, 1.5, 2, 0.75];
 // 抖音电脑端那种标题：话题词单独上色；话题到空白、# 或标点为止（和采集器认话题的规则一样）
@@ -267,7 +275,6 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   const [paused, setPaused] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [loadingMessage, setLoadingMessage] = useState("正在准备视频…");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const src = typeof media === "string" ? media : null;
@@ -323,23 +330,19 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
     const controller = new AbortController();
     const video = videoRef.current;
     const timeout = setTimeout(() => {
-      setError("视频准备超时，请重试或切换下一个视频。");
+      setError("视频准备超时");
       controller.abort();
     }, 90_000);
     setMedia(null); setSlide(0); setReadyToPlay(false); setError(null); setPaused(true); setElapsed(0); setDuration(0);
-    setLoadingMessage("正在准备视频…");
     void (async () => {
       try {
-        const next = await waitForCollector(() => loaderRef.current(record, controller.signal, (message) => {
-          if (!controller.signal.aborted) setLoadingMessage(message);
-        }), controller.signal);
+        const next = await waitForCollector(() => loaderRef.current(record, controller.signal), controller.signal);
         if (controller.signal.aborted) return;
-        setLoadingMessage("正在载入画面…");
         setMedia(next);
         // 图文没有要缓冲的视频，拿到图片就开始：自动翻页、放配乐
         if (typeof next === "object") { setReadyToPlay(true); setPaused(false); }
       } catch (cause) {
-        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "视频暂时无法播放，请稍后重试。");
+        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "视频暂时无法播放");
       } finally { clearTimeout(timeout); }
     })();
     return () => {
@@ -380,14 +383,14 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   }, [album, active]);
   useEffect(() => {
     if (!active || !src || readyToPlay || error) return;
-    const timeout = setTimeout(() => setError("视频画面加载超时，请重试或切换下一个视频。"), 15_000);
+    const timeout = setTimeout(() => setError("视频画面加载超时"), 15_000);
     return () => clearTimeout(timeout);
   }, [active, src, readyToPlay, error]);
   const toggle = () => {
     if (album) { if (!error) setPaused(!paused); return; }
     const video = videoRef.current;
     if (!src || !readyToPlay || error || !video) return;
-    if (video.paused) void video.play().catch(() => setError("无法开始播放，请重试。"));
+    if (video.paused) void video.play().catch(() => setError("无法开始播放"));
     else video.pause();
   };
 
@@ -408,13 +411,13 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
         onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
         onTimeUpdate={() => { const at = videoRef.current?.currentTime ?? 0; setElapsed(at); if (active) reached.current = Math.max(reached.current, at); }}
         onDurationChange={() => { const value = videoRef.current?.duration; setDuration(value && Number.isFinite(value) ? value : 0); }}
-        onError={() => { if (src) setError("视频无法播放，请重试或打开抖音原视频。"); }} />}
+        onError={() => { if (src) setError("视频无法播放"); }} />}
       {(!readyToPlay || error) && record.coverUrl ? <img className="rv-loading-cover" src={record.coverUrl} alt="" referrerPolicy="no-referrer" /> : null}
       <div className="rv-shade" aria-hidden="true" />
-      {!readyToPlay || error ? <div className="rv-message" role={error ? "alert" : "status"}>
-        {error ? <><p>{error}</p><button className="rv-button" onClick={() => setAttempt((value) => value + 1)}>重试播放</button>
-          {record.url && onOpenRecord ? <button className="rv-text-button" onClick={() => void onOpenRecord(record.url!)}>打开抖音原视频</button> : null}</>
-          : <><span className="rv-spinner" /><p>{loadingMessage}</p><small>可随时上下滑动切换视频</small></>}
+      {!readyToPlay || error ? <div className="rv-message" role={error ? "alert" : "status"} aria-label={error ? undefined : "视频加载中"}>
+        {error ? <><p>{error}</p><button className="rv-button" onClick={() => setAttempt((value) => value + 1)}>重试</button>
+          {record.url && onOpenRecord ? <button className="rv-text-button" onClick={() => void onOpenRecord(record.url!)}>打开原视频</button> : null}</>
+          : <VideoLoader />}
       </div> : paused ? <button className="rv-play-overlay" aria-label="开始播放" onClick={toggle}><Play color="#fff" fill="#fff" size={48} /></button> : null}
       <header className="rv-topbar">
         <button className="rv-icon-button" aria-label="关闭视频" onClick={onClose}><X color="#fff" size={24} /></button>
@@ -535,22 +538,21 @@ const VideoComments = memo(function VideoComments({ record, connection, ready, o
   return <section className="rv-comments" data-comments-panel aria-label="视频评论" onKeyDown={(event) => event.stopPropagation()}>
     <header className="rv-comments-header"><h2>评论 <span>{count(record.stats?.commentCount)}</span></h2>
       <button className="rv-icon-button" aria-label="关闭评论" onClick={onClose}><X color="#fff" size={21} /></button></header>
-    <p className="rv-comments-context" title={record.title}>@{record.author ?? "抖音用户"} · <EmojiText text={record.title} /></p>
     <div className="rv-comment-list" tabIndex={0}>
-      {!connection ? <p className="rv-comment-notice">连接本地采集器后可查看评论。</p> : null}
-      {connection && (!ready || loading) ? <div className="rv-comment-notice" role="status"><span className="rv-spinner" /><p>{ready ? "正在读取评论…" : "视频准备好后读取评论…"}</p></div> : null}
-      {error ? <div className="rv-comment-notice" role="alert"><p>{error}</p><button className="rv-button" onClick={() => setAttempt((value) => value + 1)}>重试评论</button></div> : null}
+      {!connection ? <p className="rv-comment-notice">连接采集器后可看评论</p> : null}
+      {connection && (!ready || loading) ? <div className="rv-comment-notice" role="status" aria-label="评论加载中"><span className="rv-spinner" /></div> : null}
+      {error ? <div className="rv-comment-notice" role="alert"><p>{error}</p><button className="rv-button" onClick={() => setAttempt((value) => value + 1)}>重试</button></div> : null}
       {threads.map((comment) => <article className="rv-comment" key={posted.has(comment.id) ? `mine:${comment.id}` : `${page!.sessionId}:${comment.id}`} data-comment-id={comment.id}>
         <CommentRow comment={comment} onReply={reply} />
         {mine.filter((item) => item.parentId === comment.id).map((item) => <article className="rv-reply rv-replies" key={item.id} data-reply-id={item.id}><CommentRow comment={item} onReply={reply} /></article>)}
         {comment.replies > 0 ? <div className="rv-replies"><p className="rv-reply-notice">{count(comment.replies)} 条回复，到抖音原页查看</p></div> : null}
       </article>)}
       {page && !threads.length && !loading && !error ? <p className="rv-comment-notice">暂时没有评论</p> : null}
-      {page?.limited ? <p className="rv-comment-notice">已展示 500 条，可在原页继续查看。</p> : page && page.hasMore !== false ?
-        <button className="rv-more" disabled={loading} onClick={() => setAttempt((value) => value + 1)}>{loading ? "正在加载…" : "加载更多评论"}</button> : page?.items.length ? <p className="rv-comment-end">已显示全部已返回评论</p> : null}
+      {page?.limited ? <p className="rv-comment-notice">已显示 500 条</p> : page && page.hasMore !== false ?
+        <button className="rv-more" disabled={loading} onClick={() => setAttempt((value) => value + 1)}>{loading ? <span className="rv-spinner rv-spinner-small" /> : "更多评论"}</button> : null}
     </div>
     <footer className="rv-comments-footer">{connection ? <CommentComposer key={record.id} disabled={!page} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} onSend={send} />
-      : record.url && onOpenRecord ? <button className="rv-more" onClick={() => void onOpenRecord(record.url!)}>在抖音参与讨论 <ArrowUpRight color="#ddd" size={15} /></button> : <span>评论来自抖音公开页面</span>}</footer>
+      : record.url && onOpenRecord ? <button className="rv-more" onClick={() => void onOpenRecord(record.url!)}>在抖音参与讨论 <ArrowUpRight color="#ddd" size={15} /></button> : null}</footer>
   </section>;
 });
 
@@ -558,7 +560,7 @@ function CommentRow({ comment, onReply }: { comment: ExploreComment; onReply?: (
   return <div className="rv-comment-row">
     <div className="rv-comment-avatar">{comment.author?.avatar ? <img src={comment.author.avatar} alt="" referrerPolicy="no-referrer" loading="lazy" /> : comment.name.slice(0, 1)}</div>
     <div className="rv-comment-body"><strong>{comment.name}{comment.replyToName ? <span className="rv-reply-to"> 回复 @{comment.replyToName}</span> : null}</strong>
-      {comment.text ? <p><EmojiText text={comment.text} /></p> : !comment.images?.length ? <p>图片或表情评论，请在原页查看</p> : null}
+      {comment.text ? <p><EmojiText text={comment.text} /></p> : !comment.images?.length ? <p>[图片]</p> : null}
       {comment.images?.map((url) => <img className="rv-comment-image" key={url} src={url} alt="评论图片或表情" referrerPolicy="no-referrer" loading="lazy" />)}
       <div className="rv-comment-meta"><small>{date(comment.publishedAt)}</small>
         {onReply ? <button className="rv-reply-action" aria-label={`回复 ${comment.name}`} onClick={() => onReply(comment)}>回复</button> : null}</div></div>
@@ -602,7 +604,7 @@ function CommentComposer({ replyTo, disabled, onCancelReply, onSend }: {
       <img src={url} alt="" referrerPolicy="no-referrer" loading="lazy" draggable={false} /></button>)}</div> : null}
     <div className="rv-composer-box">
       <textarea ref={inputRef} rows={1} value={text} maxLength={500} disabled={disabled} readOnly={sending}
-        placeholder={disabled ? "评论加载好后就能发" : replyTo ? `回复 @${replyTo.name}` : "留下你的精彩评论吧"} aria-label={replyTo ? `回复 ${replyTo.name}` : "发表评论"}
+        placeholder={replyTo ? `回复 @${replyTo.name}` : "留下你的精彩评论吧"} aria-label={replyTo ? `回复 ${replyTo.name}` : "发表评论"}
         onChange={(event) => { setText(event.target.value); setNotice(null); }}
         onKeyDown={(event) => {
           if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -680,10 +682,10 @@ function VideoShare({ record, connection, onClose }: { record: PersonalVideoReco
       <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索" aria-label="搜索朋友" /></label>
     <p className="rv-share-title">分享给朋友</p>
     <div className="rv-share-list">
-      {!connection ? <p className="rv-share-notice">连接本地采集器后可以分享给朋友。</p>
+      {!connection ? <p className="rv-share-notice">连接采集器后可分享</p>
         : error ? <div className="rv-share-notice" role="alert"><p>{error}</p><button className="rv-button" onClick={() => setAttempt((value) => value + 1)}>重试</button></div>
-          : !page ? <div className="rv-share-notice" role="status"><span className="rv-spinner" /><p>正在读取朋友列表…</p></div>
-            : !shown.length ? <p className="rv-share-notice">{keyword ? "没有搜索到朋友" : "暂时没有可以分享的朋友"}</p> : null}
+          : !page ? <div className="rv-share-notice" role="status" aria-label="朋友列表加载中"><span className="rv-spinner" /></div>
+            : !shown.length ? <p className="rv-share-notice">{keyword ? "没有找到" : "暂无可分享的朋友"}</p> : null}
       {shown.map((person) => {
         const state = sent[person.id] ?? (person.shared ? "done" : undefined);
         return <div className="rv-share-row" key={person.id}>
