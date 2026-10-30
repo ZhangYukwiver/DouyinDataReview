@@ -82,6 +82,17 @@ export function saveAutoSync(enabled: boolean, storage: StyleStorage | undefined
   save(AUTO_SYNC_KEY, enabled ? "on" : "off", storage);
 }
 
+// 「AI 助手」是可选功能：默认不装，设置里装上才在侧栏出现
+const ASSISTANT_KEY = "content-insights.assistant";
+
+export function loadAssistantInstalled(storage: StyleStorage | undefined = globalThis.localStorage): boolean {
+  return load<string>(ASSISTANT_KEY, ON_OFF, "off", storage) === "on";
+}
+
+export function saveAssistantInstalled(installed: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(ASSISTANT_KEY, installed ? "on" : "off", storage);
+}
+
 /** 报告（故事页、分享图、纪念卡）实际用哪套：极简借用单独选的那套，其余风格就是自己。 */
 export function resolveStoryStyle(appStyle: AppStyle, storyStyle: StoryStyle): StoryStyle {
   return appStyle === "minimal" ? storyStyle : appStyle;

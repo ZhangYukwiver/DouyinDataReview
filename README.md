@@ -54,9 +54,36 @@
 | 内容探索与抖音指数 | 搜用户和作品，点赞、收藏、关注、评论，下载用户主页作品；看实时和飙升热点、达人指标、逐日趋势和粉丝画像 | 互动同样要先打开「允许在抖音上操作」 |
 | 直播观看与弹幕 | 看关注的人正在播的直播，调弹幕透明度、字号、速度、区域和屏蔽词 | 只看不发：不发弹幕、不送礼物、不点赞 |
 | 推荐流过滤 | 在 Chrome、Edge 刷抖音网页时，按文案、作者、话题、配乐或正则过滤推荐：只记录、隐藏，或隐藏后点「不感兴趣」；挡掉的视频进内容库 | 在「设置 → 推荐流」装一次扩展（需开发者模式）；打开页面的第一屏拦不到；「不感兴趣」每分钟最多 6 条 |
+| AI 助手（可选） | 用对话查自己的记录、私信和创作者数据，或让它替你搜抖音、下载作品、整理文件夹、开始读取；Claude Code、Codex 也能通过 [MCP](#让-claude-codecodex-直接用这个应用mcp) 用同一套功能 | 默认不装，在「设置 → AI」安装；模型用你自己的 OpenAI 兼容接口或本机 Codex / Claude Code；发私信、点赞、评论这类操作每次都要你在应用里点「允许」 |
 | 持续报告与抖音年度报告 | 最近 30 天对比上一时段，样本不足回退到 90 天；年度回顾有内容年志、档案馆、海报三种风格，可导出 HTML 和 1080 × 1440 PNG 分享图 | 只用本机已存记录，不补造缺失数据 |
 
 AI 视频解析和剪辑已拆成独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)：桌面版里点视频上的「送去」，下好的视频直接进拆片工坊的素材库（图文作品不支持）。
+
+### 让 Claude Code、Codex 直接用这个应用（MCP）
+
+应用开着时，采集器在 `http://127.0.0.1:47652/mcp`（从源码运行是 `4765` 端口）提供 MCP 接口，工具和应用内的 AI 助手一样：查记录和做统计、读私信、搜抖音、读创作者中心、看谁在直播、下载、整理文件夹、开始读取等。不用安装 AI 助手也能用。令牌在第一次启动时生成，存在数据目录的 `mcp-token` 文件里。
+
+macOS 上接入 Claude Code：
+
+```bash
+claude mcp add --transport http dy2 http://127.0.0.1:47652/mcp --header "Authorization: Bearer $(cat "$HOME/Library/Application Support/内容数据工作台/collector/mcp-token")"
+```
+
+接入 Codex（令牌从环境变量读，启动 Codex 的终端里要设好 `DY2_MCP_TOKEN`）：
+
+```bash
+export DY2_MCP_TOKEN="$(cat "$HOME/Library/Application Support/内容数据工作台/collector/mcp-token")"
+```
+
+```bash
+codex mcp add dy2 --url http://127.0.0.1:47652/mcp --bearer-token-env-var DY2_MCP_TOKEN
+```
+
+Windows 上令牌文件在 `%APPDATA%\内容数据工作台\collector\mcp-token`。
+
+- 只接受本机连接，网页发来的请求一律拒绝。拿到令牌就能读你在应用里的全部数据，别外传；删掉 `mcp-token` 再重启应用会换一个。
+- 发私信、点赞、收藏、关注、评论、分享和推荐流「不感兴趣」，每次都会在应用里弹卡片，你点「允许」才做，所以应用要开着，15 分钟没点就作罢。点赞、收藏、关注、评论还要先在「设置 → 隐私」打开「允许在抖音上操作」。
+- 不提供登录、清除记录、删除账号、导入数据和改设置。
 
 ## 实现方式
 
@@ -165,6 +192,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 - `external-browser.json`：只记凭据来源（`app` 为应用内扫码，`desktop` 为抖音电脑客户端，其余为浏览器类型），不含凭据
 - `direct-history-template.json`：浏览器标识和白名单查询参数，不含 Cookie
 - `feed-filter.json`：推荐流过滤的词条、处置记录和挡掉的视频（最多 1000 条），各账号共用
+- `assistant.json`：AI 助手的对话（不含接口 Key）；`mcp-token`：MCP 令牌，仅当前用户可读写
 - `diagnostics/verify-*.html`：应用内登录遇到身份验证时存下的页面结构（去掉脚本、数字打码），只在本机，用来调整识别
 - 应用内登录的网页状态在应用数据目录的 `Partitions/douyin-login/`，各账号共用
 - 内容年志只把汇总快照写进浏览器本地；「清除本地记录」只删当前账号的记录和快照，不动登录状态，也不改抖音账号里的数据
@@ -181,6 +209,8 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 | `/v1/creator/read`、`/v1/live/*` | 创作者中心与直播；关注在播列表缓存 30 秒 |
 | `/v1/feed-filter*` | 推荐流过滤；扩展用单独范围的令牌，只能读设置、回传记录 |
 | `/v1/downloads*` | 下载与播放，由用户触发，播放地址用独立密钥 |
+| `/v1/assistant*` | AI 助手的对话、确认卡片和本机 Codex / Claude Code 检测 |
+| `/mcp` | 给本机 AI 客户端用的 MCP，认 `mcp-token`；只允许本机连接，带 `Origin` 的请求一律拒绝 |
 | `/v1/browser/*` | 导入凭据：`sources`、`connect`（`{"browser":"app"}` 应用内扫码，加 `"fresh":true` 换号；`{"browser":"desktop"}` 读电脑客户端）、`login-qrcode`、`login-window`、`confirm`、`pending`、`disconnect`；仅本机可用 |
 
 桌面版的「送去拆片工坊」不走接口，由主进程把下好的视频复制进拆片工坊的收件箱。
@@ -191,6 +221,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 - 原始响应、请求头、Cookie、签名和完整诊断 URL 不写入记录文件。
 - 群聊消息和官方火花数据都是用时通过 IM 接口现读，不写入记录文件。
 - 直播弹幕只在采集器内存里留最近 300 条，退出直播间就没了。
+- AI 助手的接口 Key 只存在工作台的浏览器本地存储里，每次对话随请求带给采集器、用完即丢，不写进数据目录。
 
 </details>
 
@@ -228,7 +259,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ### 收费吗？数据会传到哪里？
 
-应用免费，源码以 MIT 许可开源。个人记录保存和报告统计在本机完成，在线采集只请求抖音，应用本身不连任何 AI 服务。AI 解析和剪辑已拆到独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)：只有你点「送去」按钮送过去的那条视频（文件和标题、作者、链接、时长）会交给它，之后怎么用、发到哪里由拆片工坊自己说明。完整说明见[数据来源与功能边界](#数据来源与功能边界)。
+应用免费，源码以 MIT 许可开源。个人记录保存和报告统计在本机完成，在线采集只请求抖音，默认不连任何 AI 服务。装了可选的 AI 助手后，你发的话和它查到的数据会发给你自己在「设置 → AI」里填的模型接口，或交给本机的 Codex / Claude Code。AI 解析和剪辑已拆到独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)：只有你点「送去」按钮送过去的那条视频（文件和标题、作者、链接、时长）会交给它，之后怎么用、发到哪里由拆片工坊自己说明。完整说明见[数据来源与功能边界](#数据来源与功能边界)。
 
 ### 会被封号吗？
 
@@ -379,6 +410,7 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 - Watch live streams with configurable live comments; live comments are received only.
 - Filter the Douyin web recommendation feed in Chrome or Edge with a browser extension you install once from Settings: match keywords, authors, hashtags, music or regex, then log, hide, or hide and send "not interested". Filtered videos show up in the library.
 - Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports.
+- Optional AI assistant (off by default, install it in Settings → AI): ask about your own records, chats and Creator Center data, or have it search Douyin, download, organize folders and start reading, using your own OpenAI-compatible API or the Codex / Claude Code CLI on your computer. Messages, likes, comments and other actions others can see always wait for you to click "允许" (allow) in the app. Claude Code and Codex can use the same tools over MCP; see [the MCP section](#让-claude-codecodex-直接用这个应用mcp).
 - The AI video workbench now lives in a separate app, [ReelLab](https://github.com/ZhangYukwiver/ReelLab); on the desktop app, the "送去" (send) button on a video in the library or the explore page sends it over in one click.
 
 ### How it works
@@ -390,7 +422,7 @@ Collection is limited to records currently returned by Douyin's private APIs and
 - **Is there a Douyin Wrapped?** DouyinDataReview builds a Wrapped-style year-in-review from your own records on your computer, any time you want; you can [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) in the browser without installing anything.
 - **How do I export my Douyin watch history?** Connect the collector and import credentials in Settings → Account with video reading selected. After the full read finishes, click 导出数据 (Export data) in Settings → Data. Select watch history, likes, favorites and/or chats. Only selected data is saved to JSON; chats are unchecked by default. Exported files can be imported again.
 - **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from Douyin's 个人信息下载 (personal data download) to generate a report without signing in.
-- **Is it free and private?** The app is free and MIT-licensed. Records are stored and reports computed locally, collection only talks to Douyin, and the app itself calls no AI service. AI analysis and editing moved to the separate [ReelLab](https://github.com/ZhangYukwiver/ReelLab) app: only a video you send with the "送去" (send) button (the file plus its title, author, link and duration) is handed to it, and ReelLab documents what happens next.
+- **Is it free and private?** The app is free and MIT-licensed. Records are stored and reports computed locally, collection only talks to Douyin, and no AI service is called unless you install the optional AI assistant, which sends your messages and the data it looks up to the model API you configure (or to Codex / Claude Code on your computer). AI analysis and editing moved to the separate [ReelLab](https://github.com/ZhangYukwiver/ReelLab) app: only a video you send with the "送去" (send) button (the file plus its title, author, link and duration) is handed to it, and ReelLab documents what happens next.
 
 ## 交流与反馈
 

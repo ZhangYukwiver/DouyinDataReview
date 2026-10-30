@@ -11,6 +11,8 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
+import { AssistantError } from "./assistant/chat.mjs";
+import { createAssistant } from "./assistant/index.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources, openBrowserPage } from "./browserConnection.mjs";
 import { DesktopClientError, desktopDataDirectory, readDesktopIdentity, readDesktopSession } from "./desktopClient.mjs";
@@ -349,6 +351,15 @@ export async function startCollectorServer({
       accountId: target?.id ?? null, newAccount: !target, adoptable, readPermissions };
   };
   const pairing = new PairingManager();  const bindAddress = options.lan ? "0.0.0.0" : "127.0.0.1";
+  // AI 助手：数据在进程里查，功能调自己的接口（server 在下面建好、监听后才会被用到）
+  const assistant = createAssistant({
+    dataDirectory,
+    baseUrl: () => `http://127.0.0.1:${server.address().port}`,
+    pairing,
+    collector: () => collector,
+    accounts: () => accounts.list(),
+    writesEnabled: () => writesEnabled,
+  });
   const statusWaiters = new Set();
 
   const waitForStatus = (response, revision) => {
@@ -451,6 +462,13 @@ export async function startCollectorServer({
       return;
     }
 
+    // 给用户自己的 AI 客户端（Claude Code、Codex 这类）接入的 MCP：README 里写怎么接，认数据目录里 mcp-token 的令牌，只给本机连
+    if (url.pathname === "/mcp") {
+      if (isLoopbackAddress(request.socket.remoteAddress ?? "")) await assistant.handleMcp(request, response);
+      else { sendJson(response, 403, { error: "loopback_only" }); request.resume(); }
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/v1/pairing-code") {
       const remoteAddress = request.socket.remoteAddress ?? "unknown";
       if (!isLoopbackAddress(remoteAddress) || ownPage) {
@@ -526,7 +544,7 @@ export async function startCollectorServer({
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
     const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
     // 操作开关存在根目录、所有账号共用，换号时也能读改
-    const accountFree = url.pathname === "/v1/settings/writes" || url.pathname.startsWith("/v1/feed-filter");
+    const accountFree = url.pathname === "/v1/settings/writes" || url.pathname.startsWith("/v1/feed-filter") || url.pathname.startsWith("/v1/assistant");
     if (!readable && !loginWait && !accountFree && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
@@ -879,6 +897,30 @@ export async function startCollectorServer({
           message: known ? error.message : malformed ? "请求无效，请重试。" : id || request.method === "POST" ? "直播间没打开，请稍后重试。" : "没读到关注的人的直播，请稍后重试。",
         });
       }
+    } else if (url.pathname === "/v1/assistant" || url.pathname.startsWith("/v1/assistant/")) {
+      try {
+        if (request.method === "GET" && url.pathname === "/v1/assistant") {
+          const after = url.searchParams.get("afterRevision");
+          sendJson(response, 200, await assistant.wait(after !== null && /^\d+$/u.test(after) ? Number(after) : null));
+        } else if (request.method === "POST" && url.pathname === "/v1/assistant/messages") {
+          const body = await readJsonBody(request, 64 * 1024);
+          sendJson(response, 200, await assistant.send(body?.text, body?.config));
+        } else if (request.method === "POST" && url.pathname === "/v1/assistant/stop") sendJson(response, 200, assistant.stop());
+        else if (request.method === "DELETE" && url.pathname === "/v1/assistant") sendJson(response, 200, await assistant.reset());
+        else if (request.method === "POST" && /^\/v1\/assistant\/confirm\/[0-9a-f]{16}$/u.test(url.pathname)) {
+          const body = await readJsonBody(request);
+          sendJson(response, 200, assistant.answer(url.pathname.split("/").at(-1), body?.allow === true));
+        } else if (request.method === "GET" && url.pathname === "/v1/assistant/runtimes") sendJson(response, 200, await assistant.runtimes(url.searchParams.get("fresh") === "1"));
+        else sendJson(response, 404, { error: "not_found" });
+      } catch (error) {
+        const known = error instanceof AssistantError;
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        if (!known && !malformed) console.error("AI 助手接口出错:", error);
+        if (!response.headersSent) sendJson(response, known ? error.status : malformed ? 400 : 500, {
+          error: known ? error.code : malformed ? "invalid_request" : "assistant_failed",
+          message: known ? error.message : malformed ? "请求无效，请重试。" : "AI 助手出错了，请稍后再试。",
+        });
+      }
     } else if (url.pathname === "/v1/settings/writes" && ["GET", "POST"].includes(request.method)) {
       if (request.method === "POST") {
         let body;
@@ -1117,6 +1159,7 @@ export async function startCollectorServer({
       await accountWork?.catch(() => undefined);
       await browserWork;
       await clearPendingBrowser();
+      await assistant.close();
       await explorer.close();
       await collector.close();
     } finally {

@@ -50,6 +50,7 @@ import {
   Settings,
   Settings2,
   Sparkles,
+  Bot,
   Star,
   Trash2,
 } from "lucide-react-native";
@@ -104,11 +105,13 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "summary" | "highlights" | "chat" | "explore" | "creator";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "summary" | "highlights" | "chat" | "explore" | "creator" | "assistant";
 
 export interface ContentWorkspaceProps {
   explore?: React.ReactNode;
   creator?: React.ReactNode;
+  /** AI 助手是可选功能：没装就不传，侧栏也不出这一项 */
+  assistant?: React.ReactNode;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
   /** 读取中这一轮新读到、还不在 records 里的记录：只进列表和侧栏计数，报告等读完拿到整份再算 */
@@ -162,6 +165,7 @@ type NavItem<Id extends string = WorkspaceViewKey> = { id: Id; label: string; ic
 const navItems: NavItem[] = [
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
+  { id: "assistant", label: "AI 助手", icon: Bot, accent: color.accent },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
@@ -178,14 +182,14 @@ const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "li
 const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
 type SideKey = WorkspaceViewKey | "library";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
+// 探索、创作者中心和 AI 助手是工具页：排在前面，不显示条数、隐私和重新读取
+const toolView = (view: SideKey) => view === "explore" || view === "creator" || view === "assistant";
 const sideItems: NavItem<SideKey>[] = [
-  ...navItems.filter((item) => item.id === "explore" || item.id === "creator"),
+  ...navItems.filter((item) => toolView(item.id)),
   { id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan },
-  ...navItems.filter((item) => !isLibraryView(item.id) && item.id !== "explore" && item.id !== "creator"),
+  ...navItems.filter((item) => !isLibraryView(item.id) && !toolView(item.id)),
 ];
-
-// 探索和创作者中心是工具页：不显示条数、隐私和重新读取
-const toolView = (view: SideKey) => view === "explore" || view === "creator";
+const withoutAssistant = sideItems.filter((item) => item.id !== "assistant");
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -210,6 +214,7 @@ function Text({ style, ...rest }: TextProps) {
 export function ContentWorkspace({
   explore,
   creator,
+  assistant,
   activeView,
   records,
   liveRecords = null,
@@ -260,6 +265,7 @@ export function ContentWorkspace({
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
   const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
   const sideKey: SideKey = isLibraryView(activeView) ? "library" : activeView;
+  const sides = assistant ? sideItems : withoutAssistant;
   // 点侧栏「内容库」回到上次看的那一栏
   const lastLibraryView = useRef<WorkspaceViewKey>(isLibraryView(activeView) ? activeView : "watch_history");
   if (isLibraryView(activeView)) lastLibraryView.current = activeView;
@@ -304,6 +310,7 @@ export function ContentWorkspace({
   const counts: Record<SideKey, number> = {
     explore: 0,
     creator: 0,
+    assistant: 0,
     watch_history: watchedVideos.length + incomingVideos.length,
     live: watchedLives.length + incomingLives.length,
     liked_videos: records.liked_videos.length + (liveRecords?.liked_videos.length ?? 0),
@@ -386,7 +393,7 @@ export function ContentWorkspace({
             {Platform.OS === "web" && navTops[sideKey] !== undefined ? (
               <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[sideKey]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
-            {sideItems.map((item) => (
+            {sides.map((item) => (
               <NavButton
                 key={item.id}
                 compact={compactSidebar}
@@ -522,7 +529,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "chat" ? (
+        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
@@ -599,9 +606,9 @@ export function ContentWorkspace({
       {mobile ? (
         <View {...ws("w-bottom g-ink")} accessibilityRole="tablist" style={styles.bottomNav}>
           {Platform.OS === "web" ? (
-            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(sideItems.findIndex((item) => item.id === sideKey) + 0.5) / sideItems.length * 100}%`, backgroundColor: currentNav.accent }]} />
+            <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(sides.findIndex((item) => item.id === sideKey) + 0.5) / sides.length * 100}%`, backgroundColor: currentNav.accent }]} />
           ) : null}
-          {sideItems.map((item) => {
+          {sides.map((item) => {
             const selected = item.id === sideKey;
             const Icon = item.icon;
             return (

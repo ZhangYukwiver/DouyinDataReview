@@ -103,7 +103,9 @@ import {
 import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { getAssistant, type AssistantView } from "./src/services/assistant";
+import { AssistantConfirmCards, AssistantWorkspace } from "./src/components/workspace/AssistantWorkspace";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
@@ -306,6 +308,11 @@ function AppContent() {
   const [storyStyle, setStoryStyle] = useState<StoryStyle>(() => (Platform.OS === "web" ? loadStoryStyle() : "archive"));
   // 设置面板开着时是要先滚到的那一节，关着是 null
   const [preferences, setPreferences] = useState<SettingsSection | null>(null);
+  // AI 助手（可选功能）。连着采集器就长轮询它的状态：README 里写的外部 AI（MCP）不装助手也能用，
+  // 它要发私信、点赞时的确认卡片和「切到某一页」都从这里来
+  const [assistantInstalled, setAssistantInstalled] = useState(() => Platform.OS === "web" && loadAssistantInstalled());
+  const [assistantView, setAssistantView] = useState<AssistantView | null>(null);
+  const assistantUiSeq = useRef<number | null>(null);
   // 内容年志开着时读的是打开那一刻写好的数据，外层先不拉整份快照（见 pollCollector），关掉时补一次
   const storyOpenRef = useRef(false);
   const storySnapshotStaleRef = useRef(false);
@@ -1861,6 +1868,59 @@ function AppContent() {
 
   // 设置面板：采集器页和工作台共用一个 App 级模态
   const openPreferences = (section: SettingsSection = "appearance") => setPreferences(section);
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || !collectorToken) { setAssistantView(null); return; }
+    const connection = { baseUrl: collectorUrl, token: collectorToken };
+    const controller = new AbortController();
+    void (async () => {
+      let revision: number | null = null;
+      while (!controller.signal.aborted) {
+        try {
+          const next = await getAssistant(connection, revision, controller.signal);
+          revision = next.revision;
+          setAssistantView(next);
+        } catch {
+          if (controller.signal.aborted) return;
+          revision = null;
+          await delay(3_000);
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [collectorToken, collectorUrl]);
+
+  // AI 叫应用切页面：只认这次打开后新来的（上次留下的那条不重放）
+  const assistantUi = assistantView?.ui ?? null;
+  useEffect(() => {
+    if (!assistantView) return;
+    const seq = assistantUi?.seq ?? 0;
+    if (assistantUiSeq.current === null || seq < assistantUiSeq.current) { assistantUiSeq.current = seq; return; }
+    if (seq === assistantUiSeq.current || !assistantUi) return;
+    assistantUiSeq.current = seq;
+    if (assistantUi.view === "settings") { setPreferences("appearance"); return; }
+    setStorySrc(null);
+    setDashboardView(assistantUi.view as LegacyWorkspaceViewKey);
+    setDashboardOpen(true);
+    setActiveView("summary");
+  }, [assistantView, assistantUi]);
+
+  const toggleAssistant = () => {
+    const next = !assistantInstalled;
+    setAssistantInstalled(next);
+    saveAssistantInstalled(next);
+    if (!next && dashboardView === "assistant") setDashboardView("summary");
+  };
+
+  async function saveAssistantDownload(id: string, fileName: string | null) {
+    if (!collectorToken) return;
+    try {
+      const file = await fetchCollectorVideoFile(collectorUrl, collectorToken, id);
+      triggerBrowserDownload(file.blob, file.fileName ?? fileName);
+    } catch (error) {
+      showAlert("没保存下来", collectorErrorMessage(error));
+    }
+  }
   // 要登录或重新导入凭据：桌面版回采集器页首屏扫码，网页版去设置 → 账号连浏览器
   const openLogin = () => {
     if (!isDesktopApp()) { openPreferences("account"); return; }
@@ -1955,6 +2015,8 @@ function AppContent() {
         <LegacyContentWorkspace
           explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onSendToReelLab={reelLabReady ? (record) => sendRecordToReelLab(record, true) : undefined} downloadStates={downloadStates} sendStates={sendStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
+          assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
+            onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} /> : undefined}
           onSendToReelLab={reelLabReady ? (record) => void sendRecordToReelLab(record) : undefined}
           activeView={dashboardView}
           appStyle={appStyle}
@@ -2064,7 +2126,12 @@ function AppContent() {
           onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined}
         onShowLogin={isDesktopApp() ? openLogin : undefined}
         loginExpired={loginExpired}
+        assistantInstalled={assistantInstalled}
+        onToggleAssistant={toggleAssistant}
       />
+      {/* 外部 AI（MCP）或对话页以外发起的对外动作：不在对话页时浮在右下角等用户点 */}
+      {collectorToken && assistantView?.confirms.length && !(activeView !== "sources" && (dashboardOpen || storyMode) && !storySrc && dashboardView === "assistant")
+        ? <AssistantConfirmCards connection={{ baseUrl: collectorUrl, token: collectorToken }} confirms={assistantView.confirms} floating /> : null}
       {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={closeDataExport} onExport={exportSelectedData} progress={exportProgress} /> : null}
     </SafeAreaView>
   );

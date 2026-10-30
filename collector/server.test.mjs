@@ -140,7 +140,8 @@ describe("collector accounts", () => {
     const removed = await call("/v1/accounts/default", "DELETE");
     expect(removed.status).toBe(200);
     expect(removed.body).toMatchObject({ activeId: created.body.activeId, accounts: [{ id: created.body.activeId }] });
-    expect((await readdir(dataDirectory)).sort()).toEqual(["accounts", "accounts.json", "backups", "direct-signer", "launcher-error.txt", "notes.txt"]);
+    // mcp-token 是所有账号共用的 MCP 令牌，删默认账号不动它
+    expect((await readdir(dataDirectory)).sort()).toEqual(["accounts", "accounts.json", "backups", "direct-signer", "launcher-error.txt", "mcp-token", "notes.txt"]);
     expect(await exists(path.join(dataDirectory, "direct-signer", "signer.js"))).toBe(true);
   });
 
