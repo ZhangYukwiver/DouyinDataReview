@@ -4,7 +4,7 @@ import Svg, { Circle } from "react-native-svg";
 import { Check, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
 import { canDragDesktopExtension, getDesktopOpenAtLogin, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
-import { APP_STYLES, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
+import { APP_STYLES, loadAppStyleFonts, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import { DEFAULT_ASSISTANT_CONFIG, isLocalAiRuntime, loadAssistantConfig, saveAssistantConfig, type AssistantConfig } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
 import {
@@ -196,6 +196,7 @@ function Appearance({ appStyle, contentWidth, onChangeAppStyle, onChangeStorySty
   const width = gridWidth ?? contentWidth;
   const columns = width >= 480 ? 4 : 2;
   const cardWidth = Math.floor((width - GRID_GAP * (columns - 1)) / columns);
+  useEffect(() => { if (web) APP_STYLES.forEach((item) => loadAppStyleFonts(item.key)); }, []);
   return (
     <>
       <View style={[styles.row, styles.rowStacked]}>

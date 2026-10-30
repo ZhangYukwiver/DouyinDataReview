@@ -1444,12 +1444,15 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
   // column/timestamp layout, but remove the generic chat-bubble background and
   // padding so the sticker is shown on its own.
   const framelessSticker = !privacy && message.type === "sticker" && Boolean(message.mediaUrl);
+  // A shared-video card uses the bubble itself as its frame, so every style's
+  // bubble border/background applies and there is no box inside a box.
+  const shareCard = !privacy && message.type === "share" && hasChatShareEvidence(message.share);
   return (
     <View {...fx({ motion: "rise", i })} style={[styles.messageLine, own && styles.messageLineOwn]}>
       {!own ? <ChatAvatar avatarUrl={message.senderAvatarUrl ?? avatarUrl} accent={accent} initials={initialsFor(sender, "friend")} kind="friend" privacy={privacy} size={30} /> : null}
       <View style={[styles.messageColumn, own && styles.messageColumnOwn]}>
         {!own ? <Text style={styles.senderLabel}>{sender}</Text> : null}
-        <View {...ws("c-bubble", framelessSticker ? "sticker" : own ? "own" : "in")} style={[styles.bubble, framelessSticker ? styles.bubbleSticker : own ? styles.bubbleOwn : styles.bubbleIncoming]}>
+        <View {...ws("c-bubble", framelessSticker ? "sticker" : own ? "own" : "in")} style={[styles.bubble, framelessSticker ? styles.bubbleSticker : own ? styles.bubbleOwn : styles.bubbleIncoming, shareCard && styles.bubbleCard]}>
           {privacy ? <Text style={styles.bubbleText}>消息内容已隐藏</Text> : <MessageContent message={message} onOpenRecord={onOpenRecord} />}
         </View>
         <Text {...ws("mono")} style={[styles.messageTime, own && styles.messageTimeOwn]}>{formatMessageTime(message.sentAt)}</Text>
@@ -1921,15 +1924,17 @@ const styles = StyleSheet.create({
   bubbleIncoming: { borderTopLeftRadius: 4, backgroundColor: color.surfaceRaised },
   bubbleOwn: { borderTopRightRadius: 4, backgroundColor: color.cyanSoft },
   bubbleSticker: { minHeight: 0, paddingHorizontal: 0, paddingVertical: 0, borderRadius: 0, backgroundColor: "transparent" },
+  bubbleCard: { paddingHorizontal: 0, paddingVertical: 0, overflow: "hidden" },
   bubbleText: { color: color.text, fontSize: 12, lineHeight: 19 },
   messageTime: { color: color.textMuted, fontSize: 8, marginTop: 4, marginLeft: 3 },
   messageTimeOwn: { marginRight: 3 },
   systemMessage: { alignSelf: "center", maxWidth: "86%", color: color.textMuted, fontSize: 9, lineHeight: 15, textAlign: "center", marginBottom: 16, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.small, backgroundColor: color.surface },
   messageImage: { width: 220, height: 148, borderRadius: radius.small, backgroundColor: color.surfaceMuted },
   stickerImage: { width: 132, height: 132, borderRadius: radius.small },
-  shareCard: { width: 242, minHeight: 72, flexDirection: "row", overflow: "hidden", borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
-  shareCover: { width: 74, height: 72, backgroundColor: color.surfaceMuted },
-  shareCoverFallback: { width: 74, height: 72, alignItems: "center", justifyContent: "center", backgroundColor: color.surfaceMuted },
+  shareCard: { width: 242, minHeight: 72, flexDirection: "row" },
+  // 封面跟着卡片撑满高度：风格把字号放大后，下面不会露出一截空白
+  shareCover: { width: 74, minHeight: 72, backgroundColor: color.surfaceMuted },
+  shareCoverFallback: { width: 74, minHeight: 72, alignItems: "center", justifyContent: "center", backgroundColor: color.surfaceMuted },
   shareCopy: { flex: 1, minWidth: 0, paddingHorizontal: 9, paddingVertical: 8 },
   shareTitle: { color: color.text, fontSize: 10, lineHeight: 15, fontWeight: "800" },
   shareAuthor: { color: color.textSecondary, fontSize: 9, marginTop: 3 },

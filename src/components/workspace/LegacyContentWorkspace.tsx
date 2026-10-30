@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -1192,7 +1192,8 @@ function RecordsGallery({
       onLayout?.(event);
       const { y, height } = event.nativeEvent.layout;
       const start = y - index * height;
-      if (index === 0 && height > 0) setRowFrame((current) => current && Math.abs(current.start - start) < 1 && Math.abs(current.length - height) < 0.5 ? current : { start, length: height });
+      // 换风格后行高跟着变，这次重渲染整页卡片；放进 transition 分片做，不卡住正在播的转场动画
+      if (index === 0 && height > 0) startTransition(() => setRowFrame((current) => current && Math.abs(current.start - start) < 1 && Math.abs(current.length - height) < 0.5 ? current : { start, length: height }));
     }}>{children}</View>;
   }, []);
   const getItemLayout = useMemo(() => rowFrame
@@ -1217,7 +1218,8 @@ function RecordsGallery({
   const candidates = useMemo(() => uniqueDownloadVideos(shownRecords), [shownRecords]);
   // 按钮按全部记录决定显不显示：跟着搜索结果来回出现会让搜索框左右跳，多选时还会找不到「退出多选」
   const hasDownloadable = useMemo(() => uniqueDownloadVideos(records).length > 0, [records]);
-  const chosen = candidates.filter((record) => selected.has(videoDownloadKey(record)!));
+  // 一万多条逐条解析网址要好几毫秒，没勾的时候（绝大多数时候）别算；换风格、收消息时这页会整页重渲染
+  const chosen = useMemo(() => selected.size ? candidates.filter((record) => selected.has(videoDownloadKey(record)!)) : [], [candidates, selected]);
   const chosenRecords = selectMode === "folder" ? shownRecords.filter((record) => selected.has(record.id)) : [];
   // 整理不限条数，常开着连勾几十条：同一条、勾选状态没变就给同一个对象，卡片的 memo 才拦得住，勾一下只重画那一张
   const folderSelections = useRef(new Map<string, RecordSelection>());
