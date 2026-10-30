@@ -109,6 +109,12 @@ interface StyleDocument {
 export function applyAppStyle(style: AppStyle, doc: StyleDocument | undefined = globalThis.document as StyleDocument | undefined): void {
   if (!doc) return;
   doc.documentElement.dataset.style = style;
+  loadAppStyleFonts(style, doc);
+}
+
+// 挑风格的面板一打开就先把各套字体表挂上：等点了再挂，字体表会在转场动画中途到，整页再重算一遍样式
+export function loadAppStyleFonts(style: AppStyle, doc: StyleDocument | undefined = globalThis.document as StyleDocument | undefined): void {
+  if (!doc) return;
   const href = FONTS[style];
   const id = `content-insights-${style}-fonts`;
   if (!href || doc.getElementById(id)) return;
