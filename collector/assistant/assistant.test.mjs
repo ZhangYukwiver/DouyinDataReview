@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { startCollectorServer } from "../server.mjs";
 import { createConfirmDesk } from "./confirm.mjs";
-import { countBy, filterRecords } from "./tools.mjs";
+import { countBy, filterRecords, listConversations } from "./tools.mjs";
 
 const cleanups = [];
 afterEach(async () => {
@@ -82,6 +82,34 @@ describe("searching and counting the local records", () => {
     expect(countBy(rows, "author", 5).items).toEqual([{ key: "示例创作者甲", count: 2 }, { key: "示例创作者乙", count: 1 }]);
     expect(countBy(rows, "topic", 1).items).toEqual([{ key: "城市散步", count: 2 }]);
     expect(countBy(rows, "month", 5).items.map((item) => item.key)).toEqual(["2026-09", "2026-10"]);
+  });
+});
+
+describe("listing chat conversations", () => {
+  // 存下来的会话 lastActiveAt 常常是空的：时间要从消息里算
+  const snapshot = {
+    chatConversations: [
+      { id: "a", name: "老朋友", kind: "friend", lastActiveAt: null, messageCount: 2 },
+      { id: "b", name: "新朋友", kind: "friend", lastActiveAt: null, messageCount: 1 },
+      { id: "g", name: "家人群", kind: "group", lastActiveAt: null, messageCount: 0 },
+    ],
+    chatMessages: [
+      { conversationId: "a", senderName: "老朋友", sentAt: "2026-10-01T02:00:00.000Z", text: "好久不见" },
+      { conversationId: "a", senderName: "我", sentAt: "2026-10-20T02:00:00.000Z", text: "最近怎么样" },
+      { conversationId: "b", senderName: "新朋友", sentAt: "2026-10-29T02:00:00.000Z", share: { title: "做饭教程" }, type: "share" },
+    ],
+  };
+
+  it("orders by the newest message and says what it was, with groups last", () => {
+    const { items } = listConversations(snapshot, {});
+    expect(items.map((item) => [item.name, Boolean(item.lastActive)])).toEqual([["新朋友", true], ["老朋友", true], ["家人群", false]]);
+    expect(items[0].lastMessage).toBe("新朋友：分享了《做饭教程》");
+    expect(items[1].lastMessage).toBe("我：最近怎么样");
+  });
+
+  it("keeps only the ones still talking since a date", () => {
+    expect(listConversations(snapshot, { since: "2026-10-15" }).items.map((item) => item.name)).toEqual(["新朋友", "老朋友"]);
+    expect(listConversations(snapshot, { since: "2026-10-25" }).items.map((item) => item.name)).toEqual(["新朋友"]);
   });
 });
 
@@ -161,6 +189,16 @@ describe("talking to the assistant", () => {
     await until((view) => !view.busy);
     expect(model.requests.at(-1).messages.some((message) => message.role === "tool" && message.content.includes("stopped"))).toBe(true);
     expect((await call("DELETE", "/v1/assistant")).body.messages).toEqual([]);
+  });
+
+  it("stops after 10 actions others can see in one turn", async () => {
+    const { call, until } = await start();
+    // 没在接收聊天，每次发私信都会马上报错，不弹卡片；只看第 11 次是不是被上限挡下
+    const model = await fakeModel([...Array.from({ length: 11 }, () => ({ call: "send_chat_message", args: { conversationId: "x", text: "在吗" } })), "停了。"]);
+    await call("POST", "/v1/assistant/messages", { text: "给这些人都发一句", config: model.config });
+    await until((view) => !view.busy && view.messages.length >= 2);
+    expect(toolResult(model.requests[10])).toMatchObject({ code: "not_receiving" });
+    expect(toolResult(model.requests[11])).toMatchObject({ code: "external_limit" });
   });
 
   it("refuses a config without a key", async () => {

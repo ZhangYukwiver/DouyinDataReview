@@ -78,6 +78,36 @@ export function filterRecords(snapshot, args, folders = null) {
   return rows;
 }
 
+/**
+ * 私信会话按最近一条消息排：存下来的会话自己的 lastActiveAt 常常是空的（工作台聊天页也是拿最新消息的时间），
+ * 所以和聊天页一样从消息里算，没有消息才退回 lastActiveAt。
+ */
+export function listConversations(snapshot, args) {
+  const latest = new Map();
+  for (const message of snapshot?.chatMessages ?? []) {
+    const time = new Date(message.sentAt).getTime();
+    if (Number.isNaN(time) || (latest.get(message.conversationId)?.time ?? -Infinity) >= time) continue;
+    latest.set(message.conversationId, { time, message });
+  }
+  const query = text(args.query, 60).toLowerCase();
+  const { from } = timeRange({ since: args.since });
+  const items = (snapshot?.chatConversations ?? []).map((conversation) => {
+    const last = latest.get(conversation.id);
+    const fallback = new Date(conversation.lastActiveAt ?? NaN).getTime();
+    return { conversation, last: last?.message ?? null, time: last?.time ?? (Number.isNaN(fallback) ? null : fallback) };
+  })
+    .filter(({ conversation, time }) => (!query || String(conversation.name ?? "").toLowerCase().includes(query)) && (from === null || (time !== null && time >= from)))
+    .sort((left, right) => (right.time ?? -Infinity) - (left.time ?? -Infinity));
+  return {
+    total: items.length,
+    items: items.slice(0, clampInt(args.limit, 1, MAX_ROWS, 30)).map(({ conversation, last, time }) => ({
+      conversationId: conversation.id, name: conversation.name ?? "抖音用户", group: conversation.kind === "group",
+      messages: conversation.messageCount ?? 0, mine: conversation.ownMessageCount ?? 0, lastActive: time === null ? null : localTime(time),
+      ...(last ? { lastMessage: `${last.senderName ?? "对方"}：${String(last.text || (last.share?.title ? `分享了《${last.share.title}》` : `[${last.type ?? "消息"}]`)).slice(0, 40)}` } : {}),
+    })),
+  };
+}
+
 const row = ({ list, record }) => ({
   list: LISTS[list],
   videoId: record.videoId ?? null,
@@ -283,25 +313,15 @@ export const TOOLS = [
   },
   {
     kind: "read",
-    def: fn("list_conversations", "本机存的私信会话（好友和群），按最近活跃排序。", {
+    def: fn("list_conversations", "本机存的私信会话（好友和群），按最近一条消息的时间从新到旧，带最后一句。群聊消息本机不存，群的时间和最后一句是空的，要知道就用 read_live_chat。", {
       query: { type: "string", description: "按会话名筛" },
+      since: { type: "string", description: "只要这个时间以后还有消息的，如 2026-10-29" },
       limit: { type: "integer", description: "默认 30，最多 50" },
     }),
     async run(ctx, args) {
       const collector = ctx.collector();
       collector.assertReadPermission("chat");
-      const query = text(args.query, 60).toLowerCase();
-      const items = (collector.snapshot.chatConversations ?? [])
-        .filter((conversation) => !query || String(conversation.name ?? "").toLowerCase().includes(query))
-        .sort((left, right) => String(right.lastActiveAt ?? "").localeCompare(String(left.lastActiveAt ?? "")));
-      return {
-        ok: true,
-        total: items.length,
-        items: items.slice(0, clampInt(args.limit, 1, MAX_ROWS, 30)).map((conversation) => ({
-          conversationId: conversation.id, name: conversation.name ?? "抖音用户", group: conversation.kind === "group",
-          messages: conversation.messageCount ?? 0, mine: conversation.ownMessageCount ?? 0, lastActive: localTime(conversation.lastActiveAt),
-        })),
-      };
+      return { ok: true, ...listConversations(collector.snapshot, args) };
     },
   },
   {
@@ -491,7 +511,7 @@ export const TOOLS = [
   },
   {
     kind: "external",
-    def: fn("send_chat_message", "以用户的身份给一个会话发一条私信（会先弹卡片让用户确认）。要先在接收聊天。一次只发一条，不要群发。", {
+    def: fn("send_chat_message", "以用户的身份给一个会话发一条私信（每条都会先弹卡片让用户确认）。要先在接收聊天。用户点名或说清楚范围的几个人，就一个会话调一次。", {
       conversationId: { type: "string" },
       text: { type: "string", description: "要发的原文，最多 2000 字" },
     }, ["conversationId", "text"]),

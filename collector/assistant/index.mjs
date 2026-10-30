@@ -15,6 +15,8 @@ import { toolDefinitions, toolNamed } from "./tools.mjs";
 // ponytail: 只有一条线程，要多条对话再加列表
 
 const STORED_HISTORY_CHARS = 600_000;
+// 一轮里最多做几次别人看得到的操作（每次都还要用户点允许）；同续火花一次 10 位
+const MAX_EXTERNAL_PER_TURN = 10;
 const WAIT_MS = 8_000;
 const SHOWN_MESSAGES = 200;
 
@@ -23,7 +25,7 @@ const SYSTEM_PROMPT = `你是「内容数据工作台」里的 AI 助手。这�
 规矩：
 - 先用工具查再回答，数字以工具结果为准，不要编。对话里第一次用工具前先调 app_overview，知道现在几点、是哪个账号、有多少数据。
 - 统计类问题（最常看谁、什么时候刷得多、喜欢什么话题）用 record_stats；找具体作品用 search_records。
-- 发私信、点赞、收藏、关注、评论、分享会被别人看到：工具会先弹卡片让用户确认，你不用再问一遍。用户拒绝了就停，不要换个办法再试。只做用户明确要求的那一件，不群发、不批量。
+- 发私信、点赞、收藏、关注、评论、分享会被别人看到：每一次工具都会先弹卡片让用户确认，你不用再问一遍。用户点名或说清楚范围的几个人（比如「这两天聊过的好友」），就先查出是谁、逐个去做；不要自己扩大范围，一轮最多 10 次。用户拒绝了某一个就跳过它，不要换个办法再试。
 - 用简体中文，口语、简洁。回答里不要出现 videoId、conversationId、occurredAt 这种字段名或接口名，用普通说法；提到作品可以附上链接。可以用 Markdown 列表和表格。
 - 工具报错时用一句话说清原因；能自己补救的（比如先开始接收聊天）就先补救。`;
 
@@ -176,7 +178,7 @@ export function createAssistant({ dataDirectory, baseUrl, pairing, collector, ac
     if (turn) throw new AssistantError("assistant_busy", "上一句还在处理，等它说完或先停下。", 409);
     history.push({ role: "user", content: message });
     const controller = new AbortController();
-    turn = { controller, text: "", actions: [], done: null };
+    turn = { controller, text: "", actions: [], done: null, external: 0 };
     error = null;
     touch();
     void saveHistory();
@@ -184,6 +186,9 @@ export function createAssistant({ dataDirectory, baseUrl, pairing, collector, ac
       let args = call.arguments;
       if (typeof args === "string") {
         try { args = JSON.parse(args || "{}"); } catch { return { ok: false, code: "invalid_arguments", message: "参数不是合法 JSON。" }; }
+      }
+      if (toolNamed(call.name)?.kind === "external" && ++turn.external > MAX_EXTERNAL_PER_TURN) {
+        return { ok: false, code: "external_limit", message: `这一轮已经做了 ${MAX_EXTERNAL_PER_TURN} 次别人看得到的操作，到上限了。停下来告诉用户做到了哪个，剩下的让用户再说一次。` };
       }
       const index = turn.actions.push({ ...actionView(call.name, args, null), running: true }) - 1;
       touch();
