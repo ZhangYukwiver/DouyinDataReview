@@ -103,9 +103,10 @@ export function signSecsdkUrl(value, uifid, timestamp = Math.floor(Date.now() / 
 }
 
 export class DirectApiClient {
-  constructor(session, { dataDirectory, requestFactory = playwrightRequest, signer = signDirectApiUrl, onSessionError } = {}) {
+  constructor(session, { dataDirectory, directory, requestFactory = playwrightRequest, signer = signDirectApiUrl, onSessionError } = {}) {
     this.session = validateSession(session);
     this.dataDirectory = dataDirectory;
+    this.directory = directory;
     this.requestFactory = requestFactory;
     this.signer = signer;
     this.onSessionError = onSessionError;
@@ -232,18 +233,22 @@ export class DirectApiClient {
       if (!["count", "cursor", "max_cursor", "min_cursor", "status", "category", "directory", "a_bogus", "timestamp", "x-secsdk-web-signature"].includes(name) || name in query)
         url.searchParams.set(name, String(value));
     }
-    for (const [name, cookie] of [["verifyFp", "s_v_web_id"], ["fp", "s_v_web_id"], ["uifid", "UIFID"], ["msToken", "msToken"]]) {
+    const reply = pathname === "/aweme/v1/web/comment/list/reply/";
+    // Reply signatures omit UIFID and fingerprint fields. The latter are appended
+    // after a_bogus, as in DouYin_Spider's get_work_inner_comment protocol.
+    for (const [name, cookie] of reply ? [["msToken", "msToken"]] : [["verifyFp", "s_v_web_id"], ["fp", "s_v_web_id"], ["uifid", "UIFID"], ["msToken", "msToken"]]) {
       const value = name === "msToken" ? this.session.security?.msToken || this.cookie(cookie) : this.cookie(cookie);
       if (value) url.searchParams.set(name, value);
     }
     const data = body === null ? null : typeof body === "string" ? body : new URLSearchParams(body).toString();
-    const signed = await this.signer(url, { userAgent: this.currentUserAgent,
+    const signed = await this.signer(url, { directory: this.directory, userAgent: this.currentUserAgent,
       uifid: this.cookie("UIFID"), method, body: data ?? "" });
     const checked = new URL(signed);
     if (checked.origin !== url.origin || checked.pathname !== pathname || checked.hash || checked.username || checked.password
       || !/^[A-Za-z0-9+/_=-]{64,512}$/u.test(checked.searchParams.get("a_bogus") ?? ""))
       throw new DirectHistoryError("unsafe_url", "签名结果偏离允许的接口，已停止请求。");
-    const signedUrl = WEB_SIGN_PATHS.has(pathname) ? signSecsdkUrl(signed, this.cookie("UIFID")) : String(signed);
+    let signedUrl = WEB_SIGN_PATHS.has(pathname) ? signSecsdkUrl(signed, this.cookie("UIFID")) : String(signed);
+    if (reply && this.cookie("s_v_web_id")) signedUrl += `&verifyFp=${encodeURIComponent(this.cookie("s_v_web_id"))}&fp=${encodeURIComponent(this.cookie("s_v_web_id"))}`;
     const response = await this.raw(signedUrl, { method, body: data, referer, signal });
     if (response.text.trim() === "blocked") throw this.sessionError(new DirectHistoryError("verification_required", "抖音要求安全验证，请在登录浏览器中完成后重试。"));
     let payload;

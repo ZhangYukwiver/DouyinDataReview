@@ -71,6 +71,12 @@
 .rv-text-button { padding: 8px; background: transparent; text-decoration: underline; }
 .rv-play-overlay { position: absolute; left: 50%; top: calc((100% - 48px) / 2); transform: translate(-50%,-50%); width: 80px; height: 80px; padding: 0; background: transparent; filter: drop-shadow(0 2px 8px #0005); }
 .rv-spinner { display: inline-block; width: 25px; height: 25px; border: 2px solid #ffffff30; border-top-color: #fe2c55; border-radius: 50%; animation: rv-spin .8s linear infinite; }
+/* 视频加载：两段光在三角轮廓上追，青的错开半圈、再偏一点位置，像抖音标志的红青重影 */
+.rv-loader { width: 64px; height: 64px; overflow: visible; }
+.rv-loader path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.rv-loader-core { fill: #fff !important; stroke: #fff; stroke-width: 6; opacity: .1; transform-origin: 31px 32px; animation: rv-breathe 1.6s ease-in-out infinite; }
+.rv-loader-trail { stroke: #fe2c55; stroke-width: 3; stroke-dasharray: 26 74; animation: rv-trace 1.6s cubic-bezier(.55,.1,.45,.9) infinite; filter: drop-shadow(0 0 4px #fe2c55aa); }
+.rv-loader-cyan { stroke: #25f4ee; animation-delay: -.8s; transform: translate(-1.5px,-1px); filter: drop-shadow(0 0 4px #25f4eeaa); mix-blend-mode: screen; }
 .rv-navigation { position: absolute; right: 12px; bottom: 8px; display: flex; gap: 4px; }
 /* 清屏：只留画面、关闭按钮和控制栏 */
 .rv-clean .rv-caption, .rv-clean .rv-actions, .rv-clean .rv-shade, .rv-clean .rv-heading, .rv-clean .rv-position { display: none; }
@@ -81,7 +87,6 @@
 .rv-comments-header h2 { font-size: 17px; font-weight: 600; margin: 0; }
 .rv-comments-header h2 span { margin-left: 5px; font-size: 13px; color: #a1a1aa; }
 .rv-comments-header .rv-icon-button { background: transparent; }
-.rv-comments-context { margin: 0 20px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #97979f; font-size: 12px; }
 .rv-comment-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 20px; scrollbar-width: thin; scrollbar-color: #494950 transparent; }
 .rv-comment { padding: 17px 0; border-bottom: 1px solid #ffffff08; }
 .rv-comment-row { display: flex; align-items: flex-start; gap: 10px; }
@@ -98,8 +103,13 @@
 .rv-reply .rv-comment-avatar { width: 26px; height: 26px; font-size: 11px; }
 .rv-reply-to { color: #82828d; overflow-wrap: anywhere; }
 .rv-reply-notice { margin: 8px 0; color: #a4a4af; line-height: 1.6; font-size: 12px; }
+.rv-reply-notice p { margin: 0; }
+/* 展开回复：抖音那样一行灰字小按钮，前面一小段横线引出 */
+.rv-reply-bar { display: flex; align-items: center; gap: 16px; min-height: 30px; }
+.rv-reply-bar::before { content: ""; width: 20px; height: 1px; background: #ffffff26; }
+.rv-backdrop .rv-reply-toggle { gap: 4px; padding: 4px 0; background: transparent; color: #a4a4af; font-size: 12px; }
+.rv-backdrop .rv-reply-toggle:hover { color: #fff; }
 .rv-comment-notice { padding: 30px 3px; text-align: center; color: #a4a4af; line-height: 1.7; font-size: 13px; }
-.rv-comment-end { text-align: center; color: #737380; font-size: 11px; padding: 12px 0; }
 .rv-more { width: 100%; min-height: 40px; gap: 5px; padding: 8px; background: transparent; color: #c4c4cd !important; font-size: 12px !important; }
 .rv-more:hover:not(:disabled) { color: white !important; background: #ffffff06; }
 .rv-comments-footer { padding: 10px 12px; border-top: 1px solid #ffffff10; font-size: 12px; color: #929298; }
@@ -148,6 +158,8 @@
 .rv-share-copy:hover:not(:disabled) { background: #3d3d46; }
 @keyframes rv-pop { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
 @keyframes rv-spin { to { transform: rotate(360deg); } }
+@keyframes rv-trace { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -100; } }
+@keyframes rv-breathe { 50% { opacity: .22; transform: scale(1.06); } }
 @keyframes rv-enter { from { opacity: .5; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 760px) {
   .rv-backdrop { padding: 0; }
@@ -173,7 +185,7 @@
   .rv-caption p { -webkit-line-clamp: 2; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .rv-stage, .rv-spinner { animation: none; }
+  .rv-stage, .rv-spinner, .rv-loader path { animation: none; }
 }
 /* 直播间：左边画面，右边弹幕列表 */
 .lv-layout { display: grid; grid-template-columns: minmax(0,1fr) 300px; width: min(1320px,100%); height: min(860px,calc(100dvh - 48px)); overflow: hidden; border-radius: 18px; background: #101013; box-shadow: 0 24px 100px #000; animation: rv-enter .2s ease-out; }

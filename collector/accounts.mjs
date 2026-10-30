@@ -5,7 +5,7 @@ import path from "node:path";
 const SCHEMA_VERSION = 1;
 const ACCOUNT_ID_PATTERN = /^(default|[0-9a-f]{12})$/u;
 const NESTED_ID_PATTERN = /^[0-9a-f]{12}$/u;
-// 根目录本身就是 default 账号；删它时只动这几样，backups 这些是全局共用的
+// 根目录本身就是 default 账号；删它时只动这几样，direct-signer、backups 这些是全局共用的
 const ROOT_ACCOUNT_ENTRIES = ["browser-profile", "records.json", "folders.json", "direct-history-template.json", "direct-session.json", "external-browser.json", "downloads"];
 // 存盘临时文件，和记录、文件夹文件坏掉时改名留下的底，都算默认账号的数据
 const RECORDS_TEMPORARY_PATTERN = /^(?:records|folders)\.json\.(?:.+\.tmp|broken-\d+)$/u;

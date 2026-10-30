@@ -1,5 +1,8 @@
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { request as playwrightRequest } from "playwright-core";
 import { nativeSignedUrl } from "./nativeSignature.mjs";
@@ -8,8 +11,14 @@ export const DIRECT_HISTORY_ENDPOINT = "https://www.douyin.com/aweme/v1/web/hist
 export const DIRECT_LIKED_ENDPOINT = "https://www-hj.douyin.com/aweme/v1/web/aweme/favorite/";
 export const DIRECT_FAVORITE_ENDPOINT = "https://www-hj.douyin.com/aweme/v1/web/aweme/listcollection/";
 const DIRECT_SELF_ENDPOINT = "https://www.douyin.com/aweme/v1/web/user/profile/self/";
-// 已存的观看历史模板里记着这个值，加载时要对得上；签名早已不用它，改了会让大家的模板全部失效
+// 评论回复用的签名器（mafqla/douyin-api，GPL-3.0）的固定版本；已存的观看历史模板也记着这个值，改了会让大家的模板全部失效
 export const DIRECT_SIGNER_COMMIT = "42987a1aa0c88c4d7f00d106ea2bc87dc01b0edf";
+export const DIRECT_SIGNER_FILES = Object.freeze({
+  LICENSE: "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+  "lib/runtime/bdms/index.js": "5c3b712aa5ee9b88aa438843512ed10d21564ef2acad3158baf68b37d639b29f",
+  "lib/runtime/bdms/env.js": "ae95d680b2dfdd95b93f36dd74864e834e10f875df7f9ec69ad362b85194c3cd",
+  "lib/runtime/bdms/bdms.js": "393b30953e215c3c006cd44c179c1e0cd2375a458bea268eb17bf1401096469b",
+});
 
 // Scroll every visible list surface. The profile page can put the record grid
 // in a smaller nested container, so choosing only the largest half-viewport
@@ -374,7 +383,7 @@ export const DIRECT_API_PATHS = new Set([
   "/aweme/v1/web/aweme/detail/", "/aweme/v1/web/aweme/post/",
   "/aweme/v1/web/aweme/favorite/", "/aweme/v1/web/aweme/listcollection/",
   "/aweme/v1/web/collects/list/", "/aweme/v1/web/collects/video/list/",
-  "/aweme/v1/web/comment/list/",
+  "/aweme/v1/web/comment/list/", "/aweme/v1/web/comment/list/reply/",
   "/aweme/v1/web/discover/search/", "/aweme/v1/web/search/item/", "/aweme/v1/web/tab/feed/",
   "/aweme/v1/web/commit/item/digg/", "/aweme/v1/web/aweme/collect/",
   "/aweme/v1/web/comment/publish", "/aweme/v1/web/comment/delete/", "/aweme/v1/web/commit/follow/user/", "/aweme/v1/web/history/write/", "/aweme/v1/web/play/progress/",
@@ -400,7 +409,140 @@ export async function signDirectApiUrl(unsignedUrl, options = {}) {
     throw new DirectHistoryError("invalid_request", "直接请求方法或请求体无效。");
   }
   if (!validateUserAgent(options.userAgent)) throw new DirectHistoryError("template_invalid", "直接请求缺少有效浏览器标识。");
+  // 评论回复接口对签名查得更严，自带签名过不去：交给打包的签名器在沙箱子进程里算（不开浏览器）
+  if (url.pathname === "/aweme/v1/web/comment/list/reply/") return signRequestUrl(url, { ...options, uifid: "" });
   return nativeSignedUrl(url, options);
+}
+
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+const defaultSignerDirectory = path.resolve(moduleDirectory, "..", ".local-data", "direct-signer");
+const asarPathMarker = `${path.sep}app.asar${path.sep}`;
+const signerRunnerPath = path.join(moduleDirectory, "directSignerRunner.cjs").replace(
+  asarPathMarker,
+  `${path.sep}app.asar.unpacked${path.sep}`,
+);
+const MAX_SIGNER_OUTPUT_BYTES = 64 * 1024;
+const SIGNER_TIMEOUT_MS = 8_000;
+const MACOS_SIGNER_PROFILE = "(version 1) (allow default) (deny network*) (deny file-write*)";
+
+export function directSignerProcessConfiguration({
+  platform = process.platform,
+  executablePath = process.execPath,
+  runtimeDirectory,
+  runnerPath = signerRunnerPath,
+} = {}) {
+  if (!runtimeDirectory || !runnerPath || !executablePath) {
+    throw new DirectHistoryError("signer_failed", "评论回复签名器缺少运行路径。");
+  }
+  if (platform !== "darwin" && platform !== "win32") {
+    throw new DirectHistoryError("unsupported_platform", "展开评论回复目前只支持 Windows 和 macOS。");
+  }
+  const resolvedRuntimeDirectory = path.resolve(runtimeDirectory);
+  const resolvedRunnerPath = path.resolve(runnerPath);
+  const nodeArguments = [
+    "--permission",
+    `--allow-fs-read=${resolvedRuntimeDirectory}`,
+    `--allow-fs-read=${resolvedRunnerPath}`,
+    resolvedRunnerPath,
+    resolvedRuntimeDirectory,
+  ];
+  const env = {
+    LANG: "C",
+    LC_ALL: "C",
+    TZ: "UTC",
+    ELECTRON_RUN_AS_NODE: "1",
+    ...(platform === "win32" && process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+  };
+  return {
+    command: platform === "darwin" ? "/usr/bin/sandbox-exec" : executablePath,
+    args: platform === "darwin"
+      ? ["-p", MACOS_SIGNER_PROFILE, executablePath, ...nodeArguments]
+      : nodeArguments,
+    options: {
+      cwd: resolvedRuntimeDirectory,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  };
+}
+
+function signerDirectory(value) {
+  return path.resolve(value || process.env.DOUYIN_DIRECT_SIGNER_DIR || defaultSignerDirectory);
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export async function verifyDirectSigner(directory) {
+  const root = signerDirectory(directory);
+  for (const [relativePath, expectedHash] of Object.entries(DIRECT_SIGNER_FILES)) {
+    let content;
+    try {
+      content = await readFile(path.join(root, relativePath));
+    } catch {
+      throw new DirectHistoryError(
+        "signer_missing",
+        "评论回复签名器缺失，请重新安装应用；开发环境请运行 npm run direct:setup。",
+      );
+    }
+    if (sha256(content) !== expectedHash) {
+      throw new DirectHistoryError("signer_tampered", "评论回复签名器校验失败，已拒绝执行。");
+    }
+  }
+  return realpath(path.join(root, "lib", "runtime"));
+}
+
+async function signRequestUrl(url, { directory, uifid = "", userAgent, method = "GET", body = "" } = {}) {
+  const validatedUserAgent = validateUserAgent(userAgent);
+  if (!validatedUserAgent) throw new DirectHistoryError("template_invalid", "直接请求缺少有效浏览器标识。");
+  const runtimeDirectory = await verifyDirectSigner(directory);
+  const processConfiguration = directSignerProcessConfiguration({ runtimeDirectory });
+  const payload = JSON.stringify({ url: url.toString(), method, body, uifid, userAgent: validatedUserAgent });
+  const signature = await new Promise((resolve, reject) => {
+    const child = spawn(
+      processConfiguration.command,
+      processConfiguration.args,
+      processConfiguration.options,
+    );
+    let stdout = Buffer.alloc(0);
+    let totalOutput = 0;
+    let outputTooLarge = false;
+    const capture = (chunk, keep) => {
+      totalOutput += chunk.length;
+      if (totalOutput > MAX_SIGNER_OUTPUT_BYTES) {
+        outputTooLarge = true;
+        child.kill("SIGKILL");
+      } else if (keep) stdout = Buffer.concat([stdout, chunk]);
+    };
+    child.stdout.on("data", (chunk) => capture(chunk, true));
+    child.stderr.on("data", (chunk) => capture(chunk, false));
+    child.stdin.on("error", () => undefined);
+    child.once("error", () => reject(new DirectHistoryError("signer_failed", "评论回复签名器无法启动。")));
+    const timer = setTimeout(() => child.kill("SIGKILL"), SIGNER_TIMEOUT_MS);
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      if (outputTooLarge) return reject(new DirectHistoryError("signer_output_too_large", "评论回复签名器输出异常，已停止执行。"));
+      if (code !== 0) return reject(new DirectHistoryError("signer_failed", "评论回复签名器执行失败。"));
+      const marker = "__SIGN_RESULT__";
+      const output = stdout.toString("utf8");
+      const index = output.lastIndexOf(marker);
+      const line = index === -1 ? "" : output.slice(index + marker.length).split(/\r?\n/u, 1)[0];
+      try {
+        const parsed = JSON.parse(line);
+        if (!parsed.ok || typeof parsed.a_bogus !== "string" || !/^[A-Za-z0-9+/_=-]{64,512}$/u.test(parsed.a_bogus)) {
+          throw new Error("invalid_signature");
+        }
+        resolve(parsed.a_bogus);
+      } catch {
+        reject(new DirectHistoryError("signer_invalid_output", "评论回复签名器没有返回有效结果。"));
+      }
+    });
+    child.stdin.end(payload);
+  });
+  url.searchParams.append("a_bogus", signature);
+  return url;
 }
 
 function directItems(payload, label = "记录") {

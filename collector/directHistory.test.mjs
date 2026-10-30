@@ -13,6 +13,7 @@ import {
   buildUnsignedHistoryUrl,
   captureDirectHistoryTemplate,
   collectDirectRecordPages,
+  directSignerProcessConfiguration,
   fetchDirectHistoryPage,
   scrollHiddenListPage,
 } from "./directHistory.mjs";
@@ -90,6 +91,63 @@ function fakeContext({ cookies = sessionCookies, payload, status = 200 } = {}) {
   };
   return { context, isolatedRequest, requestFactory, response };
 }
+
+describe("direct signer process", () => {
+  const runtimeDirectory = path.join(tmpdir(), "direct signer runtime");
+  const runnerPath = path.join(tmpdir(), "direct signer runner.cjs");
+  const executablePath = path.join(tmpdir(), "runtime.exe");
+
+  it("uses a hidden permission-limited Node subprocess on Windows", () => {
+    const configuration = directSignerProcessConfiguration({
+      platform: "win32",
+      executablePath,
+      runtimeDirectory,
+      runnerPath,
+    });
+
+    expect(configuration.command).toBe(path.resolve(executablePath));
+    expect(configuration.args).toEqual([
+      "--permission",
+      `--allow-fs-read=${path.resolve(runtimeDirectory)}`,
+      `--allow-fs-read=${path.resolve(runnerPath)}`,
+      path.resolve(runnerPath),
+      path.resolve(runtimeDirectory),
+    ]);
+    expect(configuration.options).toMatchObject({
+      cwd: path.resolve(runtimeDirectory),
+      env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: "1", LANG: "C", LC_ALL: "C", TZ: "UTC" }),
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    expect(configuration.options.env).not.toHaveProperty("NODE_OPTIONS");
+  });
+
+  it("keeps the macOS system sandbox around the same Node permission boundary", () => {
+    const configuration = directSignerProcessConfiguration({
+      platform: "darwin",
+      executablePath: "/usr/local/bin/node",
+      runtimeDirectory,
+      runnerPath,
+    });
+
+    expect(configuration.command).toBe("/usr/bin/sandbox-exec");
+    expect(configuration.args.slice(0, 4)).toEqual([
+      "-p",
+      "(version 1) (allow default) (deny network*) (deny file-write*)",
+      "/usr/local/bin/node",
+      "--permission",
+    ]);
+  });
+
+  it("rejects platforms without an implemented process boundary", () => {
+    expect(() => directSignerProcessConfiguration({
+      platform: "linux",
+      executablePath: "/usr/bin/node",
+      runtimeDirectory,
+      runnerPath,
+    })).toThrowError(expect.objectContaining({ code: "unsupported_platform" }));
+  });
+});
 
 describe("direct history request", () => {
   it("builds and sends one fixed signed GET without exposing a Cookie header", async () => {

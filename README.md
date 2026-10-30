@@ -282,10 +282,13 @@ git clone https://github.com/ZhangYukwiver/DouyinDataReview.git
 cd DouyinDataReview
 npm install
 
-# 2. 启动采集器（终端 A）
+# 2. 下载并校验评论回复用的签名器（不装也能用，只是展开不了评论回复）
+npm run direct:setup
+
+# 3. 启动采集器（终端 A）
 npm run collector
 
-# 3. 启动 Web 页面（终端 B），然后打开 http://localhost:8081 点「连接采集器」
+# 4. 启动 Web 页面（终端 B），然后打开 http://localhost:8081 点「连接采集器」
 npm run web
 ```
 
@@ -403,7 +406,7 @@ Collection is limited to records currently returned by Douyin's private APIs and
 
 ## 致谢
 
-感谢 [Expo](https://github.com/expo/expo) / [React Native](https://github.com/facebook/react-native) / [react-native-web](https://github.com/necolas/react-native-web)（工作台页面）、[Electron](https://github.com/electron/electron) / [electron-builder](https://github.com/electron-userland/electron-builder)（桌面壳与安装包）、[Playwright](https://github.com/microsoft/playwright)（连接浏览器 CDP 与 HTTP 请求会话）和 [lucide](https://github.com/lucide-icons/lucide)（图标）。
+感谢 [Expo](https://github.com/expo/expo) / [React Native](https://github.com/facebook/react-native) / [react-native-web](https://github.com/necolas/react-native-web)（工作台页面）、[Electron](https://github.com/electron/electron) / [electron-builder](https://github.com/electron-userland/electron-builder)（桌面壳与安装包）、[Playwright](https://github.com/microsoft/playwright)（连接浏览器 CDP 与 HTTP 请求会话）、[lucide](https://github.com/lucide-icons/lucide)（图标）和 [mafqla/douyin-api](https://github.com/mafqla/douyin-api)（评论回复签名，GPL-3.0，固定版本、按原样随安装包附带并保留其许可证）。
 
 ## 贡献
 
