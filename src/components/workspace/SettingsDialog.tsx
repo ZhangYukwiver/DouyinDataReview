@@ -5,6 +5,8 @@ import { Check, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type Luci
 
 import { canDragDesktopExtension, getDesktopOpenAtLogin, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
+import { DEFAULT_ASSISTANT_CONFIG, isLocalAiRuntime, loadAssistantConfig, saveAssistantConfig, type AssistantConfig } from "../../services/assistant";
+import { AiRuntimeField } from "./AiRuntimeField";
 import {
   collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites,
   findTwinAccount, formatAccountAddedDay, getBrowserLoginSources,
@@ -16,7 +18,7 @@ import { appUpdateAction } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
 
-export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "feed" | "about";
+export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "feed" | "ai" | "about";
 
 export interface SettingsDialogProps {
   visible: boolean;
@@ -60,6 +62,9 @@ export interface SettingsDialogProps {
   onShowLogin?: () => void;
   /** 正在用的号登录失效了：账号行和「登录与凭据」那行都要说出来 */
   loginExpired?: boolean;
+  /** AI 助手是可选功能：装上才在侧栏出现 */
+  assistantInstalled: boolean;
+  onToggleAssistant: () => void;
 }
 
 const web = Platform.OS === "web";
@@ -71,6 +76,7 @@ const SECTIONS: ReadonlyArray<{ key: SettingsSection; title: string }> = [
   { key: "account", title: "账号" },
   { key: "data", title: "数据" },
   { key: "feed", title: "推荐流" },
+  { key: "ai", title: "AI" },
   { key: "about", title: "关于" },
 ];
 
@@ -173,6 +179,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   : tab === "account" ? <Account {...props} />
                     : tab === "data" ? <Data {...props} />
                       : tab === "feed" ? <FeedFilter {...props} />
+                        : tab === "ai" ? <Assistant {...props} />
                       : <About {...props} />}
           </ScrollView>
         </View>
@@ -556,6 +563,48 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
   );
 }
 
+function Assistant({ appStyle, assistantInstalled, collector, onToggleAssistant }: SettingsDialogProps) {
+  const [config, setConfig] = useState<AssistantConfig>(() => loadAssistantConfig());
+  const connection = collector ? { baseUrl: collector.baseUrl, token: collector.token } : null;
+  // 改一项存一项：以前「改了没点保存就关窗」会把选择丢掉
+  const change = (patch: Partial<AssistantConfig>) => setConfig((current) => {
+    const next = { ...current, ...patch };
+    saveAssistantConfig(next);
+    return next;
+  });
+  return (
+    <>
+      <View style={styles.row}>
+        <RowCopy
+          detail="在侧栏加一个能对话的 AI：它能查你的观看记录、私信和创作者数据，也能替你搜抖音、下载作品、整理文件夹、开始读取。发私信、点赞、评论这类别人看得到的事，每次都会先弹卡片问你。"
+          title="AI 助手"
+        />
+        <Button appStyle={appStyle} kind={assistantInstalled ? "danger" : "primary"} label={assistantInstalled ? "移除" : "安装"} onPress={onToggleAssistant} testID="settings-assistant" />
+      </View>
+      {assistantInstalled ? <>
+        <View style={[styles.row, styles.rowStacked]}>
+          {/* 方舟的默认模型名本机 CLI 不认：切到本机就清空（用 CLI 自己的默认），切回接口再填回默认 */}
+          <AiRuntimeField connection={connection} value={config.runtime ?? "api"} onChange={(runtime) => change(isLocalAiRuntime(runtime)
+            ? { runtime, model: config.model === DEFAULT_ASSISTANT_CONFIG.model ? "" : config.model }
+            : { runtime, model: config.model || DEFAULT_ASSISTANT_CONFIG.model })} />
+          {isLocalAiRuntime(config.runtime) ? (
+            <TextInput accessibilityLabel="模型" autoCapitalize="none" onChangeText={(model) => change({ model })} placeholder="模型（留空用默认的）" placeholderTextColor={color.textMuted}
+              style={styles.field} testID="settings-assistant-model" value={config.model} />
+          ) : <>
+            <TextInput accessibilityLabel="接口地址" autoCapitalize="none" onChangeText={(baseUrl) => change({ baseUrl })} placeholder="接口地址（OpenAI 兼容，比如 https://ark.cn-beijing.volces.com/api/v3）"
+              placeholderTextColor={color.textMuted} style={styles.field} testID="settings-assistant-url" value={config.baseUrl} />
+            <TextInput accessibilityLabel="接口 Key" autoCapitalize="none" onChangeText={(apiKey) => change({ apiKey })} placeholder="接口 Key" placeholderTextColor={color.textMuted}
+              secureTextEntry style={styles.field} testID="settings-assistant-key" value={config.apiKey} />
+            <TextInput accessibilityLabel="模型" autoCapitalize="none" onChangeText={(model) => change({ model })} placeholder="模型名（要支持工具调用）" placeholderTextColor={color.textMuted}
+              style={styles.field} testID="settings-assistant-model" value={config.model} />
+            <Text style={styles.detail}>Key 只存在这台电脑上，每次对话随请求带给接口，不会写进应用的数据目录。</Text>
+          </>}
+        </View>
+      </> : null}
+    </>
+  );
+}
+
 function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, onDownloadAppUpdate, onInstallAppUpdate }: SettingsDialogProps) {
   const feedback = (
     <View style={styles.row}>
@@ -886,6 +935,8 @@ const styles = StyleSheet.create({
   rulesInput: { minHeight: 132, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: color.border, borderRadius: radius.small,
     backgroundColor: color.surface, color: color.text, fontFamily: font.mono, fontSize: 12.5, lineHeight: 19, textAlignVertical: "top" },
   feedEvent: { gap: 1 },
+  field: { height: 36, paddingHorizontal: 10, borderWidth: 1, borderColor: color.border, borderRadius: radius.small,
+    backgroundColor: color.surface, color: color.text, fontFamily: font.body, fontSize: 13 },
   // 按钮：次按钮白底细描边，主按钮实底，危险操作红字红描边；禁用 40%
   button: { minHeight: 32, flexShrink: 0, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12, borderWidth: 1, borderColor: color.border, borderRadius: radius.small, backgroundColor: color.surface },
   buttonHover: { backgroundColor: color.surfaceMuted },
