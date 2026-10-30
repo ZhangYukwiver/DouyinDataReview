@@ -53,6 +53,7 @@ import {
   Bot,
   Star,
   Trash2,
+  TvMinimalPlay,
 } from "lucide-react-native";
 
 import type {
@@ -99,15 +100,17 @@ import {
   type RecordFolders,
 } from "../../services/recordFolders";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
-import { PioneerBadge } from "./PioneerBadge";
+import { BadgeShelf, PioneerBadge } from "./PioneerBadge";
 import { ReportDashboard } from "./ReportDashboard";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "summary" | "highlights" | "chat" | "explore" | "creator" | "assistant";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant";
 
 export interface ContentWorkspaceProps {
+  /** 刷视频：进工作台默认就是这一页 */
+  feed?: React.ReactNode;
   explore?: React.ReactNode;
   creator?: React.ReactNode;
   /** AI 助手是可选功能：没装就不传，侧栏也不出这一项 */
@@ -129,7 +132,8 @@ export interface ContentWorkspaceProps {
   status: CollectorStatus | null;
   onChangeView: (view: WorkspaceViewKey) => void;
   onOpenRecord: (url: string) => Promise<void>;
-  onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
+  /** keepExplore：从播放器里下载时别关探索会话，评论面板还在用 */
+  onDownloadRecord?: (record: PersonalVideoRecord, keepExplore?: boolean) => Promise<void>;
   /** 送去拆片工坊：采集器下好视频，再由桌面外壳放进拆片工坊的收件箱；只有桌面版给 */
   onSendToReelLab?: (record: PersonalVideoRecord) => void;
   onBatchDownloadActiveChange?: (active: boolean) => void;
@@ -163,6 +167,7 @@ type IconComponent = React.ComponentType<{
 type NavItem<Id extends string = WorkspaceViewKey> = { id: Id; label: string; icon: IconComponent; accent: string };
 
 const navItems: NavItem[] = [
+  { id: "feed", label: "刷视频", icon: TvMinimalPlay, accent: color.accent },
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
   { id: "assistant", label: "AI 助手", icon: Bot, accent: color.accent },
@@ -182,13 +187,17 @@ const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "li
 const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
 type SideKey = WorkspaceViewKey | "library";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
-// 探索、创作者中心和 AI 助手是工具页：排在前面，不显示条数、隐私和重新读取
-const toolView = (view: SideKey) => view === "explore" || view === "creator" || view === "assistant";
+// 刷视频、探索、创作者中心和 AI 助手是工具页：不显示条数、隐私和重新读取
+const toolView = (view: SideKey) => view === "feed" || view === "explore" || view === "creator" || view === "assistant";
+const sideItem = (id: SideKey) => navItems.find((item) => item.id === id)!;
+// 侧栏按功能分区：看视频 / 我的记录 / 报告 / 创作工具，区和区之间一道细线
 const sideItems: NavItem<SideKey>[] = [
-  ...navItems.filter((item) => toolView(item.id)),
-  { id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan },
-  ...navItems.filter((item) => !isLibraryView(item.id) && !toolView(item.id)),
+  sideItem("feed"), sideItem("explore"),
+  { id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan }, sideItem("chat"),
+  sideItem("summary"), sideItem("highlights"),
+  sideItem("creator"), sideItem("assistant"),
 ];
+const SECTION_STARTS: ReadonlySet<SideKey> = new Set(["library", "summary", "creator"]);
 const withoutAssistant = sideItems.filter((item) => item.id !== "assistant");
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
@@ -212,6 +221,7 @@ function Text({ style, ...rest }: TextProps) {
 }
 
 export function ContentWorkspace({
+  feed,
   explore,
   creator,
   assistant,
@@ -308,6 +318,7 @@ export function ContentWorkspace({
   const folders = useRecordFolders(commentsConnection, status?.account?.id);
   const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
   const counts: Record<SideKey, number> = {
+    feed: 0,
     explore: 0,
     creator: 0,
     assistant: 0,
@@ -394,18 +405,20 @@ export function ContentWorkspace({
               <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[sideKey]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
             {sides.map((item) => (
-              <NavButton
-                key={item.id}
-                compact={compactSidebar}
-                count={counts[item.id]}
-                item={item}
-                onLayoutTop={(y) => reportNavTop(item.id, y)}
-                onPress={() => changeView(item.id)}
-                selected={item.id === sideKey}
-              />
+              <React.Fragment key={item.id}>
+                {SECTION_STARTS.has(item.id) ? <View {...ws("w-navsep")} style={styles.navSection} /> : null}
+                <NavButton
+                  compact={compactSidebar}
+                  count={counts[item.id]}
+                  item={item}
+                  onLayoutTop={(y) => reportNavTop(item.id, y)}
+                  onPress={() => changeView(item.id)}
+                  selected={item.id === sideKey}
+                />
+              </React.Fragment>
             ))}
           </View>
-          <PioneerBadge />
+          <BadgeShelf><PioneerBadge /></BadgeShelf>
           <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} />
           </View>
           <View style={styles.sidebarFooter}>
@@ -529,7 +542,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "chat" ? (
+        {activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
@@ -1038,7 +1051,8 @@ function RecordsGallery({
   downloadStates: Record<string, RecordDownloadState>;
   sendStates: Record<string, RecordDownloadState>;
   mobile: boolean;
-  onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
+  /** keepExplore：从播放器里下载时别关探索会话，评论面板还在用 */
+  onDownloadRecord?: (record: PersonalVideoRecord, keepExplore?: boolean) => Promise<void>;
   onSendToReelLab?: (record: PersonalVideoRecord) => void;
   onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
@@ -1475,7 +1489,8 @@ function RecordsGallery({
       {...{ dataSet: { scrollbar: "" } }}
     />
     {Platform.OS === "web" && playingRecord && !privacy && onLoadVideo ? (
-      <RecordVideoPlayer record={playingRecord} records={shownRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)} />
+      <RecordVideoPlayer record={playingRecord} records={shownRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)}
+        onDownload={onDownloadRecord ? (record) => void onDownloadRecord(record, true) : undefined} downloadStates={downloadStates} />
     ) : null}
     {liveTarget && Platform.OS === "web" && !privacy ? (
       <LiveRoomPlayer target={liveTarget} connection={commentsConnection ?? null} onClose={() => setLiveTarget(null)} onOpenRecord={onOpenRecord} onOpenSettings={onOpenSettings} />
@@ -2221,6 +2236,7 @@ const styles = StyleSheet.create({
   // 顶上 46 用 margin 而不是 padding：滚动时导航从折叠按钮下面滑过，而不是从它背后露出来
   sidebarBody: { flex: 1, marginTop: 46, marginHorizontal: -14, paddingHorizontal: 14 },
   sidebarNav: { gap: 4 },
+  navSection: { height: StyleSheet.hairlineWidth, marginVertical: 2, marginHorizontal: 8, backgroundColor: color.border },
   activeDays: { flexDirection: "row", alignItems: "center", minHeight: 44, marginTop: 26, paddingHorizontal: 8 },
   activeDaysText: { flex: 1, color: color.textMuted, fontSize: 10, marginLeft: 7 },
   navButton: { position: "relative", minHeight: 52, flexDirection: "row", alignItems: "center", paddingHorizontal: 8, borderRadius: radius.medium },
