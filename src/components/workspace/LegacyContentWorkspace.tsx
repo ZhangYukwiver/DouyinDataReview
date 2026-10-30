@@ -98,6 +98,7 @@ import {
   type RecordFolders,
 } from "../../services/recordFolders";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
+import { PioneerBadge } from "./PioneerBadge";
 import { ReportDashboard } from "./ReportDashboard";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -397,6 +398,7 @@ export function ContentWorkspace({
               />
             ))}
           </View>
+          <PioneerBadge />
           <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} />
           </View>
           <View style={styles.sidebarFooter}>
