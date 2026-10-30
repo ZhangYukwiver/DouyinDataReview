@@ -247,6 +247,7 @@ export async function startCollectorServer({
   feedExtensionVersion = null,
   origins = [],
   dataDirectory = path.join(projectDirectory, ".local-data"),
+  signerDirectory,
   browserSources = browserDirectories(),
   browserConnector = connectExternalBrowser,
   // 抖音桌面端的数据目录和登录态读取可替换，测试里用假的客户端目录
@@ -278,6 +279,7 @@ export async function startCollectorServer({
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const next = new DouyinCollector({
       dataDirectory: directory,
+      signerDirectory,
       store: new CollectorStore(directory),
       account: { id: account.id, nickname: account.nickname, avatar: account.avatar, uid: account.uid },
       onAccountIdentity: (identity) => accounts.updateIdentity(account.id, identity).catch(() => undefined),

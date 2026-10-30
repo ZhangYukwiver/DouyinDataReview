@@ -103,6 +103,12 @@
 .rv-reply .rv-comment-avatar { width: 26px; height: 26px; font-size: 11px; }
 .rv-reply-to { color: #82828d; overflow-wrap: anywhere; }
 .rv-reply-notice { margin: 8px 0; color: #a4a4af; line-height: 1.6; font-size: 12px; }
+.rv-reply-notice p { margin: 0; }
+/* 展开回复：抖音那样一行灰字小按钮，前面一小段横线引出 */
+.rv-reply-bar { display: flex; align-items: center; gap: 16px; min-height: 30px; }
+.rv-reply-bar::before { content: ""; width: 20px; height: 1px; background: #ffffff26; }
+.rv-backdrop .rv-reply-toggle { gap: 4px; padding: 4px 0; background: transparent; color: #a4a4af; font-size: 12px; }
+.rv-backdrop .rv-reply-toggle:hover { color: #fff; }
 .rv-comment-notice { padding: 30px 3px; text-align: center; color: #a4a4af; line-height: 1.7; font-size: 13px; }
 .rv-more { width: 100%; min-height: 40px; gap: 5px; padding: 8px; background: transparent; color: #c4c4cd !important; font-size: 12px !important; }
 .rv-more:hover:not(:disabled) { color: white !important; background: #ffffff06; }

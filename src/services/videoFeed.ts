@@ -50,6 +50,7 @@ export function createVideoCommentsSession(connection: ExploreConnection, record
   let sessionId: string | undefined;
   let disposed = false;
   let pending: Promise<ExplorePage> | null = null;
+  let pendingKey: string | undefined;
   const controller = new AbortController();
   const release = () => {
     if (!sessionId) return;
@@ -57,15 +58,18 @@ export function createVideoCommentsSession(connection: ExploreConnection, record
     sessionId = undefined;
     void closeExplore(connection, [current]).catch(() => {});
   };
-  const read = (): Promise<ExplorePage> => {
+  const read = (commentId?: string): Promise<ExplorePage> => {
     if (disposed) return Promise.reject(new DOMException("评论已关闭", "AbortError"));
     if (!id) return Promise.reject(new Error("这条记录缺少作品 ID，请在抖音原页查看评论。"));
-    if (pending) return pending;
+    // A reply read must wait for the shared tab, never reuse another thread's result.
+    if (pending) return pendingKey === commentId ? pending : pending.catch(() => {}).then(() => read(commentId));
+    if (commentId && !sessionId) return Promise.reject(new Error("请先加载评论，再展开回复。"));
+    pendingKey = commentId;
     pending = waitForCollector(async () => {
       let result: ExplorePage;
-      try { result = await readExplore(connection, { kind: "comments", id, sessionId }); }
+      try { result = await readExplore(connection, commentId ? { kind: "replies", id, sessionId, commentId } : { kind: "comments", id, sessionId }); }
       catch (error) {
-        if (!(error instanceof LocalCollectorError) || error.code !== "session_expired") throw error;
+        if (commentId || !(error instanceof LocalCollectorError) || error.code !== "session_expired") throw error;
         sessionId = undefined;
         controller.signal.throwIfAborted();
         result = await readExplore(connection, { kind: "comments", id });
@@ -79,6 +83,7 @@ export function createVideoCommentsSession(connection: ExploreConnection, record
   };
   return {
     read: () => read(),
+    readReplies: (commentId: string) => read(commentId),
     /** Posts through the same tab the comments were read from, so a reply target is on that page. */
     async comment(text: string, replyTo?: string): Promise<ExploreOutcome> {
       await pending?.catch(() => {});

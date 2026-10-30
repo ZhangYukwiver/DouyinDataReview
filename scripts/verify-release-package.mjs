@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { extractFile as extractArchiveFile, listPackage, statFile as statArchiveFile } from "@electron/asar";
+import { DIRECT_SIGNER_FILES, verifyDirectSigner } from "../collector/directHistory.mjs";
 
 const projectDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|records(?:\.json)?|direct-history-template\.json|direct-session\.json(?:\.[^/]+\.tmp)?|external-browser\.json(?:\.[^/]+\.tmp)?|accounts\.json|cookies?(?:\.sqlite|\.db|\.json)?(?:-journal|-wal|-shm)?|login data(?:-journal|-wal|-shm)?|local state|web data(?:-journal|-wal|-shm)?|\.env(?:\..*)?|\.git|\.ssh)$/i;
@@ -128,17 +129,23 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
   assert(!extractFile(archive, "collector/douyinCollector.mjs").toString("utf8").includes("launchPersistentContext"),
     "Collector still launches a dedicated browser");
 
+  const runner = "collector/directSignerRunner.cjs";
+  assert.equal(statFile(archive, runner).unpacked, true, "Signer runner must be unpacked");
+  assert.deepEqual(await readFile(path.join(resources, "app.asar.unpacked", runner)), await readFile(path.join(sourceDirectory, runner)));
   for (const relative of ["node_modules/playwright-core/package.json", "node_modules/playwright-core/index.js"]) {
     assert.equal(statFile(archive, relative).unpacked, true, "Playwright must be unpacked");
     assert.deepEqual(await readFile(path.join(resources, "app.asar.unpacked", relative)), await readFile(path.join(sourceDirectory, relative)));
   }
+  const signerDirectory = path.join(resources, "direct-signer");
+  assert.deepEqual((await filesUnder(signerDirectory)).sort(), Object.keys(DIRECT_SIGNER_FILES).sort(), "Unexpected file in bundled signer");
+  await verifyDirectSigner(signerDirectory);
 
   const packagedFiles = await filesUnder(resources);
   for (const relative of ["manifest.json", "filter.js", "page.js", "bridge.js", "background.js"])
     assert(packagedFiles.includes(`extension/${relative}`), `Feed filter extension is missing ${relative}`);
   for (const relative of packagedFiles) {
     assertPublicPackagePath(relative);
-    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("extension/"), `Unexpected resource: ${relative}`);
+    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("extension/") || relative.startsWith("direct-signer/"), `Unexpected resource: ${relative}`);
     // 推荐流过滤扩展原样带上（浏览器从拷出去的这份加载），不许多出或改动文件
     if (relative.startsWith("extension/")) {
       assert(!relative.endsWith(".test.mjs"), `Test file in package: ${relative}`);
@@ -162,5 +169,5 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   if (!process.argv[2]) throw new Error("Usage: node scripts/verify-release-package.mjs <packaged resources directory>");
   const result = await verifyReleasePackage(process.argv[2]);
-  console.log(`Verified release ${result.version}: current collector, ${result.webFiles} web assets, CDP import flow and no private data paths.`);
+  console.log(`Verified release ${result.version}: current collector, ${result.webFiles} web assets, CDP import flow, signer and no private data paths.`);
 }

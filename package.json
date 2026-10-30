@@ -11,6 +11,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "collector": "node collector/server.mjs",
+    "direct:setup": "node scripts/setup-direct-signer.mjs",
     "app:mac": "npm run build:icons && osacompile -s -o 'DouyinDataReview.app' scripts/macos-launcher.applescript && plutil -replace CFBundleName -string DouyinDataReview 'DouyinDataReview.app/Contents/Info.plist' && plutil -replace CFBundleDisplayName -string DouyinDataReview 'DouyinDataReview.app/Contents/Info.plist' && plutil -replace CFBundleIdentifier -string local.douyin.annual-recap 'DouyinDataReview.app/Contents/Info.plist' && plutil -replace NSDocumentsFolderUsageDescription -string '读取同目录中的本地应用代码与年度回顾数据。' 'DouyinDataReview.app/Contents/Info.plist' && cp build/icon.icns 'DouyinDataReview.app/Contents/Resources/applet.icns' && (plutil -remove CFBundleIconName 'DouyinDataReview.app/Contents/Info.plist' 2>/dev/null || true) && codesign --force --deep --sign - 'DouyinDataReview.app'",
     "build:icons": "node scripts/build-icons.mjs",
     "watch:process": "node scripts/process-watchdog.mjs",
@@ -23,12 +24,12 @@
     "prebuild:web": "npm run build:icons && npm run sync:story",
     "build:web": "expo export --platform web",
     "desktop": "npm run build:web && electron desktop/main.mjs",
-    "desktop:pack": "npm run build:web && electron-builder --win dir --publish never",
-    "desktop:build": "npm run build:web && electron-builder --win nsis --publish never",
+    "desktop:pack": "npm run build:web && npm run direct:setup && electron-builder --win dir --publish never",
+    "desktop:build": "npm run build:web && npm run direct:setup && electron-builder --win nsis --publish never",
     "sync:story": "node scripts/sync-story.mjs",
     "sync:geo": "node scripts/sync-geo.mjs",
     "check:geo": "node scripts/sync-geo.mjs --check",
-    "desktop:build:mac": "npm run build:web && electron-builder --mac --publish never",
+    "desktop:build:mac": "npm run build:web && npm run direct:setup && electron-builder --mac --publish never",
     "test:ops": "vitest run scripts/ops/github-traffic.test.mjs"
   },
   "dependencies": {
@@ -97,10 +98,19 @@
           "**/*",
           "!*.test.mjs"
         ]
+      },
+      {
+        "from": ".local-data/direct-signer",
+        "to": "direct-signer",
+        "filter": [
+          "LICENSE",
+          "lib/runtime/bdms/**"
+        ]
       }
     ],
     "asar": true,
     "asarUnpack": [
+      "collector/directSignerRunner.cjs",
       "collector/openBrowserDebugging.ps1",
       "collector/desktopCookies.ps1",
       "node_modules/playwright-core/**/*"

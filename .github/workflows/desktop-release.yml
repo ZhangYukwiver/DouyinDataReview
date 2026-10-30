@@ -54,6 +54,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build:web
+      - run: npm run direct:setup
       - name: Install Apple Silicon Electron
         if: runner.os == 'macOS'
         env:
