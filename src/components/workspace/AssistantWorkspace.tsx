@@ -178,7 +178,7 @@ export function AssistantConfirmCards({ connection, confirms, floating = false }
         <Text style={styles.cardTitle}>{item.source === "mcp" ? "外部 AI 想" : "AI 想"}{item.action}{item.target ? `：${item.target}` : ""}</Text>
       </View>
       {item.text ? <Text selectable style={styles.cardText}>{item.text}</Text> : null}
-      <Text style={kit.muted}>用的是你自己的抖音号，别人看得到。不点的话 15 分钟后自动作罢。</Text>
+      <Text style={kit.muted}>用的是你自己的抖音号，别人看得到。{item.covers ? (item.source === "mcp" ? "允许后 10 分钟内同样的操作不再问。" : "允许后这一轮里同样的操作（换了对象也算）不再问。") : ""}不点的话 15 分钟后自动作罢。</Text>
       <View style={styles.cardButtons}>
         <SmallButton label="不要" disabled={answered[item.id]} onPress={() => answer(item.id, false)} />
         <Pressable accessibilityRole="button" disabled={answered[item.id]} onPress={() => answer(item.id, true)} testID={`assistant-allow-${item.id}`}

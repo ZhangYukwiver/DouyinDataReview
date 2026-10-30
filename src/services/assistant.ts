@@ -39,6 +39,8 @@ export interface AssistantConfirm {
   text?: string;
   /** app 应用内对话；mcp 用户自己的 AI 客户端 */
   source: "app" | "mcp";
+  /** 点了允许以后，同样的操作（换了对象也算）这一轮里不再问 */
+  covers?: boolean;
   expiresAt: number;
 }
 

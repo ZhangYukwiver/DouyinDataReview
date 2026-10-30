@@ -78,6 +78,36 @@ export function filterRecords(snapshot, args, folders = null) {
   return rows;
 }
 
+/**
+ * 私信会话按最近一条消息排：存下来的会话自己的 lastActiveAt 常常是空的（工作台聊天页也是拿最新消息的时间），
+ * 所以和聊天页一样从消息里算，没有消息才退回 lastActiveAt。
+ */
+export function listConversations(snapshot, args) {
+  const latest = new Map();
+  for (const message of snapshot?.chatMessages ?? []) {
+    const time = new Date(message.sentAt).getTime();
+    if (Number.isNaN(time) || (latest.get(message.conversationId)?.time ?? -Infinity) >= time) continue;
+    latest.set(message.conversationId, { time, message });
+  }
+  const query = text(args.query, 60).toLowerCase();
+  const { from } = timeRange({ since: args.since });
+  const items = (snapshot?.chatConversations ?? []).map((conversation) => {
+    const last = latest.get(conversation.id);
+    const fallback = new Date(conversation.lastActiveAt ?? NaN).getTime();
+    return { conversation, last: last?.message ?? null, time: last?.time ?? (Number.isNaN(fallback) ? null : fallback) };
+  })
+    .filter(({ conversation, time }) => (!query || String(conversation.name ?? "").toLowerCase().includes(query)) && (from === null || (time !== null && time >= from)))
+    .sort((left, right) => (right.time ?? -Infinity) - (left.time ?? -Infinity));
+  return {
+    total: items.length,
+    items: items.slice(0, clampInt(args.limit, 1, MAX_ROWS, 30)).map(({ conversation, last, time }) => ({
+      conversationId: conversation.id, name: conversation.name ?? "抖音用户", group: conversation.kind === "group",
+      messages: conversation.messageCount ?? 0, mine: conversation.ownMessageCount ?? 0, lastActive: time === null ? null : localTime(time),
+      ...(last ? { lastMessage: `${last.senderName ?? "对方"}：${String(last.text || (last.share?.title ? `分享了《${last.share.title}》` : `[${last.type ?? "消息"}]`)).slice(0, 40)}` } : {}),
+    })),
+  };
+}
+
 const row = ({ list, record }) => ({
   list: LISTS[list],
   videoId: record.videoId ?? null,
@@ -283,25 +313,15 @@ export const TOOLS = [
   },
   {
     kind: "read",
-    def: fn("list_conversations", "本机存的私信会话（好友和群），按最近活跃排序。", {
+    def: fn("list_conversations", "本机存的私信会话（好友和群），按最近一条消息的时间从新到旧，带最后一句。群聊消息本机不存，群的时间和最后一句是空的，要知道就用 read_live_chat。", {
       query: { type: "string", description: "按会话名筛" },
+      since: { type: "string", description: "只要这个时间以后还有消息的，如 2026-10-29" },
       limit: { type: "integer", description: "默认 30，最多 50" },
     }),
     async run(ctx, args) {
       const collector = ctx.collector();
       collector.assertReadPermission("chat");
-      const query = text(args.query, 60).toLowerCase();
-      const items = (collector.snapshot.chatConversations ?? [])
-        .filter((conversation) => !query || String(conversation.name ?? "").toLowerCase().includes(query))
-        .sort((left, right) => String(right.lastActiveAt ?? "").localeCompare(String(left.lastActiveAt ?? "")));
-      return {
-        ok: true,
-        total: items.length,
-        items: items.slice(0, clampInt(args.limit, 1, MAX_ROWS, 30)).map((conversation) => ({
-          conversationId: conversation.id, name: conversation.name ?? "抖音用户", group: conversation.kind === "group",
-          messages: conversation.messageCount ?? 0, mine: conversation.ownMessageCount ?? 0, lastActive: localTime(conversation.lastActiveAt),
-        })),
-      };
+      return { ok: true, ...listConversations(collector.snapshot, args) };
     },
   },
   {
@@ -491,38 +511,45 @@ export const TOOLS = [
   },
   {
     kind: "external",
-    def: fn("send_chat_message", "以用户的身份给一个会话发一条私信（会先弹卡片让用户确认）。要先在接收聊天。一次只发一条，不要群发。", {
-      conversationId: { type: "string" },
+    def: fn("send_chat_message", "以用户的身份把同一句私信发给一个或几个会话（最多 10 个）：弹一张卡片列出所有对象，用户点一次允许就逐个发。要先在接收聊天。用户点名或说清楚范围的几个人，放进同一次调用，不要一个一个调。", {
+      conversationIds: { type: "array", items: { type: "string" }, description: "1–10 个会话" },
       text: { type: "string", description: "要发的原文，最多 2000 字" },
-    }, ["conversationId", "text"]),
-    async run(ctx, args) {
+    }, ["conversationIds", "text"]),
+    async run(ctx, args, signal) {
       const message = String(args.text ?? "").trim();
       if (!message || message.length > 2_000) return fail("invalid_text", "要发的内容不能为空，最多 2000 字。");
+      const ids = [...new Set((Array.isArray(args.conversationIds) ? args.conversationIds : [args.conversationId]).filter((id) => typeof id === "string" && id))];
+      if (!ids.length || ids.length > MAX_BATCH) return fail("invalid_targets", `一次发给 1 到 ${MAX_BATCH} 个会话。`);
       const collector = ctx.collector();
       if (!["launching_browser", "observing"].includes(collector.getStatus().chat?.state)) return fail("not_receiving", "还没在接收聊天，先调 start_reading（kind=chat），等它开始接收再发。");
-      const conversation = collector.snapshot.chatConversations?.find((item) => item.id === args.conversationId);
-      await ctx.confirm({ action: "发私信", target: conversation?.name ?? "这个会话", text: message });
-      return passThrough(ctx, "POST", "/v1/chat/send", { requestId: requestId(), conversationId: args.conversationId, text: message });
+      const conversations = collector.snapshot.chatConversations ?? [];
+      const names = ids.map((id) => conversations.find((item) => item.id === id)?.name ?? null);
+      if (names.includes(null)) return fail("conversation_not_found", "有的会话找不到，先用 list_conversations 查一下。");
+      await ctx.confirm({ action: "发私信", target: everyone(names), text: message });
+      return sendEach(ids.map((conversationId, index) => ({
+        name: names[index],
+        send: () => ctx.api("POST", "/v1/chat/send", { requestId: requestId(), conversationId, text: message }),
+      })), { signal });
     },
   },
   {
     kind: "external",
-    def: fn("douyin_interact", "以用户的身份在抖音上操作（每次都会先弹卡片让用户确认）：like/unlike 点赞、collect/uncollect 收藏（videoId）；follow/unfollow 关注（userId 是 sec_uid）；comment 评论（videoId + text，回复某条评论再带 replyToCommentId 和读评论那次的 sessionId）；share 把作品分享给一个私信会话（videoId + shareTo 会话名，要先在接收聊天）。", {
+    def: fn("douyin_interact", "以用户的身份在抖音上操作（会先弹卡片让用户确认）：like/unlike 点赞、collect/uncollect 收藏（videoId）；follow/unfollow 关注（userId 是 sec_uid）；comment 评论（videoId + text，回复某条评论再带 replyToCommentId 和读评论那次的 sessionId）；share 把作品分享给一个或几个私信会话（videoId + shareTo 会话名列表，最多 10 个，一张卡片确认后逐个分享，要先在接收聊天；几个人放进同一次调用）。", {
       action: { type: "string", enum: ["like", "unlike", "collect", "uncollect", "follow", "unfollow", "comment", "share"] },
       videoId: { type: "string" },
       userId: { type: "string" },
       text: { type: "string", description: "评论原文，最多 500 字" },
       replyToCommentId: { type: "string" },
       sessionId: { type: "string" },
-      shareTo: { type: "string", description: "分享给哪个会话（名字）" },
+      shareTo: { type: "array", items: { type: "string" }, description: "分享给哪些会话（名字），1–10 个" },
     }, ["action"]),
-    run: interact,
+    run: (ctx, args, signal) => interact(ctx, args, signal),
   },
 ];
 
 const PUBLIC = new Set(["like", "unlike", "collect", "uncollect", "follow", "unfollow", "comment"]);
 
-async function interact(ctx, args) {
+async function interact(ctx, args, signal) {
   const { action } = args;
   if (PUBLIC.has(action) && !ctx.writesEnabled()) {
     return fail("writes_disabled", "应用设置里「允许在抖音上操作」关着。请用户自己到「设置 → 隐私」打开，你不能替用户打开。");
@@ -558,19 +585,59 @@ async function interact(ctx, args) {
     return passThrough(ctx, "POST", "/v1/explore/interact", { sessionId, requestId: requestId(), action: "comment", text: comment, ...(args.replyToCommentId ? { replyTo: String(args.replyToCommentId) } : {}) });
   }
   if (action === "share") {
+    const wanted = [...new Set((Array.isArray(args.shareTo) ? args.shareTo : [args.shareTo]).map((name) => text(name, 60)).filter(Boolean))];
+    if (!wanted.length || wanted.length > MAX_BATCH) return fail("invalid_targets", `一次分享给 1 到 ${MAX_BATCH} 个会话。`);
     const sharees = await ctx.api("POST", "/v1/explore/read", { kind: "sharees", id: args.videoId });
     if (!sharees.ok) return apiFailure(sharees);
-    const wanted = text(args.shareTo, 60);
-    const matches = (sharees.body.items ?? []).filter((item) => item.name === wanted);
-    if (matches.length !== 1) {
-      const close = (sharees.body.items ?? []).filter((item) => wanted && String(item.name).includes(wanted)).slice(0, 8).map((item) => item.name);
-      return fail("target_not_found", matches.length ? `有 ${matches.length} 个会话都叫「${wanted}」，先问用户是哪个。` : `私信会话里没有叫「${wanted}」的。${close.length ? `名字像的有：${close.join("、")}` : ""}`);
+    const items = sharees.body.items ?? [];
+    // 对不上的先全部报出来，一个都不发，免得发一半
+    const targets = [];
+    const problems = [];
+    for (const name of wanted) {
+      const matches = items.filter((item) => item.name === name);
+      if (matches.length === 1) { targets.push(matches[0]); continue; }
+      const close = items.filter((item) => String(item.name).includes(name)).slice(0, 5).map((item) => item.name);
+      problems.push(matches.length ? `「${name}」有 ${matches.length} 个重名会话` : `没有叫「${name}」的会话${close.length ? `（名字像的有：${close.join("、")}）` : ""}`);
     }
+    if (problems.length) return fail("target_not_found", `${problems.join("；")}。先和用户确认，再一起分享。`);
     const detail = await ctx.api("POST", "/v1/explore/read", { kind: "detail", id: args.videoId });
-    await ctx.confirm({ action: "分享作品", target: matches[0].name, text: detail.ok ? workName(detail.body.video) : `作品 ${args.videoId}` });
-    return passThrough(ctx, "POST", "/v1/explore/interact", { sessionId: sharees.body.sessionId, requestId: requestId(), action: "share", targetId: matches[0].id });
+    await ctx.confirm({ action: "分享作品", target: everyone(targets.map((target) => target.name)), text: detail.ok ? workName(detail.body.video) : `作品 ${args.videoId}` });
+    return sendEach(targets.map((target) => ({
+      name: target.name,
+      send: () => ctx.api("POST", "/v1/explore/interact", { sessionId: sharees.body.sessionId, requestId: requestId(), action: "share", targetId: target.id }),
+    })), { signal });
   }
   return fail("invalid_action", "不支持这个操作。");
+}
+
+const MAX_BATCH = 10;
+const everyone = (names) => (names.length > 1 ? `${names.join("、")}（${names.length} 人）` : names[0]);
+
+/**
+ * 一张卡片允许以后逐个发：中间随机隔 2–4 秒（和续火花一样别发太快），连着两次没发成就停。
+ * 结果不明（发出去了没拿到回执）的不重发。gap 测试里换成 0。
+ */
+export async function sendEach(items, { signal, gap = () => 2_000 + Math.random() * 2_000 } = {}) {
+  const results = [];
+  let failures = 0;
+  for (const [index, item] of items.entries()) {
+    if (index) await delay(gap(), undefined, { signal });
+    const response = await item.send();
+    const outcome = response.body?.outcome;
+    const ok = response.ok && outcome !== "rejected";
+    results.push({ name: item.name, ok, ...(outcome === "unknown" ? { note: "发出去了但没确认收到，别重发" } : {}), ...(!ok ? { note: response.body?.message ?? "没发成" } : {}) });
+    failures = ok ? 0 : failures + 1;
+    if (failures >= 2) break;
+  }
+  const sent = results.filter((result) => result.ok).length;
+  const skipped = items.slice(results.length).map((item) => item.name);
+  return {
+    ok: sent > 0,
+    total: sent,
+    results,
+    ...(skipped.length ? { notSent: skipped, message: "连着两次没发成，剩下的先停了。" } : {}),
+    ...(!sent ? { code: "send_failed", message: results[0]?.note ?? "一个都没发成。" } : {}),
+  };
 }
 
 const workName = (video) => (video ? `${video.author ?? ""}的作品《${String(video.title ?? "").slice(0, 40) || "无标题"}》` : "这个作品");
