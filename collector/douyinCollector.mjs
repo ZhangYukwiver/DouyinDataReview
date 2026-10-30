@@ -43,6 +43,7 @@ import { LiveRooms } from "./liveRoom.mjs";
 import { DirectApiClient, loadDirectSession, saveDirectSession, sameDirectSession, needsDirectSessionRefresh } from "./directApi.mjs";
 import { readDirectCredentialMaterial, initializeDirectCredentialMaterial, completeDirectCredentialExport, requireDirectCredentials } from "./directCredentials.mjs";
 import { DirectChatClient } from "./directChat.mjs";
+import { transcribeVoiceMessage } from "./chatVoice.mjs";
 import { BrowserConnectionError } from "./browserConnection.mjs";
 import { writeDesktopTemplate } from "./desktopClient.mjs";
 import { readDesktopSecurity } from "./desktopSecurity.mjs";
@@ -1423,6 +1424,19 @@ export class DouyinCollector {
   async readChatMessages(input) {
     const { pageMessages, ...result } = await this.chatClientForReading().messages(input);
     return result;
+  }
+
+  async transcribeChatVoice(input, { signal } = {}) {
+    this.assertReadPermission("chat");
+    if (typeof input?.messageId !== "string" || !/^\d{1,30}$/u.test(input.messageId))
+      throw new ChatSendError("invalid_request", "语音消息标识无效。", 400);
+    const message = this.snapshot.chatMessages.find(item => item.id === input.messageId);
+    if (!message || message.type !== "voice" || message.conversationType === "group")
+      throw new ChatSendError("voice_not_found", "本地没有这条好友语音，请重新读取聊天记录。", 404);
+    if (message.voiceTranscription?.status === "done" && message.text) return { id: message.id, text: message.text };
+    if (!message.voiceResource) throw new DirectHistoryError("voice_resource_missing", "缺少语音转写资料，请重新读取聊天记录后再导出。");
+    const api = await this.ensureDirectApi({ signal });
+    return transcribeVoiceMessage(api, message, { signal });
   }
 
   async readChatStreaks() {

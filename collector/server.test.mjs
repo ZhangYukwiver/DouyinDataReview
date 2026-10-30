@@ -50,6 +50,21 @@ async function startPaired(prefix, prepare) {
 }
 
 describe("collector accounts", () => {
+  it("scopes voice transcription to the expected account and forwards only the requested local message", async () => {
+    const transcribe = vi.spyOn(DouyinCollector.prototype, "transcribeChatVoice").mockResolvedValue({ id: "123", text: "合成转写" });
+    try {
+      const { runtime, headers } = await startPaired("voice-export-route-");
+      const wrong = await fetch(`${runtime.baseUrl}/v1/chat/voice/transcribe?account=another-account`, {
+        method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ messageId: "123" }),
+      });
+      expect(wrong.status).toBe(409); expect(transcribe).not.toHaveBeenCalled();
+      const response = await fetch(`${runtime.baseUrl}/v1/chat/voice/transcribe`, {
+        method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ messageId: "123" }),
+      });
+      expect(response.status).toBe(200); expect(await response.json()).toEqual({ id: "123", text: "合成转写" });
+      expect(transcribe).toHaveBeenCalledWith({ messageId: "123" }, { signal: expect.any(AbortSignal) });
+    } finally { transcribe.mockRestore(); }
+  });
   it("keeps each account's login and records apart and switches without deleting anything", async () => {
     const { dataDirectory, runtime, call, headers } = await startPaired("accounts-switch-", async (directory) => {
       await writeSyntheticRecords(directory);

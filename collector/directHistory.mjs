@@ -377,6 +377,7 @@ export async function signDirectHistoryUrl(unsignedUrl, { userAgent } = {}) {
 }
 
 export const DIRECT_API_PATHS = new Set([
+  "/aweme/v1/web/im/message/audio/recognition/",
   "/aweme/v1/web/query/user/",
   "/webcast/feed/", "/webcast/web/feed/follow/",
   "/aweme/v1/web/user/profile/self/", "/aweme/v1/web/user/profile/other/",

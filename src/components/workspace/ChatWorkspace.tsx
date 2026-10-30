@@ -1522,6 +1522,9 @@ export function MessageContent({ message, onOpenRecord }: { message: ChatMessage
         <View style={styles.callCopy}>
           <Text style={styles.callTitle}>{message.type === "video" ? "视频通话" : message.type === "voice" ? "语音消息" : "通话记录"}</Text>
           <Text style={styles.callMeta}>{message.callDurationSeconds === null ? "时长未提供" : formatDuration(message.callDurationSeconds)}</Text>
+          {message.type === "voice" && message.voiceTranscription ? <Text style={styles.bubbleText}>
+            {message.voiceTranscription.status === "done" ? message.text : `未转写：${message.voiceTranscription.reason ?? "未取得文字"}`}
+          </Text> : null}
         </View>
       </View>
     );

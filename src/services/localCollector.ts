@@ -518,7 +518,7 @@ function parseChatMessage(value: unknown): ChatMessage | null {
   const share = parseChatShare(value.share);
   const shareHasEvidence = hasChatShareEvidence(share);
   const shareIsRenderable = rawType === "share" && shareHasEvidence;
-  const rawText = cleanRecordString(value.text);
+  const rawText = cleanRecordString(value.text, rawType === "voice" ? 16_000 : MAX_RECORD_STRING);
   const fallbackText = rawText && !/^\[分享\]$/u.test(rawText)
     ? rawText
     : (!shareIsRenderable && rawType === "share" && share?.title ? share.title : rawText);
@@ -540,6 +540,12 @@ function parseChatMessage(value: unknown): ChatMessage | null {
     callDurationSeconds: duration,
   };
   if (senderAvatarUrl) message.senderAvatarUrl = senderAvatarUrl;
+  if (type === "voice" && isObject(value.voiceTranscription)
+    && ["done", "unavailable", "failed"].includes(String(value.voiceTranscription.status))) {
+    const reason = cleanRecordString(value.voiceTranscription.reason);
+    message.voiceTranscription = { status: value.voiceTranscription.status as "done" | "unavailable" | "failed",
+      ...(reason ? { reason } : {}) };
+  }
   // 抖音自己插的提示带 {{0}} 这种模板空位（比如跟没互关的人新建会话时那句），旧版采集器把它当成了「我发的文字」
   if (message.type === "text" && message.text && /\{\{\d+\}\}/u.test(message.text)) {
     message.type = "system";

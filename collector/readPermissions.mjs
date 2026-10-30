@@ -14,7 +14,7 @@ export function importedReadPermissions(source) {
 }
 
 export function readPermissionForRequest(method, pathname) {
-  if ((method === "POST" && ["/v1/chat/observe", "/v1/chat/messages", "/v1/chat/send"].includes(pathname))
+  if ((method === "POST" && ["/v1/chat/observe", "/v1/chat/messages", "/v1/chat/send", "/v1/chat/voice/transcribe"].includes(pathname))
     || (method === "GET" && pathname === "/v1/chat/streaks")) return "chat";
   if ((method === "POST" && ["/v1/sync", "/v1/experimental/records-direct", "/v1/downloads",
     "/v1/explore/read", "/v1/explore/interact", "/v1/explore/react", "/v1/explore/seen", "/v1/explore/video", "/v1/creator/read", "/v1/live/rooms"].includes(pathname))

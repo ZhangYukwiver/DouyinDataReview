@@ -1,3 +1,5 @@
+import { normalizeVoiceResource, VOICE_MESSAGE_TYPES } from "./chatVoice.mjs";
+
 const SUPPORTED_HOSTS = new Set(["imapi.douyin.com", "imapi.snssdk.com"]);
 const SUPPORTED_PATHS = new Set([
   "/v1/message/get_by_conversation",
@@ -671,6 +673,7 @@ function parseMessageType(typeCode, content) {
   const explicit = cleanString(typeCode, 50)?.toLowerCase();
   if (isCommentContent(typeCode, content)) return "comment";
   if (explicit === "call" || explicit === "193") return "call";
+  if (VOICE_MESSAGE_TYPES.has(Number(explicit))) return "voice";
   if (!isObject(content)) return "unknown";
   if (isCallContent(typeCode, content)) return "call";
   const parsedShare = parseShare(content);
@@ -685,6 +688,7 @@ function parseMessageType(typeCode, content) {
   const numeric = /^\d+$/u.test(explicit ?? "") ? Number(explicit) : null;
   const contentNumericText = cleanString(content.aweType ?? content.awe_type, 50);
   const contentNumeric = /^\d+$/u.test(contentNumericText ?? "") ? Number(contentNumericText) : null;
+  if (contentNumeric === 10900) return "voice";
   if (STICKER_TYPES.has(contentNumeric) || content.sticker || content.sticker_url || content.stickerUrl || content.stickers || content.joker_stickers) return "sticker";
   if (IMAGE_TYPES.has(contentNumeric)) return "image";
   if (SHARE_TYPES.has(contentNumeric) && parsedShare) return "share";
@@ -811,6 +815,17 @@ function parseMessageObject(value, fallbackConversationId = null, fallbackConver
     callDurationSeconds: null,
   };
   if (senderAvatarUrl) message.senderAvatarUrl = senderAvatarUrl;
+  if (type === "voice") {
+    const voiceResource = normalizeVoiceResource({
+      uri: contentObject?.resource_url?.uri || contentObject?.tkey,
+      skey: contentObject?.skey,
+      secUid: value.sec_sender ?? value.secSender,
+      conversationShortId: firstString(value.conversation_short_id, value.conversationShortId),
+      messageType: VOICE_MESSAGE_TYPES.has(Number(rawTypeCode)) ? Number(rawTypeCode)
+        : Number(contentObject?.aweType) === 10900 ? 109 : 17,
+    });
+    if (voiceResource) message.voiceResource = voiceResource;
+  }
   const comment = type === "comment" ? parseComment(contentForClassification) : null;
   const share = type === "comment" ? parseCommentVideo(contentForClassification)
     : type === "share" ? parseShare(contentForClassification) : null;
@@ -938,6 +953,8 @@ function parseProtoMessage(bytes, fallbackConversation = null) {
     sender_uid: senderId,
     conv_id: conversationId,
     content_json: decodeText(firstField(fields, 8, 2)?.value, 20_000) ?? null,
+    conversation_short_id: firstString(firstField(fields, 5, 0)?.value, decodeText(firstField(fields, 5, 2)?.value)),
+    sec_sender: decodeText(firstField(fields, 14, 2)?.value),
   };
   return message;
 }

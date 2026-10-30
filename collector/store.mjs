@@ -2,6 +2,7 @@ import { copyFile, mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 import { hasChatShareEvidence, isSyntheticChatPlaceholder } from "./chatNormalizer.mjs";
+import { normalizeVoiceResource } from "./chatVoice.mjs";
 import { createEmptyRecords, normalizeRecord } from "./normalizer.mjs";
 
 export const SCHEMA_VERSION = 2;
@@ -157,7 +158,7 @@ function normalizeChatMessage(value) {
   }
   const shareHasEvidence = hasChatShareEvidence(share);
   const shareIsRenderable = rawType === "share" && shareHasEvidence;
-  const rawText = chatString(value.text);
+  const rawText = chatString(value.text, rawType === "voice" ? 16_000 : MAX_CHAT_STRING);
   const fallbackText = rawText && !/^\[分享\]$/u.test(rawText)
     ? rawText
     : (!shareIsRenderable && rawType === "share" ? chatString(value.share?.title) : rawText);
@@ -187,6 +188,14 @@ function normalizeChatMessage(value) {
     callDurationSeconds: rawDuration,
   };
   if (senderAvatarUrl) result.senderAvatarUrl = senderAvatarUrl;
+  if (type === "voice") {
+    const resource = normalizeVoiceResource(value.voiceResource);
+    if (resource) result.voiceResource = resource;
+    if (["done", "unavailable", "failed"].includes(value.voiceTranscription?.status)) {
+      result.voiceTranscription = { status: value.voiceTranscription.status,
+        ...(chatString(value.voiceTranscription.reason) ? { reason: chatString(value.voiceTranscription.reason) } : {}) };
+    }
+  }
   if (type === "comment") {
     const comment = value.comment && typeof value.comment === "object" ? value.comment : {};
     result.comment = {

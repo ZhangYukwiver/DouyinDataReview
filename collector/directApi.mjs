@@ -225,7 +225,7 @@ export class DirectApiClient {
       }
     }
   }
-  async request(pathname, { query = {}, method = "GET", body = null, referer, signal } = {}) {
+  async request(pathname, { query = {}, method = "GET", body = null, referer, signal, contentType } = {}) {
     if (!DIRECT_API_PATHS.has(pathname) || !["GET", "POST"].includes(method)) throw new DirectHistoryError("unsafe_url", "直接请求不在接口白名单内。");
     const url = new URL(pathname, ORIGIN);
     const common = { device_platform: "webapp", aid: "6383", channel: "channel_pc_web", ...this.session.values };
@@ -249,7 +249,7 @@ export class DirectApiClient {
       throw new DirectHistoryError("unsafe_url", "签名结果偏离允许的接口，已停止请求。");
     let signedUrl = WEB_SIGN_PATHS.has(pathname) ? signSecsdkUrl(signed, this.cookie("UIFID")) : String(signed);
     if (reply && this.cookie("s_v_web_id")) signedUrl += `&verifyFp=${encodeURIComponent(this.cookie("s_v_web_id"))}&fp=${encodeURIComponent(this.cookie("s_v_web_id"))}`;
-    const response = await this.raw(signedUrl, { method, body: data, referer, signal });
+    const response = await this.raw(signedUrl, { method, body: data, referer, signal, contentType });
     if (response.text.trim() === "blocked") throw this.sessionError(new DirectHistoryError("verification_required", "抖音要求安全验证，请在登录浏览器中完成后重试。"));
     let payload;
     try { payload = JSON.parse(response.text); } catch { throw new DirectHistoryError("invalid_json", "抖音接口没有返回有效 JSON。"); }
