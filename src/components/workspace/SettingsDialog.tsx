@@ -453,7 +453,8 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
         setSettings(value);
         setDraft(value.rules);
         setEvents(history);
-        setBrowsers(sources.filter((source) => source.id !== "app" && source.available));
+        // 应用内登录窗口和抖音电脑客户端都不是浏览器，没有扩展页
+        setBrowsers(sources.filter((source) => source.id !== "app" && source.id !== "desktop" && source.available));
       }, (value: unknown) => { if (live) fail(value); });
     // 开着这一页时隔几秒刷一下扩展状态和新记录：刚拖进去装好、点了移除，这里很快就跟上
     const timer = setInterval(() => {
