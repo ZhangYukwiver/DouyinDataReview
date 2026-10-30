@@ -565,15 +565,19 @@ function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, 
       </View>
     </View>
   );
-  const releaseNotes = RELEASE_NOTES && (
+  const releaseNotes = RELEASE_NOTES.length > 0 && (
     <View style={styles.row}>
       <View style={styles.copy} testID="settings-release-notes">
-        <Text style={styles.rowTitle}>v{RELEASE_NOTES.version} 更新了什么</Text>
-        <Text style={styles.updateTarget}>{RELEASE_NOTES.title}</Text>
-        {RELEASE_NOTES.notes.map((note) => (
-          <View key={note} style={styles.note}>
-            <Text style={styles.detail}>·</Text>
-            <Text selectable style={[styles.detail, styles.noteText]}>{note}</Text>
+        <Text style={styles.rowTitle}>更新记录</Text>
+        {RELEASE_NOTES.map((release) => (
+          <View key={release.version} style={styles.release}>
+            <Text style={styles.updateTarget}>v{release.version} · {release.title}</Text>
+            {release.notes.map((note) => (
+              <View key={note} style={styles.note}>
+                <Text style={styles.detail}>·</Text>
+                <Text selectable style={[styles.detail, styles.noteText]}>{note}</Text>
+              </View>
+            ))}
           </View>
         ))}
       </View>
@@ -582,11 +586,11 @@ function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, 
   if (!appUpdate) {
     return (
       <>
-        {releaseNotes}
         <View style={styles.row}>
           <RowCopy detail="浏览器里打开时没有自动更新。" title="应用更新" />
         </View>
         {feedback}
+        {releaseNotes}
       </>
     );
   }
@@ -606,7 +610,6 @@ function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, 
           <Text style={styles.value} testID="settings-version">v{appUpdate.currentVersion}</Text>
         </View>
       ) : null}
-      {releaseNotes}
       <View style={styles.row}>
         <View style={styles.copy}>
           <Text style={styles.rowTitle}>应用更新</Text>
@@ -634,6 +637,8 @@ function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, 
         ) : null}
       </View>
       {feedback}
+      {/* 更新记录有好几版、很长，放最后，别把更新按钮挤下去 */}
+      {releaseNotes}
     </>
   );
 }
@@ -825,7 +830,8 @@ const styles = StyleSheet.create({
   error: { fontFamily: font.body, color: color.danger, fontSize: 12.5, lineHeight: 19 },
   value: { fontFamily: font.sans, color: color.textSecondary, fontSize: 13, fontVariant: ["tabular-nums"] },
   updateTarget: { fontFamily: font.body, color: color.text, fontSize: 12.5, lineHeight: 19, fontWeight: "500" },
-  // 本版更新的每条改动：圆点挂在左边，折行的字对齐第一行
+  // 更新记录：版与版之间空一点；每条改动圆点挂在左边，折行的字对齐第一行
+  release: { gap: 3, marginTop: 8 },
   note: { flexDirection: "row", gap: 6 },
   noteText: { flex: 1 },
   progressRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 },
