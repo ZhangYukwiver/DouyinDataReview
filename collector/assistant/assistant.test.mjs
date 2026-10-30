@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { startCollectorServer } from "../server.mjs";
 import { createConfirmDesk } from "./confirm.mjs";
-import { countBy, filterRecords, listConversations } from "./tools.mjs";
+import { countBy, filterRecords, listConversations, sendEach } from "./tools.mjs";
 
 const cleanups = [];
 afterEach(async () => {
@@ -113,6 +113,38 @@ describe("listing chat conversations", () => {
   });
 });
 
+describe("sending to several people after one yes", () => {
+  const reply = (status, outcome, message) => async () => ({ ok: status < 300, status, body: { outcome, message } });
+  const instant = { gap: () => 0 };
+
+  it("goes through everyone in order and counts a send without a receipt as sent", async () => {
+    const order = [];
+    const items = ["甲", "乙", "丙"].map((name, index) => ({ name, send: async () => { order.push(name); return reply(200, index === 1 ? "unknown" : "confirmed")(); } }));
+    const result = await sendEach(items, instant);
+    expect(order).toEqual(["甲", "乙", "丙"]);
+    expect(result).toMatchObject({ ok: true, total: 3 });
+    expect(result.results[1]).toMatchObject({ name: "乙", ok: true, note: expect.stringContaining("别重发") });
+  });
+
+  it("stops after two failures in a row and says who was left out", async () => {
+    const result = await sendEach([
+      { name: "甲", send: reply(200, "confirmed") },
+      { name: "乙", send: reply(200, "rejected", "被拒了") },
+      { name: "丙", send: reply(409, undefined, "没在接收") },
+      { name: "丁", send: reply(200, "confirmed") },
+    ], instant);
+    expect(result).toMatchObject({ ok: true, total: 1, notSent: ["丁"] });
+    expect(result.results.map((item) => item.ok)).toEqual([true, false, false]);
+  });
+
+  it("waits between sends and can be stopped while waiting", async () => {
+    const controller = new AbortController();
+    const sending = sendEach([{ name: "甲", send: reply(200, "confirmed") }, { name: "乙", send: reply(200, "confirmed") }], { signal: controller.signal, gap: () => 5_000 });
+    setTimeout(() => controller.abort(), 20);
+    await expect(sending).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
 describe("the confirm desk", () => {
   it("lets only the answer through, and turns no, silence and stop into errors", async () => {
     const desk = createConfirmDesk({ timeoutMs: 50 });
@@ -129,6 +161,35 @@ describe("the confirm desk", () => {
     await expect(stopped).rejects.toMatchObject({ name: "AbortError" });
     expect(desk.pending()).toEqual([]);
     expect(() => desk.answer("0123456789abcdef", true)).toThrow(/已经结束/u);
+  });
+
+  it("asks once per kind of action in a scope: same thing to someone else goes through, anything else asks again", async () => {
+    const desk = createConfirmDesk();
+    const first = desk.ask({ action: "分享作品", target: "甲", text: "《做饭》" }, { scope: "turn1" });
+    expect(desk.pending()[0]).toMatchObject({ covers: true });
+    desk.answer(desk.pending()[0].id, true);
+    await first;
+    await expect(desk.ask({ action: "分享作品", target: "乙", text: "《做饭》" }, { scope: "turn1" })).resolves.toBeUndefined();
+    expect(desk.pending()).toEqual([]);
+    desk.ask({ action: "分享作品", target: "丙", text: "《别的》" }, { scope: "turn1" }).catch(() => undefined);
+    desk.ask({ action: "分享作品", target: "丁", text: "《做饭》" }, { scope: "turn2" }).catch(() => undefined);
+    desk.ask({ action: "分享作品", target: "戊", text: "《做饭》" }).catch(() => undefined);
+    expect(desk.pending()).toHaveLength(3);
+    desk.forget("turn1");
+    desk.ask({ action: "分享作品", target: "己", text: "《做饭》" }, { scope: "turn1" }).catch(() => undefined);
+    expect(desk.pending()).toHaveLength(4);
+    desk.close();
+  });
+
+  it("lets one yes cover at most 9 more", async () => {
+    const desk = createConfirmDesk();
+    const first = desk.ask({ action: "点赞" }, { scope: "t" });
+    desk.answer(desk.pending()[0].id, true);
+    await first;
+    for (let index = 0; index < 9; index += 1) await desk.ask({ action: "点赞" }, { scope: "t" });
+    desk.ask({ action: "点赞" }, { scope: "t" }).catch(() => undefined);
+    expect(desk.pending()).toHaveLength(1);
+    desk.close();
   });
 });
 
@@ -172,6 +233,22 @@ describe("talking to the assistant", () => {
     const saved = await readFile(path.join(dataDirectory, "assistant.json"), "utf8");
     expect(saved).toContain("确定，改吧");
     expect(saved).not.toContain("test-key");
+  });
+
+  it("asks once for the same action in a turn, and again in the next turn", async () => {
+    const { call, until } = await start();
+    const dislike = { call: "feed_filter_set", args: { mode: "dislike" } };
+    const model = await fakeModel([dislike, dislike, "好了。", dislike, "好了。"]);
+    await call("POST", "/v1/assistant/messages", { text: "改两次", config: model.config });
+    const asking = await until((view) => view.confirms.length === 1);
+    await call("POST", `/v1/assistant/confirm/${asking.confirms[0].id}`, { allow: true });
+    await until((view) => !view.busy);
+    expect(toolResult(model.requests[2])).toMatchObject({ ok: true, mode: "dislike" });
+    await call("POST", "/v1/assistant/messages", { text: "再改一次", config: model.config });
+    const again = await until((view) => view.confirms.length === 1);
+    await call("POST", `/v1/assistant/confirm/${again.confirms[0].id}`, { allow: false });
+    await until((view) => !view.busy);
+    expect(toolResult(model.requests[4])).toMatchObject({ code: "confirm_denied" });
   });
 
   it("stops a turn that is waiting on a card, without leaving the card or a half-done tool call behind", async () => {
