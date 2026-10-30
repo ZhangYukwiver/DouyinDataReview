@@ -341,7 +341,8 @@ const blocks: string[] = [
   rule(sel("c-bubble"), "border-radius:16px!important"),
   rule(sel("c-bubble in"), `border:1px solid ${LINE}!important;background-color:${WHITE}!important;border-top-left-radius:4px!important`),
   rule(sel("c-bubble own"), `border:1px solid ${RAIL}!important;background-color:${RAIL}!important;border-top-right-radius:4px!important`),
-  rule(sel("c-bubble", " [dir]"), "font-size:13px!important;line-height:20px!important"),
+  // 只放大气泡里直接的那行字；分享卡片、评论卡片里的字号各有安排
+  rule(sel("c-bubble", " > [dir]"), "font-size:13px!important;line-height:20px!important"),
   rule(sel("c-system"), `${type(12, 400, MUTE, 18)};border-radius:999px!important;padding:4px 12px!important;background-color:${RAIL}!important`),
   rule(`${M} [data-testid="chat-workspace"] [data-ws~="c-bubble"] ~ [data-ws~="mono"]`, `color:${MUTE}!important`),
   rule(sel("c-composer"), `background-color:${WHITE}!important;${line("top")}`),
