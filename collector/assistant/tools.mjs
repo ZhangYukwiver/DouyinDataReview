@@ -14,7 +14,7 @@ const MAX_ROWS = 50;
 const MAX_RESULT_CHARS = 30_000;
 const DOWNLOAD_WAIT_MS = 5 * 60_000;
 const LIVE_LISTEN_MS = 5_000;
-const VIEWS = ["summary", "highlights", "watch_history", "liked_videos", "favorite_videos", "live", "feed_filtered", "chat", "explore", "creator", "assistant", "settings"];
+const VIEWS = ["summary", "highlights", "watch_history", "liked_videos", "favorite_videos", "live", "feed_filtered", "chat", "feed", "explore", "creator", "assistant", "settings"];
 
 const fail = (code, message) => ({ ok: false, code, message });
 const requestId = () => randomBytes(12).toString("hex");
@@ -500,7 +500,7 @@ export const TOOLS = [
   },
   {
     kind: "local",
-    def: fn("open_view", "把应用切到某一页给用户看：summary 报告、highlights 精选、watch_history 观看历史、liked_videos 喜欢、favorite_videos 收藏、live 看过的直播、feed_filtered 推荐流挡掉的、chat 私信、explore 探索、creator 创作者中心、assistant 回到对话、settings 设置。", {
+    def: fn("open_view", "把应用切到某一页给用户看：summary 报告、highlights 精选、watch_history 观看历史、liked_videos 喜欢、favorite_videos 收藏、live 看过的直播、feed_filtered 推荐流挡掉的、chat 私信、feed 刷视频（首页推荐）、explore 探索（搜用户和作品）、creator 创作者中心、assistant 回到对话、settings 设置。", {
       view: { type: "string", enum: VIEWS },
     }, ["view"]),
     async run(ctx, args) {

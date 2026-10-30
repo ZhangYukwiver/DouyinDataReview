@@ -6,11 +6,14 @@
 /* 抖音电脑端那样：一张铺满窗口的圆角大卡片，画面完整显示（横屏不再挤成竖条），底下 48px 控制栏 */
 .rv-layout { width: 100%; height: 100%; overflow: hidden; border-radius: 16px; background: #0b0b0e; box-shadow: 0 24px 100px #000; }
 .rv-layout:fullscreen { border-radius: 0; }
+/* 嵌在工作台「刷视频」页里：撑满主区，不要黑幕和大投影 */
+.rv-inline { flex: 1; min-height: 0; height: auto; padding: 0; background: none; }
+.rv-inline .rv-layout { box-shadow: none; }
 .rv-viewer { display: flex; position: relative; justify-content: center; height: 100%; overflow: clip; touch-action: pan-x pinch-zoom; }
 /* 黑底数据流：画在 canvas 上，再盖一层遮罩把画面附近压暗，加一点扫描线 */
 .rv-stream { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .rv-stream-veil { background: linear-gradient(90deg, #0000 0%, #050507b3 38%, #050507 46%, #050507 54%, #050507b3 62%, #0000 100%), repeating-linear-gradient(0deg, #ffffff04 0 1px, #0000 1px 3px); }
-.rv-stage { position: relative; flex: 1; min-width: 0; height: 100%; animation: rv-enter .2s ease-out; user-select: none; }
+.rv-stage { position: relative; flex: 1; min-width: 0; height: 100%; animation: rv-enter .2s ease-out; user-select: none; container-type: inline-size; }
 .rv-stage > video { display: block; width: 100%; height: calc(100% - 48px); object-fit: contain; cursor: pointer; }
 .rv-album { position: absolute; inset: 0 0 48px; cursor: pointer; }
 .rv-album img, .rv-album video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
@@ -31,6 +34,8 @@
 .rv-avatar img, .rv-comment-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .rv-stat { display: flex; flex-direction: column; align-items: center; min-width: 44px; gap: 3px; padding: 0; background: transparent; }
 .rv-stat span { font-size: 13px; font-weight: 500; }
+/* 下载中：转圈占住和图标一样的 30px，数字那行不跳 */
+.rv-download-spin { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; }
 .rv-selected { color: #ff2c55 !important; }
 .rv-starred { color: #face15 !important; }
 .rv-backdrop .rv-stat:disabled { opacity: 1; cursor: default; }
@@ -82,6 +87,8 @@
 .rv-clean .rv-caption, .rv-clean .rv-actions, .rv-clean .rv-shade, .rv-clean .rv-heading, .rv-clean .rv-position { display: none; }
 .rv-viewer:has(.rv-comments) { padding-right: 350px; }
 .rv-viewer:has(.rv-comments) .rv-navigation { right: 362px; }
+/* 画面窄到放不下整条控制栏（嵌在页面里又开着评论时）就先收起连播和清屏，别和上下切换叠在一起 */
+@container (max-width: 500px) { .rv-stage .rv-toggle { display: none; } .rv-stage .rv-control-row { gap: 10px; } }
 .rv-comments { display: flex; flex-direction: column; position: absolute; right: 0; top: 0; bottom: 0; width: 350px; background: #18181c; border-left: 1px solid #ffffff12; touch-action: auto; }
 .rv-comments-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 18px 8px; }
 .rv-comments-header h2 { font-size: 17px; font-weight: 600; margin: 0; }

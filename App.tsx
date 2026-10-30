@@ -108,7 +108,7 @@ import { getAssistant, type AssistantView } from "./src/services/assistant";
 import { AssistantConfirmCards, AssistantWorkspace } from "./src/components/workspace/AssistantWorkspace";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
-import { ExploreWorkspace } from "./src/components/workspace/ExploreWorkspace";
+import { ExploreWorkspace, FeedWorkspace } from "./src/components/workspace/ExploreWorkspace";
 import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
 import { buildDataExportWithVoice, type DataExportSelection } from "./src/services/exportData";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
@@ -847,8 +847,8 @@ function AppContent() {
     if (suppressForBrowserLogin) return;
     if (batchDownloadActive) return;
     // Returning from the search browser must not close its result/verification
-    // page to launch a foreground history sync. 窗口收在托盘里时没人在看探索页，照常读
-    if (!pageHidden() && activeView !== "sources" && dashboardOpen && dashboardView === "explore" && !storySrc) return;
+    // page to launch a foreground history sync. 正在刷视频时读取会把推荐翻页和记观看历史卡住，也让开。窗口收在托盘里时没人在看，照常读
+    if (!pageHidden() && activeView !== "sources" && dashboardOpen && (dashboardView === "explore" || dashboardView === "feed") && !storySrc) return;
     const token = collectorToken;
     if (collectorStatus?.browserSource?.credentials === "reconnect_required") {
       if (manual || pageHidden()) notifyDesktopBackgroundSyncBlocked(RECONNECT_NOTICE);
@@ -1844,9 +1844,10 @@ function AppContent() {
     setActiveView("summary");
   }
 
+  // 「进入工作台」默认刷视频
   function openDashboard() {
     setStorySrc(null);
-    setDashboardView("summary");
+    setDashboardView("feed");
     setDashboardOpen(true);
     setActiveView("summary");
   }
@@ -2005,6 +2006,9 @@ function AppContent() {
         />
       ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
+          // 年志盖在工作台上面时别让刷视频在底下接着放
+          feed={storySrc ? null : <FeedWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord}
+            onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} />}
           explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onSendToReelLab={reelLabReady ? (record) => sendRecordToReelLab(record, true) : undefined} downloadStates={downloadStates} sendStates={sendStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}

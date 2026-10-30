@@ -1,11 +1,12 @@
 import React, { memo, useEffect, useRef, useState } from "react";
 import { Modal } from "react-native";
-import { ArrowUp, ArrowUpRight, Bookmark, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Forward, Heart, Link, Maximize, MessageCircle, Music2, Pause, Play, Search, Smile, Volume2, VolumeX, X } from "lucide-react-native";
+import { ArrowUp, ArrowUpRight, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Forward, Heart, Link, Maximize, MessageCircle, Music2, Pause, Play, Search, Smile, Volume2, VolumeX, X } from "lucide-react-native";
 import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreComment, ExploreConnection, ExploreOutcome, ExplorePage, ExploreSharee, WatchedItem } from "../../services/explorer";
 import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, reactVideo, waitForCollector } from "../../services/videoFeed";
 import { LocalCollectorError, type PlaybackMedia } from "../../services/localCollector";
+import type { RecordDownloadState } from "./LegacyContentWorkspace";
 import "./RecordVideoPlayer.css";
 
 /** Resolves to a stream URL (or an image post's pictures) that stays valid until `signal` aborts. */
@@ -24,7 +25,8 @@ type Props = {
   onLoadVideo: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
   onOpenRecord?: (url: string) => Promise<void>;
-  onClose: () => void;
+  /** 嵌在页面里（工作台「刷视频」）时不传：不弹窗、没有关闭钮，Esc 只收评论和分享 */
+  onClose?: () => void;
   /** 推荐流：快到末尾时要下一批，records 里新来的接在后面 */
   onReachEnd?: () => void;
   /** 顶栏「工作台」后面那几个字 */
@@ -33,12 +35,18 @@ type Props = {
   onSeen?: (record: PersonalVideoRecord | null, previous: WatchedItem | null) => void;
   /** 推荐流上一批没要到时的原因，播放器里显示并给重试 */
   feedError?: string | null;
+  /** 右侧操作列的「下载」；没给就不显示 */
+  onDownload?: (record: PersonalVideoRecord) => void;
+  downloadStates?: Record<string, RecordDownloadState>;
 };
 
 // 往回翻时还留着的条数：画面和视频地址都在，翻回来直接放
 const KEEP_BEHIND = 3;
+const DOWNLOAD_LABEL: Record<RecordDownloadState, string> = { idle: "下载", queued: "下载中", running: "下载中", complete: "已下载", failed: "重试" };
+const DOWNLOAD_SPOKEN: Record<RecordDownloadState, string> = { idle: "下载这条视频", queued: "正在下载", running: "正在下载", complete: "已下载，再下载一次", failed: "下载失败，重试" };
 
-export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnection = null, onOpenRecord, onClose, onReachEnd, title = "当前列表", onSeen, feedError = null }: Props) {
+export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnection = null, onOpenRecord, onClose, onReachEnd, title = "当前列表", onSeen, feedError = null, onDownload, downloadStates }: Props) {
+  const inline = !onClose;
   // Freeze the opened list so background collection cannot reorder a playing feed; a growing feed only appends.
   const [feed, setFeed] = useState(() => buildVideoFeed(records ?? [record], record));
   // 推荐流每来一批就接在后面；连着几批都没有能播的（全是直播、广告）就记下来，到 3 批先停，别一直空要
@@ -83,7 +91,14 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
     setShareOpen(!shareOpen);
     if (shareOpen) requestAnimationFrame(() => rootRef.current?.querySelector<HTMLButtonElement>("[data-share-toggle]")?.focus());
   };
-  useEffect(() => { rootRef.current?.focus(); }, []);
+  // 嵌在页面里时推荐要读几秒才挂上，这期间用户可能已经打开了设置之类的弹窗，别把焦点抢过来
+  useEffect(() => { if (!inline || !document.activeElement?.closest('[role="dialog"],[aria-modal="true"]')) rootRef.current?.focus(); }, []);
+  // 窗口收进托盘、看不见了就停下，别在后台接着出声
+  useEffect(() => {
+    const pause = () => { if (document.hidden) rootRef.current?.querySelectorAll<HTMLMediaElement>("video, audio").forEach((media) => media.pause()); };
+    document.addEventListener("visibilitychange", pause);
+    return () => document.removeEventListener("visibilitychange", pause);
+  }, []);
   useEffect(() => { setShareOpen(false); }, [index]);
   // 剩不到 8 条就提前要下一批，来了还不够就接着要，一直补到前面有 8 条；出错或连着空了就停，等点重试
   const stalled = emptyBatches >= 3 || Boolean(feedError);
@@ -104,15 +119,17 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
     return () => viewer.removeEventListener("wheel", wheel);
   }, [feed.length]);
 
-  return <Modal animationType="fade" transparent visible onRequestClose={() => shareOpen ? toggleShare() : commentsOpen ? toggleComments() : onClose()}>
-    <div ref={rootRef} className="rv-backdrop" tabIndex={-1} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+  const dismiss = () => shareOpen ? toggleShare() : commentsOpen ? toggleComments() : onClose?.();
+  const player = <div ref={rootRef} className={inline ? "rv-backdrop rv-inline" : "rv-backdrop"} tabIndex={-1} onClick={(event) => { if (event.target === event.currentTarget) onClose?.(); }}
+      // 弹窗的 Esc 由 Modal 的 onRequestClose 接；嵌在页面里只能自己接，而且评论和分享面板会拦下冒泡，得在捕获阶段接
+      onKeyDownCapture={inline ? (event) => { if (event.key === "Escape" && (shareOpen || commentsOpen)) { event.stopPropagation(); dismiss(); } } : undefined}
       onKeyDown={(event) => {
         if ((event.target as Element).closest("input,a,[data-comments-panel],[data-share-panel]")) return;
         if (["ArrowDown", "PageDown", "ArrowUp", "PageUp"].includes(event.key)) {
           event.preventDefault(); move(["ArrowDown", "PageDown"].includes(event.key) ? 1 : -1);
         }
       }}>
-      <div className="rv-layout" aria-label="视频播放器" role="dialog" aria-modal="true">
+      <div className="rv-layout" aria-label="视频播放器" role={inline ? "region" : "dialog"} aria-modal={inline ? undefined : true}>
         <div ref={viewerRef} className={`rv-viewer${prefs.clean ? " rv-clean" : ""}`}
           onPointerDown={(event) => {
             swipe.current = null;
@@ -166,6 +183,7 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
             muted={muted} onToggleMute={() => setMuted((value) => !value)} commentsOpen={commentsOpen} onToggleComments={toggleComments} onOpenRecord={onOpenRecord}
             shareOpen={shareOpen} onToggleShare={toggleShare} prefs={prefs} onPrefs={(patch) => setPrefs((value) => ({ ...value, ...patch }))} onEnded={() => move(1)} onSeen={onSeen ? reportSeen : undefined} onLeave={onSeen ? (watch) => { left.current = watch; } : undefined}
             commentsConnection={commentsConnection} title={title} onClose={onClose}
+            onDownload={onDownload ? () => onDownload(item) : undefined} downloadState={downloadStates?.[item.id] ?? "idle"}
             position={`${index + offset + 1} / ${feed.length}`} />; })}
           {onReachEnd && stalled && index >= feed.length - 3 ? <div className="rv-feed-status" role="status">
             <span>{feedError ?? "暂时没有更多视频"}</span>
@@ -179,8 +197,8 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
           </nav>
         </div>
       </div>
-    </div>
-  </Modal>;
+    </div>;
+  return inline ? player : <Modal animationType="fade" transparent visible onRequestClose={dismiss}>{player}</Modal>;
 }
 
 const HEX = "0123456789abcdef";
@@ -261,11 +279,12 @@ const RATES = [1, 1.25, 1.5, 2, 0.75];
 const Caption = ({ text }: { text: string }) => <>{text.split(/(#[^#\s,，。！？!?;；~～]+)/u).map((part, i) => part.startsWith("#")
   ? <span className="rv-tag" key={i}>{part}</span> : <EmojiText key={i} text={part} />)}</>;
 
-function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, shareOpen, onToggleShare, prefs, onPrefs, onEnded, onSeen, onLeave, commentsConnection, position, title, onClose, onOpenRecord }: {
+function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOpen, onToggleComments, shareOpen, onToggleShare, prefs, onPrefs, onEnded, onSeen, onLeave, commentsConnection, position, title, onClose, onOpenRecord, onDownload, downloadState }: {
   active: boolean; record: PersonalVideoRecord; onLoadVideo: RecordVideoLoader; muted: boolean; onToggleMute: () => void;
   commentsOpen: boolean; onToggleComments: () => void; shareOpen: boolean; onToggleShare: () => void; commentsConnection: ExploreConnection | null;
   prefs: PlayerPrefs; onPrefs: (patch: Partial<PlayerPrefs>) => void; onEnded: () => void; onSeen?: (record: PersonalVideoRecord) => void; onLeave?: (watch: WatchedItem) => void;
-  position: string; title: string; onClose: () => void; onOpenRecord?: (url: string) => Promise<void>;
+  position: string; title: string; onClose?: () => void; onOpenRecord?: (url: string) => Promise<void>;
+  onDownload?: () => void; downloadState: RecordDownloadState;
 }) {
   const [media, setMedia] = useState<PlaybackMedia | null>(null);
   const [slide, setSlide] = useState(0);
@@ -420,7 +439,7 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
           : <VideoLoader />}
       </div> : paused ? <button className="rv-play-overlay" aria-label="开始播放" onClick={toggle}><Play color="#fff" fill="#fff" size={48} /></button> : null}
       <header className="rv-topbar">
-        <button className="rv-icon-button" aria-label="关闭视频" onClick={onClose}><X color="#fff" size={24} /></button>
+        {onClose ? <button className="rv-icon-button" aria-label="关闭视频" onClick={onClose}><X color="#fff" size={24} /></button> : null}
         <span className="rv-heading">工作台<span>{title}</span></span>
         <span className="rv-position" aria-live="polite" aria-label="当前视频序号">{position}</span>
       </header>
@@ -442,7 +461,10 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
         <button className="rv-stat" data-share-toggle aria-label="分享给朋友" aria-expanded={shareOpen} onClick={onToggleShare}>
           <Forward color={shareOpen ? "#ff2c55" : "#fff"} fill={shareOpen ? "#ff2c55" : "#fff"} size={30} /><span>{count(record.stats?.shareCount)}</span>
         </button>
-        {record.url && onOpenRecord ? <button className="rv-stat" aria-label="打开抖音原视频" onClick={() => void onOpenRecord(record.url!)}><ArrowUpRight color="#fff" size={30} /><span>原视频</span></button> : null}
+        {record.url && onDownload ? <button className="rv-stat" aria-label={DOWNLOAD_SPOKEN[downloadState]} disabled={downloadState === "queued" || downloadState === "running"} onClick={onDownload}>
+          {downloadState === "queued" || downloadState === "running" ? <span className="rv-download-spin"><span className="rv-spinner" /></span>
+            : downloadState === "complete" ? <Check color="#fff" size={30} /> : <Download color="#fff" size={30} />}<span>{DOWNLOAD_LABEL[downloadState]}</span>
+        </button> : null}
       </aside>
       <div className="rv-caption">
         <strong>@{record.author ?? "抖音用户"}{record.publishedAt ? <small> · {date(record.publishedAt)}</small> : null}</strong>
