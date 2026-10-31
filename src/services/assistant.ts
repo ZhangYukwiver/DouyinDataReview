@@ -128,3 +128,18 @@ export async function getAiRuntimes(connection: ExploreConnection, fresh = false
   const value = await request<{ runtimes?: AiRuntimeStatus[] }>(connection, `/v1/assistant/runtimes${fresh ? "?fresh=1" : ""}`, {}, 40_000);
   return Array.isArray(value?.runtimes) ? value.runtimes : [];
 }
+
+export type McpClient = { command: string; args: string[]; env: Record<string, string> };
+
+export const getMcpClient = (connection: ExploreConnection) => request<McpClient>(connection, "/v1/assistant/mcp");
+
+/** 设置 → AI 里给用户复制的接入写法：Claude Code、Codex 的命令，其他客户端的 JSON 配置。 */
+export function mcpCommands({ command, args, env }: McpClient) {
+  const run = [command, ...args].map((part) => `"${part}"`).join(" ");
+  const flags = (flag: string) => Object.entries(env).map(([key, value]) => `${flag} ${key}=${/\s/u.test(value) ? `"${value}"` : value} `).join("");
+  return {
+    claude: `claude mcp add dy2 ${flags("-e")}-- ${run}`,
+    codex: `codex mcp add dy2 ${flags("--env")}-- ${run}`,
+    json: JSON.stringify({ mcpServers: { dy2: { command, args, env } } }, null, 2),
+  };
+}

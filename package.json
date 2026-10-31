@@ -111,6 +111,7 @@
     "asar": true,
     "asarUnpack": [
       "collector/directSignerRunner.cjs",
+      "collector/mcpStdio.mjs",
       "collector/openBrowserDebugging.ps1",
       "collector/desktopCookies.ps1",
       "node_modules/playwright-core/**/*"

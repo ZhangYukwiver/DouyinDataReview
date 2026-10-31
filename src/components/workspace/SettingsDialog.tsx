@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
-import { Check, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
+import { Check, Copy, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
 import { canDragDesktopExtension, getDesktopOpenAtLogin, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, loadAppStyleFonts, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
-import { DEFAULT_ASSISTANT_CONFIG, isLocalAiRuntime, loadAssistantConfig, saveAssistantConfig, type AssistantConfig } from "../../services/assistant";
+import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, mcpCommands, saveAssistantConfig, type AssistantConfig, type McpClient } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
 import {
   collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites,
@@ -603,7 +603,47 @@ function Assistant({ appStyle, assistantInstalled, collector, onToggleAssistant 
           </>}
         </View>
       </> : null}
+      {connection ? <McpAccess appStyle={appStyle} connection={connection} /> : null}
     </>
+  );
+}
+
+/** 用户自己的 AI 客户端接 MCP：命令由采集器按本机实际路径给，用应用自带的运行环境跑转发程序，不用装 AI 助手也不用装 Node。 */
+function McpAccess({ appStyle, connection }: { appStyle: AppStyle; connection: { baseUrl: string; token: string } }) {
+  const [client, setClient] = useState<McpClient | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    getMcpClient(connection).then((value) => { if (live) setClient(value); }, () => undefined);
+    return () => { live = false; };
+  }, [connection.baseUrl, connection.token]);
+  if (!client) return null;
+  const commands = mcpCommands(client);
+  const items = [["claude", "Claude Code", commands.claude], ["codex", "Codex", commands.codex], ["json", "其他客户端（填进 MCP 配置）", commands.json]] as const;
+  // 内嵌浏览器可能不给剪贴板权限，退回到选中文字再复制
+  const fallback = (text: string) => {
+    const area = Object.assign(document.createElement("textarea"), { value: text });
+    document.body.append(area); area.select();
+    const done = document.execCommand("copy"); area.remove();
+    return done;
+  };
+  const copy = (key: string, text: string) => void navigator.clipboard.writeText(text).then(() => true, () => fallback(text)).then((done) => setCopied(done ? key : null));
+  return (
+    <View style={[styles.row, styles.rowStacked]} testID="settings-mcp">
+      <RowCopy
+        detail="把命令贴进终端，Claude Code、Codex 这类工具就能用上和 AI 助手一样的功能，不用装 AI 助手。用的时候应用要开着；发私信、点赞这类别人看得到的事，同样先在应用里弹卡片问你。"
+        title="接入你自己的 AI 客户端（MCP）"
+      />
+      {items.map(([key, label, text]) => (
+        <View key={key} style={styles.mcpItem}>
+          <View style={styles.mcpHead}>
+            <Text style={styles.rowTitle}>{label}</Text>
+            <Button appStyle={appStyle} icon={copied === key ? Check : Copy} label={copied === key ? "已复制" : "复制"} onPress={() => copy(key, text)} testID={`settings-mcp-${key}`} />
+          </View>
+          <Text selectable style={styles.mcpCode}>{text}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -873,6 +913,9 @@ const styles = StyleSheet.create({
   // 每行：左边标题和一句说明，右边控件；行与行之间一道发丝线
   row: { flexDirection: "row", alignItems: "center", gap: 16, paddingVertical: 14, borderTopWidth: 1, borderTopColor: color.borderSoft },
   rowStacked: { flexDirection: "column", alignItems: "stretch", gap: 12 },
+  mcpItem: { gap: 6 },
+  mcpHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  mcpCode: { fontFamily: font.mono, color: color.textSecondary, fontSize: 12, lineHeight: 18, padding: 10, borderRadius: radius.small, backgroundColor: color.surfaceMuted },
   rowIntro: { flexDirection: "column", alignItems: "flex-start", gap: 6, paddingVertical: 12 },
   copy: { flex: 1, minWidth: 0, gap: 3 },
   rowTitle: { fontFamily: font.body, color: color.text, fontSize: 14, lineHeight: 20, fontWeight: "500" },

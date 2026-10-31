@@ -462,7 +462,7 @@ export async function startCollectorServer({
       return;
     }
 
-    // 给用户自己的 AI 客户端（Claude Code、Codex 这类）接入的 MCP：README 里写怎么接，认数据目录里 mcp-token 的令牌，只给本机连
+    // 给用户自己的 AI 客户端（Claude Code、Codex 这类）接入的 MCP：设置 → AI 里给出接入命令，认数据目录里 mcp-token 的令牌，只给本机连
     if (url.pathname === "/mcp") {
       if (isLoopbackAddress(request.socket.remoteAddress ?? "")) await assistant.handleMcp(request, response);
       else { sendJson(response, 403, { error: "loopback_only" }); request.resume(); }
@@ -911,6 +911,7 @@ export async function startCollectorServer({
           const body = await readJsonBody(request);
           sendJson(response, 200, assistant.answer(url.pathname.split("/").at(-1), body?.allow === true));
         } else if (request.method === "GET" && url.pathname === "/v1/assistant/runtimes") sendJson(response, 200, await assistant.runtimes(url.searchParams.get("fresh") === "1"));
+        else if (request.method === "GET" && url.pathname === "/v1/assistant/mcp") sendJson(response, 200, assistant.mcpClient(request.socket.localPort));
         else sendJson(response, 404, { error: "not_found" });
       } catch (error) {
         const known = error instanceof AssistantError;
