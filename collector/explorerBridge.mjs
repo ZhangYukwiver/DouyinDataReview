@@ -32,7 +32,7 @@ export class ExplorerBridge {
         return result;
       }
       const result = await this.explorer.react(input);
-      if (result.outcome === "confirmed") void this.syncReaction(input).catch(() => {});
+      if (result.outcome === "confirmed" && input.action !== "comment") void this.syncReaction(input).catch(() => {});
       return result;
     }
     if (this.busy || this.collectorBusy()) throw new ExploreError("collector_busy", "采集器正在执行任务，请停止采集或等待完成后再探索。");

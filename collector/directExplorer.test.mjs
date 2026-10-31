@@ -74,6 +74,19 @@ describe("code-based exploration", () => {
     await expect(new DirectExplorer(null, async () => lost.api).react({ awemeId: id, action: "collect", desired: false })).resolves.toMatchObject({ outcome: "unknown" });
     await api.close(); await lost.api.close();
   });
+  it("posts a creator-center reply to a reply without opening a comments session", async () => {
+    const csrf = { headers: { "x-ware-csrf-token": "1,csrf" } };
+    const { api, fetch } = directApiFixture((url) => url.pathname === "/service/2/abtest_config/" ? csrf
+      : { payload: { status_code: 0, comment: { cid: "7000000000000000009", text: "谢谢 你", aweme_id: id } } });
+    const value = new DirectExplorer(null, async () => api);
+    await expect(value.react({ awemeId: id, action: "comment", text: "  " })).rejects.toMatchObject({ code: "invalid_request" });
+    await expect(value.react({ awemeId: id, action: "comment", text: "谢谢\n你", replyTo: "7000000000000000001", replyToReply: "7000000000000000002" }))
+      .resolves.toMatchObject({ outcome: "confirmed", message: "回复已发送", comment: { id: "7000000000000000009" } });
+    const [url, options] = fetch.mock.calls.at(-1);
+    expect(new URL(url).pathname).toBe("/aweme/v1/web/comment/publish");
+    expect(Object.fromEntries(new URLSearchParams(options.data))).toMatchObject({ aweme_id: id, text: "谢谢 你", reply_id: "7000000000000000001", reply_to_reply_id: "7000000000000000002" });
+    await api.close();
+  });
   it("reports the video just left like the site: resume point for long ones, then the finish flag with the next write", async () => {
     const csrf = { headers: { "x-ware-csrf-token": "1,csrf" } };
     const { api, fetch } = directApiFixture((url) => url.pathname === "/service/2/abtest_config/" ? csrf : { payload: { status_code: 0 } });

@@ -115,17 +115,26 @@ export class DirectExplorer extends DouyinExplorer {
     if (acknowledgement.status_code !== 0) throw new ExploreError("platform_rejected", "抖音没有记下这条观看记录。");
     return { ok: true };
   }
-  /** 播放器里的点赞 / 收藏：只发一个写请求，不开详情会话、不先读后读；抖音回执成功就算数 */
+  /** 播放器里的点赞 / 收藏、创作者中心里的评论 / 回复：只发一个写请求，不开详情会话、不先读后读；抖音回执成功就算数 */
   async react(input) {
     const awemeId = String(input?.awemeId ?? "");
-    if (!/^\d{5,30}$/u.test(awemeId) || !["like", "collect"].includes(input?.action) || typeof input?.desired !== "boolean")
+    const comment = input?.action === "comment";
+    if (!/^\d{5,30}$/u.test(awemeId) || !["like", "collect", "comment"].includes(input?.action) || (!comment && typeof input?.desired !== "boolean"))
       throw new ExploreError("invalid_request", "点赞或收藏请求无效。", 400);
+    const text = comment && typeof input.text === "string" ? input.text.replace(/\s+/gu, " ").trim() : "";
+    if (comment && (!text || text.length > 500)) throw new ExploreError("invalid_request", "评论需为 1–500 字。", 400);
     const api = await this.getApi({ security: true });
     let dispatched = false;
     try {
-      const acknowledgement = await directWrite(api, input.action, { awemeId, desired: input.desired }, { onDispatch: () => { dispatched = true; } });
+      const acknowledgement = await directWrite(api, input.action, comment ? { awemeId, text, replyTo: input.replyTo, replyToReply: input.replyToReply }
+        : { awemeId, desired: input.desired }, { onDispatch: () => { dispatched = true; } });
       if (acknowledgement.status_code === 8) throw new ExploreError("login_required", "抖音登录已失效，请在登录窗口重新登录后再试。");
       if (acknowledgement.status_code !== 0) throw new ExploreError("platform_rejected", "抖音没有接收这次操作，请稍后再试。");
+      if (comment) {
+        const posted = normalizeExploreComment(acknowledgement.comment);
+        return posted?.id && posted.text === text ? { outcome: "confirmed", message: input.replyTo ? "回复已发送" : "评论已发送", comment: posted }
+          : { outcome: "unknown", message: "没等到抖音的确认，刷新评论看看再决定要不要重发。" };
+      }
     } catch (error) {
       // 已经发出去却没拿到回执：可能成了也可能没成，不能当失败退回
       if (dispatched && !(error instanceof ExploreError)) return { outcome: "unknown", message: "结果没确认，稍后在抖音里看一眼。" };

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { ArrowLeft, CircleCheck, Search, ThumbsUp } from "lucide-react-native";
+import { ArrowLeft, CircleCheck, Search, ThumbsUp, X } from "lucide-react-native";
 import {
   ACTIVE_NAMES, ATTRACTION, AUDIENCE_CARDS, clockText, COMMENT_CROWDS, COMMENT_SORTS, COMMENT_TYPES, commentSelectOptions, commentTime,
   contentType as toContentType, detailDuration, detailMetric, detailNumber, ENGAGEMENT, fullTime, GENDER_NAMES, normalizeComment,
@@ -8,7 +8,7 @@ import {
   type ContentType, type CreatorComment, type DetailCard, type DetailKind,
 } from "../../domain/creatorCenter";
 import { readCreator, type CreatorQuery } from "../../services/creatorCenter";
-import type { ExploreConnection } from "../../services/explorer";
+import { reactExplore, type ExploreConnection } from "../../services/explorer";
 import { Bars, BarList, chartPalette, Donut, LineChart } from "./CreatorCharts";
 import { Empty, ErrorLine, kit, Loading, MetricTile, Panel, RankTable, Segmented, SmallButton, Tabs, useCreator, type Raw } from "./CreatorKit";
 import { renderEmojiText } from "./emojiText";
@@ -430,7 +430,34 @@ function Comments({ ctx }: { ctx: DetailContext }) {
   const [loading, setLoading] = useState(false);
   const [secId, setSecId] = useState<string | null>(fresh ? ctx.itemId : null);
   const [replyState, setReplyState] = useState<Record<string, { cursor: number; more: boolean; loading: boolean; open: boolean }>>({});
+  // 回复谁：一级评论直接回；回楼中楼要带上它所在的一级评论
+  const [target, setTarget] = useState<{ comment: CreatorComment; parent: CreatorComment | null } | null>(null);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const input = useRef<TextInput>(null);
+  useEffect(() => { if (target) input.current?.focus(); }, [target]);
   const run = useRef(0);
+
+  async function send() {
+    const content = text.replace(/\s+/gu, " ").trim();
+    if (!content || sending) return;
+    const top = target ? target.parent ?? target.comment : null;
+    setSending(true); setNotice(null);
+    try {
+      const outcome = await reactExplore(ctx.connection, { awemeId: ctx.itemId, action: "comment", text: content,
+        ...(top ? { replyTo: top.id } : {}), ...(target?.parent ? { replyToReply: target.comment.id } : {}) });
+      if (outcome.outcome !== "confirmed" || !outcome.comment) { setNotice(outcome.message); return; }
+      const posted: CreatorComment = { id: outcome.comment.id, avatar: outcome.comment.author?.avatar ?? null, name: outcome.comment.name, isAuthor: true,
+        createTime: Math.floor(Date.now() / 1000), replyTo: target?.parent ? target.comment.name : null, text: outcome.comment.text, folded: false,
+        images: [], likes: "0", replyCount: 0, replies: [] };
+      setList((current) => top ? current.map((entry) => entry.id === top.id ? { ...entry, replyCount: entry.replyCount + 1, replies: [...entry.replies, posted] } : entry) : [posted, ...current]);
+      if (top) setReplyState((current) => { const state = current[top.id]; return state ? { ...current, [top.id]: { ...state, open: true } } : current; });
+      setText(""); setTarget(null);
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : "没发出去，请稍后再试。");
+    } finally { setSending(false); }
+  }
 
   useEffect(() => {
     if (fresh) return;
@@ -488,6 +515,17 @@ function Comments({ ctx }: { ctx: DetailContext }) {
       <Segmented small options={COMMENT_SORTS.map(({ label, value }) => ({ label, value }))} value={sort} onChange={setSort} />
       {fresh ? <View style={styles.search}><Search size={14} color={color.textMuted} /><TextInput accessibilityLabel="搜索评论关键词" value={draft} onChangeText={setDraft} onSubmitEditing={() => setKeyword(draft.trim())} onBlur={() => setKeyword(draft.trim())} placeholder="搜索评论关键词" placeholderTextColor={color.textMuted} style={styles.searchInput} /></View> : null}
     </View>
+    <View style={{ gap: 6 }}>
+      {target ? <View style={kit.row}><Text style={kit.muted}>回复 @{target.comment.name}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="取消回复" onPress={() => setTarget(null)}><X size={14} color={color.textMuted} /></Pressable></View> : null}
+      <View style={kit.row}>
+        <TextInput ref={input} accessibilityLabel={target ? `回复 ${target.comment.name}` : "发表评论"} value={text} maxLength={500} editable={!sending}
+          onChangeText={(value) => { setText(value); setNotice(null); }} onSubmitEditing={() => void send()}
+          placeholder={target ? `回复 @${target.comment.name}` : "以作者身份发一条评论"} placeholderTextColor={color.textMuted} style={[styles.search, styles.searchInput, styles.composer]} />
+        <SmallButton label={sending ? "发送中" : "发送"} disabled={!text.trim() || sending} onPress={() => void send()} />
+      </View>
+      {notice ? <ErrorLine text={notice} /> : null}
+    </View>
     <View style={{ gap: 2 }}>{shown.map((comment) => {
       const state = replyState[comment.id];
       const loaded = comment.replies.length;
@@ -495,8 +533,8 @@ function Comments({ ctx }: { ctx: DetailContext }) {
       const more = state ? state.more && (remaining > 0 || state.more) : remaining > 0;
       const open = state?.open ?? true;
       return <View key={comment.id} style={styles.comment}>
-        <CommentBody comment={comment} />
-        {open ? comment.replies.map((reply) => <View key={reply.id} style={styles.reply}><CommentBody comment={reply} /></View>) : null}
+        <CommentBody comment={comment} onReply={() => setTarget({ comment, parent: null })} />
+        {open ? comment.replies.map((reply) => <View key={reply.id} style={styles.reply}><CommentBody comment={reply} onReply={() => setTarget({ comment: reply, parent: comment })} /></View>) : null}
         {state?.loading ? <Loading /> : open && loaded && !more ? <Pressable accessibilityRole="button" onPress={() => setReplyState((current) => ({ ...current, [comment.id]: { ...(state ?? { cursor: 0, more: false, loading: false }), open: false } }))}><Text style={styles.link}>收起</Text></Pressable>
           : open && (more || remaining > 0) ? <Pressable accessibilityRole="button" onPress={() => void loadReplies(comment)}><Text style={styles.link}>查看{remaining || 10}条回复</Text></Pressable>
             : !open ? <Pressable accessibilityRole="button" onPress={() => setReplyState((current) => ({ ...current, [comment.id]: { ...state!, open: true } }))}><Text style={styles.link}>查看{comment.replyCount || loaded}条回复</Text></Pressable> : null}
@@ -508,14 +546,15 @@ function Comments({ ctx }: { ctx: DetailContext }) {
   </Panel>;
 }
 
-function CommentBody({ comment }: { comment: CreatorComment }) {
+function CommentBody({ comment, onReply }: { comment: CreatorComment; onReply: () => void }) {
   return <View style={styles.commentRow}>
     {comment.avatar ? <Image source={{ uri: comment.avatar }} style={styles.commentAvatar} /> : <View style={[styles.commentAvatar, { backgroundColor: color.surfaceMuted }]} />}
     <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
       <View style={kit.row}><Text style={styles.commentName}>{comment.name}</Text>{comment.isAuthor ? <Text {...ws("cr-note")} style={styles.author}>作者</Text> : null}</View>
       <Text style={kit.body}>{comment.folded ? "该评论被折叠" : <>{comment.replyTo ? `回复 ${comment.replyTo}：` : ""}{renderEmojiText(comment.text)}</>}</Text>
       {comment.images.length ? <View style={kit.row}>{comment.images.map((uri) => <Image key={uri} source={{ uri }} style={styles.commentImage} />)}</View> : null}
-      <View style={kit.row}><Text style={kit.muted}>{comment.createTime ? commentTime(comment.createTime) : ""}</Text><ThumbsUp size={12} color={color.textMuted} /><Text style={kit.muted}>{comment.likes}</Text></View>
+      <View style={kit.row}><Text style={kit.muted}>{comment.createTime ? commentTime(comment.createTime) : ""}</Text><ThumbsUp size={12} color={color.textMuted} /><Text style={kit.muted}>{comment.likes}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={`回复 ${comment.name}`} onPress={onReply}><Text style={styles.replyAction}>回复</Text></Pressable></View>
     </View>
   </View>;
 }
@@ -539,4 +578,6 @@ const styles = StyleSheet.create({
   commentImage: { width: 80, height: 80, borderRadius: 6, backgroundColor: color.surfaceMuted },
   reply: { marginLeft: 42 },
   link: { color: color.cyan, fontFamily: font.body, fontSize: 12, marginLeft: 42 },
+  replyAction: { color: color.textMuted, fontFamily: font.body, fontSize: 12 },
+  composer: { flex: 1, paddingVertical: 4 },
 });

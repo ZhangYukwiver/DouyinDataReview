@@ -65,7 +65,8 @@ export async function markExploreSeen(connection: ExploreConnection, input: { aw
   await request(connection, "seen", input);
 }
 /** 播放器里的点赞 / 收藏：只发一个请求，带上想要的状态 */
-export async function reactExplore(connection: ExploreConnection, input: { awemeId: string; action: "like" | "collect"; desired: boolean }): Promise<ExploreOutcome> {
+export async function reactExplore(connection: ExploreConnection, input: { awemeId: string; action: "like" | "collect"; desired: boolean }
+  | { awemeId: string; action: "comment"; text: string; replyTo?: string; replyToReply?: string }): Promise<ExploreOutcome> {
   return await request(connection, "react", input) as ExploreOutcome;
 }
 export async function interactExplore(connection: ExploreConnection, action: ExploreAction): Promise<ExploreOutcome> {
