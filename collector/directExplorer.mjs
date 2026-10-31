@@ -185,7 +185,9 @@ export class DirectExplorer extends DouyinExplorer {
     if (input.action === "comment" ? !content || content.length > 500 || (input.replyTo != null && !/^\d{5,30}$/u.test(input.replyTo))
       : input.action === "share" ? !session.shareTargets?.has(input.targetId) : typeof input.desired !== "boolean")
       throw new ExploreError("invalid_request", "评论或目标状态无效。", 400);
-    if (input.replyTo && !session.items.has(input.replyTo) && ![...(session.replyThreads?.values() || [])].some(t=>t.items.has(input.replyTo)))
+    // 回复对象：读到的评论、展开过的回复，或者在这个评论区刚发出去的那几条
+    if (input.replyTo && !session.items.has(input.replyTo) && !session.posted?.has(input.replyTo)
+      && ![...(session.replyThreads?.values() || [])].some(t=>t.items.has(input.replyTo)))
       throw new ExploreError("comment_unavailable", "请从已加载的评论选择回复对象。");
     if (this.actions.size >= 1_000) throw new ExploreError("action_limit", "本次会话操作数量已达上限，请重启采集器。");
     const action = { fingerprint, result: { outcome: "unknown", message: "操作结果尚未确认，请查看抖音后再决定是否重试。" } };
@@ -232,8 +234,10 @@ export class DirectExplorer extends DouyinExplorer {
         message: acknowledgement.status_code === 8 ? "抖音登录已失效，请在登录窗口重新登录后再试。" : "抖音没有接收本次操作，请检查登录或验证提示。" };
       if (input.action === "comment") {
         const comment = normalizeExploreComment(acknowledgement.comment);
-        if (comment?.id && comment.text === content && (!comment.videoId || comment.videoId === session.id))
+        if (comment?.id && comment.text === content && (!comment.videoId || comment.videoId === session.id)) {
           action.result = { outcome: "confirmed", message: input.replyTo ? "回复已发送" : "评论已发送", comment };
+          (session.posted ??= new Set()).add(comment.id);
+        }
       } else {
         // Detail/profile state can lag a successful receipt. Poll only reads;
         // the original write is never repeated while waiting for confirmation.
