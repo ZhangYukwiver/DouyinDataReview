@@ -183,6 +183,13 @@ describe("direct exploration writes and ambiguity",()=>{
     expect((await value.interact({sessionId:page.sessionId,action:"comment",text:"测试评论",requestId:"request-comment-123"})).outcome).toBe("unknown");
     await value.clear(); await api.close();
   });
+  it("lets the comment just posted be replied to without reloading the list",async()=>{
+    const {value,api}=setup(); const page=await value.read({kind:"detail",id});
+    await expect(value.interact({sessionId:page.sessionId,action:"comment",text:"测试评论",replyTo:"9999999999",requestId:"request-reply-unknown"})).rejects.toMatchObject({code:"comment_unavailable"});
+    expect((await value.interact({sessionId:page.sessionId,action:"comment",text:"测试评论",requestId:"request-comment-123"})).outcome).toBe("confirmed");
+    expect((await value.interact({sessionId:page.sessionId,action:"comment",text:"测试评论",replyTo:"1234567890123",requestId:"request-reply-123"})).outcome).toBe("confirmed");
+    await value.clear(); await api.close();
+  });
   it("keeps share state on refresh and allows retry only after a pre-dispatch failure",async()=>{
     const {api}=directApiFixture(()=>({payload:{status_code:0,aweme_detail:{...rawVideo(),author:{uid:'789',sec_uid:userId,nickname:'作者'},is_aigc:true,ai_ext:{declared:true}}}}));
     const conversation={id:"0:1:123:456",shortId:"7654321098765432100",type:1,name:"好友"};
