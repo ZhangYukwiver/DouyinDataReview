@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createLocalAi, isLocalRuntime, LOCAL_RUNTIMES } from "../localAi.mjs";
 import { AssistantError, parseAssistantConfig, runConversation, sealHistory, trimHistory } from "./chat.mjs";
@@ -10,7 +11,7 @@ import { bearerMatches, mcpHandler } from "./mcp.mjs";
 import { toolDefinitions, toolNamed } from "./tools.mjs";
 
 // AI 助手：一条对话线程（存在数据目录根上的 assistant.json，「新对话」清空）、跑一轮、长轮询给页面看、
-// 对外动作的确认卡片、让应用切页面的事件，以及给用户自己的 AI 客户端用的 /mcp（界面上不露，README 里写怎么接；
+// 对外动作的确认卡片、让应用切页面的事件，以及给用户自己的 AI 客户端用的 /mcp（设置 → AI 里给出接入命令，走 ../mcpStdio.mjs 转发；
 // 令牌第一次启动时生成在数据目录的 mcp-token 里，只有本机用户读得到）。
 // ponytail: 只有一条线程，要多条对话再加列表
 
@@ -18,6 +19,9 @@ const STORED_HISTORY_CHARS = 600_000;
 // 一轮里最多做几次别人看得到的操作（每次都还要用户点允许）；同续火花一次 10 位
 const MAX_EXTERNAL_PER_TURN = 10;
 const WAIT_MS = 8_000;
+const PACKAGED_PORT = 47652;
+// 打包后转发程序解在 app.asar.unpacked 里，外面的进程才读得到
+const MCP_BRIDGE = fileURLToPath(new URL("../mcpStdio.mjs", import.meta.url)).replace(/app\.asar(?=[\\/])/u, "app.asar.unpacked");
 const SHOWN_MESSAGES = 200;
 
 const SYSTEM_PROMPT = `你是「内容数据工作台」里的 AI 助手。这个桌面应用把用户自己的抖音观看历史、喜欢、收藏、私信读到这台电脑上，还能搜抖音、看直播、看创作者中心、下载作品。你可以用工具查询和统计这些数据，也可以替用户使用应用的功能。
@@ -265,6 +269,13 @@ export function createAssistant({ dataDirectory, baseUrl, pairing, collector, ac
       return view();
     },
     runtimes: async (fresh) => ({ runtimes: await Promise.all(Object.keys(LOCAL_RUNTIMES).map((id) => localAi.status(id, { fresh }))) }),
+    /** 设置 → AI 里给用户自己的 AI 客户端的接入方式：用应用自带的运行环境跑转发程序，不用另装 Node。 */
+    mcpClient(port) {
+      const env = process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {};
+      // 从源码运行（4765 端口、.local-data）时转发程序猜不到地址和令牌位置
+      if (port !== PACKAGED_PORT) Object.assign(env, { DY2_MCP_URL: `http://127.0.0.1:${port}/mcp`, DY2_MCP_TOKEN_FILE: mcpTokenFile });
+      return { command: process.execPath, args: [MCP_BRIDGE], env };
+    },
     /** 用户自己的 AI 客户端发来的 /mcp 请求。 */
     async handleMcp(request, response) {
       await ready;
