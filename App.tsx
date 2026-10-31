@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   AppState,
   Alert,
@@ -105,7 +105,7 @@ import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./s
 import { sparkRenewJob } from "./src/services/sparkRenew";
 import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { getAssistant, type AssistantView } from "./src/services/assistant";
-import { AssistantConfirmCards, AssistantWorkspace } from "./src/components/workspace/AssistantWorkspace";
+import { AssistantDock, AssistantWorkspace } from "./src/components/workspace/AssistantWorkspace";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace, FeedWorkspace } from "./src/components/workspace/ExploreWorkspace";
@@ -312,6 +312,8 @@ function AppContent() {
   // 它要发私信、点赞时的确认卡片和「切到某一页」都从这里来
   const [assistantInstalled, setAssistantInstalled] = useState(() => Platform.OS === "web" && loadAssistantInstalled());
   const [assistantView, setAssistantView] = useState<AssistantView | null>(null);
+  const [assistantPanel, setAssistantPanel] = useState(false);
+  const toggleAssistantPanel = useCallback(() => setAssistantPanel((open) => !open), []);
   const assistantUiSeq = useRef<number | null>(null);
   // 内容年志开着时读的是打开那一刻写好的数据，外层先不拉整份快照（见 pollCollector），关掉时补一次
   const storyOpenRef = useRef(false);
@@ -1898,6 +1900,10 @@ function AppContent() {
     setActiveView("summary");
   }, [assistantView, assistantUi]);
 
+  // 在对话页时右下角的浮动面板让位；进对话页就把它收起，回别的页面不再自己弹出来
+  const onAssistantPage = activeView !== "sources" && (dashboardOpen || storyMode) && !storySrc && dashboardView === "assistant";
+  useEffect(() => { if (onAssistantPage) setAssistantPanel(false); }, [onAssistantPage]);
+
   const toggleAssistant = () => {
     const next = !assistantInstalled;
     setAssistantInstalled(next);
@@ -2125,9 +2131,11 @@ function AppContent() {
         assistantInstalled={assistantInstalled}
         onToggleAssistant={toggleAssistant}
       />
-      {/* 外部 AI（MCP）或对话页以外发起的对外动作：不在对话页时浮在右下角等用户点 */}
-      {collectorToken && assistantView?.confirms.length && !(activeView !== "sources" && (dashboardOpen || storyMode) && !storySrc && dashboardView === "assistant")
-        ? <AssistantConfirmCards connection={{ baseUrl: collectorUrl, token: collectorToken }} confirms={assistantView.confirms} floating /> : null}
+      {/* 不在对话页时：右下角 AI 圆钮 + 浮动对话面板；外部 AI（MCP）等发起的待确认动作也浮在这里 */}
+      {onAssistantPage ? null
+        : <AssistantDock open={assistantPanel} button={assistantInstalled} onToggle={toggleAssistantPanel}
+          connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
+          onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} />}
       {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={closeDataExport} onExport={exportSelectedData} progress={exportProgress} /> : null}
     </SafeAreaView>
   );
