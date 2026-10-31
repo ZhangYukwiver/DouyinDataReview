@@ -540,7 +540,7 @@ export async function startCollectorServer({
     }
 
     // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录和文件夹照常能读，接收中的聊天页要一直拉
-    const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (["/v1/records", "/v1/folders"].includes(url.pathname) && !accountWork));
+    const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (["/v1/records", "/v1/folders", "/v1/my-comments"].includes(url.pathname) && !accountWork));
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
     const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
     // 操作开关存在根目录、所有账号共用，换号时也能读改
@@ -1017,6 +1017,13 @@ export async function startCollectorServer({
         if (!/^\d{1,12}$/u.test(run) || !/^\d{1,12}$/u.test(after)) sendJson(response, 400, { error: "invalid_revision" });
         else sendJson(response, 200, collector.getNewRecords(Number(run), Number(after)));
       } else sendJson(response, 200, part === "chat" ? collector.getChatSnapshot() : collector.getSnapshot());
+    } else if (request.method === "GET" && url.pathname === "/v1/my-comments") {
+      // 内容库「我的评论」：自己发出的评论和评论下面的回复，读取时从抖音通知里并进来
+      try {
+        sendJson(response, 200, { comments: await collector.myComments.read() });
+      } catch {
+        sendJson(response, 500, { error: "my_comments_read_failed", message: "评论没读出来，请稍后再试。" });
+      }
     } else if (request.method === "GET" && url.pathname === "/v1/folders") {
       try {
         sendJson(response, 200, await foldersOf(collector).read());

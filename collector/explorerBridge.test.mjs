@@ -26,6 +26,17 @@ describe("HTTP explorer adapter", () => {
     await expect(bridge.run({ kind: "users", query: "建筑" })).rejects.toMatchObject({ code: "browser_reconnect_required" });
     expect(bridge.busy).toBe(false);
   });
+  it("files confirmed comments under my comments, and only those", async () => {
+    const { collector, bridge } = fixture();
+    collector.myComments = { addSent: vi.fn(async () => []) };
+    const posted = { id: "7300000000000000001", text: "说得好", publishedAt: "2026-10-31T09:00:00.000Z" };
+    bridge.explorer.react = vi.fn(async () => ({ outcome: "confirmed", message: "评论已发送", comment: posted }));
+    await bridge.run({ action: "comment", awemeId: "7000000000000000001", text: "说得好" }, "react");
+    expect(collector.myComments.addSent).toHaveBeenCalledWith(expect.objectContaining({ id: posted.id, videoId: "7000000000000000001", text: "说得好", source: "app", replies: [] }));
+    bridge.explorer.react = vi.fn(async () => ({ outcome: "unknown", message: "没等到确认" }));
+    await bridge.run({ action: "comment", awemeId: "7000000000000000001", text: "再说一句" }, "react");
+    expect(collector.myComments.addSent).toHaveBeenCalledTimes(1);
+  });
   it("lets feed pages, reactions and watch marks run beside video preparation and syncs the library afterwards", async () => {
     const { collector, api, bridge } = fixture();
     collector.hasActiveVideoDownload = () => true;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { ExploreError } from "./explorer.mjs";
 import { DirectExplorer } from "./directExplorer.mjs";
+import { sentComment } from "./myComments.mjs";
 import { downloadDouyinVideo } from "./videoDownloader.mjs";
 
 // Additive adapter. The original collector and its download jobs retain their
@@ -32,13 +33,24 @@ export class ExplorerBridge {
         return result;
       }
       const result = await this.explorer.react(input);
-      if (result.outcome === "confirmed" && input.action !== "comment") void this.syncReaction(input).catch(() => {});
+      if (input.action === "comment") this.noteComment(input.awemeId, result);
+      else if (result.outcome === "confirmed") void this.syncReaction(input).catch(() => {});
       return result;
     }
     if (this.busy || this.collectorBusy()) throw new ExploreError("collector_busy", "采集器正在执行任务，请停止采集或等待完成后再探索。");
+    const commentOn = operation === "interact" && input?.action === "comment" ? this.explorer.sessions?.get(input.sessionId)?.id : null;
     const work = Promise.resolve().then(() => operation === "interact" ? this.explorer.interact(input) : operation === "seen" ? this.explorer.seen(input) : operation === "video" ? this.video(input, signal) : this.explorer.read(input, { signal }));
     this.pending = work;
-    try { return await work; } finally { if (this.pending === work) this.pending = null; }
+    try {
+      const result = await work;
+      if (commentOn) this.noteComment(commentOn, result);
+      return result;
+    } finally { if (this.pending === work) this.pending = null; }
+  }
+  /** 评论发出去了（抖音回执确认过）：记进内容库「我的评论」，之后读到的回复挂在它下面 */
+  noteComment(videoId, result) {
+    const sent = result?.outcome === "confirmed" ? sentComment(videoId, result.comment) : null;
+    if (sent) void this.collector.myComments?.addSent(sent).catch(() => {});
   }
   /** 点赞 / 收藏成功后在后台读一次作品详情，放进或移出本机「喜欢」「收藏」，内容库不用等下次读取 */
   async syncReaction({ action, awemeId, desired }) {

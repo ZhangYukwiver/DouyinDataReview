@@ -38,6 +38,7 @@ import {
   VideoDownloadError,
 } from "./videoDownloader.mjs";
 import { ChatSendError, validateChatSend } from "./chatSender.mjs";
+import { MyCommentStore, collectMyComments } from "./myComments.mjs";
 import { CreatorCenter } from "./creatorCenter.mjs";
 import { LiveRooms } from "./liveRoom.mjs";
 import { DirectApiClient, loadDirectSession, saveDirectSession, sameDirectSession, needsDirectSessionRefresh } from "./directApi.mjs";
@@ -441,6 +442,8 @@ export class DouyinCollector {
     this.dataDirectory = dataDirectory;
     this.signerDirectory = signerDirectory;
     this.store = store;
+    // 内容库「我的评论」：读取流程和发评论都往这一份里写
+    this.myComments = new MyCommentStore(dataDirectory);
     this.context = null;
     this.contextHeadless = null;
     this.externalConnection = null;
@@ -2001,13 +2004,24 @@ export class DouyinCollector {
           await saveStaged();
         }
       }
+      // 我的评论也是附加信息：读不到不影响上面已经存好的记录。抖音那边只留最近 100 条，读到就并进本机这份
+      this.updateStatus({ phase: "watch_history", message: "正在读取评论回复" });
+      let repliesAdded = 0;
+      await this.myComments.update(async (current) => {
+        const result = await collectMyComments(context, current, { signal: { throwIfAborted: () => this.assertSyncActive(runId) } });
+        repliesAdded = result.added;
+        return result.comments;
+      }).catch((error) => {
+        if (error instanceof CollectorCancelledError) throw error;
+      });
+      this.assertSyncActive(runId);
       const newCounts = Object.fromEntries(REQUIRED_TYPES.map((type) => [type, newIds.get(type).size]));
       this.updateStatus({
         state: "complete",
         phase: null,
         progress: null,
         message: (allIncremental
-          ? `已读取新增记录（观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}${liveAdded > 0 ? `、直播 ${liveAdded}` : ""}）`
+          ? `已读取新增记录（观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}${liveAdded > 0 ? `、直播 ${liveAdded}` : ""}${repliesAdded > 0 ? `、评论回复 ${repliesAdded}` : ""}）`
           : `已读取并合并全部可见记录（观看 ${stagedRecords.watch_history.length}、点赞 ${stagedRecords.liked_videos.length}、收藏 ${stagedRecords.favorite_videos.length}）`)
           + (skipped.length ? `；${skipped.map(({ kind }) => TYPE_LABELS[kind]).join("、")}这次没读到` : ""),
         counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),

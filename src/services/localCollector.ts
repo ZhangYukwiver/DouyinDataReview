@@ -1302,6 +1302,39 @@ export async function collectorOpenBrowserExtensions(baseUrl: string, token: str
   await requestJson(baseUrl, "/v1/feed-filter/open-extensions", { method: "POST", body: JSON.stringify({ browser }) }, token, 30_000);
 }
 
+export interface MyCommentReply {
+  id: string;
+  at: string | null;
+  text: string;
+  user: { id: string | null; name: string; avatarUrl: string | null };
+  /** 抖音给的关系标签：朋友、粉丝、作者、你的关注 */
+  label: string | null;
+  /** 对方在你的评论楼里回的是别人：回的是谁、那条说了什么 */
+  replyToName?: string | null;
+  quote?: string | null;
+}
+
+export interface MyComment {
+  id: string;
+  /** 作品删了或设成私密时抖音不给编号 */
+  videoId: string | null;
+  /** 楼主那条没从评论区读回来时是 null */
+  text: string | null;
+  at: string | null;
+  likes: number | null;
+  video: { title: string | null; author: string | null; coverUrl: string | null } | null;
+  /** notice：从抖音的评论通知里读到；app：在本应用里发的 */
+  source: "notice" | "app";
+  replies: MyCommentReply[];
+}
+
+/** 内容库「我的评论」：自己发出的评论和评论下面的回复，最近有动静的在前。采集器存盘前已经逐条过过一遍 */
+export async function collectorMyComments(baseUrl: string, token: string): Promise<MyComment[]> {
+  const value = await requestJson(baseUrl, "/v1/my-comments", {}, token);
+  if (!isObject(value) || !Array.isArray(value.comments)) throw new LocalCollectorError("invalid_response", "采集服务没返回评论。");
+  return value.comments.filter((item): item is MyComment => isObject(item) && typeof item.id === "string" && Array.isArray(item.replies));
+}
+
 const FEED_VIDEO_ACTIONS: readonly string[] = ["observed", "hidden", "disliked", "dislike_failed"];
 
 /** 内容库「推荐流挡掉的」：扩展在抖音网页里碰到的命中视频，和观看记录同一个格式，多带命中的词条和处置结果（旧的在前） */
