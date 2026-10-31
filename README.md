@@ -46,17 +46,19 @@
 
 | 功能 | 可以做什么 | 使用条件与边界 |
 | --- | --- | --- |
-| 抖音数据采集与导出 | 完整或增量读取观看历史、喜欢、收藏和好友聊天记录，导出 JSON；导出聊天时语音消息经抖音转成文字；可导入本应用备份或抖音官方「个人信息下载」的 JSON / ZIP | 在线采集需导入本人登录凭据；转写语音要联网、登着原账号；群聊正文不写入备份 |
-| 刷视频 | 进工作台默认打开，在应用里接着本人账号的首页推荐往下刷，能看评论、点赞收藏、下载当前视频；刷到的视频会像在网页上一样记进抖音观看历史 | 直播和广告不放进来；点赞、收藏、评论要先打开「允许在抖音上操作」 |
-| 多账号与后台补读 | 各账号分开保存会话和记录；读取中新记录边读边出，报告读完再更新；关窗后留在托盘或菜单栏，每 3 小时补读一次 | 自动补读可在设置里关 |
-| 内容库与视频下载 | 观看历史、直播、喜欢、收藏和推荐流挡掉的视频分页签浏览；按标题、作者、话题、音乐搜索；应用内播放、看评论、发评论、转发；单条或批量 ZIP 下载，图文下载全部图片 | 发评论要先在「设置 → 隐私」打开「允许在抖音上操作」 |
-| 实时聊天与续火花 | 实时收消息，回复好友和群聊，看官方火花天数；给勾选的对象一键发续火花消息 | 一次最多 10 位，由用户手动触发；火花天数以抖音为准 |
-| 创作者中心 | 本人账号的数据总览、作品数据、粉丝画像，以及作品流量、观众和评论分析；评论管理里能以作者身份发评论、回复 | 数据按账号权限返回；发评论、回复要先打开「允许在抖音上操作」 |
-| 内容探索与抖音指数 | 搜用户和作品，点赞、收藏、关注、评论，下载用户主页作品；看实时和飙升热点、达人指标、逐日趋势和粉丝画像 | 互动同样要先打开「允许在抖音上操作」 |
-| 直播观看与弹幕 | 看关注的人正在播的直播，调弹幕透明度、字号、速度、区域和屏蔽词 | 只看不发：不发弹幕、不送礼物、不点赞 |
-| 推荐流过滤 | 在 Chrome、Edge 刷抖音网页时，按文案、作者、话题、配乐或正则过滤推荐：只记录、隐藏，或隐藏后点「不感兴趣」；挡掉的视频进内容库 | 在「设置 → 推荐流」装一次扩展（需开发者模式）；打开页面的第一屏拦不到；「不感兴趣」每分钟最多 6 条 |
-| AI 助手（可选） | 用对话查自己的记录、私信和创作者数据，或让它替你搜抖音、下载作品、整理文件夹、开始读取；装好后任意页面右下角都能打开（⌘J / Ctrl+J），可拖动缩放；Claude Code、Codex 也能通过 [MCP](#让-claude-codecodex-直接用这个应用mcp) 用同一套功能 | 默认不装，在「设置 → AI」安装；模型用你自己的 OpenAI 兼容接口或本机 Codex / Claude Code；发私信、点赞、评论这类操作每次都要你在应用里点「允许」 |
-| 持续报告与抖音年度报告 | 最近 30 天对比上一时段，样本不足回退到 90 天；年度回顾有内容年志、档案馆、海报三种风格，可导出 HTML 和 1080 × 1440 PNG 分享图 | 只用本机已存记录，不补造缺失数据 |
+| 抖音数据采集与导出 | 完整或增量读取观看历史、喜欢、收藏和好友聊天记录，导出 JSON（语音转成文字）；可导入本应用备份或抖音官方「个人信息下载」的 JSON / ZIP | 在线采集需导入本人登录凭据；群聊正文不写入备份 |
+| 刷视频 | 进工作台默认打开，像抖音电脑端一样刷首页推荐，评论、点赞、收藏、下载都在播放器里 | 不放直播和广告 |
+| 多账号与后台补读 | 各账号分开保存会话和记录；读取中新记录边读边出；关窗后留在托盘或菜单栏，每 3 小时补读一次 | 自动补读可在设置里关 |
+| 内容库与视频下载 | 分页签浏览观看历史、直播、喜欢、收藏和推荐流挡掉的视频，按标题、作者、话题搜索；应用内播放，评论、转发和抖音里一样；单条或批量 ZIP 下载 | 只能下载当前账号看得到的作品 |
+| 实时聊天与续火花 | 实时收发好友和群聊消息，看官方火花天数；给勾选的对象一键续火花 | 一次最多 10 位，由用户手动触发 |
+| 创作者中心 | 本人账号的数据总览、作品数据、粉丝画像和评论分析，评论管理和抖音创作者中心一样能回复 | 数据按账号权限返回 |
+| 内容探索与抖音指数 | 搜用户和作品，互动和抖音一样，能下载用户主页作品；看热点榜、达人指标和趋势 | 热点与达人数据来自抖音指数 |
+| 直播观看与弹幕 | 看关注的人正在播的直播，弹幕样式和屏蔽词可调 | 只看不发：不发弹幕、不送礼物、不点赞 |
+| 推荐流过滤 | 在 Chrome、Edge 刷抖音网页时，按关键词、作者、话题等过滤推荐，可以隐藏或替你点「不感兴趣」；挡掉的视频进内容库 | 在「设置 → 推荐流」装一次扩展（需开发者模式） |
+| AI 助手（可选） | 用对话查自己的数据，或让它替你用应用里的功能；任意页面按 ⌘J / Ctrl+J 打开；Claude Code、Codex 也能通过 [MCP](#让-claude-codecodex-直接用这个应用mcp) 调用 | 默认不装，在「设置 → AI」安装；用你自己的模型接口或本机 Codex / Claude Code |
+| 持续报告与抖音年度报告 | 持续报告看最近 30 天的变化；年度回顾有内容年志、档案馆、海报三种风格，可导出 HTML 和 PNG 分享图 | 只用本机已存记录，不补造缺失数据 |
+
+点赞、收藏、关注、评论这类别人看得到的操作默认关着，要先在「设置 → 隐私」打开「允许在抖音上操作」；AI 助手做这类操作时每次都要你点「允许」。
 
 AI 视频解析和剪辑已拆成独立应用[拆片工坊（ReelLab）](https://github.com/ZhangYukwiver/ReelLab)：桌面版里点视频上的「送去」，下好的视频直接进拆片工坊的素材库（图文作品不支持）。
 
@@ -83,7 +85,7 @@ codex mcp add dy2 --url http://127.0.0.1:47652/mcp --bearer-token-env-var DY2_MC
 Windows 上令牌文件在 `%APPDATA%\内容数据工作台\collector\mcp-token`。
 
 - 只接受本机连接，网页发来的请求一律拒绝。拿到令牌就能读你在应用里的全部数据，别外传；删掉 `mcp-token` 再重启应用会换一个。
-- 发私信、点赞、收藏、关注、评论、分享和推荐流「不感兴趣」，每次都会在应用里弹卡片，你点「允许」才做，所以应用要开着，15 分钟没点就作罢。点赞、收藏、关注、评论还要先在「设置 → 隐私」打开「允许在抖音上操作」。
+- 发私信、互动、分享这类别人看得到的操作，每次都会在应用里弹卡片，你点「允许」才做，所以应用要开着，15 分钟没点就作罢。
 - 不提供登录、清除记录、删除账号、导入数据和改设置。
 
 ## 实现方式
@@ -256,7 +258,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ### 能在电脑上刷抖音推荐吗？
 
-能。DouyinDataReview 进工作台默认打开「刷视频」，播放器嵌在页面里，接着你账号的首页推荐往下刷，可以看评论、点赞收藏，或把当前视频下载到本机。直播和广告不放进来；刷到的视频会像在网页上一样记进抖音观看历史。点赞、收藏、评论要先在「设置 → 隐私」打开「允许在抖音上操作」。
+能。DouyinDataReview 进工作台默认就是「刷视频」，像抖音电脑端一样刷你账号的首页推荐，评论、点赞、收藏、下载都能在播放器里做，刷过的视频也会记进抖音观看历史。
 
 ### 能屏蔽抖音推荐里不想看的视频吗？
 
@@ -409,14 +411,14 @@ npm run collector -- --lan --origin http://192.168.1.20:8081
 ### Features
 
 - Export personal records as JSON (voice messages in chats are transcribed through Douyin during export), restore app backups, or import Douyin's official JSON / ZIP personal data archive.
-- Browse your Douyin home feed inside the app, the default page of the workspace: read comments, like, favorite or download the current video. Live streams and ads are skipped, and watched videos are written to your Douyin watch history as on the web.
+- Browse your Douyin home feed inside the app (the default page), with comments, likes, favorites and downloads in the player, just like Douyin on the web.
 - Keep separate account sessions and records, receive chats in real time, reply to friends and groups, and view official chat streak status. Sending a message does not guarantee a streak increase.
 - Search saved content, play videos, download individual videos or image posts, and batch-download videos as ZIP files.
-- Search Douyin users and posts, interact on request (likes, favorites, follows and comments stay off until you turn on "允许在抖音上操作" in Settings → Privacy), and view hot lists, Creator Center stats and Douyin Index metrics through the current account's access. In Creator Center comment management you can post comments and reply as the author.
+- Search Douyin users and posts and interact as you would on Douyin (public actions stay off until you turn on "允许在抖音上操作" in Settings → Privacy); view hot lists, Douyin Index metrics and your Creator Center stats, and reply to comments there.
 - Watch live streams with configurable live comments; live comments are received only.
 - Filter the Douyin web recommendation feed in Chrome or Edge with a browser extension you install once from Settings: match keywords, authors, hashtags, music or regex, then log, hide, or hide and send "not interested". Filtered videos show up in the library.
 - Generate local reports in three visual styles, with standalone HTML and 1080 × 1440 PNG exports.
-- Optional AI assistant (off by default, install it in Settings → AI): ask about your own records, chats and Creator Center data, or have it search Douyin, download, organize folders and start reading, using your own OpenAI-compatible API or the Codex / Claude Code CLI on your computer. Once installed, it opens from any page (⌘J / Ctrl+J). Messages, likes, comments and other actions others can see always wait for you to click "允许" (allow) in the app. Claude Code and Codex can use the same tools over MCP; see [the MCP section](#让-claude-codecodex-直接用这个应用mcp).
+- Optional AI assistant (install it in Settings → AI): ask about your own data or have it use the app for you, with your own OpenAI-compatible API or the Codex / Claude Code CLI; open it from any page with ⌘J / Ctrl+J. Actions others can see always wait for your "允许" (allow). Claude Code and Codex can use the same tools over [MCP](#让-claude-codecodex-直接用这个应用mcp).
 - The AI video workbench now lives in a separate app, [ReelLab](https://github.com/ZhangYukwiver/ReelLab); on the desktop app, the "送去" (send) button on a video in the library or the explore page sends it over in one click.
 
 ### How it works
