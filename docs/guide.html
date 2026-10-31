@@ -38,7 +38,7 @@
       },
       "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-10-26",
+      "dateModified": "2026-10-31",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -101,16 +101,16 @@ html{scroll-padding-top:24px}
 <a href="./">DouyinDataReview 下载与项目介绍</a>
 <h1>抖音数据导出与年度报告使用指南</h1>
 <p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏和好友聊天记录保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
-<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-10-26">2026 年 10 月 26 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
+<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-10-31">2026 年 10 月 31 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
 <nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#coverage">数据范围</a><a href="#privacy">数据去向</a><a href="#sources">源码依据</a></nav>
 
 <h2 id="export">如何导出抖音观看历史和聊天记录？</h2>
-<p>先在桌面版首屏扫码并导入本人登录凭据，读取所需记录，再到「设置 → 数据」选择导出内容。输出为 JSON；导出只使用已保存的数据，不会额外向抖音读取。</p>
+<p>先在桌面版首屏扫码并导入本人登录凭据，读取所需记录，再到「设置 → 数据」选择导出内容。输出为 JSON；导出只使用已保存的记录，不会重新读取。勾选聊天时，语音消息会经抖音转成文字写进文件，这一步需要联网并登着原账号。</p>
 <ol>
   <li>从<a href="./#download">下载页</a>或 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">Releases</a> 安装对应系统的版本。macOS 首次打开和 Windows SmartScreen 的处理方式见<a href="./#install">安装说明</a>。</li>
   <li>启动桌面版，在首屏显示二维码，用抖音 App 扫码。核对账号，勾选「读取视频」和／或「读取聊天」，再确认导入。首次默认只勾选视频；要备份聊天，需要同时勾选聊天。</li>
   <li>等待读取完成。新账号的视频读取会分页获取接口当前提供的观看历史、喜欢和收藏；已有完整读取记录的账号重新导入后只补新增。聊天按所选权限整理和接收。</li>
-  <li>在「设置 → 数据」点「导出数据」，勾选需要的部分后保存 JSON。聊天默认不勾选；没有勾选的类型不会写入导出文件。</li>
+  <li>在「设置 → 数据」点「导出数据」，勾选需要的部分后保存 JSON。聊天默认不勾选；没有勾选的类型不会写入导出文件。转不了的语音保留原消息并注明原因。</li>
   <li>换电脑时，在新电脑的采集器页选择这份备份，再点「并入本机记录」。登录凭据不在备份内；需要继续在线采集时，重新登录并导入。</li>
 </ol>
 <p class="note">聊天备份包含已保存的好友消息及会话信息（含群聊统计），不包含群聊正文。接口不再返回的历史数据无法由本工具恢复。</p>
@@ -137,7 +137,7 @@ html{scroll-padding-top:24px}
   <tbody>
     <tr><th scope="row">观看、喜欢、收藏</th><td>读取本人账号可访问的接口，归一化后保存本机，可选择导出 JSON</td><td>不保证全部历史；记录缺少日期或字段会影响报告</td></tr>
     <tr><th scope="row">好友与群聊</th><td>保存好友聊天，接收新消息；群聊按需在线读取</td><td>群聊正文不写入记录备份；官方火花状态不等于本地估算</td></tr>
-    <tr><th scope="row">创作者中心</th><td>只读展示本人账号的数据总览、作品与粉丝指标</td><td>按平台当前权限返回；不代表可以查看任意账号的后台数据</td></tr>
+    <tr><th scope="row">创作者中心</th><td>展示本人账号的数据总览、作品与粉丝指标；评论管理里可以作者身份发评论和回复</td><td>按平台当前权限返回；不代表可以查看任意账号的后台数据</td></tr>
     <tr><th scope="row">视频与图文</th><td>支持单条下载、批量 ZIP 和图文全部图片下载</td><td>在线下载需要有效会话和当前账号可访问的作品</td></tr>
     <tr><th scope="row">年度与持续报告</th><td>本机计算；持续报告比较最近 30 天，样本不足时回退到 90 天</td><td>年度回顾仅代表已保存样本；持续报告与年度回顾是不同视图</td></tr>
   </tbody>
@@ -146,19 +146,20 @@ html{scroll-padding-top:24px}
 <p>采集依赖抖音未公开承诺的私有接口，可能失效或触发账号风控。本项目与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。仅用于本人账号和个人数据管理；不能承诺账号不会受到平台限制。</p>
 
 <h2 id="privacy">数据会传到哪里？</h2>
-<p><strong>个人记录保存和年度报告计算在本机完成，应用本身不调用任何 AI 服务。</strong>在线采集和互动需要请求抖音。AI 视频解析与剪辑已经拆成独立应用<a href="https://github.com/ZhangYukwiver/ReelLab">拆片工坊（ReelLab）</a>，在桌面版的内容库或探索页点视频上的「送去」按钮，就把那条视频交给它。</p>
+<p><strong>个人记录保存和年度报告计算在本机完成，默认不调用任何 AI 服务。</strong>可选的 AI 助手装上后，你发的话和它查到的数据会发给你自己配置的模型接口，或交给本机的 Codex / Claude Code。在线采集和互动需要请求抖音。AI 视频解析与剪辑已经拆成独立应用<a href="https://github.com/ZhangYukwiver/ReelLab">拆片工坊（ReelLab）</a>，在桌面版的内容库或探索页点视频上的「送去」按钮，就把那条视频交给它。</p>
 <div class="table-wrap" role="region" aria-label="数据流表，可横向滚动" tabindex="0">
 <table>
   <caption>使用不同功能时发送的数据</caption>
   <thead><tr><th scope="col">功能</th><th scope="col">目的地与输入</th><th scope="col">补充说明</th></tr></thead>
   <tbody>
-    <tr><th scope="row">采集与互动</th><td>向抖音请求本人可访问的记录；主动发送的消息、点赞、评论等提交至抖音</td><td>使用已导入的账号会话；未开启的读取类型不能继续联网读取</td></tr>
+    <tr><th scope="row">采集与互动</th><td>向抖音请求本人可访问的记录；主动发送的消息、点赞、评论等提交至抖音</td><td>使用已导入的账号会话；未开启的读取类型不能继续联网读取；在应用里刷视频会像网页一样记进抖音观看历史；导出聊天时语音经抖音转成文字</td></tr>
+    <tr><th scope="row">AI 助手（可选）</th><td>你的提问和它为回答查到的记录，发给你在「设置 → AI」填的模型接口，或本机的 Codex / Claude Code</td><td>默认不装；接口 Key 不写进数据目录；发私信、点赞、评论等操作每次都要你点「允许」</td></tr>
     <tr><th scope="row">本地报告</th><td>不需要发送原始记录到任何服务；统计在电脑完成</td><td>记录和汇总保存在当前设备；公开分享报告会暴露其中显示的内容</td></tr>
     <tr><th scope="row">送去拆片工坊</th><td>先从抖音下载这条视频，再把视频文件和它的标题、作者、链接、时长复制进本机拆片工坊的收件箱</td><td>只在你点了之后发生，不经网络；图文作品送不了；拆片工坊怎么用这条视频由它自己说明</td></tr>
   </tbody>
 </table>
 </div>
-<p>抖音 Cookie 和整份个人记录不会交给拆片工坊或其他 AI 服务。登录凭据和个人备份都应由本人保管。</p>
+<p>抖音 Cookie 和整份个人记录不会交给拆片工坊；AI 助手发出去的是它为回答查到的那些数据。登录凭据和个人备份都应由本人保管。</p>
 
 <h2 id="sources">这些说明依据哪些源码？</h2>
 <p>本指南依据公开仓库的实现整理。文档描述当前行为，接口可用性仍由抖音决定；具体版本变更见 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases">Releases</a>。</p>
