@@ -46,9 +46,12 @@ export async function directWrite(api, action, input, { onDispatch = () => {} } 
   }
   if (action === "comment") {
     const content = typeof input.text === "string" ? input.text.replace(/\s+/gu, " ").trim() : "";
-    if (!content || content.length > 500 || (input.replyTo != null && !/^\d{5,30}$/u.test(input.replyTo)))
+    if (!content || content.length > 500 || (input.replyTo != null && !/^\d{5,30}$/u.test(input.replyTo))
+      || (input.replyToReply != null && (!input.replyTo || !/^\d{5,30}$/u.test(input.replyToReply))))
       throw new DirectHistoryError("invalid_request", "评论需为 1–500 字，请选择有效回复对象。");
-    body = { aweme_id: awemeId, ...(input.replyTo ? { reply_id: input.replyTo } : {}), comment_send_celltime: "0", comment_video_celltime: "0",
+    // 回复楼中楼：reply_id 是一级评论，reply_to_reply_id 是被回复的那条
+    body = { aweme_id: awemeId, ...(input.replyTo ? { reply_id: input.replyTo } : {}), ...(input.replyToReply ? { reply_to_reply_id: input.replyToReply } : {}),
+      comment_send_celltime: "0", comment_video_celltime: "0",
       one_level_comment_rank: "-1", paste_edit_method: "non_paste", text: content, text_extra: "[]" };
   }
   if (action === "history") {
