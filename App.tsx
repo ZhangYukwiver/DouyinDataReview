@@ -110,6 +110,7 @@ import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/s
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace, FeedWorkspace } from "./src/components/workspace/ExploreWorkspace";
 import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
+import { countAchievement, noteAchievementWorks, syncDataAchievements, unlockAchievement } from "./src/components/workspace/achievements";
 import { buildDataExportWithVoice, type DataExportSelection } from "./src/services/exportData";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 // @ts-expect-error react-native-web 没给内部模块出类型
@@ -439,7 +440,10 @@ function AppContent() {
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return undefined;
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin || (event.data as { type?: unknown } | null)?.type !== "trace:open-dashboard") return;
+      const type = event.origin === window.location.origin ? (event.data as { type?: unknown } | null)?.type : null;
+      // 故事页存好分享图或导出整页以后发上来，记成就「年度报告导出」
+      if (type === "trace:exported") countAchievement("report");
+      if (type !== "trace:open-dashboard") return;
       setStorySrc(null);
       setDashboardView("summary");
       setDashboardOpen(true);
@@ -519,6 +523,15 @@ function AppContent() {
       : null;
   // 数据页和故事入口显示的聊天条数：采集器用服务端计数，导入的文件按同一个口径（好友消息加群聊统计）自己数
   const chatCount = displaySnapshot?.source === "archive" ? countChatMessages(displaySnapshot.chatMessages, displaySnapshot.chatConversations) : collectorStatus?.counts.chat_messages ?? null;
+  // 成就的数据类：采集器读到的或导入的真实记录，按当前条数算
+  const achievementRecords = displaySnapshot?.records;
+  useEffect(() => {
+    if (!achievementRecords) return;
+    syncDataAchievements({
+      watch: achievementRecords.watch_history.length, likes: achievementRecords.liked_videos.length,
+      favorites: achievementRecords.favorite_videos.length, chat: chatCount ?? 0,
+    });
+  }, [achievementRecords, chatCount]);
   // 记录文件坏过、采集器从空记录重新开始：告诉用户一声，坏文件留在哪
   const brokenRecordsNotice = collectorSnapshot?.warnings.find((warning) => warning.startsWith("本地记录文件损坏")) ?? null;
   // 开机后台启动时窗口还没出来：先记着，等窗口出来再说，免得第一次读取把提示换掉以后就再也看不到
@@ -1455,6 +1468,7 @@ function AppContent() {
           }
           clearStoryData();
           setSelectedArchive({ ...archive, inspection: { status: "complete", format: data.format }, data });
+          if (data.fromCollector !== undefined) unlockAchievement("restore");
         } catch (error) {
           if (importRequest.current !== requestId) return;
           setSelectedArchive({ ...archive, inspection: { status: "failed" } });
@@ -1613,6 +1627,7 @@ function AppContent() {
       });
       controller.signal.throwIfAborted();
       triggerBrowserDownload(new Blob([JSON.stringify(data)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
+      countAchievement("export");
       setExportSnapshot(null);
       if (data.warnings.length) showAlert("已导出，部分语音未转写", data.warnings.join("\n"));
     } catch (error) { if (!controller.signal.aborted) showAlert("无法导出数据", collectorErrorMessage(error)); }
@@ -1697,6 +1712,7 @@ function AppContent() {
       if (downloadRequestRef.current !== requestId) return;
       triggerBrowserDownload(file.blob, file.fileName ?? job.fileName);
       markDownloadState(record.id, "complete");
+      noteAchievementWorks("download", [record.videoId || record.id]);
     } catch (error) {
       if (downloadRequestRef.current !== requestId) return;
       markDownloadState(record.id, "failed");
@@ -1823,6 +1839,7 @@ function AppContent() {
         archive: source === "archive" && selectedArchive?.data ? { parsedFileCount: selectedArchive.data.parsedFileCount, ignoredFileCount: selectedArchive.data.ignoredFileCount } : null,
       });
       writeStoryData(story);
+      if (displaySnapshot && countPersonalRecords(workspaceRecords) > 0) unlockAchievement("my-year");
       // 极简没有自己的报告页，借用设置里选的那套
       const page = resolveStoryStyle(appStyle, storyStyle);
       setStorySrc(page === "poster" ? buildPosterStoryUrl({ motion: "full" }) : page === "archive" ? buildArchiveStoryUrl({ motion: "full" }) : buildStoryEntryUrl({
@@ -1870,10 +1887,15 @@ function AppContent() {
     const controller = new AbortController();
     void (async () => {
       let revision: number | null = null;
+      // 成就「AI 助手」：这次连上以后新出来的回答才算一轮，以前的不追算
+      let replies: number | null = null;
       while (!controller.signal.aborted) {
         try {
           const next = await getAssistant(connection, revision, controller.signal);
           revision = next.revision;
+          const answered = next.messages.filter((item) => item.role === "assistant" && item.text.trim()).length;
+          if (replies !== null && answered > replies) countAchievement("assistant", answered - replies);
+          replies = answered;
           setAssistantView(next);
         } catch {
           if (controller.signal.aborted) return;

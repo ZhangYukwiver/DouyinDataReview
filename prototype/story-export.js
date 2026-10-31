@@ -90,6 +90,8 @@
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    // 在工作台里打开时告诉应用一声，记成就「年度报告导出」；单独打开（导出的文件、示例页）没有上层，不发
+    if (window.parent !== window) window.parent.postMessage({ type: "trace:exported" }, "/");
   }
 
   // 导航上的「导出」：点的那一刻才读隐私开关，所以 options 是个函数

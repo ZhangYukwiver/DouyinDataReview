@@ -100,7 +100,8 @@ import {
   type RecordFolders,
 } from "../../services/recordFolders";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
-import { BadgeShelf, PioneerBadge } from "./PioneerBadge";
+import { BadgeWall } from "./AchievementShelf";
+import { noteAchievementWorks, countAchievement, unlockAchievement } from "./achievements";
 import { ReportDashboard } from "./ReportDashboard";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -418,7 +419,7 @@ export function ContentWorkspace({
               </React.Fragment>
             ))}
           </View>
-          <BadgeShelf><PioneerBadge /></BadgeShelf>
+          <BadgeWall compact={compactSidebar} />
           <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} />
           </View>
           <View style={styles.sidebarFooter}>
@@ -753,6 +754,9 @@ const FEED_ACTION_LABEL: Record<NonNullable<PersonalVideoRecord["feedFilter"]>["
   observed: "只记录", hidden: "已隐藏", disliked: "已反馈", dislike_failed: "反馈没成功",
 };
 
+// 成就「文件夹整理」：放进文件夹的作品，按不同作品记（三类里同一条只算一次）
+const noteFiledWorks = (lists: RecordFolders) => noteAchievementWorks("organize", Object.values(lists).flatMap((list) => Object.keys(list.items)));
+
 function useRecordFolders(connection: ExploreConnection | null | undefined, accountId: string | undefined) {
   const owner = connection ? `${connection.baseUrl}|${accountId ?? ""}` : null;
   const [state, setState] = useState<{ owner: string; lists: RecordFolders } | null>(null);
@@ -778,6 +782,7 @@ function useRecordFolders(connection: ExploreConnection | null | undefined, acco
       .then((value) => {
         if (!alive) return;
         confirmed.current = value ? { owner, lists: value } : null;
+        if (value) noteFiledWorks(value);
         setState(confirmed.current);
         setError((shown) => (shown?.kind === "read" ? null : shown));
       })
@@ -801,6 +806,7 @@ function useRecordFolders(connection: ExploreConnection | null | undefined, acco
       try {
         await saveRecordFolders(target, account, next);
         if (latest.current.owner === who) confirmed.current = { owner: who, lists: next };
+        noteFiledWorks(next);
       } catch (cause) {
         if (latest.current.owner !== who) return;
         generation.current += 1;
@@ -1213,6 +1219,19 @@ function RecordsGallery({
   // 播放器的上一条/下一条和批量下载都跟着当前文件夹和搜索结果走
   const shownRecords = useMemo(() => searchRecords(folderRecords, query), [folderRecords, query]);
   const searching = query.trim().length > 0;
+  // 成就「内容搜索」：搜索词停下一秒、有结果才算一次有效搜索，同一个词不重复算；「找回那一条」是在搜索结果里点开播放
+  const countedSearch = useRef("");
+  const searchHit = searching && shownRecords.length > 0;
+  useEffect(() => {
+    const words = query.trim();
+    if (!searchHit || words === countedSearch.current) return;
+    const timer = setTimeout(() => { countedSearch.current = words; countAchievement("search"); }, 1000);
+    return () => clearTimeout(timer);
+  }, [query, searchHit]);
+  const playRecord = useCallback((record: PersonalVideoRecord) => {
+    if (searching) unlockAchievement("found-it");
+    setPlayingRecord(record);
+  }, [searching]);
   // 喜欢和收藏的时间是上次播放的时间，不是点赞收藏的时间，拿来说「最早一条」会误导
   const earliest = useMemo(() => activeType === "watch_history" ? earliestRecordDate(records) : null, [activeType, records]);
   const candidates = useMemo(() => uniqueDownloadVideos(shownRecords), [shownRecords]);
@@ -1478,7 +1497,7 @@ function RecordsGallery({
               onDownloadRecord={item.mediaType === "live" || !onDownloadRecord ? undefined : handlers.download}
               onSendToReelLab={item.mediaType === "live" || !onSendToReelLab ? undefined : handlers.send}
               onFolderMenu={onFolderMenu}
-              onPlayRecord={item.mediaType === "live" ? openLive && handlers.live : onLoadVideo ? setPlayingRecord : undefined}
+              onPlayRecord={item.mediaType === "live" ? openLive && handlers.live : onLoadVideo ? playRecord : undefined}
               onOpenRecord={handlers.open}
               privacy={privacy}
               record={item}
