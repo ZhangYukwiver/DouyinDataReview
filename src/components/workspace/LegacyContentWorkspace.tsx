@@ -37,6 +37,7 @@ import {
   LayoutDashboard,
   List,
   MessageCircle,
+  MessageSquareText,
   Music2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -68,11 +69,12 @@ import type {
   PersonalRecordType,
   PersonalVideoRecord,
 } from "../../domain/personalRecords";
-import { collectorFeedFilteredVideos, type CollectorStatus } from "../../services/localCollector";
+import { collectorFeedFilteredVideos, collectorMyComments, type CollectorStatus, type MyComment } from "../../services/localCollector";
 import type { ExploreConnection } from "../../services/explorer";
 import { DEFAULT_APP_STYLE, DEFAULT_STORY_STYLE, resolveStoryStyle, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import Svg, { Circle } from "react-native-svg";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { MyCommentsView } from "./MyCommentsView";
 import { RecordVideoPlayer, type RecordVideoLoader } from "./RecordVideoPlayer";
 import { LiveRoomPlayer, type LiveTarget } from "./LiveRoomPlayer";
 import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../services/liveRoom";
@@ -107,7 +109,7 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant";
 
 export interface ContentWorkspaceProps {
   /** 刷视频：进工作台默认就是这一页 */
@@ -177,14 +179,15 @@ const navItems: NavItem[] = [
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
   { id: "favorite_videos", label: "收藏", icon: Bookmark, accent: color.amber },
   { id: "feed_filtered", label: "推荐流挡掉的", icon: Funnel, accent: color.green },
+  { id: "comments", label: "我的评论", icon: MessageSquareText, accent: color.amber },
   { id: "chat", label: "聊天", icon: MessageCircle, accent: color.cyan },
   { id: "summary", label: "持续报告", icon: LayoutDashboard, accent: color.green },
   { id: "highlights", label: "变化线索", icon: Star, accent: color.cyan },
 ];
 
 
-// 观看历史、直播、喜欢、收藏、推荐流挡掉的是同一种记录列表：侧栏只占「内容库」一项，进去用页签切换
-const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered"];
+// 观看历史、直播、喜欢、收藏、推荐流挡掉的是同一种记录列表，我的评论也放在一起：侧栏只占「内容库」一项，进去用页签切换
+const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered", "comments"];
 const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
 type SideKey = WorkspaceViewKey | "library";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
@@ -318,6 +321,7 @@ export function ContentWorkspace({
   const [incomingVideos, incomingLives] = useMemo(() => splitLive(liveRecords?.watch_history ?? NO_RECORDS), [liveRecords?.watch_history]);
   const folders = useRecordFolders(commentsConnection, status?.account?.id);
   const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
+  const myComments = useMyComments(commentsConnection, status?.account?.id, status?.state, activeView === "comments");
   const counts: Record<SideKey, number> = {
     feed: 0,
     explore: 0,
@@ -328,6 +332,7 @@ export function ContentWorkspace({
     liked_videos: records.liked_videos.length + (liveRecords?.liked_videos.length ?? 0),
     favorite_videos: records.favorite_videos.length + (liveRecords?.favorite_videos.length ?? 0),
     feed_filtered: feedVideos.length,
+    comments: myComments.length,
     library: 0,
     chat: countChatMessages(chatMessages, chatConversations),
     summary: model.unique || totalRecords,
@@ -569,6 +574,8 @@ export function ContentWorkspace({
             : report && isLivingReport(report)
               ? <LivingHighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={report} />
               : <HighlightsView mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} report={report} />
+        ) : activeView === "comments" ? (
+          <MyCommentsView comments={myComments} mobile={mobile} onOpenRecord={onOpenRecord} privacy={privacy} records={records} />
         ) : (
           <RecordsGallery
             activeType={activeView === "live" || activeView === "feed_filtered" ? "watch_history" : activeView}
@@ -748,6 +755,20 @@ function useFeedFilteredVideos(connection: ExploreConnection | null | undefined,
     return () => { alive = false; if (timer) clearInterval(timer); };
   }, [active, baseUrl, token]);
   return videos;
+}
+
+// 内容库「我的评论」：采集器读取记录时顺带并进来，所以换账号、读取状态变了（读完一轮）再取一次；
+// 打开这一栏也取一次，在播放器里刚发的评论能马上看到
+function useMyComments(connection: ExploreConnection | null | undefined, accountId: string | undefined, syncState: string | undefined, active: boolean) {
+  const [comments, setComments] = useState<MyComment[]>([]);
+  const baseUrl = connection?.baseUrl, token = connection?.token;
+  useEffect(() => {
+    if (!baseUrl || !token) { setComments([]); return undefined; }
+    let alive = true;
+    collectorMyComments(baseUrl, token).then((list) => { if (alive) setComments(list); }, () => undefined);
+    return () => { alive = false; };
+  }, [accountId, active, baseUrl, token, syncState]);
+  return comments;
 }
 
 const FEED_ACTION_LABEL: Record<NonNullable<PersonalVideoRecord["feedFilter"]>["action"], string> = {

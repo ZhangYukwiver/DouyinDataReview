@@ -310,6 +310,11 @@ describe("direct list pagination", () => {
         expect(Object.fromEntries(url.searchParams)).toMatchObject({ request_tag_from: "web", need_map: "1", source_key: "drawer_hot_live_history", live_id: "1", app_name: "douyin_web" });
         return { status_code: 0, data: [], extra: { has_more: false } };
       }
+      // 我的评论：只读，不能把通知标成已读
+      if (url.pathname === "/aweme/v1/web/notice/") {
+        expect(Object.fromEntries(url.searchParams)).toMatchObject({ notice_group: "2", is_mark_read: "0" });
+        return { status_code: 0, notice_list_v2: [], has_more: 0 };
+      }
       const cursor = url.pathname.endsWith("/favorite/") ? url.searchParams.get("max_cursor") : new URLSearchParams(request.data).get("cursor");
       return { status_code: 0, aweme_list: [{ aweme_id: cursor === "0" ? "old" : "new" }], has_more: cursor === "0" ? 1 : 0, max_cursor: "10", cursor: "10" };
     });
@@ -320,7 +325,7 @@ describe("direct list pagination", () => {
     await collector.runDirectRecords(1, { full });
     for (const type of types) expect(collector.snapshot.records[type].map(r => r.videoId).sort()).toEqual(full ? ["new", "old"] : ["old"]);
     expect(collector.readDirectHistory).toHaveBeenCalledTimes(full ? 2 : 1);
-    expect(context.fetch).toHaveBeenCalledTimes(full ? 5 : 3); expect(collector.ensureBrowser).not.toHaveBeenCalled();
+    expect(context.fetch).toHaveBeenCalledTimes(full ? 6 : 4); expect(collector.ensureBrowser).not.toHaveBeenCalled();
     await api.close();
   });
 });
