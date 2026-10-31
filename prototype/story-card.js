@@ -419,6 +419,8 @@
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    // 同 story-export.js：工作台里记成就「年度报告导出」
+    if (window.parent !== window) window.parent.postMessage({ type: "trace:exported" }, "/");
   }
 
   // ---------------- 预览：先看样子，三种风格随便切，满意了再存 ----------------

@@ -3,6 +3,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import { createVideoBatchZip, loadBatchVideoFile, runVideoBatch, type BatchItem } from "../../services/batchVideoDownload";
+import { noteAchievementWorks } from "./achievements";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
 
@@ -75,6 +76,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
       anchor.download = `抖音视频_${author ? `${author}_` : ""}${new Date().toISOString().slice(0, 10)}_${complete}个.zip`;
       document.body.appendChild(anchor); anchor.click(); anchor.remove();
       savedRecords.current = items.filter((item) => item.status === "complete").map((item) => item.record);
+      noteAchievementWorks("download", savedRecords.current.map((record) => record.videoId || record.id));
       setSaved(true);
     } catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : "打包失败，请重试。"); }
     finally { active.current = false; if (mounted.current) setPacking(false); }

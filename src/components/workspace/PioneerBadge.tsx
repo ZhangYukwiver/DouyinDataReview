@@ -46,16 +46,10 @@ const brushed = "conic-gradient(from 20deg,rgba(255,255,255,.6),rgba(255,255,255
 const mix = (token: string, percent: number) => `color-mix(in srgb, ${token} ${percent}%, transparent)`;
 
 const css = `
-/* 徽章墙：每枚徽章占一格方块，从导航下面左上角的第一格起往右、往下排（展开时一行四格），先驱者在第一格，以后加的不会挪动它；侧栏收起时叠成一摞压在它身后 */
-.pb-slot{flex:1 1 0;min-height:0;container-type:size}
-.pb-tiles{display:grid;grid-template-columns:repeat(auto-fill,44px);gap:4px;padding:24px 4px 0}
-.pb-tile{width:44px;height:44px;display:flex;align-items:center;justify-content:center}
-@container (max-width:120px){.pb-tiles{grid-template-columns:44px}.pb-tile{grid-area:1/1}.pb-tile:first-child{z-index:1}.pb-tile:nth-child(2){transform:translate(5px,-10px) rotate(10deg)}.pb-tile:nth-child(3){transform:translate(-5px,-16px) rotate(-9deg)}.pb-tile:nth-child(n+4){transform:translateY(-22px)}}
 .pb-btn{all:unset;position:relative;box-sizing:border-box;display:block;cursor:pointer;width:40px;height:40px;background:${brushed},${metal};transition:transform .3s cubic-bezier(.22,.61,.36,1)}
 .pb-btn::before{content:"";position:absolute;inset:4px;border-radius:50%;border:.8px dashed rgba(0,0,0,.16)}
 .pb-btn:hover,.pb-btn:focus-visible{transform:translateY(-2px) rotate(-8deg)}
 .pb-btn:focus-visible{outline:2px solid ${INK};outline-offset:3px}
-@container (max-height:68px){.pb-tiles{display:none}}
 .pb-btn i{position:absolute;inset:27%;background:#7a7a7a;-webkit-mask:${ICON_MASK};mask:${ICON_MASK};filter:drop-shadow(0 1px 0 rgba(255,255,255,.9))}
 @keyframes pb-fade{from{opacity:0}to{opacity:1}}
 @keyframes pb-fly{from{transform:translate(var(--x0,0px),var(--y0,40px)) scale(var(--s0,.6))}to{transform:none}}
@@ -146,12 +140,6 @@ function readSince(): string {
   return today();
 }
 
-/** 侧栏的徽章架，里面每枚徽章各自渲染成一个 .pb-tile；先驱者放第一个 */
-export function BadgeShelf({ children }: { children: React.ReactNode }) {
-  if (Platform.OS !== "web" || typeof document === "undefined") return null;
-  return <div className="pb-slot"><div className="pb-tiles">{children}</div></div>;
-}
-
 export function PioneerBadge() {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const flyRef = useRef<HTMLDivElement | null>(null);
@@ -168,6 +156,14 @@ export function PioneerBadge() {
     const timer = setTimeout(() => setOpen({ fresh: true }), 700); // 等工作台淡入完再弹
     return () => clearTimeout(timer);
   }, []);
+
+  // 在徽章墙里拖它时收不到 mouseleave，说明会一直挂着
+  useEffect(() => {
+    if (!tip) return;
+    const hide = () => setTip(null);
+    document.addEventListener("dragstart", hide);
+    return () => document.removeEventListener("dragstart", hide);
+  }, [tip]);
 
   useEffect(() => {
     if (!open) return;
@@ -207,8 +203,9 @@ export function PioneerBadge() {
     void globalThis.navigator?.clipboard?.writeText(GROUP).then(() => setCopied(true), () => undefined);
   };
 
+  // 外面那一格（.pb-tile）由徽章墙 BadgeWall 套，它管顺序和拖动
   return (
-    <div className="pb-tile">
+    <>
       <style>{css}</style>
       <button
         ref={buttonRef}
@@ -273,6 +270,6 @@ export function PioneerBadge() {
         </div>,
         document.body,
       ) : null}
-    </div>
+    </>
   );
 }
