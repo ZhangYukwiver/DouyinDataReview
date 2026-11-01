@@ -74,6 +74,8 @@ const CHAT_OBSERVATION_WARNING = "聊天实时接收：整理历史后保持连�
 const DIRECT_COMPLETE_WARNING_PREFIX = "无界面读取完成：";
 const DOWNLOAD_JOB_RETENTION_MS = 30 * 60 * 1_000;
 const DOWNLOAD_JOB_LIMIT = 64;
+// 读取让着前台：刷视频、探索、下载这几秒内有过请求，整份读取和聊天历史就先不翻下一页
+const FOREGROUND_QUIET_MS = 5_000;
 
 function currentChatWarnings(warnings) {
   return (warnings ?? []).filter((warning) => warning !== LEGACY_CHAT_OBSERVATION_WARNING
@@ -453,6 +455,7 @@ export class DouyinCollector {
     this.directApiPromise = null;
     this.syncPromise = null;
     this.syncStopRequested = false;
+    this.foregroundAt = 0;
     this.accountUid = account?.uid ?? null;
     // 核对时发现浏览器里登录的是别的号；登回原来的号核对通过前，无界面读取也不做
     this.accountMismatch = false;
@@ -903,6 +906,15 @@ export class DouyinCollector {
   // 只算要存成文件的下载；边下边播可以直接停掉
   hasSavingVideoDownload() {
     return [...this.videoDownloadJobs.values()].some((job) => !job.playback && (job.status === "queued" || job.status === "running"));
+  }
+
+  noteForeground() {
+    this.foregroundAt = Date.now();
+  }
+
+  // ponytail: 一直有人在刷就一直等，读取会拖到空下来；stopped() 为真时不等了，交给调用方的检查去停
+  async yieldToForeground(stopped) {
+    while (Date.now() - this.foregroundAt < FOREGROUND_QUIET_MS && !stopped()) await delay(500);
   }
 
   hasActiveVideoDownload() {
@@ -1548,6 +1560,7 @@ export class DouyinCollector {
       const friends = [...client.conversations.values()].filter(c=>c.type===1);
       let skipped = 0;
       for (const [index, conversation] of friends.entries()) {
+        await this.yieldToForeground(() => signal.aborted || runId !== this.chatRunId);
         signal.throwIfAborted(); this.assertChatActive(runId);
         this.updateChat({ progress: { current: index + 1, total: friends.length }, message: `正在读取聊天历史 ${index + 1}/${friends.length}` });
         // 一个好友读失败就跳过这个好友，别让整个接收停掉、下次又从头读；登录失效、限流这类整个账号的问题照旧停下。
@@ -1559,6 +1572,7 @@ export class DouyinCollector {
             page = await client.messages({ conversationId: conversation.id, older: true }, { signal });
             await accept({ messages: page.pageMessages, conversations: [] });
             await delay(200, undefined, { signal });
+            await this.yieldToForeground(() => signal.aborted || runId !== this.chatRunId);
           }
         } catch (error) {
           if (signal.aborted || runId !== this.chatRunId || CHAT_ACCOUNT_ERRORS.has(error?.code)) throw error;
@@ -1757,6 +1771,7 @@ export class DouyinCollector {
       cursor = String(field("max_cursor") ?? "");
       if (!/^\d{1,20}$/u.test(cursor)) break;
       await delay(900);
+      await this.yieldToForeground(() => runId !== this.syncRunId);
     }
     return { completed, coveredFromMs: oldest };
   }
@@ -1919,6 +1934,8 @@ export class DouyinCollector {
                 newRecords: newRecordsStatus(),
               });
               await persistProgress(type);
+              await this.yieldToForeground(() => runId !== this.syncRunId);
+              this.assertSyncActive(runId);
               return !result.recordIds.some((id) => knownIds.get(type).has(id));
             });
           } catch (error) {
@@ -1968,6 +1985,7 @@ export class DouyinCollector {
           }
           cursor = result.pagination.cursor;
           await delay(900);
+          await this.yieldToForeground(() => runId !== this.syncRunId);
         }
         await persistCompletedType(type, phaseIndex === phases.length - 1);
       }

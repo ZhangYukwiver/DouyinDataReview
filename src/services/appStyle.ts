@@ -93,6 +93,17 @@ export function saveAssistantInstalled(installed: boolean, storage: StyleStorage
   save(ASSISTANT_KEY, installed ? "on" : "off", storage);
 }
 
+// 「刷视频」也能在设置里隐藏：默认显示，隐藏后侧栏不放它、进工作台直接到持续报告
+const FEED_KEY = "content-insights.feed";
+
+export function loadFeedShown(storage: StyleStorage | undefined = globalThis.localStorage): boolean {
+  return load<string>(FEED_KEY, ON_OFF, "on", storage) === "on";
+}
+
+export function saveFeedShown(shown: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(FEED_KEY, shown ? "on" : "off", storage);
+}
+
 /** 报告（故事页、分享图、纪念卡）实际用哪套：极简借用单独选的那套，其余风格就是自己。 */
 export function resolveStoryStyle(appStyle: AppStyle, storyStyle: StoryStyle): StoryStyle {
   return appStyle === "minimal" ? storyStyle : appStyle;

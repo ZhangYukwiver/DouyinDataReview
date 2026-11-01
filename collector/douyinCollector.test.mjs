@@ -119,7 +119,7 @@ describe("watch completion labels", () => {
       0: { status_code: 0, aweme_list: [{ aweme_id: "a" }, { aweme_id: "b", history_info: { view_time: 1_790_000_900 } }], aweme_date: { a: 1_790_001_000_000 }, has_more: 1, max_cursor: "1790000900000" },
       1790000900000: { status_code: 0, aweme_list: [{ aweme_id: "c" }], aweme_date: { c: 1_790_000_000 }, has_more: 1, max_cursor: "1790000000000" },
     };
-    const self = { assertSyncActive: vi.fn(), updateStatus: vi.fn(), readDirectHistory: vi.fn(async (_context, cursor, options) => {
+    const self = { assertSyncActive: vi.fn(), updateStatus: vi.fn(), yieldToForeground: vi.fn(async () => {}), readDirectHistory: vi.fn(async (_context, cursor, options) => {
       expect(options).toEqual({ completedOnly: true });
       return pages[cursor];
     }) };
@@ -130,6 +130,16 @@ describe("watch completion labels", () => {
     expect(self.readDirectHistory.mock.calls.map(([, cursor]) => cursor)).toEqual(["0", "1790000900000"]);
     expect(Object.fromEntries(result.completed)).toEqual({ a: 1_790_001_000_000, b: 1_790_000_900_000, c: 1_790_000_000_000 });
     expect(result.coveredFromMs).toBe(1_790_000_000_000);
+  });
+
+  it("lets the foreground go first: waits while something was asked for in the last few seconds", async () => {
+    const yieldToForeground = DouyinCollector.prototype.yieldToForeground;
+    const started = Date.now();
+    await yieldToForeground.call({ foregroundAt: 0 }, () => false);
+    expect(Date.now() - started).toBeLessThan(100);
+    let checks = 0;
+    await yieldToForeground.call({ foregroundAt: Date.now() }, () => ++checks > 2);
+    expect(checks).toBe(3);
   });
 
   it("resumes an hour before the newest labelled viewing", () => {

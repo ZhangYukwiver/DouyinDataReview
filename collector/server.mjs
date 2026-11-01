@@ -539,6 +539,9 @@ export async function startCollectorServer({
       return;
     }
 
+    // 刷视频、探索、下载是人在等的：记一下时间，读取记录和聊天历史先给它们让路
+    if (request.method === "POST" && /^\/v1\/(?:explore\/|downloads$|creator\/read$)/u.test(url.pathname)) collector.noteForeground();
+
     // 切换账号时只放行读状态和账号列表；等浏览器登录时还没换号（accountWork 为空），记录和文件夹照常能读，接收中的聊天页要一直拉
     const readable = request.method === "GET" && (url.pathname === "/v1/status" || url.pathname === "/v1/accounts" || (["/v1/records", "/v1/folders", "/v1/my-comments"].includes(url.pathname) && !accountWork));
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
@@ -558,10 +561,8 @@ export async function startCollectorServer({
         sendJson(response, 409, { error: "collector_busy", message: "请等待当前探索操作完成后继续。" });
         return;
       }
-      // Release only the adapter's tabs before invoking an original workflow.
-      // Downloads decide after reading the body: playback only opens its own tab, so open comments survive a prefetch.
-      // A download started from an explore page (keepExplore) does the same, so its profile tab can still page on.
-      if (url.pathname !== "/v1/downloads") await explorer.close();
+      // 读取记录和聊天不关探索会话：刷视频、评论面板在读取时照常用，读取自己给它们让路。
+      // Downloads decide after reading the body (see below).
       if (rejectWhileSwitching(response)) return;
     }
 

@@ -202,7 +202,6 @@ const sideItems: NavItem<SideKey>[] = [
   sideItem("creator"), sideItem("assistant"),
 ];
 const SECTION_STARTS: ReadonlySet<SideKey> = new Set(["library", "summary", "creator"]);
-const withoutAssistant = sideItems.filter((item) => item.id !== "assistant");
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -279,7 +278,8 @@ export function ContentWorkspace({
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
   const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
   const sideKey: SideKey = isLibraryView(activeView) ? "library" : activeView;
-  const sides = assistant ? sideItems : withoutAssistant;
+  // 刷视频和 AI 助手都能在设置里隐藏，没传就不进侧栏（feed 传 null 是年志盖着时先不挂播放器，侧栏照常有它）
+  const sides = sideItems.filter((item) => (item.id !== "assistant" || assistant) && (item.id !== "feed" || feed !== undefined));
   // 点侧栏「内容库」回到上次看的那一栏
   const lastLibraryView = useRef<WorkspaceViewKey>(isLibraryView(activeView) ? activeView : "watch_history");
   if (isLibraryView(activeView)) lastLibraryView.current = activeView;

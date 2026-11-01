@@ -103,7 +103,7 @@ import {
 import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { getAssistant, type AssistantView } from "./src/services/assistant";
 import { AssistantDock, AssistantWorkspace } from "./src/components/workspace/AssistantWorkspace";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
@@ -312,6 +312,8 @@ function AppContent() {
   // AI 助手（可选功能）。连着采集器就长轮询它的状态：README 里写的外部 AI（MCP）不装助手也能用，
   // 它要发私信、点赞时的确认卡片和「切到某一页」都从这里来
   const [assistantInstalled, setAssistantInstalled] = useState(() => Platform.OS === "web" && loadAssistantInstalled());
+  // 刷视频能在设置里隐藏（默认显示）：隐藏了侧栏就没有它，进工作台去持续报告
+  const [feedShown, setFeedShown] = useState(loadFeedShown);
   const [assistantView, setAssistantView] = useState<AssistantView | null>(null);
   const [assistantPanel, setAssistantPanel] = useState(false);
   const toggleAssistantPanel = useCallback(() => setAssistantPanel((open) => !open), []);
@@ -861,8 +863,7 @@ function AppContent() {
     if (manual) skipBrowserLoginAutoSyncRef.current = false;
     if (suppressForBrowserLogin) return;
     if (batchDownloadActive) return;
-    // Returning from the search browser must not close its result/verification
-    // page to launch a foreground history sync. 正在刷视频时读取会把推荐翻页和记观看历史卡住，也让开。窗口收在托盘里时没人在看，照常读
+    // 正在刷视频、探索时不自己开读取（读取会给它们让路，但能不抢就不抢）。窗口收在托盘里时没人在看，照常读
     if (!pageHidden() && activeView !== "sources" && dashboardOpen && (dashboardView === "explore" || dashboardView === "feed") && !storySrc) return;
     const token = collectorToken;
     if (collectorStatus?.browserSource?.credentials === "reconnect_required") {
@@ -1863,10 +1864,10 @@ function AppContent() {
     setActiveView("summary");
   }
 
-  // 「进入工作台」默认刷视频
+  // 「进入工作台」默认刷视频（隐藏了就去持续报告）
   function openDashboard() {
     setStorySrc(null);
-    setDashboardView("feed");
+    setDashboardView(feedShown ? "feed" : "summary");
     setDashboardOpen(true);
     setActiveView("summary");
   }
@@ -1917,10 +1918,10 @@ function AppContent() {
     assistantUiSeq.current = seq;
     if (assistantUi.view === "settings") { setPreferences("appearance"); return; }
     setStorySrc(null);
-    setDashboardView(assistantUi.view as LegacyWorkspaceViewKey);
+    setDashboardView(assistantUi.view === "feed" && !feedShown ? "summary" : assistantUi.view as LegacyWorkspaceViewKey);
     setDashboardOpen(true);
     setActiveView("summary");
-  }, [assistantView, assistantUi]);
+  }, [assistantView, assistantUi, feedShown]);
 
   // 在对话页时右下角的浮动面板让位；进对话页就把它收起，回别的页面不再自己弹出来
   const onAssistantPage = activeView !== "sources" && (dashboardOpen || storyMode) && !storySrc && dashboardView === "assistant";
@@ -1931,6 +1932,13 @@ function AppContent() {
     setAssistantInstalled(next);
     saveAssistantInstalled(next);
     if (!next && dashboardView === "assistant") setDashboardView("summary");
+  };
+
+  const toggleFeed = () => {
+    const next = !feedShown;
+    setFeedShown(next);
+    saveFeedShown(next);
+    if (!next && dashboardView === "feed") setDashboardView("summary");
   };
 
   async function saveAssistantDownload(id: string, fileName: string | null) {
@@ -2035,10 +2043,10 @@ function AppContent() {
       ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
           // 年志盖在工作台上面时别让刷视频在底下接着放
-          feed={storySrc ? null : <FeedWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord}
+          feed={!feedShown ? undefined : storySrc ? null : <FeedWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord}
             onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} />}
-          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onSendToReelLab={reelLabReady ? (record) => sendRecordToReelLab(record, true) : undefined} downloadStates={downloadStates} sendStates={sendStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
-          creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} collectorBusy={collectorBusy} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
+          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onSendToReelLab={reelLabReady ? (record) => sendRecordToReelLab(record, true) : undefined} downloadStates={downloadStates} sendStates={sendStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
+          creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
             onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} /> : undefined}
           onSendToReelLab={reelLabReady ? (record) => void sendRecordToReelLab(record) : undefined}
@@ -2152,6 +2160,8 @@ function AppContent() {
         loginExpired={loginExpired}
         assistantInstalled={assistantInstalled}
         onToggleAssistant={toggleAssistant}
+        feedShown={feedShown}
+        onToggleFeed={toggleFeed}
       />
       {/* 不在对话页时：右下角 AI 圆钮 + 浮动对话面板；外部 AI（MCP）等发起的待确认动作也浮在这里 */}
       {onAssistantPage ? null
