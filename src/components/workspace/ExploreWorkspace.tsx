@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Download, Heart, MessageCircle, Play, Search, Send, UserRound, Users, X } from "lucide-react-native";
 import { closeExplore, interactExplore, markExploreSeen, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo, type WatchedItem } from "../../services/explorer";
+import { loadFeedWords } from "../../services/appStyle";
 import { loadCollectorVideo, LocalCollectorError } from "../../services/localCollector";
 import { waitForCollector } from "../../services/videoFeed";
 import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
@@ -366,11 +367,13 @@ export function FeedWorkspace({ connection, onOpenSettings, onOpenRecord, onDown
     const timeout = setTimeout(() => { setError("读取超时，已停止等待，请稍后重试。"); controller.abort(); }, 50000);
     try {
       const previous = pageRef.current;
-      const input: ExploreQuery = more && previous && !previous.limited ? { kind: "feed", sessionId: previous.sessionId } : { kind: "feed" };
+      // 想看的词条每批现读，设置里改了下一批就用上
+      const words = loadFeedWords().split("\n").map((word) => word.trim()).filter(Boolean);
+      const input: ExploreQuery = more && previous && !previous.limited ? { kind: "feed", sessionId: previous.sessionId, words } : { kind: "feed", words };
       // 播放器同时在让采集器准备视频，撞上了就等一下；会话被挤掉（评论也占会话）就重新开一个
       const read = (query: ExploreQuery) => waitForCollector(() => readExplore(connection, query, controller.signal), controller.signal);
       const next = await read(input).catch((cause) =>
-        input.sessionId && cause instanceof LocalCollectorError && cause.code === "session_expired" ? read({ kind: "feed" }) : Promise.reject(cause));
+        input.sessionId && cause instanceof LocalCollectorError && cause.code === "session_expired" ? read({ kind: "feed", words }) : Promise.reject(cause));
       if (controller.signal.aborted) return;
       sessions.current.add(next.sessionId);
       pageRef.current = next; setPage(next);

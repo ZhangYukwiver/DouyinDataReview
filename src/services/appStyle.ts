@@ -104,6 +104,21 @@ export function saveFeedShown(shown: boolean, storage: StyleStorage | undefined 
   save(FEED_KEY, shown ? "on" : "off", storage);
 }
 
+// 刷视频里想看的词条，一行一个：搜出来的视频混进推荐，每三条插一条
+const FEED_WORDS_KEY = "content-insights.feed-words";
+
+export function loadFeedWords(storage: StyleStorage | undefined = globalThis.localStorage): string {
+  try {
+    return storage?.getItem(FEED_WORDS_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveFeedWords(text: string, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(FEED_WORDS_KEY, text, storage);
+}
+
 /** 报告（故事页、分享图、纪念卡）实际用哪套：极简借用单独选的那套，其余风格就是自己。 */
 export function resolveStoryStyle(appStyle: AppStyle, storyStyle: StoryStyle): StoryStyle {
   return appStyle === "minimal" ? storyStyle : appStyle;

@@ -63,6 +63,35 @@ describe("code-based exploration", () => {
       .toEqual([["/aweme/v1/web/tab/feed/", "1", "0"], ["/aweme/v1/web/tab/feed/", "2", "2"]]);
     expect(second.hasMore).toBe(true);
   });
+  it("mixes one video for the wanted words after every three recommendations, taking the words in turn", async () => {
+    const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
+    const searched = [];
+    const { value } = explorer(async (pathname, { query }) => {
+      if (pathname.endsWith("/tab/feed/")) return { status_code: 0, has_more: 1, aweme_list: [1, 2, 3, 4].map((n) => playable(`${query.refresh_index}0000${n}`)) };
+      searched.push([query.keyword, query.offset]);
+      const base = `${query.keyword === "猫" ? 7 : 8}${query.offset}`;
+      // 搜出来和推荐撞了的那条不再插
+      return { status_code: 0, has_more: 1, cursor: Number(query.offset) + 10, data: [{ aweme_info: playable("100002") }, ...[1, 2].map((n) => ({ aweme_info: playable(`${base}000${n}`) }))] };
+    });
+    const first = await value.read({ kind: "feed", words: [" 猫 ", "狗", "猫", ""] });
+    expect(first.items.map((item) => item.videoId)).toEqual(["100001", "100002", "100003", "700001", "100004", "800001"]);
+    expect(first.items[3].pickedFor).toBe("猫");
+    const second = await value.read({ kind: "feed", sessionId: first.sessionId, words: ["猫", "狗"] });
+    expect(second.items.slice(6).map((item) => item.videoId)).toEqual(["200001", "200002", "200003", "700002", "200004", "800002"]);
+    const third = await value.read({ kind: "feed", sessionId: first.sessionId, words: ["猫", "狗"] });
+    expect(third.items.slice(12).map((item) => item.videoId)).toEqual(["300001", "300002", "300003", "7100001", "300004", "8100001"]);
+    expect(searched).toEqual([["猫", "0"], ["狗", "0"], ["猫", "10"], ["狗", "10"]]);
+  });
+  it("keeps the plain feed and stops searching for a while when a word search asks for verification", async () => {
+    const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
+    const { value, api } = explorer(async (pathname, { query }) => pathname.endsWith("/tab/feed/")
+      ? { status_code: 0, has_more: 1, aweme_list: [playable(`${query.refresh_index}00001`)] }
+      : { status_code: 0, search_nil_info: { search_nil_type: "verify_check" } });
+    const first = await value.read({ kind: "feed", words: ["猫"] });
+    const second = await value.read({ kind: "feed", sessionId: first.sessionId, words: ["猫"] });
+    expect(second.items.map((item) => item.videoId)).toEqual(["100001", "200001"]);
+    expect(api.request.mock.calls.filter(([pathname]) => pathname.includes("search"))).toHaveLength(1);
+  });
   it("likes with a single write and never rolls back a write whose receipt was lost", async () => {
     const csrf = { headers: { "x-ware-csrf-token": "1,csrf" } };
     const { api, fetch } = directApiFixture((url) => url.pathname === "/service/2/abtest_config/" ? csrf : { payload: { status_code: 0 } });

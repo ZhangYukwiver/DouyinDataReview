@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { DouyinExplorer, ExploreError, validateExploreRequest, ingestExploreResponse, ingestExploreReplies, normalizeExploreComment } from "./explorer.mjs";
+import { DouyinExplorer, ExploreError, validateExploreRequest, ingestExploreResponse, ingestExploreReplies, normalizeExploreComment, normalizeExploreVideo, playableAweme } from "./explorer.mjs";
 import { directWrite } from "./directWrites.mjs";
 
 const ROUTES = { users: "/aweme/v1/web/discover/search/", videos: "/aweme/v1/web/search/item/",
@@ -9,6 +9,63 @@ const ROUTES = { users: "/aweme/v1/web/discover/search/", videos: "/aweme/v1/web
 const hasMore = (value) => [true, 1, "1"].includes(value) ? true : [false, 0, "0"].includes(value) ? false : null;
 // 推荐没有游标，按网页的做法每刷一屏 refresh_index 加一
 const cursorOf = (payload, kind, cursor) => kind === "feed" ? String(Number(cursor) + 1) : String(payload[kind === "profile" ? "max_cursor" : "cursor"] ?? "");
+const searchQuery = (channel, keyword, offset, count, searchId) => ({ search_channel: channel, keyword, search_source: "switch_tab", query_correct_type: "1",
+  is_filter_search: "0", from_group_id: "", disable_rs: "0", offset, count, need_filter_settings: "0", list_type: "single", ...(searchId ? { search_id: searchId } : {}) });
+
+// 想看的词条混进推荐：每三条推荐后面插一条词条搜出来的视频，词条轮着来、各翻各的页。
+// ponytail: 一批只搜一轮（和推荐请求同时发，接下来四轮要用的词里队列空了的各搜一页），搜不到就少插几条，下一批再补
+const PICK_EVERY = 3, PICK_AHEAD = 4, PICK_RETRY_MS = 5 * 60_000;
+const pickState = (session, word) => {
+  if (!session.picks.has(word)) session.picks.set(word, { offset: 0, searchId: null, hasMore: true, retryAt: 0, queue: [] });
+  return session.picks.get(word);
+};
+async function searchWord(api, word, state, signal) {
+  try {
+    const payload = await api.request(ROUTES.videos, { query: searchQuery("aweme_video_web", word, String(state.offset), "10", state.searchId),
+      referer: "https://www.douyin.com/search/", signal });
+    // 要验证或报错就先歇几分钟，别每批都去撞
+    if (payload?.status_code !== 0 || !Array.isArray(payload.data)
+      || [payload.search_nil_info?.search_nil_type, payload.search_nil_info?.search_nil_item].includes("verify_check")) { state.retryAt = Date.now() + PICK_RETRY_MS; return; }
+    state.queue.push(...payload.data.flatMap((entry) => entry.aweme_info ? [entry.aweme_info] : entry.aweme_list ?? [])
+      .filter(playableAweme).map(normalizeExploreVideo).filter(Boolean));
+    const next = Number(payload.cursor);
+    state.hasMore = hasMore(payload.has_more) === true && Number.isSafeInteger(next) && next > state.offset;
+    if (state.hasMore) state.offset = next;
+    state.searchId = payload.log_pb?.impr_id ?? state.searchId;
+  } catch {
+    signal?.throwIfAborted();
+    state.retryAt = Date.now() + PICK_RETRY_MS;
+  }
+}
+function searchAhead(api, session, signal) {
+  const turn = session.pickTurn ?? 0;
+  const words = new Set(Array.from({ length: PICK_AHEAD }, (_, index) => session.words[(turn + index) % session.words.length]));
+  return Promise.all([...words].map((word) => [word, pickState(session, word)])
+    .filter(([, state]) => !state.queue.length && state.hasMore && state.retryAt <= Date.now()).map(([word, state]) => searchWord(api, word, state, signal)));
+}
+async function mixWords(session, known, ahead) {
+  await ahead;
+  const fresh = [...session.items.values()].filter((item) => !known.has(item.id));
+  // 首屏常只有一两条、或整批都是直播广告，也插一条
+  const wanted = Math.max(1, Math.ceil(fresh.length / PICK_EVERY)), turn = session.pickTurn ?? 0;
+  const order = Array.from({ length: wanted }, (_, index) => session.words[(turn + index) % session.words.length]);
+  session.pickTurn = (turn + wanted) % session.words.length;
+  const picks = [];
+  for (const word of order) {
+    const queue = pickState(session, word).queue;
+    while (queue.length) {
+      const item = queue.shift();
+      if (!session.items.has(item.id) && !picks.some((pick) => pick.id === item.id)) { picks.push({ ...item, pickedFor: word }); break; }
+    }
+  }
+  if (!picks.length) return;
+  for (const item of fresh) session.items.delete(item.id);
+  fresh.forEach((item, index) => {
+    session.items.set(item.id, item);
+    if (index % PICK_EVERY === PICK_EVERY - 1 && picks.length) { const pick = picks.shift(); session.items.set(pick.id, pick); }
+  });
+  for (const pick of picks) session.items.set(pick.id, pick);
+}
 
 // Reuse the existing response normalizers and API contracts for HTTP reads and
 // writes. Credential bootstrap belongs to the collector's login session.
@@ -32,14 +89,15 @@ export class DirectExplorer extends DouyinExplorer {
     if (previous && (previous.hasMore === false || previous.items.size >= 500)) return this.snapshot(previous);
     const session = previous ? { ...previous, items: new Map(previous.items), cursors: new Set(previous.cursors) }
       : { ...validated, key: randomUUID(), direct: true, items: new Map(), hasMore: null, received: false, revision: 0, cursor: "0", cursors: new Set() };
+    // 词条每批跟着请求来，设置里改了下一批就用新的；各词翻到哪页留着
+    if (session.kind === "feed") Object.assign(session, { words: validated.words,
+      picks: new Map([...(previous?.picks ?? [])].map(([word, state]) => [word, { ...state, queue: [...state.queue] }])) });
     if (session.cursors.has(session.cursor)) throw new ExploreError("pagination_stalled", "分页游标重复，已加载的内容仍保留。");
     const api = await this.getApi({ signal });
     signal?.throwIfAborted();
     let query;
     switch (session.kind) {
-      case "users": case "videos": query = { search_channel: session.kind === "users" ? "aweme_user_web" : "aweme_video_web",
-        keyword: session.query, search_source: "switch_tab", query_correct_type: "1", is_filter_search: "0", from_group_id: "", disable_rs: "0",
-        offset: session.cursor, count: "20", need_filter_settings: "0", list_type: "single", ...(session.searchId ? { search_id: session.searchId } : {}) }; break;
+      case "users": case "videos": query = searchQuery(session.kind === "users" ? "aweme_user_web" : "aweme_video_web", session.query, session.cursor, "20", session.searchId); break;
       case "profile": query = { sec_user_id: session.id, max_cursor: session.cursor, count: "18", publish_video_strategy_type: "2" }; break;
       case "detail": query = { aweme_id: session.id }; break;
       case "comments": query = { aweme_id: session.id, cursor: session.cursor, count: "20", item_type: "0" }; break;
@@ -50,6 +108,8 @@ export class DirectExplorer extends DouyinExplorer {
     const referer = session.kind === "profile" ? `https://www.douyin.com/user/${session.id}`
       : ["detail", "comments"].includes(session.kind) ? `https://www.douyin.com/video/${session.id}`
       : session.kind === "feed" ? "https://www.douyin.com/?recommend=1" : "https://www.douyin.com/search/";
+    const ahead = session.kind === "feed" && session.words.length ? searchAhead(api, session, signal) : null;
+    ahead?.catch(() => {});
     const reads = [api.request(pathname, { query, referer, signal })];
     if (session.kind === "profile" && !session.profile) reads.push(api.request("/aweme/v1/web/user/profile/other/", { query: { sec_user_id: session.id }, referer, signal }));
     const results = await Promise.allSettled(reads);
@@ -59,6 +119,7 @@ export class DirectExplorer extends DouyinExplorer {
       ingestExploreResponse(session, "/aweme/v1/web/user/profile/other/", results[1].value);
       if (session.profile) session.profile.self = session.id === api.secUid || (api.session?.uid && String(results[1].value.user?.uid) === api.session.uid) || false;
     }
+    const known = new Set(session.items.keys());
     ingestExploreResponse(session, pathname, payload);
     if (session.error) throw session.error;
     if (!session.received || (session.kind === "profile" && !session.profile) || (session.kind === "detail" && !session.video))
@@ -70,6 +131,7 @@ export class DirectExplorer extends DouyinExplorer {
     signal?.throwIfAborted();
     session.cursors.add(session.cursor); session.cursor = next; session.hasMore = more;
     session.searchId = payload.log_pb?.impr_id ?? session.searchId;
+    if (ahead) await mixWords(session, known, ahead);
     this.sessions.set(session.key, session);
     if (this.sessions.size > 6) {
       const oldest = this.sessions.values().next().value; this.sessions.delete(oldest.key);

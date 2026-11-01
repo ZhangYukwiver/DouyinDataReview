@@ -49,6 +49,7 @@
 .rv-caption strong small { color: #ffffffb3; font-size: 12px; font-weight: 400; }
 .rv-tag { color: #face15; }
 .rv-caption p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 6px 0; color: #ffffffe6; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.rv-picked { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 4px; background: #ffffff26; color: #fff; font-size: 12px; }
 .rv-music { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #ffffffcc; font-size: 12px; }
 .rv-music span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-controls { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: #121216; }
