@@ -298,6 +298,7 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const src = typeof media === "string" ? media : null;
   const album = typeof media === "object" ? media : null;
+  const pickedFor = (record as { pickedFor?: string }).pickedFor;
   const step = (direction: number) => { if (album) setSlide((value) => (value + direction + album.images.length) % album.images.length); };
   const loaderRef = useRef(onLoadVideo);
   loaderRef.current = onLoadVideo;
@@ -468,6 +469,7 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
       </aside>
       <div className="rv-caption">
         <strong>@{record.author ?? "抖音用户"}{record.publishedAt ? <small> · {date(record.publishedAt)}</small> : null}</strong>
+        {pickedFor ? <span className="rv-picked">来自词条「{pickedFor}」</span> : null}
         <p title={record.title}><Caption text={record.title} /></p>
         {record.music?.title ? <div className="rv-music"><Music2 color="#fff" size={14} /><span>{record.music.title}{record.music.author ? ` · ${record.music.author}` : ""}</span></div> : null}
       </div>

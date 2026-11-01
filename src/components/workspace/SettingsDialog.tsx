@@ -4,7 +4,7 @@ import Svg, { Circle } from "react-native-svg";
 import { Check, Copy, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
 import { canDragDesktopExtension, getDesktopOpenAtLogin, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
-import { APP_STYLES, loadAppStyleFonts, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
+import { APP_STYLES, loadAppStyleFonts, loadFeedWords, saveFeedWords, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, mcpCommands, saveAssistantConfig, type AssistantConfig, type McpClient } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
 import {
@@ -437,11 +437,22 @@ function eventTime(at: number): string {
 
 /** 推荐流过滤：浏览器扩展装一次，按这里定的词条和过滤方式改抖音网页的推荐数据；处置记录也存在采集器里 */
 function FeedPage({ appStyle, feedShown, onToggleFeed }: SettingsDialogProps) {
+  const [words, setWords] = useState(loadFeedWords);
   return (
-    <View style={styles.row}>
-      <RowCopy detail="在应用里刷抖音首页推荐，进工作台默认先到这里。用不上就隐藏：侧栏不再有它，进工作台直接到持续报告，想用了再回来打开。" title="刷视频" />
-      <Button appStyle={appStyle} kind={feedShown ? "secondary" : "primary"} label={feedShown ? "隐藏" : "显示"} onPress={onToggleFeed} testID="settings-feed-page" />
-    </View>
+    <>
+      <View style={styles.row}>
+        <RowCopy detail="在应用里刷抖音首页推荐，进工作台默认先到这里。用不上就隐藏：侧栏不再有它，进工作台直接到持续报告，想用了再回来打开。" title="刷视频" />
+        <Button appStyle={appStyle} kind={feedShown ? "secondary" : "primary"} label={feedShown ? "隐藏" : "显示"} onPress={onToggleFeed} testID="settings-feed-page" />
+      </View>
+      {feedShown ? (
+        <View style={[styles.row, styles.rowStacked]}>
+          <RowCopy detail="一行写一个词。刷视频时，每三条推荐后面会插一条按这些词搜到的视频，几个词轮着来，画面左下角会注明是哪个词带来的。改完从下一批开始生效，空着就只刷推荐。" title="想看的词条" />
+          {/* 存在本机，刷视频每要一批就带上 */}
+          <TextInput accessibilityLabel="想看的词条" multiline onChangeText={(text) => { setWords(text); saveFeedWords(text); }} placeholder={"露营\n手冲咖啡"}
+            placeholderTextColor={color.textMuted} spellCheck={false} style={styles.rulesInput} testID="settings-feed-words" value={words} />
+        </View>
+      ) : null}
+    </>
   );
 }
 

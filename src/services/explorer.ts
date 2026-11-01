@@ -8,6 +8,7 @@ export interface ExploreUser {
 }
 export interface ExploreVideo extends PersonalVideoRecord {
   authorProfile: ExploreUser | null; liked: boolean | null; collected: boolean | null; images: string[];
+  /** 刷视频里按想看的词条搜来混进推荐的那条 */ pickedFor?: string;
 }
 export interface ExploreComment {
   id: string; text: string; name: string; author: ExploreUser | null; likes: number | null; replies: number; publishedAt: string | null;
@@ -17,7 +18,7 @@ export interface ExploreComment {
 /** Someone in the site's "分享给朋友" list; groups share the same id space as people. */
 export interface ExploreSharee { id: string; name: string; avatar: string | null; group: boolean | null; shared: boolean }
 export type ExploreKind = "users" | "videos" | "profile" | "detail" | "comments" | "replies" | "sharees" | "feed";
-export interface ExploreQuery { kind: ExploreKind; query?: string; id?: string; sessionId?: string; commentId?: string }
+export interface ExploreQuery { kind: ExploreKind; query?: string; id?: string; sessionId?: string; commentId?: string; words?: string[] }
 export interface ExplorePage {
   sessionId: string; kind: ExploreKind; items: Array<ExploreUser | ExploreVideo | ExploreComment | ExploreSharee>;
   profile: ExploreUser | null; video: ExploreVideo | null; hasMore: boolean | null; limited: boolean;
