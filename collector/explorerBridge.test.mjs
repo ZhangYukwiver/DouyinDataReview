@@ -53,7 +53,7 @@ describe("HTTP explorer adapter", () => {
     await vi.waitFor(() => expect(collector.syncInteraction).toHaveBeenCalledWith("favorite_videos", { aweme_id: "7654321098765432100" }, true), { timeout: 3_000 });
     await expect(bridge.run({ kind: "users", query: "建筑" })).rejects.toMatchObject({ code: "collector_busy" });
     collector.syncPromise = Promise.resolve();
-    await expect(bridge.run({ kind: "feed" })).rejects.toMatchObject({ code: "collector_busy" });
+    await expect(bridge.run({ kind: "feed" })).resolves.toEqual({ kind: "feed" });
   });
   it("refuses overlapping searches and waits for a running interaction before clearing sessions", async () => {
     const { bridge } = fixture();
@@ -67,10 +67,10 @@ describe("HTTP explorer adapter", () => {
     finish({ outcome: "confirmed" }); await action; await closing;
     expect(bridge.explorer.sessions.has("action")).toBe(false); expect(bridge.busy).toBe(false);
   });
-  it("blocks record reads and downloads while allowing independent chat reception", async () => {
+  it("runs beside record reads and chat reception, blocks only during downloads", async () => {
     const { collector, bridge } = fixture();
     collector.syncPromise = Promise.resolve();
-    await expect(bridge.run({ kind: "users", query: "建筑" })).rejects.toMatchObject({ code: "collector_busy" });
+    await expect(bridge.run({ kind: "users", query: "建筑" })).resolves.toMatchObject({ kind: "users" });
     collector.syncPromise = null; collector.hasActiveVideoDownload = () => true;
     await expect(bridge.run({ kind: "users", query: "建筑" })).rejects.toMatchObject({ code: "collector_busy" });
     collector.hasActiveVideoDownload = () => false; collector.chatPromise = Promise.resolve();

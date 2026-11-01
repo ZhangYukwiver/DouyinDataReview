@@ -18,13 +18,13 @@ export class ExplorerBridge {
       options => collector.getDirectChatClient(options));
   }
   get busy() { return this.pending !== null; }
+  // 读取记录不算忙：它给前台让路（见 yieldToForeground），只有下载和探索共用一条队列
   collectorBusy() {
-    return Boolean(this.collector.syncPromise || this.collector.hasActiveVideoDownload());
+    return this.collector.hasActiveVideoDownload();
   }
   async run(input, operation = "read", signal) {
-    // 推荐翻页、点赞收藏、记观看历史都是互不相干的单个请求：不跟视频准备和别的探索排队，只在整份读取时让路
+    // 推荐翻页、点赞收藏、记观看历史都是互不相干的单个请求：不跟视频准备和别的探索排队
     if (operation === "react" || operation === "seen" || (operation === "read" && input?.kind === "feed")) {
-      if (this.collector.syncPromise) throw new ExploreError("collector_busy", "采集器正在读取记录，请稍后再试。");
       if (operation === "read") return this.explorer.read(input, { signal });
       if (operation === "seen") {
         const result = await this.explorer.seen(input);
@@ -37,7 +37,7 @@ export class ExplorerBridge {
       else if (result.outcome === "confirmed") void this.syncReaction(input).catch(() => {});
       return result;
     }
-    if (this.busy || this.collectorBusy()) throw new ExploreError("collector_busy", "采集器正在执行任务，请停止采集或等待完成后再探索。");
+    if (this.busy || this.collectorBusy()) throw new ExploreError("collector_busy", "采集器正在下载或处理上一个操作，请稍后再试。");
     const commentOn = operation === "interact" && input?.action === "comment" ? this.explorer.sessions?.get(input.sessionId)?.id : null;
     const work = Promise.resolve().then(() => operation === "interact" ? this.explorer.interact(input) : operation === "seen" ? this.explorer.seen(input) : operation === "video" ? this.video(input, signal) : this.explorer.read(input, { signal }));
     this.pending = work;

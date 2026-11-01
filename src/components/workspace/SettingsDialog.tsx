@@ -65,6 +65,9 @@ export interface SettingsDialogProps {
   /** AI 助手是可选功能：装上才在侧栏出现 */
   assistantInstalled: boolean;
   onToggleAssistant: () => void;
+  /** 刷视频默认显示，可以隐藏 */
+  feedShown: boolean;
+  onToggleFeed: () => void;
 }
 
 const web = Platform.OS === "web";
@@ -178,7 +181,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 : tab === "privacy" ? <Privacy {...props} />
                   : tab === "account" ? <Account {...props} />
                     : tab === "data" ? <Data {...props} />
-                      : tab === "feed" ? <FeedFilter {...props} />
+                      : tab === "feed" ? <><FeedPage {...props} /><FeedFilter {...props} /></>
                         : tab === "ai" ? <Assistant {...props} />
                       : <About {...props} />}
           </ScrollView>
@@ -433,6 +436,15 @@ function eventTime(at: number): string {
 }
 
 /** 推荐流过滤：浏览器扩展装一次，按这里定的词条和过滤方式改抖音网页的推荐数据；处置记录也存在采集器里 */
+function FeedPage({ appStyle, feedShown, onToggleFeed }: SettingsDialogProps) {
+  return (
+    <View style={styles.row}>
+      <RowCopy detail="在应用里刷抖音首页推荐，进工作台默认先到这里。用不上就隐藏：侧栏不再有它，进工作台直接到持续报告，想用了再回来打开。" title="刷视频" />
+      <Button appStyle={appStyle} kind={feedShown ? "secondary" : "primary"} label={feedShown ? "隐藏" : "显示"} onPress={onToggleFeed} testID="settings-feed-page" />
+    </View>
+  );
+}
+
 function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
   const baseUrl = collector?.baseUrl, token = collector?.token;
   const [settings, setSettings] = useState<FeedFilterSettings | null>(null);

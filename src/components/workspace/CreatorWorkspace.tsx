@@ -14,14 +14,14 @@ import { CreatorWorkDetail } from "./CreatorWorkDetail";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
 
-type Props = { connection: ExploreConnection | null; collectorBusy: boolean; onOpenSettings: () => void; onOpenRecord: (url: string) => Promise<void> };
+type Props = { connection: ExploreConnection | null; onOpenSettings: () => void; onOpenRecord: (url: string) => Promise<void> };
 type View_ = "data" | "works";
 
 const CREATOR_HOME = "https://creator.douyin.com/creator-micro/home";
 const pad = (value: number) => String(value).padStart(2, "0");
 const shortDate = (yyyymmdd: string) => `${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
 
-export function CreatorWorkspace({ connection, collectorBusy, onOpenSettings, onOpenRecord }: Props) {
+export function CreatorWorkspace({ connection, onOpenSettings, onOpenRecord }: Props) {
   const { width } = useWindowDimensions();
   const narrow = width < 760;
   const [view, setView] = useState<View_>("data");
@@ -42,7 +42,6 @@ export function CreatorWorkspace({ connection, collectorBusy, onOpenSettings, on
   </View></View>;
 
   return <ScrollView ref={scrollRef} testID="creator-workspace" style={styles.root} contentContainerStyle={[styles.content, narrow && styles.contentNarrow]}>
-    {collectorBusy ? <Text style={kit.muted}>采集器正在用浏览器读取记录，读完就能看创作者数据。</Text> : null}
     {account.error ? <ErrorLine text={account.error} onRetry={refresh} /> : null}
     {info ? <View {...ws("e-box")} style={styles.profile}>
       {profile.avatar_url ? <Image source={{ uri: profile.avatar_url }} accessibilityLabel="头像" style={styles.avatar} /> : <View style={[styles.avatar, styles.avatarEmpty]}><UserRound size={28} color={color.textMuted} /></View>}
