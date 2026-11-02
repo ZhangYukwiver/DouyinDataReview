@@ -7,6 +7,8 @@ import { setTimeout as delay } from "node:timers/promises";
 // 外加在本应用里发出去的评论。抖音那一栏只留最近 100 条，所以每次读取都并进本机这份，按评论 id 去重。
 export const NOTICE_PATH = "/aweme/v1/web/notice/";
 const COMMENT_LIST_PATH = "/aweme/v1/web/comment/list/";
+const DETAIL_PATH = "/aweme/v1/web/aweme/detail/";
+const MAX_COVER_LOOKUPS = 40;
 const MAX_COMMENTS = 2000;
 const MAX_REPLIES = 200;
 const MAX_PAGES = 10;
@@ -85,6 +87,18 @@ async function readThreadRoot(api, item) {
   return root ? { text: str(root.text), at: seconds(root.create_time), likes: Number.isFinite(root.digg_count) ? root.digg_count : null } : null;
 }
 
+// 通知里的封面签名当天就过期，作品详情给的视频封面能用十年、图文两周；没有 x-expires 的地址不签名，不会过期
+function coverExpiresSoon(url) {
+  const expires = url ? Number(new URL(url).searchParams.get("x-expires") ?? Infinity) : 0;
+  return expires * 1000 < Date.now() + 3 * 86_400_000;
+}
+
+async function readVideo(api, videoId) {
+  const payload = await api.request(DETAIL_PATH, { query: { aweme_id: videoId }, referer: `https://www.douyin.com/video/${videoId}` });
+  // 作品没了时 aweme_detail 是空的、filter_detail 写着原因；两样都没有就当这次没读到
+  return video(payload?.aweme_detail, videoId) ?? (payload?.filter_detail ? null : undefined);
+}
+
 function newComment(item, root) {
   const base = { videoId: item.videoId, threadId: item.threadId, video: item.video, source: "notice", replies: [] };
   // 我那条就是楼主：用楼的 id，带上发出时间和点赞
@@ -123,6 +137,21 @@ export async function collectMyComments(api, existing, { signal, pause = 400 } =
       await delay(pause);
     }
     if (addReply(comment, item)) added += 1;
+  }
+  // 封面没有或快过期的作品去详情换新封面，同一条作品只问一次，每轮最多问 MAX_COVER_LOOKUPS 条，剩下的下次再换。
+  // 详情说作品没了（私密、删除、没过审）就留个没封面的 video，以后不再问
+  const covers = new Map();
+  for (const comment of comments) {
+    if (!comment.videoId || (comment.video && !comment.video.coverUrl) || !coverExpiresSoon(comment.video?.coverUrl)) continue;
+    if (!covers.has(comment.videoId)) {
+      if (covers.size >= MAX_COVER_LOOKUPS) continue;
+      signal?.throwIfAborted();
+      // 请求失败是 undefined，下次再试
+      covers.set(comment.videoId, await readVideo(api, comment.videoId).catch(() => undefined));
+      await delay(pause);
+    }
+    const fresh = covers.get(comment.videoId);
+    if (fresh !== undefined) comment.video = { title: fresh?.title ?? comment.video?.title ?? null, author: fresh?.author ?? comment.video?.author ?? null, coverUrl: fresh?.coverUrl ?? null };
   }
   return { comments: sortAndCap(comments), added };
 }

@@ -7,6 +7,7 @@ import { MyCommentStore, collectMyComments, readNotice, sentComment } from "./my
 const VIDEO = "7689353274332740022";
 const THREAD = "7689869047429825317";
 const aweme = { aweme_id: VIDEO, desc: "别人的视频\n#话题", author: { nickname: "作者" }, video: { cover: { url_list: ["https://p3.douyinpic.com/cover.jpg"] } } };
+const LASTING = "https://p3-pc-sign.douyinpic.com/cover.jpeg?x-expires=2108000000";
 const notice = (type, cid, at, extra = {}) => ({
   create_time: at,
   comment: {
@@ -24,6 +25,7 @@ function fakeApi(pages, root = { cid: THREAD, text: "我的楼主评论", create
     async request(pathname, { query }) {
       calls.push({ pathname, query });
       if (pathname === "/aweme/v1/web/comment/list/") return { status_code: 0, comments: root ? [root] : [] };
+      if (pathname === "/aweme/v1/web/aweme/detail/") return { status_code: 0, ...(query.aweme_id === VIDEO ? { aweme_detail: { ...aweme, video: { cover: { url_list: [LASTING] } } } } : { aweme_detail: null, filter_detail: { filter_reason: "status_self_see" } }) };
       const index = calls.filter((call) => call.pathname === pathname).length - 1;
       return { status_code: 0, notice_list_v2: pages[index] ?? [], has_more: index < pages.length - 1 ? 1 : 0, max_time: String(1790000000 - index) };
     },
@@ -86,6 +88,20 @@ describe("my comments", () => {
     expect(comments.find((comment) => comment.text === "[表情]")).toMatchObject({ videoId: VIDEO, replies: [{ id: "5002", text: "[表情]" }] });
     // 没有作品编号就不去评论区补楼主
     expect(api.calls.filter((call) => call.pathname === "/aweme/v1/web/comment/list/")).toHaveLength(1);
+  });
+
+  it("swaps a cover that expires today for the long-lived one from the work's details, once", async () => {
+    const shortLived = { ...aweme, video: { cover: { url_list: ["https://p3-pc-sign.douyinpic.com/cover.jpeg?x-expires=1790000000"] } } };
+    const pages = [[notice(2, "6001", 1790000100, { reply_comment: { text: "我的楼主评论" }, aweme: shortLived })]];
+    const api = fakeApi(pages);
+    const sent = sentComment("7000000000000000001", { id: "6100", text: "作品没了" });
+    const { comments } = await collectMyComments(api, [sent], { pause: 0 });
+    expect(comments.find((comment) => comment.id === THREAD).video).toEqual({ title: "别人的视频", author: "作者", coverUrl: LASTING });
+    // 作品没了：记下没封面，下次不再问
+    expect(comments.find((comment) => comment.id === "6100").video).toEqual({ title: null, author: null, coverUrl: null });
+    const again = fakeApi(pages);
+    await collectMyComments(again, comments, { pause: 0 });
+    expect(again.calls.filter((call) => call.pathname === "/aweme/v1/web/aweme/detail/")).toEqual([]);
   });
 
   it("stores to disk, keeps a broken file aside and ignores the same sent comment twice", async () => {
