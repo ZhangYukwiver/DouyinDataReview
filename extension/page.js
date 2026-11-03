@@ -7,6 +7,8 @@
   window.__dyfInstalled = true;
 
   const DYF = globalThis.DYF;
+  const picks = DYF.createPicks({ search: searchWord, blocked: item => Boolean(settings?.rules.length && DYF.match(settings.rules, DYF.fieldsOf(item)).score >= 1) });
+  let commonReady = false;
   // 首页推荐是 tab/feed，精选页是 module/feed；关注、朋友这些流不碰
   const FEED = /^\/aweme\/v\d+\/web\/(?:tab|module)\/feed\/?$/u;
   const DETAIL = /^\/aweme\/v\d+\/web\/aweme\/detail\/?$/u;
@@ -55,7 +57,7 @@
   }
 
   document.addEventListener("dyf:probe", () => {
-    const status = { ...diagnostic, pendingPages: pending.length,
+    const status = { ...diagnostic, ...picks.status(), pendingPages: pending.length,
       xhrResponseHook: String(Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, "response")?.get).includes("__dyfFeed"),
       fetchHook: String(window.fetch).includes("isFeed") };
     document.dispatchEvent(new CustomEvent("dyf:diagnostics", { detail: JSON.stringify(status) }));
@@ -65,7 +67,9 @@
     try {
       const value = JSON.parse(event.detail);
       if (!value || !["off", "observe", "hide", "dislike"].includes(value.mode) || typeof value.rules !== "string") return;
-      settings = { mode: value.mode, rules: DYF.compileRules(value.rules) };
+      settings = { mode: value.mode, rules: DYF.compileRules(value.rules), webPicks: value.webPicks === true };
+      picks.configure(typeof value.words === "string" ? value.words : "", settings.webPicks);
+      prefetchPicks();
       diagnostic.settingsReceived += 1;
       diagnostic.mode = settings.mode;
       diagnostic.ruleCount = settings.rules.length;
@@ -94,7 +98,7 @@
   function rememberCommon(url) {
     try {
       const query = new URL(String(url), location.href).searchParams;
-      if (query.get("aid")) common = new URLSearchParams([...query].filter(([name]) => COMMON.has(name)));
+      if (query.get("aid")) { common = new URLSearchParams([...query].filter(([name]) => COMMON.has(name))); commonReady = true; }
     } catch { /* 留着上一份 */ }
   }
 
@@ -113,8 +117,11 @@
       pending.push(json);
       return undefined;
     }
-    if (settings.mode === "off" || !settings.rules.length) return undefined;
+    picks.rememberPage(json);
+    prefetchPicks();
     const detail = json?.aweme_detail ?? json?.data?.aweme_detail;
+    const mix = () => !recordOnly && !detail && isRecommendationPage() && picks.mix(json);
+    if (settings.mode === "off" || !settings.rules.length) return mix() ? JSON.stringify(json) : undefined;
     // 详情是已选中作品，删成 null 会破坏播放器；和已送进页面的首屏一样只补记。
     const observe = recordOnly || Boolean(detail) || settings.mode === "observe";
     const all = DYF.filterFeed(detail ? { aweme_list: [detail] } : json, settings.rules, !observe);
@@ -128,12 +135,12 @@
     diagnostic.matchedVideos += hits.length;
     if (!observe && settings.mode === "dislike") hits.forEach((hit) => queue.push(hit)), drain();
     else if (hits.length) emit(hits.map((hit) => ({ ...hit, t: Date.now(), action: observe ? "observed" : "hidden" })));
-    return observe || !all.length ? undefined : JSON.stringify(json);
+    return mix() || (!observe && all.length) ? JSON.stringify(json) : undefined;
   }
 
   // 第一屏随 HTML/路由缓存到达，不一定再请求 feed。只读这些已加载的数据，不改路由或页面状态。
   function inspectInitial() {
-    if (!settings || settings.mode === "off" || !settings.rules.length || !isRecommendationPage()) return;
+    if (!settings || !isRecommendationPage()) return;
     const roots = [window._ROUTER_DATA, window.__MODERN_ROUTER_DATA__, window.__INITIAL_STATE__];
     const raw = document.getElementById?.("RENDER_DATA")?.textContent;
     if (raw && raw.length <= 8 * 1024 * 1024) {
@@ -161,7 +168,7 @@
 
   // 网页有 application/protobuf 和 application/x-protobuf 两种写法，统一要求 JSON。
   function jsonHeader(name, value) {
-    if (settings?.mode !== "off" && /^(?:accept|content-type)$/iu.test(name) && /\b(?:x-)?protobuf\b/iu.test(value))
+    if ((settings?.mode !== "off" || settings?.webPicks) && /^(?:accept|content-type)$/iu.test(name) && /\b(?:x-)?protobuf\b/iu.test(value))
       return /^accept$/iu.test(name) ? "application/json, text/plain, */*" : "application/json";
     return value;
   }
@@ -177,7 +184,7 @@
     if (apiPath(url)) diagnostic.xhrRequests += 1;
     countPath(diagnostic.requests, url, "xhr", this.__dyfFeed);
     if (this.__dyfFeed) diagnostic.recognizedRequests += 1;
-    if (this.__dyfFeed) rememberCommon(url);
+    if (this.__dyfFeed) { rememberCommon(url); prefetchPicks(); }
     this.__dyfDone = false;
     this.__dyfText = undefined;
     this.__dyfOut = undefined;
@@ -193,7 +200,7 @@
   function rewrite(xhr) {
     if (xhr.__dyfDone) return xhr.__dyfText;
     xhr.__dyfDone = true;
-    if (settings && (settings.mode === "off" || !settings.rules.length)) return undefined;
+    if (settings && !settings.webPicks && (settings.mode === "off" || !settings.rules.length)) return undefined;
     const type = xhr.responseType;
     if (type && type !== "text" && type !== "arraybuffer" && type !== "json") return undefined;
     let json;
@@ -242,6 +249,7 @@
     if (!recognized) return fetch.apply(this, arguments);
     diagnostic.recognizedRequests += 1;
     rememberCommon(url);
+    prefetchPicks();
     const headers = new Headers(init?.headers === undefined ? input?.headers : init.headers);
     let changed = false;
     for (const name of ["accept", "content-type"]) {
@@ -250,7 +258,7 @@
       if (before !== after) { headers.set(name, after); changed = true; }
     }
     return fetch.call(this, input, changed ? { ...init, headers } : init).then(async (response) => {
-      if (settings && (settings.mode === "off" || !settings.rules.length)) return response;
+      if (settings && !settings.webPicks && (settings.mode === "off" || !settings.rules.length)) return response;
       try {
         // 用副本检查，未命中、只记录和无法读取时，页面仍收到原响应及其未消费的 body。
         const text = await response.clone().text();
@@ -287,6 +295,33 @@
     "engine_version", "os_name", "os_version", "cpu_core_num", "device_memory", "platform", "downlink", "effective_type",
     "round_trip_time", "webid"]);
   let common = new URLSearchParams({ device_platform: "webapp", aid: "6383", channel: "channel_pc_web" });
+
+  function prefetchPicks() {
+    // 首页数据开始请求后安全组件已经就绪；搜索/关注/朋友页不额外请求。
+    if (commonReady && isRecommendationPage()) void picks.prefetch();
+  }
+
+  function searchWord(word, offset, searchId) {
+    const params = new URLSearchParams(common);
+    for (const [key, value] of Object.entries({ search_channel: "aweme_video_web", keyword: word, search_source: "switch_tab",
+      query_correct_type: "1", is_filter_search: "0", from_group_id: "", disable_rs: "0", offset: String(offset), count: "10",
+      need_filter_settings: "0", list_type: "single", ...(searchId ? { search_id: searchId } : {}) })) params.set(key, value);
+    // 同「不感兴趣」一样经过页面当前的 XHR 原型链签名；只搜索，不写观看/点赞/收藏。
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", `/aweme/v1/web/search/item/?${params}`);
+      xhr.withCredentials = true;
+      xhr.timeout = 10_000;
+      xhr.setRequestHeader("Accept", "application/json, text/plain, */*");
+      xhr.onloadend = () => {
+        try {
+          if (xhr.status !== 200) throw new Error("search_unavailable");
+          resolve(JSON.parse(xhr.responseText));
+        } catch { reject(new Error("search_unavailable")); }
+      };
+      xhr.send();
+    });
+  }
 
   function dislike(id) {
     const params = new URLSearchParams(common);

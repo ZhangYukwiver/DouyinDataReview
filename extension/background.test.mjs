@@ -62,7 +62,7 @@ describe("已打开抖音页的连接恢复", () => {
     ] });
     await restore();
     expect(scripting.executeScript.mock.calls.map(([request]) => request)).toEqual([
-      { target: { tabId: 1 }, world: "MAIN", files: ["filter.js", "page.js"] },
+      { target: { tabId: 1 }, world: "MAIN", files: ["filter.js", "picks.js", "page.js"] },
       { target: { tabId: 1 }, world: "ISOLATED", files: ["bridge.js"] },
     ]);
     expect(storage.pageAttachment).toMatchObject({ pages: 1, restored: 1, failed: 0 });

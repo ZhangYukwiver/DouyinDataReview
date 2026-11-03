@@ -5,6 +5,7 @@ import { Check, Copy, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, typ
 
 import { canDragDesktopExtension, getDesktopOpenAtLogin, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, loadAppStyleFonts, loadFeedWords, saveFeedWords, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
+import { readFeedPreferences } from "../../services/feedPreferences";
 import { usageAutoSettings, type UsageAutoSettings } from "../../services/usageSessions";
 import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, mcpCommands, saveAssistantConfig, type AssistantConfig, type McpClient } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
@@ -455,7 +456,7 @@ function Data({ appStyle, canClear, connected, onClearCache, onExportData }: Set
 }
 
 const FEED_MODES: ReadonlyArray<{ key: FeedFilterMode; label: string; detail: string }> = [
-  { key: "off", label: "关", detail: "扩展停着什么都不碰，推荐流照原样；再选别的马上恢复。" },
+  { key: "off", label: "关", detail: "不处理原推荐里的屏蔽词；上方「网页插入视频」开关单独控制。" },
   { key: "observe", label: "只记录", detail: "命中的视频照样刷得到，只记在下面。先用它看看词条会不会误杀。" },
   { key: "hide", label: "隐藏", detail: "命中的视频在推荐数据进页面之前就被拿掉，刷不到。" },
   { key: "dislike", label: "隐藏并反馈", detail: "拿掉以后再替你点「不感兴趣」，以后少推这类。用的是你自己的抖音号，每分钟最多点 6 条，多出来的只隐藏。" },
@@ -483,22 +484,54 @@ function eventTime(at: number): string {
 }
 
 /** 推荐流过滤：浏览器扩展装一次，按这里定的词条和过滤方式改抖音网页的推荐数据；处置记录也存在采集器里 */
-function FeedPage({ appStyle, feedShown, onToggleFeed }: SettingsDialogProps) {
+function FeedPage({ appStyle, feedShown, onToggleFeed, collector }: SettingsDialogProps) {
   const [words, setWords] = useState(loadFeedWords);
+  const [webPicks, setWebPicks] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const baseUrl = collector?.baseUrl, token = collector?.token;
+  useEffect(() => {
+    let live = true;
+    setMessage(null); setWebPicks(false);
+    if (!baseUrl || !token) { setBusy(false); return; }
+    setBusy(true);
+    readFeedPreferences(baseUrl, token).then((value) => {
+      if (live) { setWords(value.words); setWebPicks(value.webPicks); }
+    }, () => { if (live) setMessage("共用词条没读取成功，稍后可重新保存。"); })
+      .finally(() => { if (live) setBusy(false); });
+    return () => { live = false; };
+  }, [baseUrl, token]);
+  const save = async (enabled = webPicks) => {
+    if (!baseUrl || !token) return;
+    setBusy(true); setMessage(null);
+    try {
+      const value = await collectorFeedFilter(baseUrl, token, { words, webPicks: enabled });
+      saveFeedWords(words);
+      if (value.words === null) throw new Error("词条已保存在本机；请更新采集器后再使用网页插入视频。");
+      setWebPicks(value.webPicks);
+      setMessage("已保存；软件下一批生效，网页约一分钟内同步。");
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : "没保存成功，请重试。"); }
+    finally { setBusy(false); }
+  };
   return (
     <>
       <View style={styles.row}>
         <RowCopy detail="在应用里刷抖音首页推荐，进工作台默认先到这里。用不上就隐藏：侧栏不再有它，进工作台直接到持续报告，想用了再回来打开。" title="刷视频" />
         <Button appStyle={appStyle} kind={feedShown ? "secondary" : "primary"} label={feedShown ? "隐藏" : "显示"} onPress={onToggleFeed} testID="settings-feed-page" />
       </View>
-      {feedShown ? (
         <View style={[styles.row, styles.rowStacked]}>
-          <RowCopy detail="一行写一个词。刷视频时，每三条推荐后面会插一条按这些词搜到的视频，几个词轮着来，画面左下角会注明是哪个词带来的。改完从下一批开始生效，空着就只刷推荐。" title="想看的词条" />
-          {/* 存在本机，刷视频每要一批就带上 */}
-          <TextInput accessibilityLabel="想看的词条" multiline onChangeText={(text) => { setWords(text); saveFeedWords(text); }} placeholder={"露营\n手冲咖啡"}
+          <RowCopy detail="软件和网页共用。一行一个词，最多 20 个、每个 30 字。每三条推荐后插一条相关视频，几个词轮着来；保存空白就只刷原推荐。" title="想看的词条" />
+          <TextInput accessibilityLabel="想看的词条" multiline editable={!busy && Boolean(baseUrl && token)} maxLength={2000} onChangeText={(text) => { setWords(text); setMessage(null); }} placeholder={"露营\n手冲咖啡"}
             placeholderTextColor={color.textMuted} spellCheck={false} style={styles.rulesInput} testID="settings-feed-words" value={words} />
+          <Button appStyle={appStyle} kind="secondary" label={busy ? "请稍候…" : "保存词条"} disabled={busy || !baseUrl || !token} onPress={() => void save()} testID="settings-save-feed-words" />
+          {!baseUrl || !token ? <Text style={styles.detail}>连接采集器后可保存共用词条、开启网页插入。</Text> : null}
+          {message ? <Text accessibilityLiveRegion="polite" style={styles.detail}>{message}</Text> : null}
         </View>
-      ) : null}
+      <View style={styles.row}>
+        <RowCopy detail="装好下面的扩展后，在浏览器的抖音首页和精选推荐中插入相关视频。使用浏览器登录的账号搜索，命中屏蔽词的不插入；搜索失败照常刷推荐。首次升级扩展后请刷新抖音页。" title="网页插入视频" />
+        <Button appStyle={appStyle} kind={webPicks ? "secondary" : "primary"} label={webPicks ? "关闭" : "开启"}
+          disabled={busy || !baseUrl || !token} onPress={() => void save(!webPicks)} testID="settings-web-feed-picks" />
+      </View>
     </>
   );
 }
