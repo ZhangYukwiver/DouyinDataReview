@@ -85,23 +85,6 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 也可以在「设置 → 账号」从 Chrome / Edge / macOS Comet 导入登录凭据，或直接读本机抖音电脑客户端的登录态。关掉窗口后应用留在托盘，每 3 小时补读一次，完全退出要在托盘菜单里点「退出」。记录存在本机，升级不会覆盖。
 
-## 实现方式
-
-工作台用 React / React Native / Expo 写，本地采集器是 Node.js，桌面壳是 Electron。采集器用导入的登录会话发签名 HTTP 请求、按游标分页读取记录，聊天和直播弹幕走 WebSocket；记录按账号存成本地 JSON，报告在本机计算。
-
-| 模块 | 主要源码 |
-| --- | --- |
-| 桌面与工作台 | [桌面入口](desktop/main.mjs)、[工作台组件](src/components/workspace/) |
-| 登录与请求会话 | [浏览器连接](collector/browserConnection.mjs)、[HTTP 客户端](collector/directApi.mjs) |
-| 记录采集与存储 | [分页与签名](collector/directHistory.mjs)、[归一化](collector/normalizer.mjs)、[记录存储](collector/store.mjs) |
-| 刷视频、搜索与互动 | [内容探索](collector/directExplorer.mjs)、[互动请求](collector/directWrites.mjs) |
-| 聊天与直播 | [聊天](collector/directChat.mjs)、[直播](collector/directLive.mjs) |
-| 创作者中心 | [创作者中心](collector/creatorCenter.mjs) |
-| 推荐流过滤 | [浏览器扩展](extension/)、[过滤设置](collector/feedFilter.mjs) |
-| 报告 | [年度统计](src/domain/annualReport.ts)、[持续报告](src/domain/livingReport.ts)、[报告页面](prototype/) |
-
-数据目录在 macOS 的 `~/Library/Application Support/内容数据工作台/collector/`、Windows 当前用户的应用数据目录（从源码运行在 `.local-data/`）。`records.json` 是记录，`direct-session.json` 是登录会话，其他账号在 `accounts/` 下。Cookie、签名和原始响应不写进记录文件，群聊正文和火花数据用时现读、不落盘。采集器默认只接受本机连接。
-
 ## 常见问题
 
 ### 有没有像 Spotify Wrapped 那样的抖音年度报告？
@@ -138,7 +121,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ### 收费吗？数据会传到哪里？
 
-免费，MIT 许可开源。记录和报告都在本机，采集只请求抖音，默认不连任何 AI 服务；装了可选的 AI 助手后，你的对话和它查到的数据会发给你自己配置的模型接口。
+免费，MIT 许可开源。记录和报告都在本机，采集只请求抖音，默认不连任何 AI 服务；装了可选的 AI 助手后，你的对话和它查到的数据会发给你自己配置的模型接口。记录按账号存成本地 JSON（macOS 在 `~/Library/Application Support/内容数据工作台/collector/`），Cookie、签名和原始响应不写进记录文件，群聊正文和火花数据用时现读、不落盘；采集器默认只接受本机连接。
 
 ### 会被封号吗？
 
@@ -165,6 +148,8 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 开着聊天接收时显示的是抖音官方天数；没在接收时按本机记录估算（同一天双方都发过消息才算一天），只能当参考。
 
 ## 面向开发者
+
+工作台用 React / React Native / Expo 写，本地采集器是 Node.js，桌面壳是 Electron。采集器用导入的登录会话发签名 HTTP 请求、按游标分页读取记录，聊天和直播弹幕走 WebSocket。
 
 ```bash
 # 1. 克隆项目并安装依赖

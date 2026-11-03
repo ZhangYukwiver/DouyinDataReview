@@ -8,7 +8,7 @@
 
 - [下载与项目介绍](https://zhangyukwiver.github.io/DouyinDataReview/): 平台、功能、安装与常见问题。
 - [数据导出与年度报告指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html): 导出步骤、官方档案导入、覆盖范围、数据流向与源码依据。
-- [GitHub 仓库与 README](https://github.com/ZhangYukwiver/DouyinDataReview): 实现方式、功能边界和源码运行。
+- [GitHub 仓库与 README](https://github.com/ZhangYukwiver/DouyinDataReview): 功能边界和源码运行。
 - [最新发布](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest): 已发布版本和安装包。
 - [问题反馈](https://github.com/ZhangYukwiver/DouyinDataReview/issues): Bug 与功能建议。
 - [MIT 许可](https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/LICENSE): 源码使用许可。
