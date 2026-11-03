@@ -5,6 +5,7 @@ import { Check, Copy, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, typ
 
 import { canDragDesktopExtension, getDesktopOpenAtLogin, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, loadAppStyleFonts, loadFeedWords, saveFeedWords, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
+import { usageAutoSettings, type UsageAutoSettings } from "../../services/usageSessions";
 import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, mcpCommands, saveAssistantConfig, type AssistantConfig, type McpClient } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
 import {
@@ -262,7 +263,7 @@ function Appearance({ appStyle, contentWidth, onChangeAppStyle, onChangeStorySty
   );
 }
 
-function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openAtLogin, browserConnection }: SettingsDialogProps & { openAtLogin: boolean | null; onToggleOpenAtLogin: () => void }) {
+function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openAtLogin, browserConnection, collector, appStyle }: SettingsDialogProps & { openAtLogin: boolean | null; onToggleOpenAtLogin: () => void }) {
   const videosAllowed = browserConnection?.status?.readPermissions?.videos !== false;
   return (
     <>
@@ -282,8 +283,54 @@ function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openA
           <Toggle label="开机后在后台运行" onPress={onToggleOpenAtLogin} testID="settings-open-at-login" value={openAtLogin} />
         </View>
       ) : null}
+      <AutoUsageSettings collector={collector} appStyle={appStyle} />
     </>
   );
+}
+
+function AutoUsageSettings({ collector, appStyle }: Pick<SettingsDialogProps, "collector" | "appStyle">) {
+  const [settings, setSettings] = useState<UsageAutoSettings | null>(null);
+  const [sources, setSources] = useState<BrowserLoginSource[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
+  const baseUrl = collector?.baseUrl, token = collector?.token;
+  useEffect(() => {
+    setSettings(null); setError(null);
+    if (!baseUrl || !token) return;
+    let live = true;
+    void Promise.all([usageAutoSettings({ baseUrl, token }), getBrowserLoginSources(baseUrl, token)]).then(([value, items]) => {
+      if (!live) return;
+      setSettings(value); setSources(items.filter(source => ["chrome", "edge", "comet"].includes(source.id)));
+    }, reason => { if (live) setError(reason instanceof Error ? reason.message : "无法读取自动连接设置。"); });
+    return () => { live = false; };
+  }, [baseUrl, token]);
+  const save = async (next: UsageAutoSettings) => {
+    if (!baseUrl || !token || saving.current) return;
+    saving.current = true; setBusy(true); setError(null);
+    try { setSettings(await usageAutoSettings({ baseUrl, token }, next)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "设置没有保存，请重试。"); }
+    finally { saving.current = false; setBusy(false); }
+  };
+  return <>
+    <View style={styles.row}>
+      <RowCopy title="自动连接网页使用记录" detail={!collector ? "先连接本机采集器，再开启自动连接。"
+        : "软件运行时，所选浏览器启动后自动请求连接；在浏览器点击允许后，打开抖音网页就会记录。设置会保留到下次启动。"} />
+      <Toggle label="自动连接网页使用记录" testID="settings-usage-auto-connect" value={settings?.enabled === true}
+        disabled={!settings || busy} onPress={() => { if (settings) void save({ ...settings, enabled: !settings.enabled }); }} />
+    </View>
+    {settings ? <View style={styles.rowStacked}>
+      <Text style={styles.detail}>选择自动请求的浏览器</Text>
+      <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+        {sources.map(source => <Button key={source.id} appStyle={appStyle} label={source.label}
+          kind={settings.browser === source.id ? "primary" : "secondary"} disabled={!source.available || busy}
+          testID={`settings-usage-browser-${source.id}`}
+          onPress={() => { void save({ ...settings, browser: source.id as UsageAutoSettings["browser"] }); }} />)}
+      </View>
+      <Text style={styles.detail}>需先在浏览器开启远程调试。连接前无法判断打开了哪个网页，因此浏览器启动时就可能请求。拒绝或手动停止后，本次浏览器运行期间不再自动请求；也可到「使用记录」手动重试。</Text>
+    </View> : null}
+    {error ? <Text accessibilityRole="alert" style={styles.detail}>{error}</Text> : null}
+  </>;
 }
 
 function Privacy({ collector, onTogglePrivacy, privacy }: SettingsDialogProps) {

@@ -105,6 +105,7 @@ import { useContextMenu, type MenuEntry } from "./ContextMenu";
 import { BadgeWall } from "./AchievementShelf";
 import { noteAchievementWorks, countAchievement, unlockAchievement } from "./achievements";
 import { ReportDashboard } from "./ReportDashboard";
+import { UsageSessionsButton } from "./UsageSessionsPanel";
 import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
@@ -488,6 +489,7 @@ export function ContentWorkspace({
             </>}
           </View>
           <View style={styles.topbarActions}>
+            <UsageSessionsButton connection={commentsConnection ?? null} compact={mobile} privacy={privacy} />
             {mobile ? (
               <Pressable
                 {...ws("w-mbtn")}
