@@ -27,6 +27,9 @@ import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
 import { FEED_FILTER_MODES, FEED_FILTER_ORIGINS, FeedFilterStore } from "./feedFilter.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
+import { UsageSessions } from "./usageSessions.mjs";
+import { UsageAutoConnect, discoverUsageBrowser } from "./usageAutoConnect.mjs";
+import { BrowserUsageMonitor, connectBrowserUsage } from "./browserUsage.mjs";
 
 const DEFAULT_PORT = 4765;
 const MAX_BODY_BYTES = 4 * 1024;
@@ -252,6 +255,8 @@ export async function startCollectorServer({
   signerDirectory,
   browserSources = browserDirectories(),
   browserConnector = connectExternalBrowser,
+  usageBrowserConnector = connectBrowserUsage,
+  usageBrowserDiscovery = discoverUsageBrowser,
   // 抖音桌面端的数据目录和登录态读取可替换，测试里用假的客户端目录
   desktopDirectory = desktopDataDirectory(),
   // 抖音电脑客户端有 Windows 和 Mac 版，别的系统上不列出这一项
@@ -268,6 +273,9 @@ export async function startCollectorServer({
     ? [{ id: "desktop", label: "抖音桌面端", desktop: true, directory: desktopDirectory }] : [])];
   await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   await chmod(dataDirectory, 0o700);
+  const usageSessions = await new UsageSessions(dataDirectory).initialize();
+  const usageBrowser = new BrowserUsageMonitor(usageSessions, browserSources, { connector: usageBrowserConnector });
+  const usageAutoConnect = await new UsageAutoConnect(dataDirectory, usageBrowser, { discover: usageBrowserDiscovery }).initialize();
   const accounts = new AccountRegistry(dataDirectory);
   await accounts.load();
   // 点赞、收藏、关注、评论要先在设置里打开；所有账号共用这一个开关，默认关
@@ -547,7 +555,7 @@ export async function startCollectorServer({
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
     const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
     // 操作开关存在根目录、所有账号共用，换号时也能读改
-    const accountFree = url.pathname === "/v1/settings/writes" || url.pathname.startsWith("/v1/feed-filter") || url.pathname.startsWith("/v1/assistant");
+    const accountFree = url.pathname === "/v1/settings/writes" || url.pathname.startsWith("/v1/feed-filter") || url.pathname.startsWith("/v1/assistant") || url.pathname.startsWith("/v1/usage/");
     if (!readable && !loginWait && !accountFree && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
@@ -564,6 +572,35 @@ export async function startCollectorServer({
       // 读取记录和聊天不关探索会话：刷视频、评论面板在读取时照常用，读取自己给它们让路。
       // Downloads decide after reading the body (see below).
       if (rejectWhileSwitching(response)) return;
+    }
+
+    if (url.pathname.startsWith("/v1/usage/")) {
+      if (!isLoopbackAddress(request.socket.remoteAddress)) {
+        sendJson(response, 403, { error: "loopback_only", message: "使用记录和浏览器计时只在当前电脑查看、连接。" });
+        return;
+      }
+      try {
+        if (request.method === "GET" && url.pathname === "/v1/usage/sessions") {
+          const offset = Number(url.searchParams.get("offset") ?? 0);
+          if (!Number.isSafeInteger(offset) || offset < 0) { sendJson(response, 400, { error: "invalid_request" }); return; }
+          sendJson(response, 200, { ...await usageSessions.snapshot({ offset }), browser: usageBrowser.snapshot() });
+        } else if (url.pathname === "/v1/usage/settings" && ["GET", "POST"].includes(request.method)) {
+          const settings = request.method === "POST" ? await usageAutoConnect.configure(await readJsonBody(request)) : usageAutoConnect.snapshot();
+          sendJson(response, 200, { settings });
+        } else if (request.method === "POST" && url.pathname === "/v1/usage/browser") {
+          const body = await readJsonBody(request);
+          usageAutoConnect.manualAction();
+          sendJson(response, 200, { browser: await usageBrowser.start(body?.browser) });
+        } else if (request.method === "DELETE" && url.pathname === "/v1/usage/browser") {
+          usageAutoConnect.manualAction();
+          sendJson(response, 200, { browser: await usageBrowser.stop() });
+        } else sendJson(response, 404, { error: "not_found" });
+      } catch (error) {
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        sendJson(response, error?.status ?? (malformed ? 400 : 500), { error: error?.code ?? "usage_failed",
+          message: error?.status ? error.message : malformed ? "请求格式无效。" : "使用记录暂时无法保存，请稍后重试。" });
+      }
+      return;
     }
 
     if (url.pathname.startsWith("/v1/browser/")) {
@@ -1162,6 +1199,9 @@ export async function startCollectorServer({
     if (shuttingDown) return;
     shuttingDown = true;
     browserLoginController?.abort();
+    await usageAutoConnect.close();
+    await usageBrowser.stop().catch(() => {});
+    await usageSessions.close().catch(() => {});
     for (const finish of statusWaiters) finish();
     try {
       // 正在切换就等它换完，关掉的才是最后接上的那个采集器
@@ -1184,10 +1224,13 @@ export async function startCollectorServer({
     await shutdown();
     throw new Error("采集服务未能分配 TCP 端口。");
   }
+  usageAutoConnect.start();
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     dataDirectory,
     getPairingCode: () => pairing.displayCode(),
+    setAppUsageActive: active => usageSessions.setActive("app", active, { reason: "hidden" }),
+    setUsageSuspended: suspended => usageSessions.setSuspended(suspended),
     // 送去拆片工坊：桌面主进程按下载任务取已下好的文件，没下完或不在下载目录里就是 null
     getDownloadFilePath: (jobId) => collector.getVideoDownloadFilePath(jobId),
     close: shutdown,

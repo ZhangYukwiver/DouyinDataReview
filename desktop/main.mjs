@@ -119,6 +119,7 @@ function syncWindowVisibility(window) {
   const onScreen = isOnScreen(window);
   if (onScreen === lastOnScreen) return;
   lastOnScreen = onScreen;
+  void desktopRuntime?.collector.setAppUsageActive(onScreen).catch(() => {});
   if (onScreen) backgroundBlockedNotified = false; // 用户看到窗口了，下次再出问题还要提醒
   window.webContents.send("desktop:window-visibility", onScreen);
 }
@@ -247,6 +248,7 @@ function createMainWindow(appUrl, { hidden = false } = {}) {
   window.on("session-end", () => { quitting = true; });
   window.on("closed", () => {
     if (mainWindow !== window) return;
+    void desktopRuntime?.collector.setAppUsageActive(false).catch(() => {});
     mainWindow = null;
     for (const storyWindow of storyWindows) storyWindow.destroy();
   });
@@ -391,6 +393,13 @@ async function launch() {
   // 上一轮观看历史被打断过的话这一轮会整段重读（约等于第一次读的量），要省就记下中断时存的新记录只跳过它们
   setInterval(() => requestBackgroundSync(), BACKGROUND_SYNC_MS);
   powerMonitor.on("resume", () => setTimeout(() => requestBackgroundSync(), 60_000));
+  // 使用记录按实际打开的窗口/网页计时；睡眠和锁屏期间暂停，恢复后另起一段。
+  let usageAsleep = false, usageLocked = false;
+  const syncUsagePower = () => { void desktopRuntime?.collector.setUsageSuspended(usageAsleep || usageLocked).catch(() => {}); };
+  powerMonitor.on("suspend", () => { usageAsleep = true; syncUsagePower(); });
+  powerMonitor.on("resume", () => { usageAsleep = false; syncUsagePower(); });
+  powerMonitor.on("lock-screen", () => { usageLocked = true; syncUsagePower(); });
+  powerMonitor.on("unlock-screen", () => { usageLocked = false; syncUsagePower(); });
   appUpdateController.start();
 }
 
