@@ -4,6 +4,7 @@ import vm from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
 const filterScript = readFileSync(new URL("./filter.js", import.meta.url), "utf8");
+const picksScript = readFileSync(new URL("./picks.js", import.meta.url), "utf8");
 const pageScript = readFileSync(new URL("./page.js", import.meta.url), "utf8");
 const feedUrl = "https://www.douyin.com/aweme/v1/web/tab/feed/?aid=6383";
 const feed = () => ({ status_code: 0, aweme_list: [
@@ -43,6 +44,7 @@ function setup({ mode = "hide", rules = "王者荣耀", initialSettings = true, 
   context.window = context;
   if (bootstrap) context._ROUTER_DATA = bootstrap;
   vm.runInNewContext(filterScript, context);
+  vm.runInNewContext(picksScript, context);
   vm.runInNewContext(pageScript, context);
   const settings = change => document.dispatchEvent(new CustomEvent("dyf:settings", { detail: JSON.stringify({ mode, rules, ...change }) }));
   if (initialSettings) settings();
@@ -50,6 +52,48 @@ function setup({ mode = "hide", rules = "王者荣耀", initialSettings = true, 
 }
 
 describe("推荐流请求拦截", () => {
+  it.each(["xhr", "fetch"])("%s 在关闭过滤时仍能插入词条视频，搜索经过网页后挂的 XHR 钩子", async transport => {
+    const video = id => ({ aweme_id: String(id), desc: "日常", video: { play_addr: { url_list: ["https://example.com/video.mp4"] } } });
+    const original = { status_code: 0, aweme_list: [10001, 10002, 10003].map(video), has_more: 1, cursor: 10 };
+    const { context, XHR, settings } = setup({ mode: "off", rules: "", fetch: async () => new Response(JSON.stringify(original)) });
+    const sent = [];
+    const hooked = XHR.prototype.open;
+    XHR.prototype.open = function (method, url) { this.signed = true; return hooked.call(this, method, url); };
+    XHR.prototype.send = function () {
+      sent.push(this);
+      this.status = 200; this.respond({ status_code: 0, data: [{ aweme_info: video(90001) }], has_more: 0 }); this.onloadend();
+    };
+    settings({ words: "露营", webPicks: true });
+    // 真实页面开始请求推荐后预取，待候选准备好再读取推荐回包。
+    const xhr = new XHR(); xhr.open("GET", feedUrl);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const result = transport === "fetch" ? await (await context.fetch(feedUrl)).json()
+      : (xhr.respond(original, "json"), xhr.response);
+    expect(result.aweme_list.map(item => item.aweme_id)).toEqual(["10001", "10002", "10003", "90001"]);
+    expect(result).toMatchObject({ cursor: 10, has_more: 1 });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ signed: true, method: "GET", withCredentials: true, timeout: 10000 });
+    const url = new URL(sent[0].url, "https://www.douyin.com");
+    expect(url.pathname).toBe("/aweme/v1/web/search/item/");
+    expect(url.searchParams.get("keyword")).toBe("露营");
+    expect(url.searchParams.get("search_channel")).toBe("aweme_video_web");
+  });
+
+  it("搜索或关注页不插入，也不预取；搜索失败不影响原推荐", async () => {
+    const { context, XHR, settings } = setup({ mode: "off", rules: "" });
+    XHR.prototype.send = vi.fn(function () { this.status = 0; this.onloadend(); });
+    settings({ words: "露营", webPicks: true });
+    context.location = new URL("https://www.douyin.com/search/露营");
+    expect((await (await context.fetch(feedUrl)).json()).aweme_list).toHaveLength(2);
+    expect(XHR.prototype.send).not.toHaveBeenCalled();
+    context.location = new URL("https://www.douyin.com/follow");
+    await context.fetch("/aweme/v1/web/follow/feed/");
+    expect(XHR.prototype.send).not.toHaveBeenCalled();
+    context.location = new URL("https://www.douyin.com/");
+    expect((await (await context.fetch(feedUrl)).json()).aweme_list).toHaveLength(2);
+    expect((await (await context.fetch(feedUrl)).json()).aweme_list).toHaveLength(2);
+    expect(XHR.prototype.send).toHaveBeenCalledOnce();
+  });
   it.each(["", "text", "json", "arraybuffer"])("XHR %s 回包在页面读取前过滤，连续读取只记一次", type => {
     const { XHR, events } = setup();
     const xhr = new XHR();

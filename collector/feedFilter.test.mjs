@@ -20,6 +20,17 @@ async function makeDirectory() {
 const event = (id, action = "hidden") => ({ t: 1_790_000_000_000, id, desc: "文案", author: "作者", matched: ["营销号"], action });
 
 describe("推荐流过滤存储", () => {
+  it("软件与网页共用词条，旧档保留迁移标记，主动清空不会恢复旧词条", async () => {
+    const directory = await makeDirectory(), store = new FeedFilterStore(directory);
+    expect(await store.read()).toMatchObject({ words: null, webPicks: false });
+    await store.setSettings({ words: "露营\n咖啡", webPicks: true });
+    await store.setSettings({ mode: "hide" });
+    expect(await new FeedFilterStore(directory).read()).toMatchObject({ words: "露营\n咖啡", webPicks: true, mode: "hide" });
+    await store.setSettings({ words: "", webPicks: false });
+    expect(await new FeedFilterStore(directory).read()).toMatchObject({ words: "", webPicks: false });
+    expect(sanitizeFeedFilter({ words: "长".repeat(3000), webPicks: "true" }).words).toHaveLength(2000);
+    expect(sanitizeFeedFilter({ webPicks: "true" }).webPicks).toBe(false);
+  });
   it("没有文件时给示例词条和「只记录」", async () => {
     const value = await new FeedFilterStore(await makeDirectory()).read();
     expect(value.mode).toBe("observe");

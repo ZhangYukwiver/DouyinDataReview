@@ -11,7 +11,7 @@ const MAX_PENDING = 300;
 function diagnosticOf(value) {
   const count = (item) => Number.isFinite(item) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(item))) : 0;
   const clean = Object.fromEntries(["installedAt", "settingsReceived", "ruleCount", "xhrRequests", "fetchRequests", "recognizedRequests",
-    "responsesRead", "videosRead", "matchedVideos", "eventsEmitted", "readFailures", "pendingPages"]
+    "responsesRead", "videosRead", "matchedVideos", "eventsEmitted", "readFailures", "pendingPages", "pickWords", "picksQueued", "picksInserted", "pickSearches", "pickFailures"]
     .map((key) => [key, count(value?.[key])]));
   const paths = (items) => (Array.isArray(items) ? items : []).slice(-12).flatMap((item) => {
     if (!["www.douyin.com", "www-hj.douyin.com"].includes(item?.host) || typeof item.path !== "string" || !item.path.startsWith("/aweme/")) return [];
@@ -19,7 +19,7 @@ function diagnosticOf(value) {
       transport: ["xhr", "fetch", "xmlhttprequest"].includes(item.transport) ? item.transport : "other",
       recognized: item.recognized === true, count: count(item.count) }];
   });
-  return { ...clean, mode: ["off", "observe", "hide", "dislike"].includes(value?.mode) ? value.mode : null,
+  return { ...clean, picksEnabled: value?.picksEnabled === true, mode: ["off", "observe", "hide", "dislike"].includes(value?.mode) ? value.mode : null,
     xhrResponseHook: value?.xhrResponseHook === true, fetchHook: value?.fetchHook === true,
     requests: paths(value?.requests), resources: paths(value?.resources),
     lastResponse: value?.lastResponse ? { videos: count(value.lastResponse.videos),
@@ -54,7 +54,7 @@ async function restoreOpenPages() {
     const bridge = await chrome.tabs.sendMessage(tab.id, { type: "dyf:ping" }).catch(() => null);
     if (bridge?.version === version && bridge.ready === true) return "connected";
     // page.js 已有安装保护：沿用当前页面的匹配器，不叠加网络拦截。
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", files: ["filter.js", "page.js"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", files: ["filter.js", "picks.js", "page.js"] });
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", files: ["bridge.js"] });
     return "restored";
   }));
@@ -117,7 +117,7 @@ async function refresh() {
     return null;
   }
   if (typeof value?.rules !== "string" || typeof value?.mode !== "string") return null;
-  const next = { rules: value.rules, mode: value.mode };
+  const next = { rules: value.rules, mode: value.mode, words: typeof value.words === "string" ? value.words : "", webPicks: value.webPicks === true };
   await chrome.storage.local.set({ settings: next });
   // 应用带了更新的扩展、已经换进了浏览器加载的那个文件夹：重新加载一次就是新版。
   // 同一个版本只试一次：万一是从别的文件夹加载的，重载了还是旧版，不能每分钟重载一回

@@ -981,21 +981,23 @@ export async function startCollectorServer({
       try {
         if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
           if (fromExtension) {
-            const { rules, mode, remove } = await feedFilter.touch();
-            sendJson(response, 200, { rules, mode, remove, version: feedExtensionVersion });
+            const { rules, mode, words, webPicks, remove } = await feedFilter.touch();
+            sendJson(response, 200, { rules, mode, words, webPicks, remove, version: feedExtensionVersion });
           } else {
             const value = await feedFilter.read();
-            sendJson(response, 200, { rules: value.rules, mode: value.mode, extension: extensionState(value) });
+            sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, extension: extensionState(value) });
           }
         } else if (request.method === "POST" && url.pathname === "/v1/feed-filter") {
           let body;
           try { body = await readJsonBody(request, 64 * 1024); } catch { body = null; }
-          if ((body?.rules !== undefined && typeof body.rules !== "string") || (body?.mode !== undefined && !FEED_FILTER_MODES.includes(body.mode))) {
+          if (!body || (body.rules !== undefined && typeof body.rules !== "string") || (body.mode !== undefined && !FEED_FILTER_MODES.includes(body.mode))
+            || (body.words !== undefined && (typeof body.words !== "string" || body.words.length > 2000))
+            || (body.webPicks !== undefined && typeof body.webPicks !== "boolean")) {
             sendJson(response, 400, { error: "invalid_request" });
             return;
           }
           const value = await feedFilter.setSettings(body);
-          sendJson(response, 200, { rules: value.rules, mode: value.mode, extension: extensionState(value) });
+          sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, extension: extensionState(value) });
         } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/remove") {
           // 点了移除：扩展下次来对接（一分钟内）时自己卸载；remove=false 是取消
           let body;

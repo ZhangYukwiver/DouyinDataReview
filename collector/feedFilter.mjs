@@ -55,7 +55,10 @@ export function sanitizeFeedFilter(value) {
   // 扩展最近一次来对接的时间（没装或已移除是 null）；remove = 用户点了移除、等扩展下次来时自己卸载
   const lastSeenAt = Number.isFinite(value?.lastSeenAt) ? value.lastSeenAt : null;
   const remove = value?.remove === true;
-  return { rules, mode, events, videos, lastSeenAt, remove };
+  // null 表示旧版还没迁移本机词条；空字符串是用户主动清空，不能再从旧缓存恢复。
+  const words = typeof value?.words === "string" ? value.words.slice(0, 2000) : null;
+  const webPicks = value?.webPicks === true;
+  return { rules, mode, words, webPicks, events, videos, lastSeenAt, remove };
 }
 
 export class FeedFilterStore {
@@ -113,8 +116,9 @@ export class FeedFilterStore {
     await rename(temporaryPath, this.filePath);
   }
 
-  setSettings({ rules, mode }) {
-    return this.update((current) => ({ ...current, ...(typeof rules === "string" ? { rules } : {}), ...(FEED_FILTER_MODES.includes(mode) ? { mode } : {}) }));
+  setSettings({ rules, mode, words, webPicks }) {
+    return this.update((current) => ({ ...current, ...(typeof rules === "string" ? { rules } : {}), ...(FEED_FILTER_MODES.includes(mode) ? { mode } : {}),
+      ...(typeof words === "string" ? { words } : {}), ...(typeof webPicks === "boolean" ? { webPicks } : {}) }));
   }
 
   // 处置记录照旧只留文字；带着视频信息的另外存成记录，同一个作品只留最近一次
