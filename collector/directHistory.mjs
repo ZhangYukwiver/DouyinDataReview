@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import { request as playwrightRequest } from "playwright-core";
@@ -143,6 +144,22 @@ const MAX_RESPONSE_BYTES = 24 * 1024 * 1024;
 const DIRECT_LIST_REQUEST_TIMEOUT_MS = 30_000;
 // 一页喜欢/收藏本身就要传 1–2 MB；再隔 300ms，大约每秒一页，比抖音页面自己滚动加载（约每秒两页）还慢
 const DIRECT_LIST_PAGE_INTERVAL_MS = 300;
+
+// 连着翻几百页，偶尔会碰上一页坏响应：隔两秒重试一次，还不行再往上报
+export async function retryBadPage(ask, signal) {
+  return ask().catch(async (error) => {
+    if (!["http_error", "invalid_json", "request_failed"].includes(error?.code)) throw error;
+    await delay(2_000, undefined, { signal });
+    return ask();
+  });
+}
+
+// 读到底的最后一页，抖音可能回 aweme_list: null，当成空页
+export function fillEmptyLastPage(payload) {
+  const data = payload && typeof payload === "object" && "has_more" in payload ? payload : payload?.data;
+  if (data && typeof data === "object" && data.aweme_list == null && [0, "0", false].includes(data.has_more)) data.aweme_list = [];
+  return payload;
+}
 
 export class DirectHistoryError extends Error {
   constructor(code, message) {
@@ -552,7 +569,7 @@ function directItems(payload, label = "记录") {
     : Array.isArray(payload?.data?.aweme_list)
       ? payload.data.aweme_list
       : null;
-  if (!items) throw new DirectHistoryError("schema_changed", `${label}响应缺少 aweme_list，未保存本次结果。`);
+  if (!items) throw new DirectHistoryError("schema_changed", `${label}响应缺少作品列表。`);
   return items;
 }
 
@@ -690,7 +707,7 @@ export async function fetchDirectHistoryPage({
     } catch {
       throw new DirectHistoryError("invalid_json", "观看历史接口没有返回有效 JSON。");
     }
-    validateDirectPayload(payload, "观看历史");
+    validateDirectPayload(fillEmptyLastPage(payload), "观看历史");
     return payload;
   } catch (error) {
     throw context.sessionError?.(error) ?? error;

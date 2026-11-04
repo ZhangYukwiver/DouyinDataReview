@@ -944,10 +944,51 @@ describe("DouyinCollector direct records", () => {
     expect(collector.snapshot.warnings).toContain("点赞列表这次没读到，保留了本地原有的记录：抖音接口没有返回有效 JSON。");
     expect(collector.snapshot.warnings[0]).toBe("无界面读取完成：新增观看 1、点赞 0、收藏 1；读取观看历史 1 页、点赞 0 页、收藏 1 页。");
 
+    // 整份读取翻了几页才出错：读到的收藏留下，标记仍是没读完
+    const partial = setup(new DirectHistoryError("invalid_json", "抖音接口没有返回有效 JSON。"));
+    partial.collectDirectList.mockImplementation(async (_context, type, onPage) => {
+      if (type === "liked_videos") return 0;
+      await onPage({ status_code: 0, aweme_list: [{ aweme_id: "favorite-1" }], has_more: 1, cursor: "10" }, 1);
+      throw new DirectHistoryError("schema_changed", "列表响应缺少作品数据。");
+    });
+    await partial.runDirectRecords(1, { full: true });
+    expect(partial.snapshot.records.favorite_videos.map((record) => record.videoId)).toEqual(["favorite-1"]);
+    expect(partial.snapshot.directSync.favorite_videos).toBe(false);
+    expect(partial.status.message).toContain("收藏列表没读完");
+    expect(partial.snapshot.warnings).toContain("收藏列表读到第 2 页出错，已读到的先留下了，下次读取会再从头读一遍：列表响应缺少作品数据。");
+
     // 登录失效是整个会话的问题，不能当成「这一类读不到」跳过去
     const expired = setup(new DirectHistoryError("session_rejected", "抖音接口返回 HTTP 403。"));
     await expect(expired.runDirectRecords(1)).rejects.toMatchObject({ code: "session_rejected" });
     expect(expired.collectDirectList.mock.calls.map(([, type]) => type)).toEqual(["liked_videos"]);
+  });
+
+  it("retries a bad watch history page, keeps what was read on a later failure and still reads likes and favorites", async () => {
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => []), newPage: vi.fn() };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore("2026-08-13T00:00:00.000Z") });
+    collector.snapshot = emptySnapshot();
+    collector.syncRunId = 1;
+    collector.ensureDirectApi = vi.fn(async () => context);
+    let secondPageFailures = 0;
+    collector.readDirectHistory = vi.fn(async (_context, cursor, options) => {
+      if (options?.completedOnly) return { status_code: 0, aweme_list: [], has_more: 0 };
+      if (cursor === "1" && secondPageFailures++ === 0) throw new DirectHistoryError("http_error", "观看历史直接请求返回 HTTP 502。");
+      if (cursor === "2") throw new DirectHistoryError("schema_changed", "观看历史响应缺少作品列表。");
+      return { status_code: 0, aweme_list: [{ aweme_id: `watch-${cursor}` }], aweme_date: { [`watch-${cursor}`]: 1_700_000_000 - Number(cursor) }, has_more: 1, max_cursor: String(Number(cursor) + 1) };
+    });
+    collector.collectDirectList = vi.fn(async (_context, type, onPage) => {
+      await onPage({ status_code: 0, aweme_list: [{ aweme_id: `${type}-1` }], has_more: 0 }, 1);
+      return 1;
+    });
+
+    await collector.runDirectRecords(1);
+
+    expect(secondPageFailures).toBe(2);
+    expect(collector.snapshot.records.watch_history.map((record) => record.videoId)).toEqual(["watch-0", "watch-1"]);
+    expect(collector.snapshot.records.favorite_videos.map((record) => record.videoId)).toEqual(["favorite_videos-1"]);
+    expect(collector.snapshot.directSync).toEqual({ watch_history: false, liked_videos: true, favorite_videos: true });
+    expect(collector.status.message).toContain("观看历史没读完");
+    expect(collector.snapshot.warnings).toContain("观看历史读到第 3 页出错，已读到的先留下了，下次读取会再从头读一遍：观看历史响应缺少作品列表。");
   });
 
   it("does not save when the direct request fails", async () => {

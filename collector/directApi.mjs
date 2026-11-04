@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { request as playwrightRequest } from "playwright-core";
-import { DIRECT_API_PATHS, SAFE_TEMPLATE_PARAMETERS, DirectHistoryError, signDirectApiUrl } from "./directHistory.mjs";
+import { DIRECT_API_PATHS, SAFE_TEMPLATE_PARAMETERS, DirectHistoryError, fillEmptyLastPage, retryBadPage, signDirectApiUrl } from "./directHistory.mjs";
 import { CREATOR_ENDPOINTS } from "./creatorCenter.mjs";
 import { validateDirectCredentials } from "./directCredentials.mjs";
 
@@ -301,14 +301,15 @@ export class DirectApiClient {
       signal?.throwIfAborted();
       if (seen.has(cursor)) throw new DirectHistoryError("pagination_stalled", "分页游标重复，已停止读取。");
       seen.add(cursor);
-      const payload = await this.request(liked ? "/aweme/v1/web/aweme/favorite/" : "/aweme/v1/web/aweme/listcollection/", {
+      const ask = () => this.request(liked ? "/aweme/v1/web/aweme/favorite/" : "/aweme/v1/web/aweme/listcollection/", {
         method: liked ? "GET" : "POST", query: liked ? { sec_user_id: this.secUid, max_cursor: cursor, min_cursor: "0", whale_cut_token: "", cut_version: "1", count: "18", publish_video_strategy_type: "2" } : { publish_video_strategy_type: "2" },
         body: liked ? null : { count: "10", cursor }, signal,
         referer: `${ORIGIN}/user/self?showTab=${liked ? "like" : "favorite_collection"}`,
       });
+      const payload = fillEmptyLastPage(await retryBadPage(ask, signal));
       const data = payload.data ?? payload;
-      if (!Array.isArray(data.aweme_list)) throw new DirectHistoryError("schema_changed", "列表响应缺少作品数据。");
       const more = [1, "1", true].includes(data.has_more) ? true : [0, "0", false].includes(data.has_more) ? false : null;
+      if (!Array.isArray(data.aweme_list)) throw new DirectHistoryError("schema_changed", "列表响应缺少作品数据。");
       if (more === null) throw new DirectHistoryError("pagination_missing", "列表响应缺少分页状态。");
       const next = String(data[liked ? "max_cursor" : "cursor"] ?? "");
       if (more && !/^\d{1,20}$/u.test(next)) throw new DirectHistoryError("pagination_missing", "列表响应缺少下一页游标。");

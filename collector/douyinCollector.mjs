@@ -12,6 +12,7 @@ import {
   countMissingDirectHistoryViewTimes,
   fetchDirectHistoryPage,
   loadDirectHistoryTemplate,
+  retryBadPage,
   validateDirectHistoryUrl,
 } from "./directHistory.mjs";
 import {
@@ -1891,7 +1892,7 @@ export class DouyinCollector {
         this.updateStatus({ updatedAt: this.snapshot.updatedAt });
       };
       const skipped = [];
-      // completed=false：这一类被跳过，本地记录和「读完过」标记都不动，下次再整份读
+      // completed=false：这一类被跳过，「读完过」标记不动，下次再整份读
       const persistCompletedType = async (type, finalPhase, { completed = true } = {}) => {
         this.assertSyncActive(runId);
         if (completed) {
@@ -1903,7 +1904,9 @@ export class DouyinCollector {
           ...(finalPhase
             ? [`${DIRECT_COMPLETE_WARNING_PREFIX}新增观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}；读取观看历史 ${pageCounts.watch_history} 页、点赞 ${pageCounts.liked_videos} 页、收藏 ${pageCounts.favorite_videos} 页。`]
             : completed ? [`无界面读取阶段完成：${TYPE_LABELS[type]}已保存，其他分类继续读取。`] : []),
-          ...skipped.map(({ kind, message }) => `${TYPE_LABELS[kind]}这次没读到，保留了本地原有的记录：${message}`),
+          ...skipped.map(({ kind, message, pages }) => (pages
+            ? `${TYPE_LABELS[kind]}读到第 ${pages + 1} 页出错，已读到的先留下了，下次读取会再从头读一遍：${message}`
+            : `${TYPE_LABELS[kind]}这次没读到，保留了本地原有的记录：${message}`)),
           ...(missingViewTimes > 0
             ? [`其中 ${missingViewTimes} 条缺少观看日期，已保持为空，未使用发布时间或采集时间替代。`]
             : []),
@@ -1919,9 +1922,20 @@ export class DouyinCollector {
         });
       };
 
+      // 某一类读到一半碰上用不了的响应：只跳过这一类。整份读取（观看历史本来就是合并）时前面读到的留下、旧记录不删，标成没读完
+      const skipType = async (type, error, readPages, finalPhase) => {
+        if (!SKIPPABLE_LIST_ERRORS.has(error?.code)) throw error;
+        const kept = readPages > 0 && (type === "watch_history" || !incrementalByType.get(type));
+        if (kept) { stagedRecords[type] = previewRecords(type)[type]; directSync[type] = false; }
+        pageCounts[type] = kept ? readPages : 0;
+        skipped.push({ kind: type, message: error.message, pages: kept ? readPages : 0 });
+        await persistCompletedType(type, finalPhase, { completed: false });
+      };
+
       for (const [phaseIndex, [type, endpointUrl]] of phases.entries()) {
         const endpoint = matchDouyinEndpoint(endpointUrl);
         if (type !== "watch_history") {
+          let readPages = 0;
           try {
             pageCounts[type] = await this.collectDirectList(context, type, async (payload, pageCount) => {
               this.assertSyncActive(runId);
@@ -1933,16 +1947,14 @@ export class DouyinCollector {
                 counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
                 newRecords: newRecordsStatus(),
               });
+              readPages = pageCount;
               await persistProgress(type);
               await this.yieldToForeground(() => runId !== this.syncRunId);
               this.assertSyncActive(runId);
               return !result.recordIds.some((id) => knownIds.get(type).has(id));
             });
           } catch (error) {
-            if (!SKIPPABLE_LIST_ERRORS.has(error?.code)) throw error;
-            pageCounts[type] = 0;
-            skipped.push({ kind: type, message: error.message });
-            await persistCompletedType(type, phaseIndex === phases.length - 1, { completed: false });
+            await skipType(type, error, readPages, phaseIndex === phases.length - 1);
             continue;
           }
           await persistCompletedType(type, phaseIndex === phases.length - 1);
@@ -1952,40 +1964,45 @@ export class DouyinCollector {
         const pageFingerprints = new Set();
         let cursor = "0";
         pageCounts[type] = 0;
-        while (true) {
-          this.assertSyncActive(runId);
-          if (cursors.has(cursor)) {
-            throw new DirectHistoryError("pagination_stalled", `${TYPE_LABELS[type]}分页游标重复，已停止且未保存本次结果。`);
+        try {
+          while (true) {
+            this.assertSyncActive(runId);
+            if (cursors.has(cursor)) {
+              throw new DirectHistoryError("pagination_stalled", `${TYPE_LABELS[type]}分页游标重复，已停止且未保存本次结果。`);
+            }
+            cursors.add(cursor);
+            const payload = await retryBadPage(() => this.readDirectHistory(context, cursor));
+            this.assertSyncActive(runId);
+            const result = accumulator.addResponse(endpoint, payload);
+            trackResult(type, result);
+            pageCounts[type] += 1;
+            if (type === "watch_history") missingViewTimes += countMissingDirectHistoryViewTimes(payload);
+            if (result.pageFingerprint && pageFingerprints.has(result.pageFingerprint)) {
+              throw new DirectHistoryError("pagination_stalled", `${TYPE_LABELS[type]}分页内容重复，已停止且未保存本次结果。`);
+            }
+            if (result.pageFingerprint) pageFingerprints.add(result.pageFingerprint);
+            if (accumulator.isTruncated(type)) {
+              throw new DirectHistoryError("record_limit", `${TYPE_LABELS[type]}响应超过本地安全容量，已停止且未保存本次结果。`);
+            }
+            this.updateStatus({
+              phase: type,
+              message: progressMessage(type, pageCounts[type]),
+              counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
+              newRecords: newRecordsStatus(),
+            });
+            await persistProgress(type);
+            if (result.recordIds.some((id) => knownIds.get(type).has(id))) break;
+            if (result.pagination.hasMore === false) break;
+            if (result.pagination.hasMore !== true || !result.pagination.cursor) {
+              throw new DirectHistoryError("pagination_missing", `${TYPE_LABELS[type]}响应缺少下一页游标，已停止且未保存本次结果。`);
+            }
+            cursor = result.pagination.cursor;
+            await delay(900);
+            await this.yieldToForeground(() => runId !== this.syncRunId);
           }
-          cursors.add(cursor);
-          const payload = await this.readDirectHistory(context, cursor);
-          this.assertSyncActive(runId);
-          const result = accumulator.addResponse(endpoint, payload);
-          trackResult(type, result);
-          pageCounts[type] += 1;
-          if (type === "watch_history") missingViewTimes += countMissingDirectHistoryViewTimes(payload);
-          if (result.pageFingerprint && pageFingerprints.has(result.pageFingerprint)) {
-            throw new DirectHistoryError("pagination_stalled", `${TYPE_LABELS[type]}分页内容重复，已停止且未保存本次结果。`);
-          }
-          if (result.pageFingerprint) pageFingerprints.add(result.pageFingerprint);
-          if (accumulator.isTruncated(type)) {
-            throw new DirectHistoryError("record_limit", `${TYPE_LABELS[type]}响应超过本地安全容量，已停止且未保存本次结果。`);
-          }
-          this.updateStatus({
-            phase: type,
-            message: progressMessage(type, pageCounts[type]),
-            counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
-            newRecords: newRecordsStatus(),
-          });
-          await persistProgress(type);
-          if (result.recordIds.some((id) => knownIds.get(type).has(id))) break;
-          if (result.pagination.hasMore === false) break;
-          if (result.pagination.hasMore !== true || !result.pagination.cursor) {
-            throw new DirectHistoryError("pagination_missing", `${TYPE_LABELS[type]}响应缺少下一页游标，已停止且未保存本次结果。`);
-          }
-          cursor = result.pagination.cursor;
-          await delay(900);
-          await this.yieldToForeground(() => runId !== this.syncRunId);
+        } catch (error) {
+          await skipType(type, error, pageCounts[type], phaseIndex === phases.length - 1);
+          continue;
         }
         await persistCompletedType(type, phaseIndex === phases.length - 1);
       }
@@ -2041,7 +2058,7 @@ export class DouyinCollector {
         message: (allIncremental
           ? `已读取新增记录（观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}${liveAdded > 0 ? `、直播 ${liveAdded}` : ""}${repliesAdded > 0 ? `、评论回复 ${repliesAdded}` : ""}）`
           : `已读取并合并全部可见记录（观看 ${stagedRecords.watch_history.length}、点赞 ${stagedRecords.liked_videos.length}、收藏 ${stagedRecords.favorite_videos.length}）`)
-          + (skipped.length ? `；${skipped.map(({ kind }) => TYPE_LABELS[kind]).join("、")}这次没读到` : ""),
+          + (skipped.length ? `；${skipped.map(({ kind, pages }) => `${TYPE_LABELS[kind]}${pages ? "没读完" : "这次没读到"}`).join("、")}` : ""),
         counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
         updatedAt: this.snapshot.updatedAt,
       });
