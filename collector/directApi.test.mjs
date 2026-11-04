@@ -279,6 +279,14 @@ describe("direct list pagination", () => {
     expect(await api.collectRecordPages("liked_videos", () => false)).toBe(1);
     expect(context.fetch).toHaveBeenCalledTimes(1); await api.close();
   });
+  it("retries one bad page once and treats a null last page as the end", async () => {
+    let calls = 0;
+    const { api, context } = client(() => (++calls === 1 ? { status: 502, payload: {} } : { status_code: 0, aweme_list: null, has_more: 0, cursor: "0" }));
+    const onPage = vi.fn();
+    expect(await api.collectRecordPages("favorite_videos", onPage)).toBe(1);
+    expect(context.fetch).toHaveBeenCalledTimes(2);
+    expect(onPage.mock.calls[0][0].aweme_list).toEqual([]); await api.close();
+  });
   it("rejects a repeated cursor instead of looping", async () => {
     const { api, context } = client(() => ({ status_code: 0, aweme_list: [], has_more: 1, max_cursor: "0" }));
     await expect(api.collectRecordPages("liked_videos", () => true)).rejects.toMatchObject({ code: "pagination_stalled" });
