@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { Check, Info } from "lucide-react-native";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Check, Download, Info } from "lucide-react-native";
+import { toCsv } from "../../domain/creatorCenter";
 import { readCreator, type CreatorData, type CreatorQuery } from "../../services/creatorCenter";
 import type { ExploreConnection } from "../../services/explorer";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -120,6 +121,29 @@ export function SmallButton({ label, onPress, disabled = false, done = false, ch
     {done ? <View {...fx({ motion: "pop" })} style={styles.doneMark}><View {...fx({ motion: "burst" })} style={styles.burst} /><Check size={14} color={color.accent} strokeWidth={2.6} /></View> : children}
     <Text style={styles.smallButtonText}>{label}</Text>
   </Pressable>;
+}
+
+/** 导出表格：点了现取数据拼行，存成 CSV。只在网页/桌面端显示。 */
+export function ExportButton({ build }: { build: () => Promise<{ fileName: string; rows: unknown[][] }> }) {
+  const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
+  if (Platform.OS !== "web") return null;
+  const run = async () => {
+    setState("busy");
+    try {
+      const { fileName, rows } = await build();
+      const url = URL.createObjectURL(new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" }));
+      const link = Object.assign(document.createElement("a"), { href: url, download: fileName });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setState("done");
+    } catch {
+      setState("error");
+    }
+  };
+  const label = state === "busy" ? "正在导出…" : state === "error" ? "导出失败，再试一次" : "导出表格";
+  return <SmallButton label={label} disabled={state === "busy"} done={state === "done"} onPress={() => void run()}><Download size={14} color={color.text} /></SmallButton>;
 }
 
 /** 名次 + 名称 + 值的两列表（地域、兴趣、热词、搜索词这类）。 */

@@ -4,12 +4,12 @@ import { ArrowUpRight, ChartColumn, Lock, RefreshCw, Search, UserRound } from "l
 import {
   dashboardCardValue, dashboardMetrics, DASHBOARD_CARDS, DASHBOARD_DEFAULT, dcCount, dcValue, DIAGNOSIS, diagnosisBlock, diagnosisSentence,
   fansDistribution, fullTime, LIVE_TABS, listCount, listDuration, listMetricSet, listMetricsHidden, listRate, periodText, RADAR_AXES,
-  STATUS_TONE, workStatus, WORK_STATUS_FILTER, WORK_TYPE_FILTER, GENDER_NAMES, type DiagnosisKey,
+  STATUS_TONE, workStatus, WORK_STATUS_FILTER, WORK_TYPE_FILTER, GENDER_NAMES, csvRate, WORK_EXPORT_METRICS, type DiagnosisKey,
 } from "../../domain/creatorCenter";
 import { readCreator, type CreatorQuery } from "../../services/creatorCenter";
 import type { ExploreConnection } from "../../services/explorer";
 import { Bars, BarList, chartPalette, Donut, LineChart, Radar } from "./CreatorCharts";
-import { clearCreatorCache, Empty, ErrorLine, kit, Loading, MetricTile, Panel, Segmented, SmallButton, Tabs, useCreator, type Raw } from "./CreatorKit";
+import { clearCreatorCache, Empty, ErrorLine, ExportButton, kit, Loading, MetricTile, Panel, Segmented, SmallButton, Tabs, useCreator, type Raw } from "./CreatorKit";
 import { CreatorWorkDetail } from "./CreatorWorkDetail";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
@@ -20,6 +20,7 @@ type View_ = "data" | "works";
 const CREATOR_HOME = "https://creator.douyin.com/creator-micro/home";
 const pad = (value: number) => String(value).padStart(2, "0");
 const shortDate = (yyyymmdd: string) => `${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
+const today = () => new Date().toLocaleDateString("sv-SE");
 
 export function CreatorWorkspace({ connection, onOpenSettings, onOpenRecord }: Props) {
   const { width } = useWindowDimensions();
@@ -259,20 +260,21 @@ function FansPortrait({ connection, followers }: { connection: ExploreConnection
     ? <BarList rows={rows.slice(0, 6).map((row, index) => ({ label: ranked ? `${index + 1}  ${row.name}` : row.name, ratio: row.value, value: percent(row.value) }))} />
     : <Empty small />;
   const block = (title: string, body: React.ReactNode) => <View style={styles.portraitBlock}><Text style={kit.subhead}>{title}</Text>{body}</View>;
+  const groups = data ? portraitGroups(data) : null;
+  const keywords: Raw[] = Array.isArray(data?.fans_portrait?.like_item_keyword) ? data!.fans_portrait.like_item_keyword : [];
+  const anything = Boolean(groups && Object.values(groups).some((rows) => rows.some((row) => row.value > 0)));
+  const exportPortrait = async () => {
+    const rows: unknown[][] = [["维度", "项目", "数值"]];
+    for (const [title, list] of Object.entries(groups ?? {})) for (const row of list) rows.push([title, row.name, `${row.value.toFixed(1)}%`]);
+    if (followers >= 1000) for (const row of keywords) rows.push(["粉丝关注", row.name, `热度${row.value}`]);
+    return { fileName: `抖音粉丝画像_${today()}.csv`, rows };
+  };
   let body: React.ReactNode;
   if (!open) body = <Empty lines={["粉丝数达到300可查看粉丝画像，积极创作吸引更多粉丝吧", "粉丝数首次达到300，数据次日计算产出"]} />;
   else if (summary.error) body = <Empty text={summary.error || "粉丝画像加载失败，请稍后重试"} />;
-  else if (!data) body = <Loading />;
+  else if (!groups) body = <Loading />;
   else {
-    const gender = fansDistribution(data.gender_distribution, "normalize", GENDER_NAMES).sort((a, b) => ["男性", "女性"].indexOf(a.name) - ["男性", "女性"].indexOf(b.name));
-    const activeOrder = ["重度", "中度", "轻度", "静默", "低活", "未知"];
-    const active = fansDistribution(data.active_levels).sort((a, b) => (activeOrder.indexOf(a.name) + 99) % 99 - (activeOrder.indexOf(b.name) + 99) % 99);
-    const age = fansDistribution(data.age_distribution, "age");
-    const device = fansDistribution(data.device_brand_distribution).sort((a, b) => b.value - a.value);
-    const city = fansDistribution(data.city_distribution, "raw");
-    const interest = fansDistribution(data.fans_interest_distribution, "raw");
-    const keywords: Raw[] = Array.isArray(data.fans_portrait?.like_item_keyword) ? data.fans_portrait.like_item_keyword : [];
-    const anything = [gender, active, age, device, city, interest].some((rows) => rows.some((row) => row.value > 0));
+    const { 性别分布: gender, 活跃度分布: active, 年龄分布: age, 设备分布: device, 地域分布: city, 粉丝兴趣: interest } = groups;
     body = !anything ? <Empty text="暂无粉丝画像数据" /> : <View style={styles.portraitGrid}>
       {block("性别分布", gender.some((row) => row.value > 0) ? <Donut slices={gender.map((row) => ({ label: row.name, value: row.value }))} /> : <Empty small />)}
       {block("活跃度分布", active.some((row) => row.value > 0) ? <Donut slices={active.map((row) => ({ label: row.name, value: row.value }))} /> : <Empty small />)}
@@ -285,7 +287,19 @@ function FansPortrait({ connection, followers }: { connection: ExploreConnection
         : <Empty small text="暂无热词分析数据" />)}
     </View>;
   }
-  return <Panel title="粉丝画像">{body}</Panel>;
+  return <Panel title="粉丝画像" extra={anything ? <ExportButton build={exportPortrait} /> : null}>{body}</Panel>;
+}
+
+function portraitGroups(data: Raw) {
+  const activeOrder = ["重度", "中度", "轻度", "静默", "低活", "未知"];
+  return {
+    性别分布: fansDistribution(data.gender_distribution, "normalize", GENDER_NAMES).sort((a, b) => ["男性", "女性"].indexOf(a.name) - ["男性", "女性"].indexOf(b.name)),
+    活跃度分布: fansDistribution(data.active_levels).sort((a, b) => (activeOrder.indexOf(a.name) + 99) % 99 - (activeOrder.indexOf(b.name) + 99) % 99),
+    年龄分布: fansDistribution(data.age_distribution, "age"),
+    设备分布: fansDistribution(data.device_brand_distribution).sort((a, b) => b.value - a.value),
+    地域分布: fansDistribution(data.city_distribution, "raw"),
+    粉丝兴趣: fansDistribution(data.fans_interest_distribution, "raw"),
+  };
 }
 
 // ---------------- 作品管理 ----------------
@@ -398,12 +412,31 @@ function WorkList({ connection, onOpenWork }: { connection: ExploreConnection; o
     void readCreator(connection, [{ key: "work_list", params: { status: 0, count: 1, max_cursor: 0 } }]).then(([payload]) => setTotal(Number(payload?.total) || 0), () => {});
   }, []);
 
+  // 导出不管当前筛选，翻完全部作品。ponytail: 最多 100 页（4000 条），作品更多的号再放开
+  const exportWorks = async () => {
+    const all: WorkCard[] = [];
+    let max: string | number = 0;
+    for (let page = 0; page < 100; page += 1) {
+      const [payload] = await readCreator(connection, [{ key: "work_list", params: { status: 0, count: 40, max_cursor: max } }]);
+      if (!payload || (payload.status_code ?? 0) !== 0) throw new Error(payload?.status_msg || "作品加载失败");
+      all.push(...workCards(payload));
+      if (!payload.has_more || String(payload.max_cursor) === String(max)) break;
+      max = payload.max_cursor;
+    }
+    // 用链接不用纯数字 ID：19 位 ID 进 Excel 会被截成科学计数法
+    const rows = all.map((card) => [
+      `https://www.douyin.com/${card.badge?.endsWith("张") ? "note" : "video"}/${card.id}`, card.time ? fullTime(card.time) : "", card.desc, card.status.label, card.badge ?? "",
+      ...WORK_EXPORT_METRICS.map((metric) => (card.hidden ? "" : metric.kind === "rate" ? csvRate(card.metrics?.[metric.key]) : card.metrics?.[metric.key] ?? "")),
+    ]);
+    return { fileName: `抖音作品数据_${today()}.csv`, rows: [["作品链接", "发布时间", "作品描述", "状态", "时长/图片数", ...WORK_EXPORT_METRICS.map((metric) => metric.label)], ...rows] };
+  };
+
   const shown = keyword.trim() ? cards.filter((card) => card.desc.includes(keyword.trim())) : cards;
   const toggleType = (value: number) => {
     setTypes((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
     setSort("time");
   };
-  return <Panel title={total ? `作品 (${total})` : "作品"}>
+  return <Panel title={total ? `作品 (${total})` : "作品"} extra={<ExportButton build={exportWorks} />}>
     <View style={{ gap: 10 }}>
       <View style={kit.row}><Text style={kit.muted}>审核状态</Text><Segmented small options={WORK_STATUS_FILTER} value={status} onChange={(value) => { setStatus(value); if (value) setSort("time"); }} /></View>
       <View style={kit.row}><Text style={kit.muted}>体裁</Text>
