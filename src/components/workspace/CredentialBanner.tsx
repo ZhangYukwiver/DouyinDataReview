@@ -20,6 +20,24 @@ export function CredentialBanner({ onDismiss, onLogin }: { onDismiss: () => void
   );
 }
 
+/** 下载站 notice.json 里的公告，和登录失效条同一个样子；一次只挂一条，点「知道了」这条就不再出现 */
+export function SiteNoticeBanner({ text, url, onDismiss, onOpen }: { text: string; url: string | null; onDismiss: () => void; onOpen: (url: string) => void }) {
+  return (
+    <View accessibilityLiveRegion="polite" style={styles.bar} testID="site-notice-banner">
+      <View style={[styles.dot, { backgroundColor: color.button }]} />
+      <Text selectable style={styles.text}>{text}</Text>
+      {url ? (
+        <Pressable accessibilityRole="link" onPress={() => onOpen(url)} style={[styles.button, pointer]} testID="site-notice-open">
+          <Text style={styles.label}>查看详情</Text>
+        </Pressable>
+      ) : null}
+      <Pressable accessibilityRole="button" onPress={onDismiss} style={[styles.button, pointer]} testID="site-notice-dismiss">
+        <Text style={styles.label}>知道了</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   bar: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: color.border, backgroundColor: color.amberSoft },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.danger },

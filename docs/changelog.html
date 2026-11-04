@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>更新日志 · DouyinDataReview</title>
+<meta name="description" content="DouyinDataReview 每个版本改了什么，新版本在前。">
+<link rel="canonical" href="https://zhangyukwiver.github.io/DouyinDataReview/changelog.html">
+<link rel="icon" href="icon.png">
+<style>
+:root{--bg:#f6f4ef;--card:#fff;--ink:#1c1b19;--sub:#6b675f;--line:#e4e0d6;--accent:#cc2b45;--code:#f0ede5}
+@media (prefers-color-scheme:dark){:root{--bg:#141412;--card:#1e1d1a;--ink:#eeebe3;--sub:#a29d92;--line:#33312c;--accent:#ff5570;--code:#2a2925}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+main{max-width:880px;margin:0 auto;padding:48px 16px 64px}
+h1{margin:0;font-size:30px;line-height:1.3}
+h2{margin:36px 0 0;font-size:20px;overflow-wrap:anywhere}
+.sub{margin:4px 0 0;color:var(--sub);font-size:14px}
+ul{margin:8px 0 0;padding-left:1.2em}
+code{background:var(--code);border-radius:4px;padding:0 4px;font-size:.9em}
+a{color:var(--accent)}
+:focus-visible{outline:3px solid var(--accent);outline-offset:4px}
+footer{margin-top:48px;font-size:14px;color:var(--sub)}
+</style>
+</head>
+<body>
+<main>
+<p class="sub"><a href="./">← 下载与常见问题</a></p>
+<h1>更新日志</h1>
+<p class="sub" id="state">正在从 GitHub 读取发布记录。打不开的话可以直接去 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases">GitHub 发布页</a>看。</p>
+<div id="list"></div>
+<footer>更早的版本见 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases">GitHub 发布页</a>。</footer>
+</main>
+<script>
+const REPO = 'ZhangYukwiver/DouyinDataReview';
+const state = document.getElementById('state');
+const el = (tag, text) => Object.assign(document.createElement(tag), {textContent: text});
+
+// html+json 让 GitHub 直接给渲染好、已过滤的正文 HTML，页面不用自带 Markdown 解析
+fetch(`https://api.github.com/repos/${REPO}/releases?per_page=20`, {headers: {Accept: 'application/vnd.github.html+json'}})
+  .then(r => r.ok ? r.json() : Promise.reject())
+  .then(releases => {
+    const list = document.getElementById('list');
+    for (const release of releases) {
+      const body = document.createElement('template');
+      body.innerHTML = release.body_html || '';
+      // 正文开头是「vX 标题」加改动列表；后面的验证范围和安装说明每版都一样，不搬过来
+      const head = [...body.content.querySelectorAll('h2')].find(h => /^v\d/.test(h.textContent));
+      const notes = head?.nextElementSibling?.tagName === 'UL' ? head.nextElementSibling : el('p', '这一版没有单独写更新说明。');
+      const title = el('h2', head ? head.textContent : release.tag_name);
+      title.id = release.tag_name;
+      const date = el('p', `${release.published_at.slice(0, 10)} 发布 · `);
+      date.className = 'sub';
+      date.append(Object.assign(el('a', '发布页与安装包'), {href: release.html_url}));
+      list.append(title, date, notes);
+    }
+    state.remove();
+    if (location.hash) document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
+  })
+  .catch(() => { state.firstChild.textContent = '暂时连不上 GitHub，可以直接去 '; });
+</script>
+</body>
+</html>

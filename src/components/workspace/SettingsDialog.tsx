@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Image, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { Check, Copy, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
@@ -59,6 +59,8 @@ export interface SettingsDialogProps {
   onCheckAppUpdate: () => Promise<void>;
   onDownloadAppUpdate: () => Promise<void>;
   onInstallAppUpdate: () => Promise<void>;
+  /** 下载站 notice.json 里的问卷地址；没填或读不到就只写 QQ 群 */
+  feedbackUrl?: string | null;
   browserConnection?: Omit<BrowserConnectionPanelProps, "visible" | "blocked">;
   /** 桌面版：登录在采集器页首屏，设置里只放一个过去的按钮，不再开第二个登录面板 */
   onShowLogin?: () => void;
@@ -750,13 +752,14 @@ function McpAccess({ appStyle, connection }: { appStyle: AppStyle; connection: {
   );
 }
 
-function About({ appStyle, appUpdate, installBlocked = false, onCheckAppUpdate, onDownloadAppUpdate, onInstallAppUpdate }: SettingsDialogProps) {
+function About({ appStyle, appUpdate, feedbackUrl = null, installBlocked = false, onCheckAppUpdate, onDownloadAppUpdate, onInstallAppUpdate }: SettingsDialogProps) {
   const feedback = (
     <View style={styles.row}>
       <View style={styles.copy}>
         <Text style={styles.rowTitle}>反馈渠道</Text>
-        <Text selectable style={styles.detail} testID="settings-feedback">遇到问题或想交流，可以加 QQ 群「DDDouyin」，群号 1124211302；也可以直接加 QQ 940537208。</Text>
+        <Text selectable style={styles.detail} testID="settings-feedback">遇到问题或想交流，可以加 QQ 群「DDDouyin」，群号 1124211302；也可以直接加 QQ 940537208。{feedbackUrl ? "不方便进群的话，也可以填反馈问卷。" : ""}</Text>
       </View>
+      {feedbackUrl ? <Button appStyle={appStyle} label="填写问卷" onPress={() => void Linking.openURL(feedbackUrl).catch(() => undefined)} testID="settings-feedback-survey" /> : null}
     </View>
   );
   const releaseNotes = RELEASE_NOTES.length > 0 && (

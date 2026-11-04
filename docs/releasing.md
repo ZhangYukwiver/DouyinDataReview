@@ -22,3 +22,19 @@ node scripts/verify-release-package.mjs release/win-unpacked/resources
 ```
 
 此校验不需要抖音账号、浏览器登录态或历史数据。线上站点登录、风控或接口变化仍需实际用户会话验证；CI 确保回归测试通过并且修复进入可下载的安装器。
+
+## 公告与反馈问卷
+
+`docs/notice.json` 随 GitHub Pages 发布，改完合并进 `main` 几分钟后生效，不用发版。桌面版每次启动读一次，读不到就不显示；下载页的「交流与反馈」也读它。
+
+```json
+{
+  "feedbackUrl": "https://问卷地址",
+  "notices": [
+    { "id": "2026-11-mac-sync", "text": "Mac 上读取聊天会卡住，1.38.0 已修复，请更新。", "url": "https://zhangyukwiver.github.io/DouyinDataReview/changelog.html#v1.38.0", "fixedIn": "1.38.0" }
+  ]
+}
+```
+
+- `feedbackUrl`：设置 → 关于和下载页的「填写问卷」按钮，空着就不显示。只认 https 链接。
+- `notices`：工作台顶上一次挂一条，用户点「知道了」后这条编号不再出现，所以改了内容要换一个新的 `id`。`url` 可选；写了 `fixedIn` 的条目，用户的版本到了那一版就不再显示。
