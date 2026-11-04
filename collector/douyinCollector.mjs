@@ -56,9 +56,9 @@ const SELF_PROFILE_URL = "https://www.douyin.com/user/self";
 const LOGIN_COOKIE_NAMES = new Set(["sessionid", "sessionid_ss", "sid_tt", "sid_guard"]);
 const REQUIRED_TYPES = ["watch_history", "liked_videos", "favorite_videos"];
 const TYPE_LABELS = { watch_history: "观看历史", liked_videos: "点赞列表", favorite_videos: "收藏列表" };
-// 点赞、收藏单个接口给的东西用不了时只跳过这一类（抖音桌面端的登录态读点赞就回空响应）；
+// 某一类接口给的东西用不了、或者翻不下去时只跳过这一类（抖音桌面端的登录态读点赞就回空响应）；
 // 登录失效、限流、要验证这些是整个会话的问题，照旧停下
-const SKIPPABLE_LIST_ERRORS = new Set(["invalid_json", "schema_changed", "http_error"]);
+const SKIPPABLE_LIST_ERRORS = new Set(["invalid_json", "schema_changed", "http_error", "pagination_stalled", "pagination_missing"]);
 const ENDPOINT_ACTIVATION_WAIT_MS = 8_000;
 const MAX_CHAT_MESSAGES = 100_000;
 // ponytail: bound a broken cursor chain while still allowing the 100k-message
@@ -2058,7 +2058,7 @@ export class DouyinCollector {
         message: (allIncremental
           ? `已读取新增记录（观看 ${newCounts.watch_history}、点赞 ${newCounts.liked_videos}、收藏 ${newCounts.favorite_videos}${liveAdded > 0 ? `、直播 ${liveAdded}` : ""}${repliesAdded > 0 ? `、评论回复 ${repliesAdded}` : ""}）`
           : `已读取并合并全部可见记录（观看 ${stagedRecords.watch_history.length}、点赞 ${stagedRecords.liked_videos.length}、收藏 ${stagedRecords.favorite_videos.length}）`)
-          + (skipped.length ? `；${skipped.map(({ kind, pages }) => `${TYPE_LABELS[kind]}${pages ? "没读完" : "这次没读到"}`).join("、")}` : ""),
+          + skipped.map(({ kind, message, pages }) => `；${TYPE_LABELS[kind]}${pages ? `在第 ${pages + 1} 页停下了` : "这次没读到"}（${message.replace(/。$/u, "")}）`).join(""),
         counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
         updatedAt: this.snapshot.updatedAt,
       });

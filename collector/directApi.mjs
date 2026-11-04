@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { request as playwrightRequest } from "playwright-core";
-import { DIRECT_API_PATHS, SAFE_TEMPLATE_PARAMETERS, DirectHistoryError, fillEmptyLastPage, retryBadPage, signDirectApiUrl } from "./directHistory.mjs";
+import { DIRECT_API_PATHS, SAFE_TEMPLATE_PARAMETERS, DirectHistoryError, fillEmptyPage, retryBadPage, signDirectApiUrl } from "./directHistory.mjs";
 import { CREATOR_ENDPOINTS } from "./creatorCenter.mjs";
 import { validateDirectCredentials } from "./directCredentials.mjs";
 
@@ -306,7 +306,7 @@ export class DirectApiClient {
         body: liked ? null : { count: "10", cursor }, signal,
         referer: `${ORIGIN}/user/self?showTab=${liked ? "like" : "favorite_collection"}`,
       });
-      const payload = fillEmptyLastPage(await retryBadPage(ask, signal));
+      const payload = fillEmptyPage(await retryBadPage(ask, signal));
       const data = payload.data ?? payload;
       const more = [1, "1", true].includes(data.has_more) ? true : [0, "0", false].includes(data.has_more) ? false : null;
       if (!Array.isArray(data.aweme_list)) throw new DirectHistoryError("schema_changed", "列表响应缺少作品数据。");

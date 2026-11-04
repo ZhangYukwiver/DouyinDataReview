@@ -937,7 +937,7 @@ describe("DouyinCollector direct records", () => {
     const collector = setup(new DirectHistoryError("invalid_json", "抖音接口没有返回有效 JSON。"));
     await collector.runDirectRecords(1);
     expect(collector.status.state).toBe("complete");
-    expect(collector.status.message).toContain("点赞列表这次没读到");
+    expect(collector.status.message).toContain("点赞列表这次没读到（抖音接口没有返回有效 JSON）");
     expect(collector.snapshot.records.liked_videos.map((record) => record.videoId)).toEqual(["liked-old"]);
     expect(collector.snapshot.records.favorite_videos.map((record) => record.videoId)).toEqual(["favorite-new"]);
     expect(collector.snapshot.directSync).toEqual({ watch_history: true, liked_videos: false, favorite_videos: true });
@@ -954,7 +954,7 @@ describe("DouyinCollector direct records", () => {
     await partial.runDirectRecords(1, { full: true });
     expect(partial.snapshot.records.favorite_videos.map((record) => record.videoId)).toEqual(["favorite-1"]);
     expect(partial.snapshot.directSync.favorite_videos).toBe(false);
-    expect(partial.status.message).toContain("收藏列表没读完");
+    expect(partial.status.message).toContain("收藏列表在第 2 页停下了（列表响应缺少作品数据）");
     expect(partial.snapshot.warnings).toContain("收藏列表读到第 2 页出错，已读到的先留下了，下次读取会再从头读一遍：列表响应缺少作品数据。");
 
     // 登录失效是整个会话的问题，不能当成「这一类读不到」跳过去
@@ -987,7 +987,7 @@ describe("DouyinCollector direct records", () => {
     expect(collector.snapshot.records.watch_history.map((record) => record.videoId)).toEqual(["watch-0", "watch-1"]);
     expect(collector.snapshot.records.favorite_videos.map((record) => record.videoId)).toEqual(["favorite_videos-1"]);
     expect(collector.snapshot.directSync).toEqual({ watch_history: false, liked_videos: true, favorite_videos: true });
-    expect(collector.status.message).toContain("观看历史没读完");
+    expect(collector.status.message).toContain("观看历史在第 3 页停下了（观看历史响应缺少作品列表）");
     expect(collector.snapshot.warnings).toContain("观看历史读到第 3 页出错，已读到的先留下了，下次读取会再从头读一遍：观看历史响应缺少作品列表。");
   });
 
@@ -1242,8 +1242,8 @@ describe("DouyinCollector direct records", () => {
     expect(store.save).toHaveBeenCalledTimes(3);
   });
 
-  it("does not save when direct pagination repeats a cursor", async () => {
-    const store = { save: vi.fn() };
+  it("keeps what was read and moves on when watch history repeats a cursor", async () => {
+    const store = mockStore("2026-08-13T00:00:00.000Z");
     const page = { evaluate: vi.fn(async () => "Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36"), goto: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => [page]), newPage: vi.fn(async () => page) };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
@@ -1258,9 +1258,11 @@ describe("DouyinCollector direct records", () => {
       max_cursor: "1700000000000",
     }));
 
-    await expect(collector.runDirectRecords(1)).rejects.toMatchObject({ code: "pagination_stalled" });
-    expect(collector.readDirectHistory).toHaveBeenCalledTimes(2);
-    expect(store.save).not.toHaveBeenCalled();
+    await collector.runDirectRecords(1);
+    expect(collector.readDirectHistory.mock.calls.filter(([, , options]) => !options?.completedOnly)).toHaveLength(2);
+    expect(collector.snapshot.records.watch_history.map((record) => record.videoId)).toEqual(["history-new"]);
+    expect(collector.snapshot.directSync.watch_history).toBe(false);
+    expect(collector.collectDirectList).toHaveBeenCalledTimes(2);
     expect(context.close).not.toHaveBeenCalled();
   });
 
