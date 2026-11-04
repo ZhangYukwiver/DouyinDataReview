@@ -29,5 +29,8 @@ contextBridge.exposeInMainWorld("desktopRuntime", Object.freeze({
   getOpenAtLogin: () => ipcRenderer.invoke("desktop:get-open-at-login"),
   setOpenAtLogin: (enabled) => ipcRenderer.invoke("desktop:set-open-at-login", enabled === true),
   sendToReelLab: (request) => ipcRenderer.invoke("desktop:send-to-reellab", request),
+  getVideoDownloadDirectory: () => ipcRenderer.invoke("desktop:get-video-download-directory"),
+  chooseVideoDownloadDirectory: () => ipcRenderer.invoke("desktop:choose-video-download-directory"),
+  openVideoDownloadDirectory: () => ipcRenderer.invoke("desktop:open-video-download-directory"),
   startExtensionDrag: () => ipcRenderer.send("desktop:start-extension-drag"),
 }));

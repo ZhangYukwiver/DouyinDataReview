@@ -3,6 +3,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
 import { createVideoBatchZip, loadBatchVideoFile, runVideoBatch, type BatchItem } from "../../services/batchVideoDownload";
+import { isDesktopApp } from "../../desktopRuntime";
 import { noteAchievementWorks } from "./achievements";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
@@ -103,7 +104,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
         </ScrollView>
         {stopping ? <Text accessibilityLiveRegion="polite" style={styles.hint}>正在完成当前视频，之后停止；已完成的视频仍可保存。</Text> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-        {saved ? <Text accessibilityLiveRegion="polite" style={styles.meta}>已发起 ZIP 保存，请在浏览器下载列表中查看。</Text> : null}
+        {saved ? <Text accessibilityLiveRegion="polite" style={styles.meta}>{isDesktopApp() ? "ZIP 已存到视频下载位置（设置 → 数据里可以打开或更改）。" : "已发起 ZIP 保存，请在浏览器下载列表中查看。"}</Text> : null}
         <View style={styles.actions}>
           {running ? <Button label={stopping ? "正在停止…" : "停止后续下载"} disabled={stopping} onPress={stopQueue} /> : (pending || failed) && !full ? <Button label={complete || failed ? (pending ? "继续未完成" : "重试失败项") : "开始下载"} disabled={packing} onPress={() => void start()} primary /> : null}
           {complete > 0 ? <Button label={packing ? "正在打包…" : `保存 ZIP（${complete} 个 · ${(bytes / 1024 / 1024).toFixed(1)} MB）`} disabled={running || packing} onPress={() => void save()} primary /> : null}

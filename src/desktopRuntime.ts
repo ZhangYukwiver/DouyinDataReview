@@ -46,6 +46,9 @@ interface DesktopRuntimeBridge {
   setOpenAtLogin?(enabled: boolean): Promise<unknown>;
   sendToReelLab?(request: ReelLabHandoff): Promise<unknown>;
   startExtensionDrag?(): void;
+  getVideoDownloadDirectory?(): Promise<unknown>;
+  chooseVideoDownloadDirectory?(): Promise<unknown>;
+  openVideoDownloadDirectory?(): Promise<unknown>;
 }
 
 /** 交给拆片工坊的一条视频：jobId 是采集器里已经下好的下载任务，文件由桌面外壳复制过去 */
@@ -224,6 +227,22 @@ export async function setDesktopOpenAtLogin(enabled: boolean): Promise<boolean |
   } catch {
     return null;
   }
+}
+
+/** 视频下载存到哪个文件夹；choose = 先弹框让用户选，答选完以后的位置。浏览器里、旧版外壳是 null（设置里不显示这一行） */
+export async function getDesktopVideoDownloadDirectory(choose = false): Promise<string | null> {
+  const runtime = getDesktopRuntime();
+  if (typeof runtime?.getVideoDownloadDirectory !== "function") return null;
+  try {
+    const value = await (choose ? runtime.chooseVideoDownloadDirectory?.() : runtime.getVideoDownloadDirectory());
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function openDesktopVideoDownloadDirectory(): void {
+  void getDesktopRuntime()?.openVideoDownloadDirectory?.()?.catch(() => undefined);
 }
 
 /** 能不能「送去拆片工坊」：只有带这个接口的桌面版外壳能，浏览器里打开时没有这个按钮 */
