@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   commentSelectOptions, commentTime, contentType, dashboardCardValue, dashboardMetrics, DASHBOARD_CARDS, dcCount, dcValue, detailDuration,
   detailMetric, diagnosisBlock, diagnosisSentence, durationText, listCount, listDuration, listMetricSet, listMetricsHidden, listRate,
-  normalizeComment, olderThanDays, periodText, playSources, portraitPercent, shortCount, workStatus,
+  normalizeComment, olderThanDays, periodText, playSources, portraitPercent, shortCount, workStatus, csvRate, toCsv,
 } from "./creatorCenter";
 
 // 期望值都来自 10-06 抓到的官方页面截图/文字（zzzz张 账号）或官方前端代码里的例子
@@ -150,5 +150,13 @@ describe("work detail", () => {
     });
     expect(comment).toMatchObject({ id: "1", name: "抖音用户", avatar: "b", isAuthor: true, likes: "1.2万", replyCount: 3 });
     expect(comment.replies[0]).toMatchObject({ id: "2", name: "x" });
+  });
+});
+
+describe("export", () => {
+  it("writes Excel-safe CSV", () => {
+    expect(toCsv([["标题", "数"], ['说"好",\n的', 3], ["=HYPERLINK(1)", null], ["-5 天", -5]]))
+      .toBe('\uFEFF标题,数\r\n"说""好"",\n的",3\r\n\'=HYPERLINK(1),\r\n\'-5 天,-5\r\n');
+    expect([csvRate(0.12345), csvRate("0"), csvRate(undefined), csvRate("x")]).toEqual(["12.35%", "0%", "", ""]);
   });
 });

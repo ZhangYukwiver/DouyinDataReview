@@ -339,6 +339,30 @@ export function listMetricSet(aweme: Raw): ListMetric[] {
   return [...BASE, C("收藏", "favorite_count"), R("完播率", "completion_rate"), R("2秒跳出率", "bounce_rate_2s"), C("吸粉量", "subscribe_count")];
 }
 
+/** 导出表格的指标列：四套卡片指标的并集，某条作品没有的那项留空。 */
+export const WORK_EXPORT_METRICS: ListMetric[] = [
+  ...BASE, C("收藏", "favorite_count"), C("弹幕", "danmaku_count"), C("吸粉量", "subscribe_count"),
+  R("完播率", "completion_rate"), R("2秒跳出率", "bounce_rate_2s"), R("封面点击率", "cover_click_rate"), R("平均播放占比", "avg_view_proportion"),
+  R("文案展开率", "description_spread_rate"), C("平均浏览图片数", "image_avg_view_count"), R("详情页进入率", "enter_detail_ratio"), R("文章完播率", "long_article_finish_ratio"),
+];
+
+/** 表格里的比率：0.1234 → 12.34%（Excel 会认成百分数）；缺值留空。 */
+export function csvRate(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "";
+  const n = Number(value);
+  return Number.isFinite(n) ? `${round(n * 100, 2)}%` : "";
+}
+
+/** CSV：带 BOM 让 Excel 认中文；文字以 = + - @ 开头时前面加 '，免得被表格软件当公式执行。 */
+export function toCsv(rows: unknown[][]): string {
+  const cell = (value: unknown) => {
+    let text = value === undefined || value === null ? "" : String(value);
+    if (typeof value === "string" && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  return `﻿${rows.map((row) => row.map(cell).join(",")).join("\r\n")}\r\n`;
+}
+
 /** 私密、审核中、未通过这些作品，官方整行指标显示 -。 */
 export function listMetricsHidden(aweme: Raw, metrics: Raw | undefined): boolean {
   if (!metrics) return true;
