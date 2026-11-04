@@ -38,7 +38,7 @@
       },
       "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-10-31",
+      "dateModified": "2026-11-04",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -101,7 +101,7 @@ html{scroll-padding-top:24px}
 <a href="./">DouyinDataReview 下载与项目介绍</a>
 <h1>抖音数据导出与年度报告使用指南</h1>
 <p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏和好友聊天记录保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
-<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-10-31">2026 年 10 月 31 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
+<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-11-04">2026 年 11 月 4 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
 <nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#coverage">数据范围</a><a href="#privacy">数据去向</a><a href="#sources">源码依据</a></nav>
 
 <h2 id="export">如何导出抖音观看历史和聊天记录？</h2>
@@ -155,6 +155,7 @@ html{scroll-padding-top:24px}
     <tr><th scope="row">采集与互动</th><td>向抖音请求本人可访问的记录；主动发送的消息、点赞、评论等提交至抖音</td><td>使用已导入的账号会话；未开启的读取类型不能继续联网读取；在应用里刷视频会像网页一样记进抖音观看历史；导出聊天时语音经抖音转成文字</td></tr>
     <tr><th scope="row">AI 助手（可选）</th><td>你的提问和它为回答查到的记录，发给你在「设置 → AI」填的模型接口，或本机的 Codex / Claude Code</td><td>默认不装；接口 Key 不写进数据目录；发私信、点赞、评论等操作每次都要你点「允许」</td></tr>
     <tr><th scope="row">本地报告</th><td>不需要发送原始记录到任何服务；统计在电脑完成</td><td>记录和汇总保存在当前设备；公开分享报告会暴露其中显示的内容</td></tr>
+    <tr><th scope="row">公告与反馈问卷</th><td>启动时从本项目下载站（zhangyukwiver.github.io）读一次公告文件；点「填写问卷」才打开第三方问卷页</td><td>读公告不带任何个人数据或记录；问卷里写什么、留不留联系方式由你决定，问卷服务按它自己的规则保存</td></tr>
     <tr><th scope="row">送去拆片工坊</th><td>先从抖音下载这条视频，再把视频文件和它的标题、作者、链接、时长复制进本机拆片工坊的收件箱</td><td>只在你点了之后发生，不经网络；图文作品送不了；拆片工坊怎么用这条视频由它自己说明</td></tr>
   </tbody>
 </table>

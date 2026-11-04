@@ -64,9 +64,9 @@ describe("desktop static server", () => {
     // 图片都是抖音的 https 地址或 data:；页面只嵌同源的内容年志
     expect(directives.find(([name]) => name === "img-src")).toEqual(["img-src", "'self'", "data:", "https:"]);
     expect(directives.find(([name]) => name === "frame-src")).toEqual(["frame-src", "'self'"]);
-    // HLS 播放器以 XHR 读直播清单和分片；只放行抖音直播 CDN。
+    // HLS 播放器以 XHR 读直播清单和分片，只放行抖音直播 CDN；另外只读下载站上的公告文件。
     expect(directives.find(([name]) => name === "connect-src")).toEqual([
-      "connect-src", "'self'", "http://127.0.0.1:*", "http://localhost:*", "https://douyincdn.com", "https://*.douyincdn.com",
+      "connect-src", "'self'", "http://127.0.0.1:*", "http://localhost:*", "https://douyincdn.com", "https://*.douyincdn.com", "https://zhangyukwiver.github.io",
     ]);
     expect(directives.find(([name]) => name === "script-src")).not.toContain("blob:");
   });

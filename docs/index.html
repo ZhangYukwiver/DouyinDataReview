@@ -270,6 +270,7 @@ footer{margin-top:48px;font-size:14px;color:var(--sub)}
 a{color:var(--accent)}
 .qq{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .qq img{width:140px;border-radius:8px}
+#survey .btn{display:inline-block;margin-left:8px;padding:6px 16px}
 </style>
 </head>
 <body>
@@ -282,7 +283,7 @@ a{color:var(--accent)}
   </div>
 </header>
 
-<nav aria-label="页面导航"><a href="#download">下载</a><a href="#features">功能与范围</a><a href="guide.html">使用指南</a><a href="#faq">常见问题</a><a href="https://github.com/ZhangYukwiver/DouyinDataReview">GitHub 源码</a></nav>
+<nav aria-label="页面导航"><a href="#download">下载</a><a href="#features">功能与范围</a><a href="guide.html">使用指南</a><a href="#faq">常见问题</a><a href="changelog.html">更新日志</a><a href="https://github.com/ZhangYukwiver/DouyinDataReview">GitHub 源码</a></nav>
 <h2 id="download">下载桌面版</h2>
 <p class="ver" id="ver">版本与校验值以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub 最新发布</a>为准。</p>
 <div class="grid">
@@ -383,6 +384,7 @@ a{color:var(--accent)}
   <img src="qq-group.jpg" alt="QQ 群二维码" loading="lazy">
   <p>QQ 群 DDDouyin，群号 1124211302<br>也可以直接加 QQ 940537208</p>
 </div>
+<p id="survey" hidden>不方便进群的话，遇到的问题和想要的功能也可以写进问卷：<a class="btn" href="">填写反馈问卷</a></p>
 
 <footer>
   开源项目，源码和历史版本都在 <a href="https://github.com/ZhangYukwiver/DouyinDataReview">GitHub</a>。
@@ -432,6 +434,13 @@ document.querySelectorAll('button.copy').forEach(b => b.onclick = () => {
   navigator.clipboard.writeText(document.getElementById(b.dataset.for).textContent).then(() => b.textContent = '已复制');
 });
 load();
+// 问卷地址写在 notice.json，应用的设置 → 关于也读这份；没填就不显示
+fetch('notice.json').then(r => r.json()).then(({feedbackUrl}) => {
+  if (!/^https:\/\//.test(feedbackUrl)) return;
+  const survey = document.getElementById('survey');
+  survey.querySelector('a').href = feedbackUrl;
+  survey.hidden = false;
+}).catch(() => {});
 </script>
 </body>
 </html>

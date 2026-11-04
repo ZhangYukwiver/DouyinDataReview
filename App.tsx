@@ -15,6 +15,7 @@ import {
   LegacyContentWorkspace,
   SettingsDialog,
   SetupWorkspace,
+  SiteNoticeBanner,
   StoryFrame,
   ensureThemeStyles,
   type LegacyWorkspaceViewKey,
@@ -105,6 +106,8 @@ import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./s
 import { sparkRenewJob } from "./src/services/sparkRenew";
 import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { getAssistant, type AssistantView } from "./src/services/assistant";
+import { loadDismissedNotices, loadSiteNotices, saveDismissedNotices, type SiteNotices } from "./src/services/siteNotice";
+import { RELEASE_NOTES } from "./src/components/workspace/releaseNotes";
 import { AssistantDock, AssistantWorkspace } from "./src/components/workspace/AssistantWorkspace";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
@@ -264,6 +267,17 @@ function AppContent() {
   // 「稍后」只收起这一次失效的提示，登录好了再失效还会出来
   const [loginNoticeHidden, setLoginNoticeHidden] = useState(false);
   useEffect(() => { if (!loginExpired) setLoginNoticeHidden(false); }, [loginExpired]);
+  // 启动时读一次下载站的公告和问卷地址；当前版本号取打进包里的本版更新说明（有测试保证等于 package.json）
+  const [siteNotices, setSiteNotices] = useState<SiteNotices | null>(null);
+  const [dismissedNotices, setDismissedNotices] = useState(loadDismissedNotices);
+  useEffect(() => { void loadSiteNotices(RELEASE_NOTES[0]?.version ?? "").then(setSiteNotices, () => undefined); }, []);
+  const siteNotice = siteNotices?.notices.find((item) => !dismissedNotices.includes(item.id)) ?? null;
+  const dismissSiteNotice = (id: string) => {
+    // 只留还挂在文件里的编号，免得记录越攒越多
+    const next = [...dismissedNotices.filter((item) => siteNotices?.notices.some((notice) => notice.id === item)), id];
+    setDismissedNotices(next);
+    saveDismissedNotices(next);
+  };
   const [collectorSnapshot, setCollectorSnapshot] = useState<CollectorSnapshot | null>(null);
   const [exportSnapshot, setExportSnapshot] = useState<CollectorSnapshot | null>(null);
   const [exportProgress, setExportProgress] = useState<{ completed: number; total: number } | null>(null);
@@ -1973,6 +1987,8 @@ function AppContent() {
       {/* 采集器页首屏自己就摆着扫码，不用再挂 */}
       {loginExpired && !loginNoticeHidden && activeView !== "sources"
         ? <CredentialBanner onLogin={openLogin} onDismiss={() => setLoginNoticeHidden(true)} /> : null}
+      {siteNotice && activeView !== "sources"
+        ? <SiteNoticeBanner text={siteNotice.text} url={siteNotice.url} onOpen={(url) => void Linking.openURL(url).catch(() => undefined)} onDismiss={() => dismissSiteNotice(siteNotice.id)} /> : null}
       {activeView === "sources" ? (
         <SetupWorkspace
           archive={archiveInfo}
@@ -2154,6 +2170,7 @@ function AppContent() {
         onCheckAppUpdate={checkForAppUpdates}
         onDownloadAppUpdate={downloadAppUpdate}
         onInstallAppUpdate={installAppUpdate}
+        feedbackUrl={siteNotices?.feedbackUrl ?? null}
         browserConnection={collectorToken && !isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
           onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined}
         onShowLogin={isDesktopApp() ? openLogin : undefined}
