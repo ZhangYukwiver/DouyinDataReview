@@ -154,10 +154,11 @@ export async function retryBadPage(ask, signal) {
   });
 }
 
-// 读到底的最后一页，抖音可能回 aweme_list: null，当成空页
-export function fillEmptyLastPage(payload) {
+// 抖音会回 aweme_list: null 的空页：读到底时 has_more=0；收藏多的账号翻到中间也会碰上一段（多是失效视频），
+// 这时 has_more=1，后面还有内容，要用它给的游标接着往后翻
+export function fillEmptyPage(payload) {
   const data = payload && typeof payload === "object" && "has_more" in payload ? payload : payload?.data;
-  if (data && typeof data === "object" && data.aweme_list == null && [0, "0", false].includes(data.has_more)) data.aweme_list = [];
+  if (data && typeof data === "object" && data.aweme_list == null && [0, 1, "0", "1", false, true].includes(data.has_more)) data.aweme_list = [];
   return payload;
 }
 
@@ -707,7 +708,7 @@ export async function fetchDirectHistoryPage({
     } catch {
       throw new DirectHistoryError("invalid_json", "观看历史接口没有返回有效 JSON。");
     }
-    validateDirectPayload(fillEmptyLastPage(payload), "观看历史");
+    validateDirectPayload(fillEmptyPage(payload), "观看历史");
     return payload;
   } catch (error) {
     throw context.sessionError?.(error) ?? error;

@@ -287,6 +287,16 @@ describe("direct list pagination", () => {
     expect(context.fetch).toHaveBeenCalledTimes(2);
     expect(onPage.mock.calls[0][0].aweme_list).toEqual([]); await api.close();
   });
+  it("follows the cursor past empty pages that still say has_more", async () => {
+    const pages = { 0: [{ aweme_id: "1" }], 10: null, 20: null, 30: [{ aweme_id: "4" }] };
+    const { api } = client((_url, request) => {
+      const cursor = Number(new URLSearchParams(request.data).get("cursor"));
+      return { status_code: 0, aweme_list: pages[cursor], has_more: cursor < 30 ? 1 : 0, cursor: String(cursor + 10) };
+    });
+    const seen = [];
+    expect(await api.collectRecordPages("favorite_videos", (payload) => { seen.push(payload.aweme_list.length); })).toBe(4);
+    expect(seen).toEqual([1, 0, 0, 1]); await api.close();
+  });
   it("rejects a repeated cursor instead of looping", async () => {
     const { api, context } = client(() => ({ status_code: 0, aweme_list: [], has_more: 1, max_cursor: "0" }));
     await expect(api.collectRecordPages("liked_videos", () => true)).rejects.toMatchObject({ code: "pagination_stalled" });
