@@ -134,7 +134,7 @@ export function validateExploreRequest(input) {
   if (input.kind === "replies" && (!/^\d{5,30}$/u.test(input.commentId ?? "") || typeof input.sessionId !== "string" || !input.sessionId))
     throw new ExploreError("invalid_request", "请从已加载的评论展开回复。", 400);
   return { kind: input.kind, query, id, ...(input.kind === "replies" ? { commentId: input.commentId } : {}),
-    ...(input.kind === "feed" ? { words: feedWords(input.words) } : {}) };
+    ...(input.kind === "feed" ? { words: feedWords(input.words), pickEvery: Number.isInteger(input.pickEvery) && input.pickEvery >= 0 && input.pickEvery <= 10 ? input.pickEvery : 3 } : {}) };
 }
 
 // 刷视频里想看的词条：最多 20 个，每个最多 30 字，去空去重

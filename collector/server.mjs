@@ -838,6 +838,8 @@ export async function startCollectorServer({
           await explorer.close(body.sessionIds);
           sendJson(response, 200, { ok: true });
         } else {
+          // 刷视频插词条的频率在设置里改，这里每批现读
+          if (operation === "read" && body?.kind === "feed") body.pickEvery = (await feedFilter.read()).pickEvery;
           const result = await explorer.run(body, operation, controller.signal);
           if (operation === "video") {
             response.once("close", () => void result.dispose());
@@ -981,23 +983,24 @@ export async function startCollectorServer({
       try {
         if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
           if (fromExtension) {
-            const { rules, mode, words, webPicks, remove } = await feedFilter.touch();
-            sendJson(response, 200, { rules, mode, words, webPicks, remove, version: feedExtensionVersion });
+            const { rules, mode, words, webPicks, pickEvery, remove } = await feedFilter.touch();
+            sendJson(response, 200, { rules, mode, words, webPicks, pickEvery, remove, version: feedExtensionVersion });
           } else {
             const value = await feedFilter.read();
-            sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, extension: extensionState(value) });
+            sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, pickEvery: value.pickEvery, extension: extensionState(value) });
           }
         } else if (request.method === "POST" && url.pathname === "/v1/feed-filter") {
           let body;
           try { body = await readJsonBody(request, 64 * 1024); } catch { body = null; }
           if (!body || (body.rules !== undefined && typeof body.rules !== "string") || (body.mode !== undefined && !FEED_FILTER_MODES.includes(body.mode))
             || (body.words !== undefined && (typeof body.words !== "string" || body.words.length > 2000))
-            || (body.webPicks !== undefined && typeof body.webPicks !== "boolean")) {
+            || (body.webPicks !== undefined && typeof body.webPicks !== "boolean")
+            || (body.pickEvery !== undefined && !(Number.isInteger(body.pickEvery) && body.pickEvery >= 0 && body.pickEvery <= 10))) {
             sendJson(response, 400, { error: "invalid_request" });
             return;
           }
           const value = await feedFilter.setSettings(body);
-          sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, extension: extensionState(value) });
+          sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, pickEvery: value.pickEvery, extension: extensionState(value) });
         } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/remove") {
           // 点了移除：扩展下次来对接（一分钟内）时自己卸载；remove=false 是取消
           let body;

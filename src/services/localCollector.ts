@@ -1266,6 +1266,8 @@ export interface FeedFilterSettings {
   mode: FeedFilterMode;
   words: string | null;
   webPicks: boolean;
+  /** 每几条推荐插一条词条视频（1–10），0 是只看词条 */
+  pickEvery: number;
   extension: FeedExtensionStatus;
 }
 export interface FeedFilterEvent {
@@ -1285,12 +1287,12 @@ function parseFeedExtension(value: unknown): FeedExtensionStatus {
 }
 
 /** 推荐流过滤的词条、过滤方式和扩展状态；带上 change 就是改 */
-export async function collectorFeedFilter(baseUrl: string, token: string, change?: Partial<Pick<FeedFilterSettings, "rules" | "mode" | "words" | "webPicks">>): Promise<FeedFilterSettings> {
+export async function collectorFeedFilter(baseUrl: string, token: string, change?: Partial<Pick<FeedFilterSettings, "rules" | "mode" | "words" | "webPicks" | "pickEvery">>): Promise<FeedFilterSettings> {
   const value = await requestJson(baseUrl, "/v1/feed-filter", change ? { method: "POST", body: JSON.stringify(change) } : {}, token);
   if (!isObject(value) || typeof value.rules !== "string" || !FEED_FILTER_MODES.includes(String(value.mode)))
     throw new LocalCollectorError("invalid_response", "采集服务没返回推荐流过滤的设置。");
   return { rules: value.rules, mode: value.mode as FeedFilterMode, words: typeof value.words === "string" ? value.words : null,
-    webPicks: value.webPicks === true, extension: parseFeedExtension(value.extension) };
+    webPicks: value.webPicks === true, pickEvery: typeof value.pickEvery === "number" ? value.pickEvery : 3, extension: parseFeedExtension(value.extension) };
 }
 
 /** 叫扩展下次来对接时把自己卸载掉；remove 为 false 是取消 */

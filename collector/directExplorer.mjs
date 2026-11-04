@@ -12,9 +12,10 @@ const cursorOf = (payload, kind, cursor) => kind === "feed" ? String(Number(curs
 const searchQuery = (channel, keyword, offset, count, searchId) => ({ search_channel: channel, keyword, search_source: "switch_tab", query_correct_type: "1",
   is_filter_search: "0", from_group_id: "", disable_rs: "0", offset, count, need_filter_settings: "0", list_type: "single", ...(searchId ? { search_id: searchId } : {}) });
 
-// 想看的词条混进推荐：每三条推荐后面插一条词条搜出来的视频，词条轮着来、各翻各的页。
+// 想看的词条混进推荐：每 pickEvery 条推荐（设置里选，默认 3）后面插一条词条搜出来的视频，词条轮着来、各翻各的页；
+// pickEvery 为 0 是只看词条：整批推荐换成词条视频，一条都没搜到才照常给推荐。
 // ponytail: 一批只搜一轮（和推荐请求同时发，接下来四轮要用的词里队列空了的各搜一页），搜不到就少插几条，下一批再补
-const PICK_EVERY = 3, PICK_AHEAD = 4, PICK_RETRY_MS = 5 * 60_000;
+const PICK_AHEAD = 4, PICK_RETRY_MS = 5 * 60_000;
 const pickState = (session, word) => {
   if (!session.picks.has(word)) session.picks.set(word, { offset: 0, searchId: null, hasMore: true, retryAt: 0, queue: [] });
   return session.picks.get(word);
@@ -39,15 +40,17 @@ async function searchWord(api, word, state, signal) {
 }
 function searchAhead(api, session, signal) {
   const turn = session.pickTurn ?? 0;
-  const words = new Set(Array.from({ length: PICK_AHEAD }, (_, index) => session.words[(turn + index) % session.words.length]));
+  // 一批推荐 10 条，插得密时要用的词更多，也得提前搜到；只看词条时剩得不够一批就接着搜
+  const every = session.pickEvery, low = every ? 1 : 10;
+  const words = new Set(Array.from({ length: Math.max(PICK_AHEAD, Math.ceil(10 / (every || 1))) }, (_, index) => session.words[(turn + index) % session.words.length]));
   return Promise.all([...words].map((word) => [word, pickState(session, word)])
-    .filter(([, state]) => !state.queue.length && state.hasMore && state.retryAt <= Date.now()).map(([word, state]) => searchWord(api, word, state, signal)));
+    .filter(([, state]) => state.queue.length < low && state.hasMore && state.retryAt <= Date.now()).map(([word, state]) => searchWord(api, word, state, signal)));
 }
 async function mixWords(session, known, ahead) {
   await ahead;
   const fresh = [...session.items.values()].filter((item) => !known.has(item.id));
   // 首屏常只有一两条、或整批都是直播广告，也插一条
-  const wanted = Math.max(1, Math.ceil(fresh.length / PICK_EVERY)), turn = session.pickTurn ?? 0;
+  const every = session.pickEvery, wanted = Math.max(1, every ? Math.ceil(fresh.length / every) : fresh.length), turn = session.pickTurn ?? 0;
   const order = Array.from({ length: wanted }, (_, index) => session.words[(turn + index) % session.words.length]);
   session.pickTurn = (turn + wanted) % session.words.length;
   const picks = [];
@@ -60,9 +63,10 @@ async function mixWords(session, known, ahead) {
   }
   if (!picks.length) return;
   for (const item of fresh) session.items.delete(item.id);
+  if (!every) { for (const pick of picks) session.items.set(pick.id, pick); return; }
   fresh.forEach((item, index) => {
     session.items.set(item.id, item);
-    if (index % PICK_EVERY === PICK_EVERY - 1 && picks.length) { const pick = picks.shift(); session.items.set(pick.id, pick); }
+    if (index % every === every - 1 && picks.length) { const pick = picks.shift(); session.items.set(pick.id, pick); }
   });
   for (const pick of picks) session.items.set(pick.id, pick);
 }
@@ -90,7 +94,7 @@ export class DirectExplorer extends DouyinExplorer {
     const session = previous ? { ...previous, items: new Map(previous.items), cursors: new Set(previous.cursors) }
       : { ...validated, key: randomUUID(), direct: true, items: new Map(), hasMore: null, received: false, revision: 0, cursor: "0", cursors: new Set() };
     // 词条每批跟着请求来，设置里改了下一批就用新的；各词翻到哪页留着
-    if (session.kind === "feed") Object.assign(session, { words: validated.words,
+    if (session.kind === "feed") Object.assign(session, { words: validated.words, pickEvery: validated.pickEvery,
       picks: new Map([...(previous?.picks ?? [])].map(([word, state]) => [word, { ...state, queue: [...state.queue] }])) });
     if (session.cursors.has(session.cursor)) throw new ExploreError("pagination_stalled", "分页游标重复，已加载的内容仍保留。");
     const api = await this.getApi({ signal });

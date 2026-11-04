@@ -2,7 +2,7 @@
 (function (root) {
   "use strict";
   root.DYF.createPicks = function ({ search, blocked, now = Date.now }) {
-    let words = [], enabled = false, generation = 0, turn = 0, gap = 0, working = false;
+    let words = [], enabled = false, every = 3, generation = 0, turn = 0, gap = 0, working = false;
     let inserted = 0, failures = 0, searches = 0;
     const states = new Map(), seen = new Set(), shownPicks = new Set();
     const playable = item => /^\d{5,30}$/u.test(String(item?.aweme_id ?? "")) && !item.is_ads
@@ -13,7 +13,9 @@
       // 限制长时间刷视频的内存；仅保留最近 5000 个作品号。
       if (seen.size > 5000) seen.delete(seen.values().next().value);
     };
-    function configure(text, on) {
+    function configure(text, on, pickEvery = 3) {
+      // 每几条推荐插一条，0 是每条能播的推荐都换成词条视频；只改频率不用重搜
+      every = Number.isInteger(pickEvery) && pickEvery >= 0 && pickEvery <= 10 ? pickEvery : 3;
       const next = [...new Set(String(text ?? "").split(/\r?\n/u).map(word => word.trim().slice(0, 30)).filter(Boolean))].slice(0, 20);
       if (enabled === on && JSON.stringify(next) === JSON.stringify(words)) return;
       enabled = on; words = next; generation += 1; turn = gap = 0; states.clear();
@@ -91,9 +93,13 @@
       for (const item of owner.aweme_list) {
         // 自己已经插过的作品后来又被原推荐送来时，也只出现一次。
         if (shownPicks.has(String(item?.aweme_id))) { changed = true; continue; }
+        // 只看词条：没候选时留原推荐，别让页面空掉
+        const swap = !every && playable(item) ? take() : null;
+        if (swap) { result.push(swap); inserted += 1; changed = true; continue; }
         result.push(item);
+        if (!every) continue;
         if (playable(item)) gap += 1;
-        if (gap < 3) continue;
+        if (gap < every) continue;
         gap = 0;
         const pick = take();
         if (pick) { result.push(pick); inserted += 1; changed = true; }

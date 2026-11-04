@@ -68,7 +68,7 @@
       const value = JSON.parse(event.detail);
       if (!value || !["off", "observe", "hide", "dislike"].includes(value.mode) || typeof value.rules !== "string") return;
       settings = { mode: value.mode, rules: DYF.compileRules(value.rules), webPicks: value.webPicks === true };
-      picks.configure(typeof value.words === "string" ? value.words : "", settings.webPicks);
+      picks.configure(typeof value.words === "string" ? value.words : "", settings.webPicks, value.pickEvery);
       prefetchPicks();
       diagnostic.settingsReceived += 1;
       diagnostic.mode = settings.mode;
