@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
-import { Check, Copy, Download, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
+import { Check, Copy, Download, FolderOpen, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
-import { canDragDesktopExtension, getDesktopOpenAtLogin, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
+import { canDragDesktopExtension, getDesktopOpenAtLogin, getDesktopVideoDownloadDirectory, openDesktopVideoDownloadDirectory, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, loadAppStyleFonts, loadFeedWords, saveFeedWords, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import { readFeedPreferences } from "../../services/feedPreferences";
 import { usageAutoSettings, type UsageAutoSettings } from "../../services/usageSessions";
@@ -436,8 +436,24 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
 }
 
 function Data({ appStyle, canClear, connected, onClearCache, onExportData }: SettingsDialogProps) {
+  // 视频下载位置：只有桌面版有，浏览器里存到哪由浏览器自己定
+  const [downloadDirectory, setDownloadDirectory] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    void getDesktopVideoDownloadDirectory().then((value) => { if (live) setDownloadDirectory(value); });
+    return () => { live = false; };
+  }, []);
   return (
     <>
+      {downloadDirectory !== null ? (
+        <View style={styles.row}>
+          <RowCopy detail={`下载的视频和图文直接存到 ${downloadDirectory}，不再每次问存哪。`} title="视频下载位置" />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Button appStyle={appStyle} icon={FolderOpen} label="打开" onPress={openDesktopVideoDownloadDirectory} testID="settings-download-open" />
+            <Button appStyle={appStyle} label="更改…" onPress={() => void getDesktopVideoDownloadDirectory(true).then((value) => { if (value) setDownloadDirectory(value); })} testID="settings-download-change" />
+          </View>
+        </View>
+      ) : null}
       {web ? (
         <View style={styles.row}>
           <RowCopy

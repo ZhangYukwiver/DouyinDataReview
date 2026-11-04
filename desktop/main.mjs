@@ -11,6 +11,7 @@ import { syncFeedExtension } from "./feedExtension.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
 import { REELLAB_INBOX_URL, REELLAB_PROTOCOL, sendToReelLab } from "./reelLab.mjs";
 import { startStaticServer } from "./staticServer.mjs";
+import { isVideoDownload, readVideoDownloadDirectory, uniqueSavePath, writeVideoDownloadDirectory } from "./videoDownloads.mjs";
 import { isSameOriginUrl, isStoryUrl } from "./windowPolicy.mjs";
 
 const APP_ID = "com.zhangyukwiver.contentinsights";
@@ -361,6 +362,34 @@ async function launch() {
       syncFeedExtension(feedExtensionSource(), feedExtensionDirectory());
       event.sender.startDrag({ file: feedExtensionDirectory(), icon: nativeImage.createFromPath(path.join(feedExtensionDirectory(), "icon-128.png")).resize({ width: 64 }) });
     } catch { /* 拖不起来就什么都不做 */ }
+  });
+  // 视频下载位置：默认 系统下载/抖音视频，设置 → 数据里可改；页面存 mp4/zip 时直接存进去
+  const videoDownloadSettings = path.join(app.getPath("userData"), "video-downloads.json");
+  const videoDownloadDirectory = () => readVideoDownloadDirectory(videoDownloadSettings, path.join(app.getPath("downloads"), "抖音视频"));
+  const savingVideos = new Set();
+  session.defaultSession.on("will-download", (_event, item) => {
+    if (!isVideoDownload(item.getFilename())) return;
+    try {
+      const target = uniqueSavePath(videoDownloadDirectory(), item.getFilename(), savingVideos);
+      savingVideos.add(target);
+      item.once("done", () => savingVideos.delete(target));
+      item.setSavePath(target);
+    } catch { /* 文件夹建不了就照旧弹框让用户选 */ }
+  });
+  ipcMain.handle("desktop:get-video-download-directory", () => videoDownloadDirectory());
+  ipcMain.handle("desktop:choose-video-download-directory", async (event) => {
+    const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+      title: "选择视频下载位置",
+      defaultPath: videoDownloadDirectory(),
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (!result.canceled && result.filePaths[0]) writeVideoDownloadDirectory(videoDownloadSettings, result.filePaths[0]);
+    return videoDownloadDirectory();
+  });
+  ipcMain.handle("desktop:open-video-download-directory", async () => {
+    const directory = videoDownloadDirectory();
+    mkdirSync(directory, { recursive: true });
+    return (await shell.openPath(directory)) === "";
   });
   ipcMain.handle("desktop:get-collector-config", () => ({
     baseUrl: desktopRuntime?.collector.baseUrl,
