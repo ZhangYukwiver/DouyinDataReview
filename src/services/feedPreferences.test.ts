@@ -5,7 +5,7 @@ import { loadFeedWords, saveFeedWords } from "./appStyle";
 
 vi.mock("./localCollector", () => ({ collectorFeedFilter: vi.fn() }));
 vi.mock("./appStyle", () => ({ loadFeedWords: vi.fn(), saveFeedWords: vi.fn() }));
-const settings = (words: string | null) => ({ words, webPicks: false, rules: "", mode: "off" as const, extension: { lastSeenAt: null, removing: false } });
+const settings = (words: string | null) => ({ words, webPicks: false, pickEvery: 3, rules: "", mode: "off" as const, extension: { lastSeenAt: null, removing: false } });
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(loadFeedWords).mockReturnValue("旧词条"); });
 describe("共用推荐词条迁移", () => {
   it("仅旧数据首次迁移本机词条，之后读取采集器", async () => {

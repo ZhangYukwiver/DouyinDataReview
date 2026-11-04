@@ -32,6 +32,30 @@ describe("网页词条视频候选池", () => {
     expect(search).toHaveBeenCalledTimes(2);
   });
 
+  it("频率可调：每 1 条插一条，改频率不重搜", async () => {
+    const search = vi.fn(async () => response(90001, 90002, 90003));
+    const picks = setup(search);
+    picks.configure("露营", true, 1);
+    await picks.prefetch();
+    const first = feed(10001, 10002);
+    picks.mix(first);
+    expect(ids(first)).toEqual(["10001", "90001", "10002", "90002"]);
+    picks.configure("露营", true, 2);
+    const second = feed(10003, 10004);
+    picks.mix(second);
+    expect(ids(second)).toEqual(["10003", "10004", "90003"]);
+    expect(search).toHaveBeenCalledTimes(1);
+  });
+
+  it("只看词条：能播的推荐逐条换成词条视频，候选用完留原推荐", async () => {
+    const picks = setup(async () => response(90001, 90002));
+    picks.configure("露营", true, 0);
+    await picks.prefetch();
+    const page = { ...feed(10001, 10002, 10003), aweme_list: [video(10001), { ...video(10009), is_ads: true }, video(10002), video(10003)] };
+    expect(picks.mix(page)).toBe(true);
+    expect(ids(page)).toEqual(["90001", "10009", "90002", "10003"]);
+  });
+
   it("不插已见、同批后面会出现、重复、广告、直播或命中屏蔽词的候选；插入时重查规则", async () => {
     let blocked = "禁止";
     const search = vi.fn(async () => ({ ...response(10001, 10004, 90001, 90001, 90002, 90003), data: [

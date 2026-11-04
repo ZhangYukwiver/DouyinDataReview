@@ -117,7 +117,8 @@ async function refresh() {
     return null;
   }
   if (typeof value?.rules !== "string" || typeof value?.mode !== "string") return null;
-  const next = { rules: value.rules, mode: value.mode, words: typeof value.words === "string" ? value.words : "", webPicks: value.webPicks === true };
+  const next = { rules: value.rules, mode: value.mode, words: typeof value.words === "string" ? value.words : "", webPicks: value.webPicks === true,
+    pickEvery: Number.isInteger(value.pickEvery) ? value.pickEvery : 3 };
   await chrome.storage.local.set({ settings: next });
   // 应用带了更新的扩展、已经换进了浏览器加载的那个文件夹：重新加载一次就是新版。
   // 同一个版本只试一次：万一是从别的文件夹加载的，重载了还是旧版，不能每分钟重载一回

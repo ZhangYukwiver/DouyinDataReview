@@ -692,10 +692,11 @@ describe("推荐流过滤扩展接口", () => {
     expect(await (await bare("/v1/feed-filter")).json()).toMatchObject({ mode: "observe", remove: false });
     expect((await app("/v1/feed-filter")).body.extension.lastSeenAt).toEqual(expect.any(Number));
     expect((await bare("/v1/records")).status).toBe(403);
-    expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ words: "露营\n咖啡", webPicks: true }) })).body)
-      .toMatchObject({ words: "露营\n咖啡", webPicks: true });
-    expect(await (await bare("/v1/feed-filter")).json()).toMatchObject({ words: "露营\n咖啡", webPicks: true });
-    for (const body of [{ words: [] }, { words: "长".repeat(2001) }, { webPicks: "true" }, null])
+    expect((await app("/v1/feed-filter")).body.pickEvery).toBe(3);
+    expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 }) })).body)
+      .toMatchObject({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 });
+    expect(await (await bare("/v1/feed-filter")).json()).toMatchObject({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 });
+    for (const body of [{ words: [] }, { words: "长".repeat(2001) }, { webPicks: "true" }, { pickEvery: -1 }, { pickEvery: 11 }, { pickEvery: 1.5 }, null])
       expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify(body) })).status).toBe(400);
     const event = { t: 1_790_000_000_000, id: "7000000000000000001", desc: "带货现场", author: "某人", matched: ["带货"], action: "hidden" };
     expect((await fromExtension("/v1/feed-filter/events", { method: "POST", headers: auth, body: JSON.stringify({ events: [event] }) })).status).toBe(200);

@@ -82,6 +82,33 @@ describe("code-based exploration", () => {
     expect(third.items.slice(12).map((item) => item.videoId)).toEqual(["300001", "300002", "300003", "7100001", "300004", "8100001"]);
     expect(searched).toEqual([["猫", "0"], ["狗", "0"], ["猫", "10"], ["狗", "10"]]);
   });
+  it("mixes the words as often as the setting says", async () => {
+    const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
+    const { value } = explorer(async (pathname, { query }) => pathname.endsWith("/tab/feed/")
+      ? { status_code: 0, has_more: 1, aweme_list: [1, 2, 3].map((n) => playable(`${query.refresh_index}0000${n}`)) }
+      : { status_code: 0, has_more: 0, data: [1, 2, 3, 4].map((n) => ({ aweme_info: playable(`70000${n}`) })) });
+    const first = await value.read({ kind: "feed", words: ["猫"], pickEvery: 1 });
+    expect(first.items.map((item) => item.videoId)).toEqual(["100001", "700001", "100002", "700002", "100003", "700003"]);
+    expect((await value.read({ kind: "feed", words: ["猫"], pickEvery: 99 })).items.map((item) => item.videoId))
+      .toEqual(["100001", "100002", "100003", "700001"]);
+  });
+  it("shows only the word videos when asked, and falls back to the feed when the words find nothing", async () => {
+    const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
+    let found = true;
+    const { value } = explorer(async (pathname, { query }) => pathname.endsWith("/tab/feed/")
+      ? { status_code: 0, has_more: 1, aweme_list: [1, 2, 3].map((n) => playable(`${query.refresh_index}0000${n}`)) }
+      : { status_code: 0, has_more: 1, cursor: Number(query.offset) + 10, data: found ? [1, 2, 3, 4].map((n) => ({ aweme_info: playable(`7${query.offset}000${n}`) })) : [] });
+    const first = await value.read({ kind: "feed", words: ["猫"], pickEvery: 0 });
+    expect(first.items.map((item) => item.videoId)).toEqual(["700001", "700002", "700003"]);
+    // 队列只剩一条、不够一批，接着搜下一页
+    const second = await value.read({ kind: "feed", sessionId: first.sessionId, words: ["猫"], pickEvery: 0 });
+    expect(second.items.slice(3).map((item) => item.videoId)).toEqual(["700004", "7100001", "7100002"]);
+    found = false;
+    const third = await value.read({ kind: "feed", sessionId: first.sessionId, words: ["猫"], pickEvery: 0 });
+    const fourth = await value.read({ kind: "feed", sessionId: first.sessionId, words: ["猫"], pickEvery: 0 });
+    expect(fourth.items.slice(6).map((item) => item.videoId)).toEqual(["7100003", "7100004", "400001", "400002", "400003"]);
+    expect(third.items).toHaveLength(8);
+  });
   it("keeps the plain feed and stops searching for a while when a word search asks for verification", async () => {
     const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
     const { value, api } = explorer(async (pathname, { query }) => pathname.endsWith("/tab/feed/")

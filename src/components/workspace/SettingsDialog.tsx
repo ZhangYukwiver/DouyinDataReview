@@ -501,10 +501,13 @@ function eventTime(at: number): string {
   return `${date.getMonth() + 1}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+const PICK_EVERY_CHOICES = [1, 2, 3, 5, 10, 0];
+
 /** 推荐流过滤：浏览器扩展装一次，按这里定的词条和过滤方式改抖音网页的推荐数据；处置记录也存在采集器里 */
 function FeedPage({ appStyle, feedShown, onToggleFeed, collector }: SettingsDialogProps) {
   const [words, setWords] = useState(loadFeedWords);
   const [webPicks, setWebPicks] = useState(false);
+  const [pickEvery, setPickEvery] = useState(3);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const baseUrl = collector?.baseUrl, token = collector?.token;
@@ -514,19 +517,19 @@ function FeedPage({ appStyle, feedShown, onToggleFeed, collector }: SettingsDial
     if (!baseUrl || !token) { setBusy(false); return; }
     setBusy(true);
     readFeedPreferences(baseUrl, token).then((value) => {
-      if (live) { setWords(value.words); setWebPicks(value.webPicks); }
+      if (live) { setWords(value.words); setWebPicks(value.webPicks); setPickEvery(value.pickEvery); }
     }, () => { if (live) setMessage("共用词条没读取成功，稍后可重新保存。"); })
       .finally(() => { if (live) setBusy(false); });
     return () => { live = false; };
   }, [baseUrl, token]);
-  const save = async (enabled = webPicks) => {
+  const save = async (enabled = webPicks, every = pickEvery) => {
     if (!baseUrl || !token) return;
     setBusy(true); setMessage(null);
     try {
-      const value = await collectorFeedFilter(baseUrl, token, { words, webPicks: enabled });
+      const value = await collectorFeedFilter(baseUrl, token, { words, webPicks: enabled, pickEvery: every });
       saveFeedWords(words);
       if (value.words === null) throw new Error("词条已保存在本机；请更新采集器后再使用网页插入视频。");
-      setWebPicks(value.webPicks);
+      setWebPicks(value.webPicks); setPickEvery(value.pickEvery);
       setMessage("已保存；软件下一批生效，网页约一分钟内同步。");
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : "没保存成功，请重试。"); }
     finally { setBusy(false); }
@@ -538,13 +541,23 @@ function FeedPage({ appStyle, feedShown, onToggleFeed, collector }: SettingsDial
         <Button appStyle={appStyle} kind={feedShown ? "secondary" : "primary"} label={feedShown ? "隐藏" : "显示"} onPress={onToggleFeed} testID="settings-feed-page" />
       </View>
         <View style={[styles.row, styles.rowStacked]}>
-          <RowCopy detail="软件和网页共用。一行一个词，最多 20 个、每个 30 字。每三条推荐后插一条相关视频，几个词轮着来；保存空白就只刷原推荐。" title="想看的词条" />
+          <RowCopy detail="软件和网页共用。一行一个词，最多 20 个、每个 30 字。按下面选的频率插入相关视频，几个词轮着来；保存空白就只刷原推荐。" title="想看的词条" />
           <TextInput accessibilityLabel="想看的词条" multiline editable={!busy && Boolean(baseUrl && token)} maxLength={2000} onChangeText={(text) => { setWords(text); setMessage(null); }} placeholder={"露营\n手冲咖啡"}
             placeholderTextColor={color.textMuted} spellCheck={false} style={styles.rulesInput} testID="settings-feed-words" value={words} />
           <Button appStyle={appStyle} kind="secondary" label={busy ? "请稍候…" : "保存词条"} disabled={busy || !baseUrl || !token} onPress={() => void save()} testID="settings-save-feed-words" />
           {!baseUrl || !token ? <Text style={styles.detail}>连接采集器后可保存共用词条、开启网页插入。</Text> : null}
           {message ? <Text accessibilityLiveRegion="polite" style={styles.detail}>{message}</Text> : null}
         </View>
+      <View style={[styles.row, styles.rowStacked]}>
+        <RowCopy detail={pickEvery === 0 ? "只刷词条搜来的视频；一时搜不到（要验证或搜完了）就先照常给推荐。"
+          : pickEvery === 1 ? "每刷一条推荐就插一条相关视频，差不多一半是想看的。" : `每刷 ${pickEvery} 条推荐插一条相关视频。软件下一批生效。`} title="插入频率" />
+        <View style={styles.choices}>
+          {PICK_EVERY_CHOICES.map((every) => (
+            <Button key={every} appStyle={appStyle} disabled={busy || !baseUrl || !token} kind={every === pickEvery ? "primary" : "secondary"}
+              label={every ? `每 ${every} 条` : "只看词条"} onPress={() => { if (every !== pickEvery) void save(webPicks, every); }} testID={`settings-feed-pick-every-${every}`} />
+          ))}
+        </View>
+      </View>
       <View style={styles.row}>
         <RowCopy detail="装好下面的扩展后，在浏览器的抖音首页和精选推荐中插入相关视频。使用浏览器登录的账号搜索，命中屏蔽词的不插入；搜索失败照常刷推荐。首次升级扩展后请刷新抖音页。" title="网页插入视频" />
         <Button appStyle={appStyle} kind={webPicks ? "secondary" : "primary"} label={webPicks ? "关闭" : "开启"}
