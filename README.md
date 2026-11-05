@@ -24,7 +24,7 @@
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/">国内下载（加速线路）</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/#demo">在线看示例报告</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
 
-**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它用你本人登录的抖音会话读取观看历史、喜欢、收藏和好友聊天记录，保存在本机，并生成持续报告和抖音年度报告（Douyin Wrapped）。工作台还能在电脑上刷抖音推荐、下载视频、实时聊天、看创作者中心和直播，另有推荐流过滤和可选的 AI 助手。
+**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它用你本人登录的抖音会话读取观看历史、喜欢、收藏和好友聊天记录，保存在本机，并生成持续报告和抖音年度报告（Douyin Wrapped）。工作台还能在电脑上刷抖音推荐、按关键词屏蔽视频、下载视频、实时聊天、看创作者中心和直播，另有可选的 AI 助手。
 
 只支持抖音（中国版），不支持国际版 TikTok；提供 Windows x64 和 macOS Apple Silicon 安装包。本项目是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。完整步骤见[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)，给检索工具读的项目事实在 [llms.txt](llms.txt)。
 
@@ -37,7 +37,7 @@
 - **刷视频与内容库**：在电脑上刷抖音推荐，浏览、搜索、批量下载自己的记录
 - **聊天与续火花**：实时收发消息，一键续火花
 - **创作者中心、探索与直播**：看自己的作品和粉丝数据（能导出表格）、热点榜、关注的人的直播
-- **推荐流过滤**：刷抖音网页时挡掉不想看的视频
+- **推荐流控制**：按关键词屏蔽不想看的视频，把想看的词条混进推荐，软件和网页都能用
 - **AI 助手（可选）**：用对话查数据、替你操作，Claude Code、Codex 可通过 MCP 接入
 - **年度报告**：三种风格，可导出 HTML 和分享图
 
@@ -97,9 +97,9 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 能，进工作台默认就是「刷视频」，还能把想看的词条混进推荐。
 
-### 能屏蔽抖音推荐里不想看的视频吗？
+### 能按关键词屏蔽抖音推荐里不想看的视频吗？
 
-能，在「设置 → 推荐流」装一次浏览器扩展、写好词条，在 Chrome、Edge 刷抖音网页时自动挡掉。
+能，在「设置 → 推荐流」写好词条，软件里刷视频直接生效，Chrome、Edge 网页装一次扩展。还能把想看的词条混进推荐，或者只看词条。
 
 ### 收费吗？数据会传到哪里？
 
@@ -152,7 +152,7 @@ npm run web
 
 ## English
 
-**DouyinDataReview is a free, open-source desktop app for exporting and analyzing your own Douyin data on Windows x64 and macOS Apple Silicon.** It targets Douyin in China; international TikTok is not supported. It saves watch history, likes, favorites and friend chats locally as JSON, generates rolling reports and a year-in-review ("Douyin Wrapped"), and lets you browse your Douyin feed, download videos, chat, check Creator Center stats and watch live streams. This is an independent, unofficial project; the interface is in Chinese and the source is MIT-licensed. Download it from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest) and see the [export and privacy guide](https://zhangyukwiver.github.io/DouyinDataReview/guide.html).
+**DouyinDataReview is a free, open-source desktop app for exporting and analyzing your own Douyin data on Windows x64 and macOS Apple Silicon.** It targets Douyin in China; international TikTok is not supported. It saves watch history, likes, favorites and friend chats locally as JSON, generates rolling reports and a year-in-review ("Douyin Wrapped"), and lets you browse your Douyin feed, block feed videos by keyword, download videos, chat, check Creator Center stats and watch live streams. This is an independent, unofficial project; the interface is in Chinese and the source is MIT-licensed. Download it from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest) and see the [export and privacy guide](https://zhangyukwiver.github.io/DouyinDataReview/guide.html).
 
 - **How does it work?** Scan the Douyin login QR code on the first screen, or import credentials from Chrome / Edge / Comet or the Douyin desktop client. A local Node.js collector then reads your records with signed, paginated HTTP requests, and reports are computed on your computer.
 - **Is there a Douyin Wrapped?** Yes, built from your own records whenever you want; [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) without installing anything.
