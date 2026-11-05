@@ -8,6 +8,20 @@ import { createEmptyRecords } from "./normalizer.mjs";
 import { CollectorStore } from "./store.mjs";
 
 describe("CollectorStore", () => {
+  it("refuses a save that would no longer load, leaving the saved file as it was", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
+    try {
+      const store = new CollectorStore(directory, { maxFileBytes: 2_000 });
+      const record = (id) => ({ id: `favorite_videos:${id}`, title: "标题", author: null, occurredAt: null, url: `https://www.douyin.com/video/${id}`, videoId: id });
+      await store.save({ ...createEmptyRecords(), favorite_videos: [record("1")] });
+      const many = Array.from({ length: 100 }, (_, index) => record(String(index + 2)));
+      await expect(store.save({ ...createEmptyRecords(), favorite_videos: many })).rejects.toMatchObject({ code: "records_file_full" });
+      expect((await new CollectorStore(directory).load()).records.favorite_videos.map((item) => item.videoId)).toEqual(["1"]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the newest friend messages when more than the cap are saved", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "douyin-collector-store-"));
     try {

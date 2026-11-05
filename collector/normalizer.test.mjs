@@ -296,6 +296,19 @@ describe("normalizeDouyinResponse", () => {
 });
 
 describe("RecordAccumulator", () => {
+  it("keeps every record past 50,000 in the order Douyin returned them", () => {
+    const endpoint = matchDouyinEndpoint("https://www.douyin.com/aweme/v1/web/aweme/listcollection/");
+    const accumulator = new RecordAccumulator();
+    const page = (from, length) => ({ status_code: 0, aweme_list: Array.from({ length }, (_, i) => ({ aweme_id: String(from + i + 1) })), has_more: 1, cursor: "1" });
+    accumulator.addResponse(endpoint, page(0, 50_000));
+    expect(accumulator.addResponse(endpoint, page(50_000, 10)).added).toBe(10);
+    const records = accumulator.records.favorite_videos;
+    expect(records).toHaveLength(50_010);
+    // 收藏没有时间，保持抖音给的顺序
+    expect([records[0].videoId, records.at(-1).videoId]).toEqual(["1", "50010"]);
+    expect(accumulator.find("favorite_videos", "favorite_videos:50010").videoId).toBe("50010");
+  }, 30_000);
+
   it("keeps watch records at and below twenty percent, zero progress, and unknown progress", () => {
     const endpoint = matchDouyinEndpoint("https://www.douyin.com/aweme/v1/web/history/read/");
     const accumulator = new RecordAccumulator();

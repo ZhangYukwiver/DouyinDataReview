@@ -183,7 +183,7 @@ function accountMismatchError(nickname) {
 
 function safeMessage(error, fallback) {
   if (error instanceof Error && error.message === "login_timeout") return "登录等待已超时，请重新同步。";
-  if (error instanceof DirectHistoryError) return error.message;
+  if (error instanceof DirectHistoryError || error?.code === "records_file_full") return error.message;
   if (error instanceof CollectorAdapterError) return error.message;
   if (error instanceof ChatAdapterError) return error.message;
   if (error instanceof BrowserConnectionError) return error.message;
@@ -310,7 +310,7 @@ function finalizeDirectType(type, incremental, existingRecords, fetchedRecords, 
   if (!incremental) {
     // 整份重读还没读完时，没读到的旧记录先留着，中途被打断也不会把本地记录截短；读完才按这次的结果整份替换
     const fetchedIds = new Set(fetchedRecords.map((record) => record.id));
-    return [...structuredClone(fetchedRecords), ...existingRecords.filter((record) => !fetchedIds.has(record.id))];
+    return [...fetchedRecords, ...existingRecords.filter((record) => !fetchedIds.has(record.id))];
   }
 
   const fetchedById = new Map(fetchedRecords.map((record) => [record.id, record]));
@@ -1852,35 +1852,36 @@ export class DouyinCollector {
         for (const id of fresh) newIds.get(type).add(id);
         for (const id of result.rejectedRecordIds) rejectedIds.get(type).add(id);
         if (fresh.length === 0) return;
-        const byId = new Map(accumulator.records[type].map((record) => [record.id, record]));
         for (const id of fresh) {
-          if (byId.has(id)) this.newRecords.items.push({ type, record: structuredClone(byId.get(id)) });
+          const record = accumulator.find(type, id);
+          if (record) this.newRecords.items.push({ type, record: structuredClone(record) });
         }
       };
       const newRecordsStatus = () => ({ run: this.newRecords.run, count: this.newRecords.items.length });
-      const previewRecords = (type, final = false) => {
-        const preview = structuredClone(stagedRecords);
-        preview[type] = finalizeDirectType(
+      const previewRecords = (type, final = false) => ({
+        ...stagedRecords,
+        [type]: finalizeDirectType(
           type,
           incrementalByType.get(type),
           existingRecords[type],
-          accumulator.snapshot().records[type],
+          accumulator.sortedRecords(type),
           knownIds.get(type),
           rejectedIds.get(type),
           final,
-        );
-        return preview;
-      };
+        ),
+      });
+      // 每读一页都要报数：新读到的不和本地重复，直接加，不用为一个数字把整份记录算一遍
+      const liveCounts = (type) => ({ ...this.status.counts, [type]: existingRecords[type].length + newIds.get(type).size });
       const progressMessage = (type, pageCount) => (
         `正在读取${TYPE_LABELS[type]}${incrementalByType.get(type) ? "新增" : "全部"}记录（第 ${pageCount} 页，接口 ${returnedCounts.get(type)} 条，新增 ${newIds.get(type).size} 条，过滤 ${filteredCounts.get(type)} 条）`
       );
       // 每读一段就落盘，工作台边采边能看到新记录；限流是因为快照要整份重写
-      let lastProgressPersistAt = Date.now();
+      let nextProgressPersistAt = Date.now() + this.progressPersistIntervalMs;
       const persistProgress = async (type) => {
         // 喜欢和收藏的增量一般一两页就读完，读完再一起存：中途存下的新记录会让下次读取在它们身上停住，中间那段就补不回来了
         if (type !== "watch_history" && incrementalByType.get(type)) return;
-        if (Date.now() - lastProgressPersistAt < this.progressPersistIntervalMs) return;
-        lastProgressPersistAt = Date.now();
+        if (Date.now() < nextProgressPersistAt) return;
+        const persistStartedAt = Date.now();
         this.assertSyncActive(runId);
         await this.saveSnapshot((snapshot) => [previewRecords(type), snapshot.warnings, {
           // 观看历史读到一半存下的新记录，下次增量读取会在它们身上停住，被打断时中间那段就再也补不回来。
@@ -1890,6 +1891,9 @@ export class DouyinCollector {
           chatConversations: snapshot.chatConversations,
         }]);
         this.updateStatus({ updatedAt: this.snapshot.updatedAt });
+        // 记录多了整份存一次要一两秒：存盘时间压在读取时间的一成以内，别一直堵着窗口所在的主进程
+        const persistMs = Date.now() - persistStartedAt;
+        nextProgressPersistAt = Date.now() + Math.max(this.progressPersistIntervalMs, persistMs >= 200 ? persistMs * 10 : 0);
       };
       const skipped = [];
       // completed=false：这一类被跳过，「读完过」标记不动，下次再整份读
@@ -1944,7 +1948,7 @@ export class DouyinCollector {
               this.updateStatus({
                 phase: type,
                 message: progressMessage(type, pageCount),
-                counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
+                counts: liveCounts(type),
                 newRecords: newRecordsStatus(),
               });
               readPages = pageCount;
@@ -1981,13 +1985,10 @@ export class DouyinCollector {
               throw new DirectHistoryError("pagination_stalled", `${TYPE_LABELS[type]}分页内容重复，已停止且未保存本次结果。`);
             }
             if (result.pageFingerprint) pageFingerprints.add(result.pageFingerprint);
-            if (accumulator.isTruncated(type)) {
-              throw new DirectHistoryError("record_limit", `${TYPE_LABELS[type]}响应超过本地安全容量，已停止且未保存本次结果。`);
-            }
             this.updateStatus({
               phase: type,
               message: progressMessage(type, pageCounts[type]),
-              counts: recordCounts(previewRecords(type), this.snapshot.chatMessages, this.snapshot.chatConversations),
+              counts: liveCounts(type),
               newRecords: newRecordsStatus(),
             });
             await persistProgress(type);

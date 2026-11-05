@@ -297,7 +297,8 @@ export class DirectApiClient {
       if (this.dataDirectory) await saveDirectSession(this.dataDirectory, this.session);
     }
     const seen = new Set(); let cursor = "0";
-    for (let count = 1; count <= 10_000; count += 1) {
+    // ponytail: 不限页数，收藏有多少读多少；防死循环靠游标不重复，抖音一直给新游标时用户能点停止
+    for (let count = 1; ; count += 1) {
       signal?.throwIfAborted();
       if (seen.has(cursor)) throw new DirectHistoryError("pagination_stalled", "分页游标重复，已停止读取。");
       seen.add(cursor);
@@ -316,7 +317,6 @@ export class DirectApiClient {
       if (await onPage(payload, count) === false || !more) return count;
       cursor = next; await delay(300, undefined, { signal });
     }
-    throw new DirectHistoryError("record_limit", "读取页数超过容量，已停止读取。");
   }
   async readCreator(prepared) {
     const url = new URL(prepared.url);

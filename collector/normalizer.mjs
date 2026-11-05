@@ -10,7 +10,6 @@ const ENDPOINT_BY_PATH = new Map([
 
 const RECORD_TYPES = ["watch_history", "liked_videos", "favorite_videos"];
 const RELIABLE_EVENT_SOURCES = new Set(["platform_action", "archive_action"]);
-const MAX_RECORDS_PER_TYPE = 50_000;
 const MAX_STRING_LENGTH = 500;
 const MAX_URL_LENGTH = 2_048;
 const MAX_TOPICS = 100;
@@ -725,10 +724,27 @@ export function normalizeDouyinResponse(endpoint, payload) {
 
 export class RecordAccumulator {
   constructor(initialRecords = createEmptyRecords()) {
-    this.records = createEmptyRecords();
+    // 每类一张按 id 的表：新读到的一页只并进来，要用整份时才排序。每页都把已有的全部重建一遍的话，3 万条时一页要算近两秒
+    this.indexes = Object.fromEntries(RECORD_TYPES.map((type) => [type, new Map()]));
+    this.sorted = {};
     this.folders = new Map();
-    this.truncatedTypes = new Set();
     for (const type of RECORD_TYPES) this.addRecords(type, initialRecords[type] ?? []);
+  }
+
+  get records() {
+    return Object.fromEntries(RECORD_TYPES.map((type) => [type, this.sortedRecords(type)]));
+  }
+
+  sortedRecords(type) {
+    this.sorted[type] ??= [...this.indexes[type].values()]
+      .map((record) => [record.occurredAt ? Date.parse(record.occurredAt) : 0, record])
+      .sort((left, right) => right[0] - left[0])
+      .map(([, record]) => record);
+    return this.sorted[type];
+  }
+
+  find(type, id) {
+    return this.indexes[type].get(id);
   }
 
   addResponse(endpoint, payload) {
@@ -759,60 +775,45 @@ export class RecordAccumulator {
 
   addRecords(type, records) {
     if (!RECORD_TYPES.includes(type)) return 0;
-    const existing = new Map();
+    const existing = this.indexes[type];
     const normalizeForType = (rawRecord) => {
       const record = normalizeRecord(rawRecord);
       if (!record || type !== "watch_history" || !record.videoId) return record;
       const eventId = watchHistoryEventId(record.videoId, record.occurredAt, record.occurredAtSource);
       return { ...record, id: eventId ?? `watch_history:${record.videoId}` };
     };
-    const ingest = (rawRecords, trackTruncation) => {
-      const normalized = rawRecords.map(normalizeForType).filter(Boolean);
-      const ordered = type === "watch_history"
-        ? normalized.sort((left, right) => Number(Boolean(watchHistoryEventId(right.videoId, right.occurredAt, right.occurredAtSource)))
-          - Number(Boolean(watchHistoryEventId(left.videoId, left.occurredAt, left.occurredAtSource))))
-        : normalized;
-      for (let record of ordered) {
-        const eventId = type === "watch_history"
-          ? watchHistoryEventId(record.videoId, record.occurredAt, record.occurredAtSource)
-          : null;
-        if (eventId) {
-          const placeholderId = `watch_history:${record.videoId}`;
-          if (existing.has(placeholderId)) {
-            record = mergeRecords(existing.get(placeholderId), record);
-            existing.delete(placeholderId);
-          }
-        } else if (type === "watch_history" && record.videoId) {
-          const reliableMatches = [...existing.values()].filter((candidate) =>
-            candidate.videoId === record.videoId
-            && Boolean(watchHistoryEventId(candidate.videoId, candidate.occurredAt, candidate.occurredAtSource)));
-          if (reliableMatches.length === 1) {
-            const [target] = reliableMatches;
-            existing.set(target.id, mergeRecords(target, { ...record, id: target.id, occurredAt: null }));
-            continue;
-          }
-          if (reliableMatches.length > 1) continue;
-        }
-        if (trackTruncation && existing.size >= MAX_RECORDS_PER_TYPE && !existing.has(record.id)) {
-          this.truncatedTypes.add(type);
-          break;
-        }
-        existing.set(record.id, mergeRecords(existing.get(record.id), record));
-      }
-    };
-    ingest(this.records[type], false);
     const before = existing.size;
-    ingest(records, true);
-    this.records[type] = [...existing.values()].sort((left, right) => {
-      const leftTime = left.occurredAt ? Date.parse(left.occurredAt) : 0;
-      const rightTime = right.occurredAt ? Date.parse(right.occurredAt) : 0;
-      return rightTime - leftTime;
-    });
+    const normalized = records.map(normalizeForType).filter(Boolean);
+    const ordered = type === "watch_history"
+      ? normalized.sort((left, right) => Number(Boolean(watchHistoryEventId(right.videoId, right.occurredAt, right.occurredAtSource)))
+        - Number(Boolean(watchHistoryEventId(left.videoId, left.occurredAt, left.occurredAtSource))))
+      : normalized;
+    for (let record of ordered) {
+      const eventId = type === "watch_history"
+        ? watchHistoryEventId(record.videoId, record.occurredAt, record.occurredAtSource)
+        : null;
+      if (eventId) {
+        const placeholderId = `watch_history:${record.videoId}`;
+        if (existing.has(placeholderId)) {
+          record = mergeRecords(existing.get(placeholderId), record);
+          existing.delete(placeholderId);
+        }
+      } else if (type === "watch_history" && record.videoId) {
+        // ponytail: 没有观看时间的记录才走这里，每条扫一遍全表；这种记录多到几万条时再按 videoId 建索引
+        const reliableMatches = [...existing.values()].filter((candidate) =>
+          candidate.videoId === record.videoId
+          && Boolean(watchHistoryEventId(candidate.videoId, candidate.occurredAt, candidate.occurredAtSource)));
+        if (reliableMatches.length === 1) {
+          const [target] = reliableMatches;
+          existing.set(target.id, mergeRecords(target, { ...record, id: target.id, occurredAt: null }));
+          continue;
+        }
+        if (reliableMatches.length > 1) continue;
+      }
+      existing.set(record.id, mergeRecords(existing.get(record.id), record));
+    }
+    this.sorted[type] = null;
     return existing.size - before;
-  }
-
-  isTruncated(type) {
-    return this.truncatedTypes.has(type);
   }
 
   snapshot() {
