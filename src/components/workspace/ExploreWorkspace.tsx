@@ -421,8 +421,8 @@ export function FeedWorkspace({ connection, onOpenSettings, onOpenRecord, onDown
       <ActivityIndicator color={color.cyan} />
       <Text accessibilityLiveRegion="polite" style={styles.muted}>正在拉取首页推荐…</Text>
     </> : <>
-      <Text {...ws("e-section")} style={styles.sectionTitle}>{error ? "推荐没加载出来" : "这一屏全是直播或广告"}</Text>
-      <Text style={styles.emptyText}>{error ?? "再刷一屏试试。"}</Text>
+      <Text {...ws("e-section")} style={styles.sectionTitle}>{error ? "推荐没加载出来" : "这一屏没有能看的视频"}</Text>
+      <Text style={styles.emptyText}>{error ?? "可能全是直播、广告，或者都命中了屏蔽词，再刷一屏试试。"}</Text>
       <Button label={error ? "重试" : "再刷一屏"} primary onPress={() => void load(Boolean(page))} />
     </>}
   </View>;

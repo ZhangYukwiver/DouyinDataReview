@@ -720,6 +720,21 @@ describe("推荐流过滤扩展接口", () => {
     expect((await app("/v1/feed-filter/events")).body.events).toEqual([]);
   });
 
+  it("软件里刷视频每批现读屏蔽词条，命中的记进处置记录、不发给页面", async () => {
+    const { runtime, headers } = await startPaired("feed-filter-app-");
+    const app = (pathname, body) => fetch(`${runtime.baseUrl}${pathname}`, { ...(body ? { method: "POST", body: JSON.stringify(body) } : {}), headers: { ...headers, "Content-Type": "application/json" } })
+      .then((response) => response.json());
+    await app("/v1/feed-filter", { rules: "露营", mode: "hide", pickEvery: 5 });
+    const hit = { id: "7654321098765", desc: "露营装备", author: "作者", matched: ["露营"], t: 1_800_000_000_000, action: "hidden",
+      aweme: { aweme_id: "7654321098765", desc: "露营装备", create_time: 1_700_000_000, author: { nickname: "作者", uid: "1" } } };
+    const run = vi.spyOn(ExplorerBridge.prototype, "run").mockResolvedValue({ sessionId: "s", items: [], filtered: [hit] });
+    // 请求里自带的词条不算数
+    expect(await app("/v1/explore/read", { kind: "feed", rules: "", mode: "off" })).toEqual({ sessionId: "s", items: [] });
+    expect(run.mock.calls[0][0]).toMatchObject({ rules: "露营", mode: "hide", pickEvery: 5 });
+    expect((await app("/v1/feed-filter/events")).events).toEqual([expect.objectContaining({ id: hit.id, action: "hidden" })]);
+    expect((await app("/v1/feed-filter/videos")).videos).toEqual([expect.objectContaining({ videoId: hit.id })]);
+  });
+
   it("告诉扩展文件夹里装的是哪个版本，扩展发现比自己新就重新加载", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "feed-filter-version-"));
     temporaryDirectories.push(dataDirectory);

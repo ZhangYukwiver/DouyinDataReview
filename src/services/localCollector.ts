@@ -1342,7 +1342,7 @@ export async function collectorMyComments(baseUrl: string, token: string): Promi
 
 const FEED_VIDEO_ACTIONS: readonly string[] = ["observed", "hidden", "disliked", "dislike_failed"];
 
-/** 内容库「推荐流挡掉的」：扩展在抖音网页里碰到的命中视频，和观看记录同一个格式，多带命中的词条和处置结果（旧的在前） */
+/** 内容库「推荐流挡掉的」：刷视频和抖音网页里碰到的命中视频，和观看记录同一个格式，多带命中的词条和处置结果（旧的在前） */
 export async function collectorFeedFilteredVideos(baseUrl: string, token: string): Promise<PersonalVideoRecord[]> {
   const value = await requestJson(baseUrl, "/v1/feed-filter/videos", {}, token);
   if (!isObject(value) || !Array.isArray(value.videos)) throw new LocalCollectorError("invalid_response", "采集服务没返回挡掉的视频。");
