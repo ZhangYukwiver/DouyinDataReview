@@ -90,12 +90,15 @@
         || (json.status_code !== undefined && json.status_code !== 0)) return false;
       const result = [];
       let changed = false;
+      // 只看词条时这页能播的推荐会被换掉，用户没刷到就不算见过，搜到同一条时还能插进来
+      if (!every) for (const item of owner.aweme_list) if (playable(item) && !shownPicks.has(String(item.aweme_id))) seen.delete(String(item.aweme_id));
       for (const item of owner.aweme_list) {
         // 自己已经插过的作品后来又被原推荐送来时，也只出现一次。
         if (shownPicks.has(String(item?.aweme_id))) { changed = true; continue; }
         // 只看词条：没候选时留原推荐，别让页面空掉
         const swap = !every && playable(item) ? take() : null;
         if (swap) { result.push(swap); inserted += 1; changed = true; continue; }
+        remember(item?.aweme_id);
         result.push(item);
         if (!every) continue;
         if (playable(item)) gap += 1;

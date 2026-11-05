@@ -477,7 +477,7 @@ const FEED_MODES: ReadonlyArray<{ key: FeedFilterMode; label: string; detail: st
   { key: "off", label: "关", detail: "不处理原推荐里的屏蔽词；上方「网页插入视频」开关单独控制。" },
   { key: "observe", label: "只记录", detail: "命中的视频照样刷得到，只记在下面。先用它看看词条会不会误杀。" },
   { key: "hide", label: "隐藏", detail: "命中的视频在推荐数据进页面之前就被拿掉，刷不到。" },
-  { key: "dislike", label: "隐藏并反馈", detail: "拿掉以后再替你点「不感兴趣」，以后少推这类。用的是你自己的抖音号，每分钟最多点 6 条，多出来的只隐藏。" },
+  { key: "dislike", label: "隐藏并反馈", detail: "拿掉以后再替你点「不感兴趣」，以后少推这类。用的是你自己的抖音号，每分钟最多点 6 条，多出来的只隐藏。只有网页上会点，软件里刷视频时只隐藏。" },
 ];
 const FEED_ACTIONS: Record<FeedFilterEvent["action"], string> = {
   observed: "只记录", hidden: "已隐藏", disliked: "已反馈", dislike_failed: "已隐藏，反馈没成功", unreadable: "这一页推荐数据读不了，原样放过了",
@@ -541,7 +541,7 @@ function FeedPage({ appStyle, feedShown, onToggleFeed, collector }: SettingsDial
         <Button appStyle={appStyle} kind={feedShown ? "secondary" : "primary"} label={feedShown ? "隐藏" : "显示"} onPress={onToggleFeed} testID="settings-feed-page" />
       </View>
         <View style={[styles.row, styles.rowStacked]}>
-          <RowCopy detail="软件和网页共用。一行一个词，最多 20 个、每个 30 字。按下面选的频率插入相关视频，几个词轮着来；保存空白就只刷原推荐。" title="想看的词条" />
+          <RowCopy detail="软件和网页共用。一行一个词，最多 20 个、每个 30 字。按下面选的频率插入相关视频，几个词轮着来，命中屏蔽词的不插入；保存空白就只刷原推荐。" title="想看的词条" />
           <TextInput accessibilityLabel="想看的词条" multiline editable={!busy && Boolean(baseUrl && token)} maxLength={2000} onChangeText={(text) => { setWords(text); setMessage(null); }} placeholder={"露营\n手冲咖啡"}
             placeholderTextColor={color.textMuted} spellCheck={false} style={styles.rulesInput} testID="settings-feed-words" value={words} />
           <Button appStyle={appStyle} kind="secondary" label={busy ? "请稍候…" : "保存词条"} disabled={busy || !baseUrl || !token} onPress={() => void save()} testID="settings-save-feed-words" />
@@ -627,7 +627,7 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
   return (
     <>
       <View style={[styles.row, styles.rowIntro]}>
-        <Text style={styles.detail}>装一次浏览器扩展，以后你在 Chrome、Edge 里刷抖音网页时，命中词条的视频在推荐数据进页面之前就被拿掉。词条、过滤方式和记录都在这里管；应用没开时扩展按上次的词条照常过滤，记录等应用开着时补传。已经显示的首屏和作品详情只能记录命中，后续加载的推荐列表才会过滤。</Text>
+        <Text style={styles.detail}>软件里的「刷视频」直接按这里的词条和过滤方式处理，不用装扩展。想在 Chrome、Edge 里刷抖音网页时也过滤，就装一次浏览器扩展，命中词条的视频在推荐数据进页面之前就被拿掉。应用没开时扩展按上次的词条照常过滤，记录等应用开着时补传。网页上已经显示的首屏和作品详情只能记录命中，后续加载的推荐列表才会过滤。</Text>
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
       </View>
       <View style={[styles.row, styles.rowStacked]}>

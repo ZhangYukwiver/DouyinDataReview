@@ -838,9 +838,17 @@ export async function startCollectorServer({
           await explorer.close(body.sessionIds);
           sendJson(response, 200, { ok: true });
         } else {
-          // 刷视频插词条的频率在设置里改，这里每批现读
-          if (operation === "read" && body?.kind === "feed") body.pickEvery = (await feedFilter.read()).pickEvery;
+          // 刷视频插词条的频率和屏蔽词条都在设置里改，这里每批现读
+          if (operation === "read" && body?.kind === "feed") {
+            const { pickEvery, rules, mode } = await feedFilter.read();
+            Object.assign(body, { pickEvery, rules, mode });
+          }
           const result = await explorer.run(body, operation, controller.signal);
+          if (result?.filtered) {
+            const { filtered } = result;
+            delete result.filtered;
+            await feedFilter.addEvents(filtered).catch(() => {}); // 记不上不耽误刷视频
+          }
           if (operation === "video") {
             response.once("close", () => void result.dispose());
             if (controller.signal.aborted) await result.dispose();

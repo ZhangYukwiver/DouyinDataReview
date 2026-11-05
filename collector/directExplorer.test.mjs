@@ -109,6 +109,57 @@ describe("code-based exploration", () => {
     expect(fourth.items.slice(6).map((item) => item.videoId)).toEqual(["7100003", "7100004", "400001", "400002", "400003"]);
     expect(third.items).toHaveLength(8);
   });
+  it("keeps a word video that the replaced batch also recommended when showing only word videos", async () => {
+    const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
+    const { value } = explorer(async (pathname) => pathname.endsWith("/tab/feed/")
+      ? { status_code: 0, has_more: 1, aweme_list: ["100001", "100002", "100003"].map(playable) }
+      : { status_code: 0, has_more: 0, data: ["100002", "700001", "700002"].map((videoId) => ({ aweme_info: playable(videoId) })) });
+    const first = await value.read({ kind: "feed", words: ["猫"], pickEvery: 0 });
+    expect(first.items.map((item) => [item.videoId, item.pickedFor])).toEqual([["100002", "猫"], ["700001", "猫"], ["700002", "猫"]]);
+  });
+  describe("屏蔽词条", () => {
+    const playable = (videoId, desc = "作品") => ({ ...rawVideo(videoId), desc, video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
+    const feed = (search = []) => explorer(async (pathname) => pathname.endsWith("/tab/feed/")
+      ? { status_code: 0, has_more: 1, aweme_list: [playable("100001"), playable("100002", "露营装备"), playable("100003")] }
+      : { status_code: 0, has_more: 1, cursor: 10, data: search.map((aweme) => ({ aweme_info: aweme })) });
+    const shown = (page) => page.items.map((item) => item.videoId);
+
+    it("hides matching recommendations and reports them, whether or not feedback was asked for", async () => {
+      for (const mode of ["hide", "dislike"]) {
+        const page = await feed().value.read({ kind: "feed", rules: "露营", mode });
+        expect(shown(page)).toEqual(["100001", "100003"]);
+        expect(page.filtered).toEqual([expect.objectContaining({ id: "100002", action: "hidden", matched: ["露营"], t: expect.any(Number) })]);
+      }
+    });
+    it("only reports matches when observing and leaves the feed alone when off", async () => {
+      const observed = await feed().value.read({ kind: "feed", rules: "露营", mode: "observe" });
+      expect(shown(observed)).toEqual(["100001", "100002", "100003"]);
+      expect(observed.filtered).toEqual([expect.objectContaining({ id: "100002", action: "observed" })]);
+      const off = await feed().value.read({ kind: "feed", rules: "露营", mode: "off" });
+      expect(shown(off)).toEqual(["100001", "100002", "100003"]);
+      expect(off.filtered).toBeUndefined();
+    });
+    it("never inserts a word video that matches, in any mode, and rests a word whose whole page matched", async () => {
+      for (const mode of ["off", "observe", "hide"]) {
+        const { value } = feed([playable("700001", "露营vlog"), playable("700002", "山里过夜")]);
+        expect(shown(await value.read({ kind: "feed", words: ["露营"], rules: "露营", mode, pickEvery: 1 }))).toContain("700002");
+        expect(shown(await value.read({ kind: "feed", words: ["露营"], rules: "露营", mode, pickEvery: 1 }))).not.toContain("700001");
+      }
+      const { value, api } = feed([playable("700001", "露营vlog")]);
+      const first = await value.read({ kind: "feed", words: ["露营"], rules: "露营", mode: "hide" });
+      await value.read({ kind: "feed", sessionId: first.sessionId, words: ["露营"], rules: "露营", mode: "hide" });
+      expect(api.request.mock.calls.filter(([pathname]) => pathname.includes("search"))).toHaveLength(1);
+    });
+    it("checks queued word videos against the rules saved since they were found", async () => {
+      const { value } = explorer(async (pathname, { query }) => pathname.endsWith("/tab/feed/")
+        ? { status_code: 0, has_more: 1, aweme_list: [playable(`${query.refresh_index}00001`)] }
+        : { status_code: 0, has_more: 0, data: [playable("700001", "新屏蔽"), playable("700002", "新屏蔽"), playable("700003")].map((aweme) => ({ aweme_info: aweme })) });
+      const first = await value.read({ kind: "feed", words: ["猫"] });
+      expect(shown(first)).toEqual(["100001", "700001"]);
+      const second = await value.read({ kind: "feed", sessionId: first.sessionId, words: ["猫"], rules: "新屏蔽", mode: "observe" });
+      expect(shown(second)).toEqual(["100001", "700001", "200001", "700003"]);
+    });
+  });
   it("keeps the plain feed and stops searching for a while when a word search asks for verification", async () => {
     const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
     const { value, api } = explorer(async (pathname, { query }) => pathname.endsWith("/tab/feed/")

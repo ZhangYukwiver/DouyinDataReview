@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { DouyinExplorer, ExploreError, validateExploreRequest, ingestExploreResponse, ingestExploreReplies, normalizeExploreComment, normalizeExploreVideo, playableAweme } from "./explorer.mjs";
 import { directWrite } from "./directWrites.mjs";
+import "../extension/filter.js";
 
+// 屏蔽词条的匹配和浏览器扩展共用一份，filter.js 挂在 globalThis.DYF 上
+const { compileRules, fieldsOf, filterFeed, match } = globalThis.DYF;
+const hitsRules = (session, aweme) => match(session.rules, fieldsOf(aweme)).score >= 1;
 const ROUTES = { users: "/aweme/v1/web/discover/search/", videos: "/aweme/v1/web/search/item/",
   profile: "/aweme/v1/web/aweme/post/", detail: "/aweme/v1/web/aweme/detail/", comments: "/aweme/v1/web/comment/list/",
   feed: "/aweme/v1/web/tab/feed/" };
@@ -20,15 +24,19 @@ const pickState = (session, word) => {
   if (!session.picks.has(word)) session.picks.set(word, { offset: 0, searchId: null, hasMore: true, retryAt: 0, queue: [] });
   return session.picks.get(word);
 };
-async function searchWord(api, word, state, signal) {
+async function searchWord(api, session, word, state, signal) {
   try {
     const payload = await api.request(ROUTES.videos, { query: searchQuery("aweme_video_web", word, String(state.offset), "10", state.searchId),
       referer: "https://www.douyin.com/search/", signal });
     // 要验证或报错就先歇几分钟，别每批都去撞
     if (payload?.status_code !== 0 || !Array.isArray(payload.data)
       || [payload.search_nil_info?.search_nil_type, payload.search_nil_info?.search_nil_item].includes("verify_check")) { state.retryAt = Date.now() + PICK_RETRY_MS; return; }
-    state.queue.push(...payload.data.flatMap((entry) => entry.aweme_info ? [entry.aweme_info] : entry.aweme_list ?? [])
-      .filter(playableAweme).map(normalizeExploreVideo).filter(Boolean));
+    const found = payload.data.flatMap((entry) => entry.aweme_info ? [entry.aweme_info] : entry.aweme_list ?? []).filter(playableAweme);
+    const kept = found.filter((aweme) => !hitsRules(session, aweme));
+    // 排队时留原始数据：词条改了，插入前还要再查一遍
+    state.queue.push(...kept);
+    // 整页都命中屏蔽词条也歇一会，和网页一样，别每批都去搜
+    if (found.length && !kept.length) state.retryAt = Date.now() + PICK_RETRY_MS;
     const next = Number(payload.cursor);
     state.hasMore = hasMore(payload.has_more) === true && Number.isSafeInteger(next) && next > state.offset;
     if (state.hasMore) state.offset = next;
@@ -44,7 +52,7 @@ function searchAhead(api, session, signal) {
   const every = session.pickEvery, low = every ? 1 : 10;
   const words = new Set(Array.from({ length: Math.max(PICK_AHEAD, Math.ceil(10 / (every || 1))) }, (_, index) => session.words[(turn + index) % session.words.length]));
   return Promise.all([...words].map((word) => [word, pickState(session, word)])
-    .filter(([, state]) => state.queue.length < low && state.hasMore && state.retryAt <= Date.now()).map(([word, state]) => searchWord(api, word, state, signal)));
+    .filter(([, state]) => state.queue.length < low && state.hasMore && state.retryAt <= Date.now()).map(([word, state]) => searchWord(api, session, word, state, signal)));
 }
 async function mixWords(session, known, ahead) {
   await ahead;
@@ -53,12 +61,14 @@ async function mixWords(session, known, ahead) {
   const every = session.pickEvery, wanted = Math.max(1, every ? Math.ceil(fresh.length / every) : fresh.length), turn = session.pickTurn ?? 0;
   const order = Array.from({ length: wanted }, (_, index) => session.words[(turn + index) % session.words.length]);
   session.pickTurn = (turn + wanted) % session.words.length;
+  // 只看词条时这批推荐会整批换掉，撞上这批的候选要留下，不然两头都没了
+  const taken = every ? session.items : known;
   const picks = [];
   for (const word of order) {
     const queue = pickState(session, word).queue;
     while (queue.length) {
-      const item = queue.shift();
-      if (!session.items.has(item.id) && !picks.some((pick) => pick.id === item.id)) { picks.push({ ...item, pickedFor: word }); break; }
+      const aweme = queue.shift(), item = normalizeExploreVideo(aweme);
+      if (item && !hitsRules(session, aweme) && !taken.has(item.id) && !picks.some((pick) => pick.id === item.id)) { picks.push({ ...item, pickedFor: word }); break; }
     }
   }
   if (!picks.length) return;
@@ -94,7 +104,7 @@ export class DirectExplorer extends DouyinExplorer {
     const session = previous ? { ...previous, items: new Map(previous.items), cursors: new Set(previous.cursors) }
       : { ...validated, key: randomUUID(), direct: true, items: new Map(), hasMore: null, received: false, revision: 0, cursor: "0", cursors: new Set() };
     // 词条每批跟着请求来，设置里改了下一批就用新的；各词翻到哪页留着
-    if (session.kind === "feed") Object.assign(session, { words: validated.words, pickEvery: validated.pickEvery,
+    if (session.kind === "feed") Object.assign(session, { words: validated.words, pickEvery: validated.pickEvery, rules: compileRules(input.rules),
       picks: new Map([...(previous?.picks ?? [])].map(([word, state]) => [word, { ...state, queue: [...state.queue] }])) });
     if (session.cursors.has(session.cursor)) throw new ExploreError("pagination_stalled", "分页游标重复，已加载的内容仍保留。");
     const api = await this.getApi({ signal });
@@ -123,6 +133,9 @@ export class DirectExplorer extends DouyinExplorer {
       ingestExploreResponse(session, "/aweme/v1/web/user/profile/other/", results[1].value);
       if (session.profile) session.profile.self = session.id === api.secUid || (api.session?.uid && String(results[1].value.user?.uid) === api.session.uid) || false;
     }
+    // 屏蔽词条：「只记录」不动推荐；「隐藏并反馈」在这里只隐藏，替用户点不感兴趣这个写操作只有扩展在做
+    const hide = input.mode === "hide" || input.mode === "dislike";
+    const hits = session.kind === "feed" && (hide || input.mode === "observe") ? filterFeed(payload, session.rules, hide) : [];
     const known = new Set(session.items.keys());
     ingestExploreResponse(session, pathname, payload);
     if (session.error) throw session.error;
@@ -141,7 +154,8 @@ export class DirectExplorer extends DouyinExplorer {
       const oldest = this.sessions.values().next().value; this.sessions.delete(oldest.key);
       await oldest.page?.close().catch(() => {});
     }
-    return this.snapshot(session);
+    // filtered 由 server 记进处置记录，不发给页面
+    return { ...this.snapshot(session), ...(hits.length ? { filtered: hits.map((hit) => ({ ...hit, t: Date.now(), action: hide ? "hidden" : "observed" })) } : {}) };
   }
   async readDirectSharees(input, signal) {
     const validated = validateExploreRequest(input);

@@ -743,7 +743,7 @@ function NavButton({
  * 文件夹跟着采集器的当前账号走：改动先在界面上生效，再按先后顺序整份存回采集器。
  * 存不上就退回上一次存好的样子并说明，排在后面的改动也一起作废，免得界面上看着放好了、其实没存。
  */
-// 内容库「推荐流挡掉的」：浏览器扩展送进采集器的命中视频，新的在前。开着这一栏时隔半分钟刷一次，
+// 内容库「推荐流挡掉的」：软件里刷视频和浏览器扩展碰到的命中视频，新的在前。开着这一栏时隔半分钟刷一次，
 // 别的时候只在连上采集器时读一次（侧栏要显示条数）
 function useFeedFilteredVideos(connection: ExploreConnection | null | undefined, active: boolean) {
   const [videos, setVideos] = useState<PersonalVideoRecord[]>([]);
@@ -1068,7 +1068,7 @@ function RecordsGallery({
   compactHeader?: boolean;
   /** 直播一栏：卡片进直播间，页头能粘贴直播间链接 */
   live?: boolean;
-  /** 「推荐流挡掉的」一栏：记录来自浏览器扩展，没有文件夹，空的时候指去设置 →「推荐流」 */
+  /** 「推荐流挡掉的」一栏：记录来自刷视频和浏览器扩展，没有文件夹，空的时候指去设置 →「推荐流」 */
   feedFiltered?: boolean;
   onOpenPreferences?: () => void;
   /** 这一栏的文件夹；没连采集器（或采集器太旧）时为 null，不显示文件夹 */
@@ -1306,7 +1306,7 @@ function RecordsGallery({
     ? `在 ${folderRecords.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
     : currentFolder ? `「${nameOf(currentFolder)}」里放了 ${folderCounts?.get(currentFolder.id) ?? 0} 条，全部一共 ${records.length} 条`
     : folderFilter === UNFILED ? `还有 ${folderCounts?.get(UNFILED) ?? 0} 条没放进文件夹`
-    : feedFiltered ? `浏览器扩展在抖音网页里碰到的 ${records.length} 条，新的在前`
+    : feedFiltered ? `刷视频时碰到的 ${records.length} 条，新的在前`
     : `${sourceLabel} · ${status?.message ?? `${records.length} 条本地记录`}`;
   const folderBar = list && folderCounts && records.length > 0 ? (
     <FolderBar
@@ -1472,7 +1472,7 @@ function RecordsGallery({
         <View {...fx({ motion: "rise" })} style={styles.emptyState} testID="feed-filtered-empty">
           <View {...ws("w-emptyicon")} style={styles.emptyIcon}><Funnel color={color.cyan} size={24} /></View>
           <Text {...ws("w-emptytitle")} style={styles.emptyTitle}>还没有挡掉的视频</Text>
-          <Text style={styles.emptyDetail}>到设置里的「推荐流」装好浏览器扩展、写好词条，以后在抖音网页里命中的视频会出现在这里，和观看记录一样能播放、能下载。</Text>
+          <Text style={styles.emptyDetail}>到设置里的「推荐流」写好词条、选好过滤方式，以后在软件里刷视频命中的会出现在这里；装上浏览器扩展后，抖音网页里命中的也会进来。和观看记录一样能播放、能下载。</Text>
           {onOpenPreferences ? (
             <Pressable
               {...ws("btn-solid")}

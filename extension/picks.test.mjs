@@ -56,6 +56,25 @@ describe("网页词条视频候选池", () => {
     expect(ids(page)).toEqual(["90001", "10009", "90002", "10003"]);
   });
 
+  it("只看词条：候选撞上这页的推荐也留着，被换掉的推荐后来搜到还能插，插过的不再出现", async () => {
+    const queues = [[10002, 90001, 90002], [20001, 20002]];
+    const picks = setup(async () => ({ ...response(...queues.shift()), has_more: 1 }));
+    picks.configure("露营", true, 0);
+    await picks.prefetch();
+    const first = feed(10001, 10002, 10003);
+    expect(picks.mix(first)).toBe(true);
+    // 10002 插到了第一个位置，原来那条不再重复出现
+    expect(ids(first)).toEqual(["10002", "90001"]);
+    const second = feed(20001, 10002);
+    picks.mix(second);
+    expect(ids(second)).toEqual(["90002"]);
+    // 20001 上一页被换掉了，用户没刷到过
+    await picks.prefetch();
+    const third = feed(30001);
+    picks.mix(third);
+    expect(ids(third)).toEqual(["20001"]);
+  });
+
   it("不插已见、同批后面会出现、重复、广告、直播或命中屏蔽词的候选；插入时重查规则", async () => {
     let blocked = "禁止";
     const search = vi.fn(async () => ({ ...response(10001, 10004, 90001, 90001, 90002, 90003), data: [

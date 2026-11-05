@@ -82,7 +82,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
   const entries = listPackage(archive).map((entry) => entry.replaceAll("\\", "/").replace(/^\//, ""));
   for (const entry of entries) {
     assertPublicPackagePath(entry);
-    assert(/^(?:desktop|collector|dist|build|node_modules)(?:\/|$)|^package\.json$/.test(entry), `Unexpected archive path: ${entry}`);
+    assert(/^(?:desktop|collector|dist|build|node_modules)(?:\/|$)|^package\.json$|^extension(?:\/filter\.js)?$/.test(entry), `Unexpected archive path: ${entry}`);
     assert(!entry.startsWith("collector/fixtures/") && !entry.endsWith(".test.mjs"), `Test fixture in package: ${entry}`);
     if (entry.startsWith("node_modules/")) {
       const dependencyRoot = entry.split("/")[1];
@@ -97,6 +97,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     "collector/directWrites.mjs", "collector/nativeSignature.mjs", "collector/sm3.mjs",
     "collector/browserConnection.mjs", "collector/readPermissions.mjs", "collector/openBrowserDebugging.ps1", "collector/server.mjs",
     "collector/licenses/abogus-Apache-2.0.txt", "desktop/main.mjs", "desktop/inAppBrowser.mjs", "desktop/feedExtension.mjs",
+    "extension/filter.js", // 刷视频和扩展共用的词条匹配，采集器一启动就要加载
     "node_modules/ws/index.js",
     "node_modules/ws/wrapper.mjs", "node_modules/ws/lib/websocket.js",
   ]) {
