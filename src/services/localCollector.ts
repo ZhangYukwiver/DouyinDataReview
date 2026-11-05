@@ -1043,7 +1043,8 @@ export async function getCollectorStatus(baseUrl: string, token: string, afterRe
 }
 
 export async function getCollectorRecords(baseUrl: string, token: string): Promise<CollectorSnapshot> {
-  return parseSnapshot(await requestJson(baseUrl, "/v1/records", {}, token));
+  // 整份记录几万条就有几十 MB，10 秒传不完会被中断，界面还会误报成版本不兼容
+  return parseSnapshot(await requestJson(baseUrl, "/v1/records", {}, token, 120_000));
 }
 
 export interface CollectorNewRecords {

@@ -12,6 +12,9 @@ const LEGACY_DIRECT_COMPLETE_WARNING_PREFIX = "无界面读取完成：";
 const BROKEN_RECORDS_WARNING_PREFIX = "本地记录文件损坏";
 const MAX_CHAT_MESSAGES = 100_000;
 const MAX_CHAT_CONVERSATIONS = 10_000;
+// records.json 读回来时要变成一个字符串，V8 单个字符串上限约 512 MB，再大下次启动就打不开了。
+// ponytail: 这是整份 JSON 的物理上限，约 38 万条；要存更多得换成分文件或数据库，界面和接口也要跟着改成分页
+const MAX_RECORDS_FILE_BYTES = 480 * 1024 * 1024;
 const MAX_CHAT_STRING = 500;
 const CHAT_TYPES = new Set(["text", "image", "sticker", "share", "comment", "call", "system", "voice", "video", "unknown"]);
 const IMAGE_HOST_SUFFIXES = ["douyin.com", "douyinpic.com", "douyinvod.com", "byteimg.com", "ibytedtos.com", "snssdk.com"];
@@ -305,9 +308,14 @@ export function emptyStoredSnapshot() {
   };
 }
 
+function recordsFileFullError() {
+  return Object.assign(new Error("本地记录已经快存满了（约 480 MB，大概 38 万条），这次新读到的没能存下，之前存好的记录不受影响。"), { code: "records_file_full" });
+}
+
 export class CollectorStore {
-  constructor(dataDirectory) {
+  constructor(dataDirectory, { maxFileBytes = MAX_RECORDS_FILE_BYTES } = {}) {
     this.dataDirectory = dataDirectory;
+    this.maxFileBytes = maxFileBytes;
     this.filePath = path.join(dataDirectory, "records.json");
     this.recordsRevision = 0;
   }
@@ -398,8 +406,13 @@ export class CollectorStore {
       // 记录占了文件大半，存聊天时它没变：序列化好的字节留着复用，只重写其余字段（rest 至少有 schemaVersion，不会是 {}）。
       // ponytail: 不再缩进，文件小两成；多占一份记录大小的内存
       const { records, ...rest } = snapshot;
-      if (this.recordsJson?.records !== records) this.recordsJson = { records, bytes: Buffer.from(JSON.stringify(records)) };
+      try {
+        if (this.recordsJson?.records !== records) this.recordsJson = { records, bytes: Buffer.from(JSON.stringify(records)) };
+      } catch (error) {
+        throw error instanceof RangeError ? recordsFileFullError() : error;
+      }
       const content = Buffer.concat([Buffer.from("{\"records\":"), this.recordsJson.bytes, Buffer.from(`,${JSON.stringify(rest).slice(1)}\n`)]);
+      if (content.length > this.maxFileBytes) throw recordsFileFullError();
       const file = await open(temporaryPath, "w", 0o600);
       try {
         await file.writeFile(content);

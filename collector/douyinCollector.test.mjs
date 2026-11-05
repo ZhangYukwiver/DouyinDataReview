@@ -963,6 +963,30 @@ describe("DouyinCollector direct records", () => {
     expect(expired.collectDirectList.mock.calls.map(([, type]) => type)).toEqual(["liked_videos"]);
   });
 
+  it("reports live counts page by page without losing the local records it already has", async () => {
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => []), newPage: vi.fn() };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore("2026-08-13T00:00:00.000Z") });
+    collector.snapshot = emptySnapshot();
+    collector.snapshot.records.favorite_videos = [{ id: "favorite_videos:old", title: "旧收藏", author: null, occurredAt: null, url: "https://www.douyin.com/video/old", videoId: "old" }];
+    collector.syncRunId = 1;
+    collector.ensureDirectApi = vi.fn(async () => context);
+    collector.readDirectHistory = vi.fn(async () => ({ status_code: 0, aweme_list: [], has_more: 0 }));
+    const seen = [];
+    collector.collectDirectList = vi.fn(async (_context, type, onPage) => {
+      if (type !== "favorite_videos") return 0;
+      await onPage({ status_code: 0, aweme_list: [{ aweme_id: "new-1" }, { aweme_id: "old" }], has_more: 1, cursor: "10" }, 1);
+      seen.push(collector.status.counts.favorite_videos);
+      await onPage({ status_code: 0, aweme_list: [{ aweme_id: "new-2" }], has_more: 0, cursor: "20" }, 2);
+      seen.push(collector.status.counts.favorite_videos);
+      return 2;
+    });
+
+    await collector.runDirectRecords(1, { full: true });
+
+    expect(seen).toEqual([2, 3]);
+    expect(collector.snapshot.records.favorite_videos.map((record) => record.videoId).sort()).toEqual(["new-1", "new-2", "old"]);
+  });
+
   it("retries a bad watch history page, keeps what was read on a later failure and still reads likes and favorites", async () => {
     const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => []), newPage: vi.fn() };
     const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore("2026-08-13T00:00:00.000Z") });
