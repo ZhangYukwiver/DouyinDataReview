@@ -4,22 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- geo:meta:start -->
-<title>如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南</title>
-<meta name="description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。">
+<title>如何导出抖音数据、屏蔽推荐视频、生成年度报告 · DouyinDataReview 使用指南</title>
+<meta name="description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告，按关键词屏蔽推荐视频、把想看的词条混进推荐。说明数据覆盖范围，以及数据会发到哪里。">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <link rel="canonical" href="https://zhangyukwiver.github.io/DouyinDataReview/guide.html">
 <link rel="alternate" type="text/plain" href="https://zhangyukwiver.github.io/DouyinDataReview/llms.txt" title="项目事实与文档索引">
 <meta property="og:type" content="article">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:site_name" content="DouyinDataReview">
-<meta property="og:title" content="如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南">
-<meta property="og:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。">
+<meta property="og:title" content="如何导出抖音数据、屏蔽推荐视频、生成年度报告 · DouyinDataReview 使用指南">
+<meta property="og:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告，按关键词屏蔽推荐视频、把想看的词条混进推荐。说明数据覆盖范围，以及数据会发到哪里。">
 <meta property="og:url" content="https://zhangyukwiver.github.io/DouyinDataReview/guide.html">
 <meta property="og:image" content="https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg">
 <meta property="og:image:alt" content="DouyinDataReview 持续报告界面，使用合成示例数据">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南">
-<meta name="twitter:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。">
+<meta name="twitter:title" content="如何导出抖音数据、屏蔽推荐视频、生成年度报告 · DouyinDataReview 使用指南">
+<meta name="twitter:description" content="按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告，按关键词屏蔽推荐视频、把想看的词条混进推荐。说明数据覆盖范围，以及数据会发到哪里。">
 <meta name="twitter:image" content="https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg">
 <script type="application/ld+json">
 {
@@ -29,16 +29,16 @@
       "@type": "TechArticle",
       "@id": "https://zhangyukwiver.github.io/DouyinDataReview/guide.html#page",
       "url": "https://zhangyukwiver.github.io/DouyinDataReview/guide.html",
-      "name": "如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南",
-      "headline": "如何导出抖音数据、生成年度报告与管理隐私 · DouyinDataReview 使用指南",
+      "name": "如何导出抖音数据、屏蔽推荐视频、生成年度报告 · DouyinDataReview 使用指南",
+      "headline": "如何导出抖音数据、屏蔽推荐视频、生成年度报告 · DouyinDataReview 使用指南",
       "author": {
         "@type": "Person",
         "name": "ZhangYukwiver",
         "url": "https://github.com/ZhangYukwiver"
       },
-      "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告。说明群聊备份、数据覆盖范围，以及数据会发到哪里。",
+      "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告，按关键词屏蔽推荐视频、把想看的词条混进推荐。说明数据覆盖范围，以及数据会发到哪里。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-11-04",
+      "dateModified": "2026-11-05",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -101,8 +101,8 @@ html{scroll-padding-top:24px}
 <a href="./">DouyinDataReview 下载与项目介绍</a>
 <h1>抖音数据导出与年度报告使用指南</h1>
 <p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏和好友聊天记录保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
-<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-11-04">2026 年 11 月 4 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
-<nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#coverage">数据范围</a><a href="#privacy">数据去向</a><a href="#sources">源码依据</a></nav>
+<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-11-05">2026 年 11 月 5 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
+<nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#feed-control">控制推荐流</a><a href="#coverage">数据范围</a><a href="#privacy">数据去向</a><a href="#sources">源码依据</a></nav>
 
 <h2 id="export">如何导出抖音观看历史和聊天记录？</h2>
 <p>先在桌面版首屏扫码并导入本人登录凭据，读取所需记录，再到「设置 → 数据」选择导出内容。输出为 JSON；导出只使用已保存的记录，不会重新读取。勾选聊天时，语音消息会经抖音转成文字写进文件，这一步需要联网并登着原账号。</p>
@@ -129,16 +129,28 @@ html{scroll-padding-top:24px}
 </ol>
 <p>可以先看<a href="demo/story-entry.html">内容年志</a>、<a href="demo/story-archive.html">档案馆</a>和<a href="demo/story-poster.html">海报</a>的合成数据示例。示例不是实际用户记录，也不是你账号的数据。</p>
 
+<h2 id="feed-control">如何按关键词屏蔽抖音视频、只看想看的内容？</h2>
+<p>手机上可以用抖音 App 自带的屏蔽设置，入口以当前版本为准。在电脑上，到 DouyinDataReview 的「设置 → 推荐流」写屏蔽词条和想看的词条。两份设置软件和网页共用：软件里的「刷视频」直接生效，在 Chrome、Edge 刷抖音网页要装一次应用自带的扩展。</p>
+<ol>
+  <li>屏蔽：一行写一个词。默认匹配标题、作者、话题和音乐，写成 <code>author:名字</code>、<code>tag:话题</code> 可以只查某一项，也支持 <code>/正则/</code>。</li>
+  <li>选处理方式。「只记录」不拦视频，适合先看词条会不会误伤；「隐藏」让命中的视频刷不到；「隐藏并反馈」还会替你点「不感兴趣」，只有网页上会点，每分钟最多 6 条。被挡掉的视频在内容库「推荐流挡掉的」里能翻到。</li>
+  <li>想看：在「想看的词条」里写词，最多 20 个、每个 30 字。应用用本人账号搜这些词，把相关视频插进推荐，软件的播放器里会标「来自词条」。</li>
+  <li>选插入频率：每 1、2、3、5、10 条插一条，或者「只看词条」。网页上还要打开「网页插入视频」，首次升级扩展后刷新一次抖音页。</li>
+</ol>
+<p class="note">网页上已经显示的首屏和作品详情拦不掉，只记录命中，后面加载的推荐才会过滤。命中屏蔽词的视频不会被插入；搜索失败时照常刷推荐。视频是在你这边插进去的，不等于改了抖音给账号的推荐算法。</p>
+
 <h2 id="coverage">哪些数据能保存？哪些不能保证？</h2>
 <div class="table-wrap" role="region" aria-label="数据范围表，可横向滚动" tabindex="0">
 <table>
   <caption>DouyinDataReview 的数据来源与功能边界</caption>
   <thead><tr><th scope="col">内容</th><th scope="col">处理方式</th><th scope="col">边界</th></tr></thead>
   <tbody>
-    <tr><th scope="row">观看、喜欢、收藏</th><td>读取本人账号可访问的接口，归一化后保存本机，可选择导出 JSON</td><td>不保证全部历史；记录缺少日期或字段会影响报告</td></tr>
+    <tr><th scope="row">观看、喜欢、收藏</th><td>读取本人账号可访问的接口，归一化后保存本机，可选择导出 JSON；每类不限条数</td><td>全部记录合计能存约 38 万条，快存满时会提示；不保证全部历史；记录缺少日期或字段会影响报告</td></tr>
     <tr><th scope="row">好友与群聊</th><td>保存好友聊天，接收新消息；群聊按需在线读取</td><td>群聊正文不写入记录备份；官方火花状态不等于本地估算</td></tr>
+    <tr><th scope="row">我的评论</th><td>读取时整理抖音的评论通知，保存自己发过的评论和评论下的回复；在应用里发的评论也记进去</td><td>抖音通知只留最近 100 条，只有收到过回复的评论读得到；只在应用里看，不写进 JSON 导出</td></tr>
+    <tr><th scope="row">使用记录</th><td>本机记下软件窗口和浏览器抖音网页每次使用的开始、结束时间和时长，重叠时段只算一次</td><td>只记这台电脑，手机上的时间记不到；浏览器要先打开远程调试，每次连接时点允许，退出采集程序后停止记录</td></tr>
     <tr><th scope="row">创作者中心</th><td>展示本人账号的数据总览、作品与粉丝指标，作品数据和粉丝画像能导出 CSV 表格；评论管理里可以作者身份发评论和回复</td><td>按平台当前权限返回；不代表可以查看任意账号的后台数据</td></tr>
-    <tr><th scope="row">视频与图文</th><td>支持单条下载、批量 ZIP 和图文全部图片下载</td><td>在线下载需要有效会话和当前账号可访问的作品</td></tr>
+    <tr><th scope="row">视频与图文</th><td>支持单条下载、批量 ZIP 和图文全部图片下载；桌面版默认存到「下载/抖音视频」，可在「设置 → 数据」改</td><td>在线下载需要有效会话和当前账号可访问的作品</td></tr>
     <tr><th scope="row">年度与持续报告</th><td>本机计算；持续报告比较最近 30 天，样本不足时回退到 90 天</td><td>年度回顾仅代表已保存样本；持续报告与年度回顾是不同视图</td></tr>
   </tbody>
 </table>
@@ -153,6 +165,7 @@ html{scroll-padding-top:24px}
   <thead><tr><th scope="col">功能</th><th scope="col">目的地与输入</th><th scope="col">补充说明</th></tr></thead>
   <tbody>
     <tr><th scope="row">采集与互动</th><td>向抖音请求本人可访问的记录；主动发送的消息、点赞、评论等提交至抖音</td><td>使用已导入的账号会话；未开启的读取类型不能继续联网读取；在应用里刷视频会像网页一样记进抖音观看历史；导出聊天时语音经抖音转成文字</td></tr>
+    <tr><th scope="row">推荐流控制</th><td>屏蔽词条在本机匹配；想看的词条用已登录账号向抖音搜索；选了「隐藏并反馈」时，网页上会用你的账号向抖音点「不感兴趣」</td><td>浏览器扩展只访问抖音网页和本机采集器；词条存在本机</td></tr>
     <tr><th scope="row">AI 助手（可选）</th><td>你的提问和它为回答查到的记录，发给你在「设置 → AI」填的模型接口，或本机的 Codex / Claude Code</td><td>默认不装；接口 Key 不写进数据目录；发私信、点赞、评论等操作每次都要你点「允许」</td></tr>
     <tr><th scope="row">本地报告</th><td>不需要发送原始记录到任何服务；统计在电脑完成</td><td>记录和汇总保存在当前设备；公开分享报告会暴露其中显示的内容</td></tr>
     <tr><th scope="row">公告与反馈问卷</th><td>启动时从本项目下载站（zhangyukwiver.github.io）读一次公告文件；点「填写问卷」才打开第三方问卷页</td><td>读公告不带任何个人数据或记录；问卷里写什么、留不留联系方式由你决定，问卷服务按它自己的规则保存</td></tr>
@@ -168,6 +181,8 @@ html{scroll-padding-top:24px}
   <li>导出勾选项与文件结构：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/services/exportData.ts">exportData.ts</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/components/workspace/DataExportDialog.tsx">DataExportDialog.tsx</a>。</li>
   <li>登录与记录采集：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/browserConnection.mjs">browserConnection.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/directHistory.mjs">directHistory.mjs</a>。</li>
   <li>官方档案与年度统计：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/domain/personalArchiveParser.ts">personalArchiveParser.ts</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/src/domain/annualReport.ts">annualReport.ts</a>。</li>
+  <li>推荐流控制：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/feedFilter.mjs">feedFilter.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/extension/filter.js">extension/filter.js</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/directExplorer.mjs">directExplorer.mjs</a>。</li>
+  <li>我的评论与使用记录：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/myComments.mjs">myComments.mjs</a>、<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/collector/usageSessions.mjs">usageSessions.mjs</a>。</li>
   <li>送去拆片工坊：<a href="https://github.com/ZhangYukwiver/DouyinDataReview/blob/main/desktop/reelLab.mjs">desktop/reelLab.mjs</a>。</li>
 </ul>
 <footer>
