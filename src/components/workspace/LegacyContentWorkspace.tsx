@@ -1304,7 +1304,7 @@ function RecordsGallery({
 
   const galleryMeta = searching
     ? `在 ${folderRecords.length} 条记录里找到 ${shownRecords.length} 条${earliest ? `，本机最早一条是 ${formatLongDate(earliest)}` : ""}`
-    : currentFolder ? `「${nameOf(currentFolder)}」里放了 ${folderCounts?.get(currentFolder.id) ?? 0} 条，全部一共 ${records.length} 条`
+    : currentFolder ? `「${nameOf(currentFolder)}」里有 ${folderCounts?.get(currentFolder.id) ?? 0} 个作品，全部共有 ${records.length} 条记录`
     : folderFilter === UNFILED ? `还有 ${folderCounts?.get(UNFILED) ?? 0} 条没放进文件夹`
     : feedFiltered ? `刷视频时碰到的 ${records.length} 条，新的在前`
     : `${sourceLabel} · ${status?.message ?? `${records.length} 条本地记录`}`;
@@ -1341,7 +1341,7 @@ function RecordsGallery({
           <FolderInput size={14} color={color.buttonText} /><Text style={styles.batchPrimaryText}>移到文件夹（{chosenRecords.length}）</Text>
         </Pressable>
       </View>
-      <Text style={styles.batchHint}>勾选要整理的视频，再点「移到文件夹」{activeType === "watch_history" ? "；同一个视频看过几次，会一起移过去" : ""}。</Text>
+      <Text style={styles.batchHint}>勾选要整理的视频，再点「移到文件夹」{activeType === "watch_history" ? "；看过多次的视频在文件夹里只显示一次" : ""}。</Text>
     </View> : null}
     {selectMode === "download" ? <View {...ws("w-batch")} style={styles.batchToolbar}>
       <Text style={styles.batchMeta}>已选 {chosen.length} / {candidates.length} 个可下载视频</Text>
