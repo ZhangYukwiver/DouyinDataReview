@@ -17,9 +17,38 @@ const runFile = promisify(execFile);
 const debuggingScriptPath = fileURLToPath(new URL("./openBrowserDebugging.ps1", import.meta.url)).replace(
   `${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`,
 );
+// 同一个 bundle ID 可能同时有普通浏览器和 headless 自动化实例，只操作普通应用的进程。
+const macBrowserPageScript = `function run(argv) {
+  ObjC.import("AppKit");
+  let target = null;
+  for (let attempt = 0; attempt < (argv[2] === "wait" ? 50 : 1); attempt++) {
+    const applications = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(argv[0]);
+    for (let i = 0; i < applications.count; i++) {
+      const candidate = applications.objectAtIndex(i);
+      if (Number(candidate.activationPolicy) === 0 && !candidate.terminated) {
+        target = candidate;
+        break;
+      }
+    }
+    if (target) break;
+    if (argv[2] === "wait") delay(0.1);
+  }
+  if (!target) return "browser_not_running";
+  const browser = Application(Number(target.processIdentifier));
+  browser.activate();
+  const settingsWindow = browser.Window().make();
+  settingsWindow.activeTab.url = argv[1];
+  return settingsWindow.activeTab.url();
+}`;
 
 export class BrowserConnectionError extends Error {
   constructor(code, message, status = 409) { super(message); this.code = code; this.status = status; }
+}
+
+function browserSettingsUrl(browser, page) {
+  // Comet 在地址栏显示 comet://，但程序导航必须使用底层 Chromium 的 chrome://。
+  const scheme = browser === "comet" ? "chrome" : browser;
+  return `${scheme}://${page === "extensions" ? "extensions" : "inspect/#remote-debugging"}`;
 }
 
 export function browserDirectories({ platform = process.platform, home = homedir(), env = process.env } = {}) {
@@ -28,7 +57,7 @@ export function browserDirectories({ platform = process.platform, home = homedir
   const entries = platform === "darwin" ? [["chrome", "Chrome", "Google/Chrome"], ["edge", "Edge", "Microsoft Edge"], ["comet", "Comet", "Comet"]]
     : platform === "win32" ? [["chrome", "Chrome", "Google/Chrome/User Data"], ["edge", "Edge", "Microsoft/Edge/User Data"]]
       : [["chrome", "Chrome", "google-chrome"], ["edge", "Edge", "microsoft-edge"]];
-  return entries.map(([id, label, directory]) => ({ id, label, directory: path.join(root, ...directory.split("/")), inspectUrl: `${id}://inspect/#remote-debugging` }));
+  return entries.map(([id, label, directory]) => ({ id, label, directory: path.join(root, ...directory.split("/")), inspectUrl: browserSettingsUrl(id, "inspect") }));
 }
 
 // Never accept a URL supplied by a remote caller. Discover only a local browser's
@@ -129,26 +158,28 @@ export async function openBrowserPage(source, page, {
   fileExists = file => stat(file).then(value => value.isFile(), () => false),
 } = {}) {
   const applications = {
-    chrome: { mac: "Google Chrome", windows: ["Google", "Chrome", "Application", "chrome.exe"] },
-    edge: { mac: "Microsoft Edge", windows: ["Microsoft", "Edge", "Application", "msedge.exe"] },
-    comet: { mac: "Comet" },
+    chrome: { macId: "com.google.Chrome", windows: ["Google", "Chrome", "Application", "chrome.exe"] },
+    edge: { macId: "com.microsoft.edgemac", windows: ["Microsoft", "Edge", "Application", "msedge.exe"] },
+    comet: { macId: "ai.perplexity.comet" },
   };
   if (!Object.hasOwn(applications, source.id) || (source.id === "comet" && platform !== "darwin"))
     throw new BrowserConnectionError("browser_unsupported", "请选择 Chrome、Edge 或受支持的 Comet。", 400);
   const application = applications[source.id];
   // Both the browser and URL are fixed locally, never supplied by an API caller.
   const extensions = page === "extensions";
-  const inspectUrl = extensions ? `${source.id}://extensions` : `${source.id}://inspect/#remote-debugging`;
+  const inspectUrl = browserSettingsUrl(source.id, page);
   try {
     if (platform === "darwin") {
-      const script = `tell application "${application.mac}"
-  activate
-  set settingsWindow to make new window
-  set URL of active tab of settingsWindow to "${inspectUrl}"
-  return URL of active tab of settingsWindow
-end tell`;
-      const { stdout } = await run("/usr/bin/osascript", ["-e", script], { timeout: 15_000, maxBuffer: 16 * 1024 });
-      if (stdout.trim() !== inspectUrl) throw new Error("settings_page_not_opened");
+      const args = ["-l", "JavaScript", "-e", macBrowserPageScript, application.macId, inspectUrl];
+      let { stdout } = await run("/usr/bin/osascript", args, { timeout: 15_000, maxBuffer: 16 * 1024 });
+      if (stdout.trim() === "browser_not_running") {
+        // -n 让仅有 headless 实例时也能启动普通浏览器；不改用户目录或调试设置。
+        await run("/usr/bin/open", ["-n", "-b", application.macId], { timeout: 5000, maxBuffer: 16 * 1024 });
+        ({ stdout } = await run("/usr/bin/osascript", [...args, "wait"], { timeout: 15_000, maxBuffer: 16 * 1024 }));
+      }
+      // Chromium 导航完成后可能给扩展页补上末尾的斜杠。
+      const openedUrl = stdout.trim();
+      if (openedUrl !== inspectUrl && !(extensions && openedUrl === `${inspectUrl}/`)) throw new Error("settings_page_not_opened");
       return;
     }
     if (platform === "win32") {
