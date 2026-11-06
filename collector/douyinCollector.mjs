@@ -565,7 +565,7 @@ export class DouyinCollector {
       `当前账号未开启读取${kind === "videos" ? "视频" : "聊天"}。请在设置 → 账号中重新导入凭据并勾选对应权限。`, 403);
   }
 
-  externalSessionError(error) {
+  externalSessionError(error, { fromRequest = false } = {}) {
     if (!["direct_session_missing", "write_credentials_missing", "login_required", "session_rejected",
       "verification_required", "account_mismatch", "template_missing", "template_invalid", "template_mismatch"].includes(error?.code)) return error;
     if (this.externalSessionState === "exporting") {
@@ -573,6 +573,9 @@ export class DouyinCollector {
       problem.cause = error;
       return problem;
     }
+    // 单个接口的拒绝、风控或缺少操作证书只中止当前操作。下一次任务仍会核对账号身份。
+    if ((fromRequest && error.code !== "account_mismatch")
+      || ["session_rejected", "verification_required", "write_credentials_missing"].includes(error.code)) return error;
     this.externalSessionState = "reconnect_required";
     const problem = new DirectHistoryError("browser_reconnect_required", "导入的登录凭据已失效或不完整，请在设置 → 账号中重新扫码登录或连接浏览器，完成登录或验证后再次导入。");
     // 调用方要分清是登录失效还是安全验证
@@ -803,12 +806,12 @@ export class DouyinCollector {
         await this.directApi.close(); this.directApi = null;
       }
       this.directApi ??= new DirectApiClient(session, { dataDirectory: this.dataDirectory, directory: this.signerDirectory,
-        onSessionError: error => this.externalSessionError(error) });
+        onSessionError: error => this.externalSessionError(error, { fromRequest: true }) });
       this.directApi.replaceSession(session);
       try {
         // Refresh through the browser while importing; a detached cache still
         // has to pass the platform's HTTP identity check before any task runs.
-        if (security || needsDirectSessionRefresh(this.directApi.session))
+        if (security || (this.externalConnection?.connected && needsDirectSessionRefresh(this.directApi.session)))
           await this.ensureDirectWriteCredentials(this.directApi, signal);
         const identity = await this.directApi.verifyIdentity(this.accountUid, signal);
         await this.applyAccountIdentity(identity);

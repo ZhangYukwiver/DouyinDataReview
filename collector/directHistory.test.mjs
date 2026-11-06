@@ -253,15 +253,16 @@ describe("direct history request", () => {
     expect(requestFactory.newContext).not.toHaveBeenCalled();
   });
 
-  it("stops after one 403 without retrying", async () => {
+  it("stops after one 403 and retains the history template for the next attempt", async () => {
     const { context, isolatedRequest, requestFactory } = fakeContext({ status: 403 });
+    const template = path.join(dataDirectory, "direct-history-template.json");
+    const before = await readFile(template, "utf8");
 
     await expect(fetchDirectHistoryPage({ context, currentUserAgent: userAgent, dataDirectory, requestFactory, signer: async (url) => signedUrl(url) }))
       .rejects.toMatchObject({ code: "session_rejected" });
     expect(isolatedRequest.get).toHaveBeenCalledTimes(1);
     expect(isolatedRequest.dispose).toHaveBeenCalledTimes(1);
-    await expect(readFile(path.join(dataDirectory, "direct-history-template.json"), "utf8"))
-      .rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(template, "utf8")).toBe(before);
   });
 
   it("reports Douyin status 8 as an expired login so the app can reopen the login browser", async () => {
