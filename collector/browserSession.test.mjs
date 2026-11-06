@@ -29,7 +29,7 @@ async function fixture({ session = directSessionFixture(), sourceMarker = true, 
   cleanup.push(() => collector.shutdown());
   const http = directApiFixture(handler);
   http.api.dataDirectory = dataDirectory;
-  http.api.onSessionError = error => collector.externalSessionError(error);
+  http.api.onSessionError = error => collector.externalSessionError(error, { fromRequest: true });
   collector.directApi = http.api;
   const browser = (collector.ensureBrowser = vi.fn()).mockRejectedValue(new Error("must not launch browser"));
   return { collector, http, browser, dataDirectory };
@@ -89,21 +89,28 @@ describe("imported credentials without a running browser", () => {
     expect(collector.getStatus().browserSource).toMatchObject({ connected: false, credentials: "ready" });
     await expect(collector.ensureDirectApi()).resolves.toBe(http.api);
   });
-  it("stops on a server login rejection during a list read and requires explicit reconnection without launching a fallback", async () => {
-    const { collector, http, browser } = await fixture({ handler: url => ({ payload: url.pathname.includes("/query/user/")
-      ? { status_code: 0, user_uid: "123" } : { status_code: 8 } }) });
+  it.each([
+    [{ payload: { status_code: 8 } }, "login_required"],
+    [{ status: 403 }, "session_rejected"],
+    [{ buffer: Buffer.from("blocked") }, "verification_required"],
+  ])("keeps an endpoint rejection scoped to the failed read (%s)", async (rejection, code) => {
+    const list = { payload: { status_code: 0, aweme_list: [], has_more: 0, max_cursor: "0" } };
+    const read = vi.fn().mockReturnValueOnce(rejection).mockReturnValue(list);
+    const { collector, http, browser } = await fixture({ handler: url => url.pathname.includes("/query/user/")
+      ? { payload: { status_code: 0, user_uid: "123" } } : read() });
     const api = await collector.ensureDirectApi();
-    await expect(api.collectRecordPages("liked_videos", () => false)).rejects.toMatchObject({ code: "browser_reconnect_required" });
-    expect(collector.getStatus().browserSource.credentials).toBe("reconnect_required");
-    await expect(collector.ensureDirectApi()).rejects.toMatchObject({ code: "browser_reconnect_required" });
-    expect(http.fetch).toHaveBeenCalledTimes(2); expect(browser).not.toHaveBeenCalled();
+    await expect(api.collectRecordPages("liked_videos", () => false)).rejects.toMatchObject({ code });
+    expect(collector.getStatus().browserSource.credentials).toBe("ready");
+    const retry = await collector.ensureDirectApi();
+    await expect(retry.collectRecordPages("liked_videos", () => false)).resolves.toBe(1);
+    expect(http.fetch).toHaveBeenCalledTimes(4); expect(browser).not.toHaveBeenCalled();
   });
-  it.each([401, 403])("requires reconnection when the identity check is rejected with HTTP %s", async status => {
+  it.each([401, 403])("stops the task if identity cannot be verified with HTTP %s and allows another check", async status => {
     const { collector, browser } = await fixture({ handler: () => ({ status }) });
-    await expect(collector.ensureDirectApi()).rejects.toMatchObject({ code: "browser_reconnect_required" });
-    expect(collector.getStatus().browserSource.credentials).toBe("reconnect_required"); expect(browser).not.toHaveBeenCalled();
+    await expect(collector.ensureDirectApi()).rejects.toMatchObject({ code: "session_rejected" });
+    expect(collector.getStatus().browserSource.credentials).toBe("ready"); expect(browser).not.toHaveBeenCalled();
   });
-  it("requires reconnection when history paging receives a login rejection after a successful identity check", async () => {
+  it("stops rejected history paging without invalidating the verified account", async () => {
     const { collector, browser, dataDirectory } = await fixture();
     const api = await collector.ensureDirectApi();
     const before = JSON.stringify(collector.getSnapshot());
@@ -112,8 +119,8 @@ describe("imported credentials without a running browser", () => {
       dispose: async () => {},
     })) };
     await expect(fetchDirectHistoryPage({ context: api, currentUserAgent: api.currentUserAgent, dataDirectory, requestFactory,
-      signer: async url => `${url}&a_bogus=${"A".repeat(80)}` })).rejects.toMatchObject({ code: "browser_reconnect_required" });
-    expect(collector.getStatus().browserSource.credentials).toBe("reconnect_required");
+      signer: async url => `${url}&a_bogus=${"A".repeat(80)}` })).rejects.toMatchObject({ code: "login_required" });
+    expect(collector.getStatus().browserSource.credentials).toBe("ready");
     expect(JSON.stringify(collector.getSnapshot())).toBe(before); expect(browser).not.toHaveBeenCalled();
   });
   it.each(["expired", "missing"])("restores a cache with a %s short token when the platform still accepts its login", async token => {
@@ -128,19 +135,32 @@ describe("imported credentials without a running browser", () => {
     expect(collector.getStatus().browserSource.credentials).toBe("ready");
     expect(browser).not.toHaveBeenCalled(); expect(collector.context).toBeNull();
   });
-  it.each([401, 403, "logout", "account_mismatch"])("requires reconnection for an expired short token only after platform rejection %s", async rejection => {
+  it.each(["logout", "account_mismatch"])("requires reconnection when the identity endpoint confirms %s", async rejection => {
     const session = directSessionFixture(); session.browserBoundSession = true;
-    const { collector, http, browser, dataDirectory } = await fixture({ session, handler: () => typeof rejection === "number"
-      ? { status: rejection } : { payload: rejection === "logout" ? { status_code: 8 } : { status_code: 0, user_uid: "456" } } });
+    const { collector, http, browser, dataDirectory } = await fixture({ session, handler: () => ({
+      payload: rejection === "logout" ? { status_code: 8 } : { status_code: 0, user_uid: "456" },
+    }) });
     const before = await loadDirectSession(dataDirectory);
     const snapshot = collector.getSnapshot();
     expect(collector.getStatus().browserSource.credentials).toBe("ready");
     await expect(collector.ensureDirectApi({ security: true })).rejects.toMatchObject({ code: "browser_reconnect_required" });
     expect(collector.getStatus().browserSource.credentials).toBe("reconnect_required");
+    await expect(collector.ensureDirectApi()).rejects.toMatchObject({ code: "browser_reconnect_required" });
     expect(http.fetch).toHaveBeenCalledOnce(); expect(browser).not.toHaveBeenCalled();
     expect(await loadDirectSession(dataDirectory)).toMatchObject({ uid: before.uid, cookies: before.cookies,
       security: before.security, browserBoundSession: before.browserBoundSession });
     expect(collector.getSnapshot()).toEqual(snapshot);
+  });
+  it("keeps a read-only desktop login usable when a signed operation needs a certificate", async () => {
+    const session = directSessionFixture();
+    delete session.security;
+    session.browserBoundSession = true;
+    const { collector, dataDirectory } = await fixture({ session });
+    await writeFile(path.join(dataDirectory, "external-browser.json"), JSON.stringify({ browser: "desktop" }));
+    await collector.initialize();
+    await expect(collector.ensureDirectApi({ history: true })).resolves.toBeTruthy();
+    await expect(collector.ensureDirectApi({ security: true })).rejects.toMatchObject({ code: "write_credentials_missing" });
+    expect(collector.getStatus().browserSource.credentials).toBe("ready");
   });
   it("keeps an expired-token cache usable after network failures rather than treating them as expired credentials", async () => {
     const session = directSessionFixture(); session.browserBoundSession = true;
