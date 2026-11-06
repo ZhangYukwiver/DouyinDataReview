@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { browserDirectories, connectExternalBrowser, discoverBrowser, endpointOwnedByBrowser, listBrowserSources, localBrowserEndpoint, openBrowserDebuggingPage, openBrowserPage } from "./browserConnection.mjs";
 import { closeContextWithin, DouyinCollector } from "./douyinCollector.mjs";
@@ -81,6 +82,7 @@ describe("local CDP source discovery", () => {
     expect(browserDirectories({ platform: "darwin", home: "/Users/test", env: {} }).map(item => item.directory)).toEqual([
       path.join("/Users/test", "Library", "Application Support", "Google", "Chrome"), path.join("/Users/test", "Library", "Application Support", "Microsoft Edge"), path.join("/Users/test", "Library", "Application Support", "Comet"),
     ]);
+    expect(browserDirectories({ platform: "darwin", home: "/Users/test", env: {} }).find(item => item.id === "comet").inspectUrl).toBe("chrome://inspect/#remote-debugging");
     expect(browserDirectories({ platform: "win32", home: "/users/test", env: { LOCALAPPDATA: "/local" } }).map(item => item.directory)).toEqual([path.join("/local", "Google", "Chrome", "User Data"), path.join("/local", "Microsoft", "Edge", "User Data")]);
     expect(browserDirectories({ platform: "linux", home: "/home/test", env: { XDG_CONFIG_HOME: "/config" } })[0].directory).toBe(path.join("/config", "google-chrome"));
   });
@@ -111,18 +113,67 @@ describe("opening the selected browser's debugging settings", () => {
     expect(run.mock.calls[1][0]).toBe("powershell.exe");
     expect(run.mock.calls[1][1].slice(-4)).toEqual(["-Browser", "chrome", "-Executable", executable]);
   });
-  it.each([["chrome", "Google Chrome"], ["edge", "Microsoft Edge"], ["comet", "Comet"]])("targets %s by application name on macOS", async (id, application) => {
-    const run = vi.fn(async () => ({ stdout: `${id}://inspect/#remote-debugging\n` }));
+  it.each([["chrome", "com.google.Chrome", "chrome"], ["edge", "com.microsoft.edgemac", "edge"], ["comet", "ai.perplexity.comet", "chrome"]])("targets %s by its fixed bundle ID on macOS", async (id, application, scheme) => {
+    const run = vi.fn(async () => ({ stdout: `${scheme}://inspect/#remote-debugging\n` }));
     await openBrowserDebuggingPage({ id, label: application }, { platform: "darwin", run });
     expect(run).toHaveBeenCalledOnce();
     expect(run.mock.calls[0][0]).toBe("/usr/bin/osascript");
-    expect(run.mock.calls[0][1][1]).toContain(`tell application "${application}"`);
-    expect(run.mock.calls[0][1][1]).toContain(`set URL of active tab of settingsWindow to "${id}://inspect/#remote-debugging"`);
+    expect(run.mock.calls[0][1].slice(0, 3)).toEqual(["-l", "JavaScript", "-e"]);
+    expect(run.mock.calls[0][1].slice(4)).toEqual([application, `${scheme}://inspect/#remote-debugging`]);
+  });
+  it.each(["chrome://extensions", "chrome://extensions/"])("opens Comet extensions through Chromium and accepts the returned URL %s", async openedUrl => {
+    const run = vi.fn(async () => ({ stdout: `${openedUrl}\n` }));
+    await openBrowserPage({ id: "comet", label: "Comet", inspectUrl: "https://untrusted.example/" }, "extensions", { platform: "darwin", run });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0][1].slice(4)).toEqual(["ai.perplexity.comet", "chrome://extensions"]);
+  });
+  it.each(["", "about:blank", "comet://extensions", "chrome://extensions/unexpected"])("rejects an unconfirmed Comet page and provides the usable manual URL: %s", async openedUrl => {
+    await expect(openBrowserPage({ id: "comet", label: "Comet" }, "extensions", {
+      platform: "darwin", run: vi.fn(async () => ({ stdout: `${openedUrl}\n` })),
+    })).rejects.toMatchObject({ code: "browser_extensions_unavailable", message: expect.stringContaining("chrome://extensions") });
+  });
+  it("targets the normal browser PID while headless instances share its bundle ID", async () => {
+    let url = "about:blank";
+    const tab = { get url() { return () => url; }, set url(value) { url = `${value}/`; } };
+    const activate = vi.fn(), make = vi.fn(() => ({ activeTab: tab }));
+    const Application = vi.fn(() => ({ activate, Window: () => ({ make }) }));
+    const candidates = [
+      { processIdentifier: 100, activationPolicy: "2", terminated: false },
+      { processIdentifier: 200, activationPolicy: "0", terminated: true },
+      { processIdentifier: 300, activationPolicy: "0", terminated: false },
+    ];
+    const runningApplicationsWithBundleIdentifier = vi.fn(() => ({ count: candidates.length, objectAtIndex: index => candidates[index] }));
+    const run = vi.fn(async (_command, args) => ({ stdout: runInNewContext(`${args[3]}; run(argv);`, {
+      argv: args.slice(4), ObjC: { import() {} }, $: { NSRunningApplication: { runningApplicationsWithBundleIdentifier } }, Application,
+    }) }));
+    await openBrowserPage({ id: "chrome", label: "Chrome" }, "extensions", { platform: "darwin", run });
+    expect(runningApplicationsWithBundleIdentifier).toHaveBeenCalledExactlyOnceWith("com.google.Chrome");
+    expect(Application).toHaveBeenCalledExactlyOnceWith(300);
+    expect(activate).toHaveBeenCalledOnce(); expect(make).toHaveBeenCalledOnce();
+    expect(url).toBe("chrome://extensions/");
+  });
+  it("launches a normal browser if only background instances are running, then waits for it", async () => {
+    const run = vi.fn().mockResolvedValueOnce({ stdout: "browser_not_running\n" })
+      .mockResolvedValueOnce({ stdout: "" }).mockResolvedValueOnce({ stdout: "chrome://extensions/\n" });
+    await openBrowserPage({ id: "chrome", label: "Chrome" }, "extensions", { platform: "darwin", run });
+    expect(run.mock.calls[1]).toEqual(["/usr/bin/open", ["-n", "-b", "com.google.Chrome"], expect.any(Object)]);
+    expect(run.mock.calls[2][1].slice(4)).toEqual(["com.google.Chrome", "chrome://extensions", "wait"]);
+  });
+  it("does not send Apple events to headless instances when a normal browser never starts", async () => {
+    const Application = vi.fn(), delay = vi.fn();
+    const run = vi.fn(async (command, args) => ({ stdout: command === "/usr/bin/open" ? "" : runInNewContext(`${args[3]}; run(argv);`, {
+      argv: args.slice(4), ObjC: { import() {} }, Application, delay,
+      $: { NSRunningApplication: { runningApplicationsWithBundleIdentifier: () => ({ count: 1,
+        objectAtIndex: () => ({ processIdentifier: 100, activationPolicy: 2, terminated: false }) }) } },
+    }) }));
+    await expect(openBrowserPage({ id: "chrome", label: "Chrome" }, "extensions", { platform: "darwin", run }))
+      .rejects.toMatchObject({ code: "browser_extensions_unavailable" });
+    expect(Application).not.toHaveBeenCalled(); expect(delay).toHaveBeenCalledTimes(50);
   });
   it("opens the extensions page the same way, and names it in the manual fallback", async () => {
-    const mac = vi.fn(async () => ({ stdout: "chrome://extensions\n" }));
+    const mac = vi.fn(async () => ({ stdout: "chrome://extensions/\n" }));
     await openBrowserPage({ id: "chrome", label: "Chrome" }, "extensions", { platform: "darwin", run: mac });
-    expect(mac.mock.calls[0][1][1]).toContain('set URL of active tab of settingsWindow to "chrome://extensions"');
+    expect(mac.mock.calls[0][1].slice(4)).toEqual(["com.google.Chrome", "chrome://extensions"]);
     const executable = "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe";
     const windows = vi.fn(async () => ({ stdout: "extensions_page_opened\r\n" }));
     await openBrowserPage({ id: "edge", label: "Edge" }, "extensions", { platform: "win32", env: { ProgramFiles: "C:\\Program Files" }, fileExists: async (file) => file === executable, run: windows });
