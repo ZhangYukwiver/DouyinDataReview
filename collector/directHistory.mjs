@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, realpath, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -328,10 +328,6 @@ export async function loadDirectHistoryTemplate(dataDirectory) {
   return template;
 }
 
-export async function invalidateDirectHistoryTemplate(dataDirectory) {
-  if (dataDirectory) await rm(templatePath(dataDirectory), { force: true });
-}
-
 function selectedCookieState(cookies) {
   return (cookies ?? []).filter((cookie) => {
     const domain = String(cookie?.domain ?? "").toLocaleLowerCase().replace(/^\./u, "");
@@ -580,9 +576,9 @@ function directValue(payload, key) {
 
 function checkDirectStatus(payload) {
   const statusCode = directValue(payload, "status_code");
-  // 8 是抖音的「未登录」：Cookie 还在，但服务端已让这次网页登录失效
+  // 状态码 8 说明这个接口要求登录，账号是否失效由身份接口核对。
   if (statusCode === 8) {
-    throw new DirectHistoryError("login_required", "抖音登录已失效，请点「完整读取」，在弹出的浏览器里重新登录。");
+    throw new DirectHistoryError("login_required", "抖音要求登录后才能读取此列表，请重试或检查登录状态。");
   }
   if (statusCode !== undefined && statusCode !== 0) {
     throw new DirectHistoryError("douyin_error", `抖音读取返回状态码 ${String(statusCode).slice(0, 20)}。`);
@@ -688,7 +684,6 @@ export async function fetchDirectHistoryPage({
     }
     const status = response.status();
     if (status === 401 || status === 403) {
-      await invalidateDirectHistoryTemplate(dataDirectory);
       throw new DirectHistoryError("session_rejected", `观看历史直接请求返回 HTTP ${status}，已停止且不会自动重试。`);
     }
     if (status === 429) throw new DirectHistoryError("rate_limited", "观看历史直接请求触发限流，已停止且不会自动重试。");

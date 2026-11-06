@@ -95,7 +95,8 @@ export function deriveSetup({ busy, chatCollecting, connected, snapshotSource, s
   const chatProgress = status?.chat.progress ?? null;
   const chatReading = chatCollecting && (status?.chat.state !== "observing" || chatProgress !== null);
   const loginNeeded = status?.browserSource?.credentials === "reconnect_required" || status?.state === "awaiting_login"
-    || ["login_required", "browser_reconnect_required"].includes(status?.code ?? "");
+    || status?.code === "browser_reconnect_required"
+    || (status?.code === "login_required" && status.browserSource?.credentials !== "ready");
   const fromArchive = snapshotSource === "archive";
   const source = fromArchive ? "备用文件导入" : connected ? "本地采集器" : "尚未连接";
   const statusLine = busy && ready && snapshotSource === "collector" ? `${source} · 采集中，报告用采集前的数据` : source;

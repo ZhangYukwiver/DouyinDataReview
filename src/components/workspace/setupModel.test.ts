@@ -92,6 +92,8 @@ describe("采集器页状态", () => {
     const coded = deriveSetup({ ...base, status: status({ state: "error", code: "login_required" }) });
     expect(coded.loginNeeded).toBe(true);
     expect(coded.flow).toEqual({ step: 0, done: [false, true, true], note: "要导入凭据" });
+    expect(deriveSetup({ ...base, status: status({ state: "error", code: "login_required",
+      browserSource: { mode: "cdp", browser: "app", connected: false, credentials: "ready" } }) }).loginNeeded).toBe(false);
   });
 
   it("聊天：有整理进度或还没进入接收就算在读历史，单纯接收不算", () => {
