@@ -26,21 +26,21 @@ describe("record folders", () => {
   const records = [first, again, other, legacy];
   const empty: RecordFolderList = { folders: [], items: {} };
 
-  it("files a video once so every viewing of it moves together", () => {
+  it("shows and counts a filed video once while preserving its viewing history", () => {
     const list = moveToFolder(addFolder(empty, "  学习 ", "f1"), [first, legacy], "f1");
     expect(list.folders).toEqual([{ id: "f1", name: "学习" }]);
     expect(folderOf(list, again)?.name).toBe("学习");
-    expect(filterByFolder(records, list, "f1")).toEqual([first, again, legacy]);
+    expect(filterByFolder(records, list, "f1")).toEqual([first, legacy]);
     expect(filterByFolder(records, list, UNFILED)).toEqual([other]);
     expect(filterByFolder(records, list, ALL_FOLDERS)).toBe(records);
-    expect(countByFolder(records, list)).toEqual(new Map([["f1", 3], [UNFILED, 1]]));
+    expect(countByFolder(records, list)).toEqual(new Map([["f1", 2], [UNFILED, 1]]));
   });
 
   it("moves back to unfiled and drops a deleted folder's videos into unfiled", () => {
     let list = moveToFolder(addFolder(addFolder(empty, "学习", "f1"), "搞笑", "f2"), records, "f1");
     list = moveToFolder(list, [other], "f2");
     list = moveToFolder(list, [legacy], null);
-    expect(countByFolder(records, list)).toEqual(new Map([["f1", 2], ["f2", 1], [UNFILED, 1]]));
+    expect(countByFolder(records, list)).toEqual(new Map([["f1", 1], ["f2", 1], [UNFILED, 1]]));
     list = removeFolder(list, "f1");
     expect(list.folders.map((folder) => folder.id)).toEqual(["f2"]);
     expect(list.items).toEqual({ "7002": "f2" });
@@ -52,6 +52,10 @@ describe("record folders", () => {
     expect(filterByFolder(records, list, UNFILED)).toEqual([other, legacy]);
     expect(filterByFolder(records, list, UNFILED, new Set(["7001"]))).toEqual(records);
     expect(filterByFolder(records, list, ALL_FOLDERS, new Set(["7001"]))).toBe(records);
+    const movedOut = moveToFolder(list, [again], null);
+    expect(filterByFolder(records, movedOut, "f1", new Set(["7001"]))).toEqual([first]);
+    expect(filterByFolder(records, movedOut, "f1")).toEqual([]);
+    expect(filterByFolder(records, movedOut, UNFILED)).toEqual(records);
   });
 
   it("treats an assignment to a folder that no longer exists as unfiled", () => {

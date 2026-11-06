@@ -42,21 +42,32 @@ export function folderOf(list: RecordFolderList, record: PersonalVideoRecord): R
 export function filterByFolder(records: PersonalVideoRecord[], list: RecordFolderList, filter: string, keep?: ReadonlySet<string>): PersonalVideoRecord[] {
   if (filter === ALL_FOLDERS) return records;
   const known = new Set(list.folders.map((folder) => folder.id));
+  // 未分区保留每条记录；进入具体文件夹时，同一作品只展示列表里排在最前的一条。
+  const seen = filter === UNFILED ? null : new Set<string>();
   return records.filter((record) => {
     const key = folderKey(record);
     const id = list.items[key];
     const filed = id !== undefined && known.has(id) ? id : UNFILED;
-    return filed === filter || Boolean(keep?.has(key));
+    if (filed !== filter && !keep?.has(key)) return false;
+    if (seen?.has(key)) return false;
+    seen?.add(key);
+    return true;
   });
 }
 
-/** 每个文件夹（和「未分区」）里有几条：按记录条数算，和「全部」的条数口径一样 */
+/** 文件夹数作品，「未分区」和「全部」一样数原始记录。 */
 export function countByFolder(records: PersonalVideoRecord[], list: RecordFolderList): Map<string, number> {
   const known = new Set(list.folders.map((folder) => folder.id));
   const counts = new Map<string, number>();
+  const seen = new Set<string>();
   for (const record of records) {
-    const id = list.items[folderKey(record)];
+    const key = folderKey(record);
+    const id = list.items[key];
     const filed = id !== undefined && known.has(id) ? id : UNFILED;
+    if (filed !== UNFILED) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
     counts.set(filed, (counts.get(filed) ?? 0) + 1);
   }
   return counts;
