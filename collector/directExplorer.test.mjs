@@ -63,6 +63,16 @@ describe("code-based exploration", () => {
       .toEqual([["/aweme/v1/web/tab/feed/", "1", "0"], ["/aweme/v1/web/tab/feed/", "2", "2"]]);
     expect(second.hasMore).toBe(true);
   });
+  it.each(["hide", "observe", "dislike"])("records excluded ads with empty rules in %s mode without sending feedback", async mode => {
+    const playable = (videoId, is_ads) => ({ ...rawVideo(videoId), is_ads, video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
+    const { value, api } = explorer(async () => ({ status_code: 0, has_more: 1, aweme_list: [
+      playable("100001", "0"), playable("100002", "1"),
+    ] }));
+    const page = await value.read({ kind: "feed", rules: "", mode });
+    expect(page.items.map(item => item.videoId)).toEqual(["100001"]);
+    expect(page.filtered).toMatchObject([{ id: "100002", action: "hidden", matched: ["广告标识"] }]);
+    expect(api.request).toHaveBeenCalledOnce();
+  });
   it("mixes one video for the wanted words after every three recommendations, taking the words in turn", async () => {
     const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
     const searched = [];

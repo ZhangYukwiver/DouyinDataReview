@@ -155,7 +155,7 @@ export class DirectExplorer extends DouyinExplorer {
       await oldest.page?.close().catch(() => {});
     }
     // filtered 由 server 记进处置记录，不发给页面
-    return { ...this.snapshot(session), ...(hits.length ? { filtered: hits.map((hit) => ({ ...hit, t: Date.now(), action: hide ? "hidden" : "observed" })) } : {}) };
+    return { ...this.snapshot(session), ...(hits.length ? { filtered: hits.map((hit) => ({ ...hit, t: Date.now(), action: hide || hit.isAd ? "hidden" : "observed" })) } : {}) };
   }
   async readDirectSharees(input, signal) {
     const validated = validateExploreRequest(input);

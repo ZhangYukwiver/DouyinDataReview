@@ -5,7 +5,7 @@
     let words = [], enabled = false, every = 3, generation = 0, turn = 0, gap = 0, working = false;
     let inserted = 0, failures = 0, searches = 0;
     const states = new Map(), seen = new Set(), shownPicks = new Set();
-    const playable = item => /^\d{5,30}$/u.test(String(item?.aweme_id ?? "")) && !item.is_ads
+    const playable = item => /^\d{5,30}$/u.test(String(item?.aweme_id ?? "")) && !root.DYF.isAdvertisement(item)
       && !item.live_room && (item.images?.length || item.video?.play_addr?.url_list?.length);
     const remember = id => {
       if (!id) return;

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 // 和页面里一样，把 filter.js 当普通脚本跑一遍，拿它挂在 globalThis 上的 DYF
 const context = {};
 vm.runInNewContext(readFileSync(new URL("./filter.js", import.meta.url), "utf8"), context);
-const { compileRules, filterFeed } = context.DYF;
+const { compileRules, filterFeed, isAdvertisement } = context.DYF;
 
 const aweme = (id, overrides = {}) => ({
   aweme_id: id, desc: "今天去吃火锅 #美食", author: { nickname: "小王", uid: "97119340507" },
@@ -14,6 +14,29 @@ const aweme = (id, overrides = {}) => ({
 });
 
 describe("推荐流词条", () => {
+  it("空词条也过滤平台标记的广告，保留提到广告的普通视频和店铺作品", () => {
+    const normal = [
+      aweme("7000000000000000001", { desc: "聊聊广告设计", is_ads: false }),
+      aweme("7000000000000000002", { author: { nickname: "煎映会员旗舰店" }, is_ads: "0" }),
+    ];
+    const ads = [true, 1, "1", "true"].map((is_ads, index) => aweme(`700000000000000001${index}`, { is_ads }));
+    const json = { data: { aweme_list: [...ads, ...normal], has_more: 1 }, status_code: 0 };
+    const hits = filterFeed(json, [], true);
+    expect(json.data.aweme_list).toEqual(normal);
+    expect(json.data.has_more).toBe(1);
+    expect(hits).toHaveLength(4);
+    expect(hits.every(hit => hit.isAd && hit.matched[0] === "广告标识")).toBe(true);
+    for (const is_ads of [undefined, null, false, 0, "0", "false", "", {}, []]) expect(isAdvertisement({ is_ads })).toBe(false);
+  });
+
+  it("只记录保留广告，同时命中广告标识和词条也只产生一条记录", () => {
+    const json = { aweme_list: [aweme("7000000000000000001", { is_ads: true })] };
+    const hits = filterFeed(json, compileRules("火锅"), false);
+    expect(json.aweme_list).toHaveLength(1);
+    expect(hits).toMatchObject([{ isAd: true, matched: ["广告标识", "火锅"] }]);
+    expect(hits).toHaveLength(1);
+  });
+
   it("注释和空行不算词条，字段前缀、正则、权重都认", () => {
     const rules = compileRules("# 注释\n\n营销号\nauthor:小王\n/带\\s*货/gi\n擦边@0.5");
     expect(rules.map((rule) => [rule.field, rule.weight, Boolean(rule.re), rule.value])).toEqual([
