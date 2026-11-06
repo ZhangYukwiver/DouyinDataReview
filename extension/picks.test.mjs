@@ -3,12 +3,13 @@ import vm from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
 const script = readFileSync(new URL("./picks.js", import.meta.url), "utf8");
+const filterScript = readFileSync(new URL("./filter.js", import.meta.url), "utf8");
 const video = id => ({ aweme_id: String(id), desc: "相关视频", video: { play_addr: { url_list: ["https://example.com/video.mp4"] } } });
 const response = (...ids) => ({ status_code: 0, data: ids.map(id => ({ aweme_info: video(id) })), cursor: 10, has_more: 0 });
 const feed = (...ids) => ({ status_code: 0, aweme_list: ids.map(video), cursor: "keep", has_more: 1 });
 const ids = value => value.aweme_list.map(item => item.aweme_id);
 function setup(search, blocked = () => false, now = Date.now) {
-  const context = { DYF: {} }; vm.runInNewContext(script, context);
+  const context = {}; vm.runInNewContext(filterScript, context); vm.runInNewContext(script, context);
   return context.DYF.createPicks({ search, blocked, now });
 }
 
@@ -81,6 +82,7 @@ describe("网页词条视频候选池", () => {
       ...response(10001, 10004, 90001, 90001, 90002, 90003).data,
       { aweme_info: { ...video(90004), is_ads: true } }, { aweme_info: { aweme_id: "90005", live_room: {} } },
       { aweme_info: { ...video(90006), desc: "禁止" } },
+      { aweme_info: { ...video(90007), is_ads: "1" } },
     ] }));
     const picks = setup(search, item => item.desc === blocked || item.aweme_id === blocked);
     picks.configure("露营", true);

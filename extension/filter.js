@@ -43,6 +43,8 @@
 
   const list = (value) => Array.isArray(value) ? value : [];
   const textOf = (...values) => normalize(values.filter((value) => typeof value === "string" || typeof value === "number").join(" "));
+  // 用平台的广告标记，不把文案提到「广告」或店铺昵称当成广告。
+  const isAdvertisement = (aweme) => [true, 1, "1", "true"].includes(aweme?.is_ads);
 
   // 抖音号是 unique_id（老账号还有 short_id），uid 是内部用户号，两种都能按 author: 匹配。
   // 图文和部分推荐把标题放在 caption/item_title；话题和抖音给的作品分类都算 tag。
@@ -95,17 +97,19 @@
   function filterFeed(json, rules, hide) {
     const hits = [];
     const owner = Array.isArray(json?.aweme_list) ? json : json?.data;
-    if (!rules.length || !Array.isArray(owner?.aweme_list)) return hits;
+    if (!Array.isArray(owner?.aweme_list)) return hits;
     const kept = owner.aweme_list.filter((aweme) => {
       const result = match(rules, fieldsOf(aweme));
+      const isAd = isAdvertisement(aweme);
+      if (isAd) { result.score += THRESHOLD; result.matched.unshift("广告标识"); }
       if (result.score < THRESHOLD) return true;
       hits.push({ id: String(aweme?.aweme_id ?? ""), desc: String(aweme?.desc ?? "").slice(0, 120),
-        author: String(aweme?.author?.nickname ?? "").slice(0, 40), matched: result.matched.slice(0, 5), score: result.score, aweme: slim(aweme) });
+        author: String(aweme?.author?.nickname ?? "").slice(0, 40), matched: result.matched.slice(0, 5), score: result.score, isAd, aweme: slim(aweme) });
       return !hide;
     });
     if (hide) owner.aweme_list = kept;
     return hits;
   }
 
-  root.DYF = { normalize, compileRules, fieldsOf, match, filterFeed };
+  root.DYF = { normalize, compileRules, fieldsOf, match, filterFeed, isAdvertisement };
 })(globalThis);

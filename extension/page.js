@@ -121,7 +121,7 @@
     prefetchPicks();
     const detail = json?.aweme_detail ?? json?.data?.aweme_detail;
     const mix = () => !recordOnly && !detail && isRecommendationPage() && picks.mix(json);
-    if (settings.mode === "off" || !settings.rules.length) return mix() ? JSON.stringify(json) : undefined;
+    if (settings.mode === "off") return mix() ? JSON.stringify(json) : undefined;
     // 详情是已选中作品，删成 null 会破坏播放器；和已送进页面的首屏一样只补记。
     const observe = recordOnly || Boolean(detail) || settings.mode === "observe";
     const all = DYF.filterFeed(detail ? { aweme_list: [detail] } : json, settings.rules, !observe);
@@ -133,8 +133,11 @@
       return true;
     });
     diagnostic.matchedVideos += hits.length;
-    if (!observe && settings.mode === "dislike") hits.forEach((hit) => queue.push(hit)), drain();
-    else if (hits.length) emit(hits.map((hit) => ({ ...hit, t: Date.now(), action: observe ? "observed" : "hidden" })));
+    // 广告只在本地隐藏，不沿用普通作品的「不感兴趣」接口。
+    const feedback = !observe && settings.mode === "dislike" ? hits.filter((hit) => !hit.isAd) : [];
+    const local = !observe && settings.mode === "dislike" ? hits.filter((hit) => hit.isAd) : hits;
+    if (local.length) emit(local.map((hit) => ({ ...hit, t: Date.now(), action: observe ? "observed" : "hidden" })));
+    if (feedback.length) { queue.push(...feedback); drain(); }
     return mix() || (!observe && all.length) ? JSON.stringify(json) : undefined;
   }
 
@@ -200,7 +203,7 @@
   function rewrite(xhr) {
     if (xhr.__dyfDone) return xhr.__dyfText;
     xhr.__dyfDone = true;
-    if (settings && !settings.webPicks && (settings.mode === "off" || !settings.rules.length)) return undefined;
+    if (settings && !settings.webPicks && settings.mode === "off") return undefined;
     const type = xhr.responseType;
     if (type && type !== "text" && type !== "arraybuffer" && type !== "json") return undefined;
     let json;
@@ -258,7 +261,7 @@
       if (before !== after) { headers.set(name, after); changed = true; }
     }
     return fetch.call(this, input, changed ? { ...init, headers } : init).then(async (response) => {
-      if (settings && !settings.webPicks && (settings.mode === "off" || !settings.rules.length)) return response;
+      if (settings && !settings.webPicks && settings.mode === "off") return response;
       try {
         // 用副本检查，未命中、只记录和无法读取时，页面仍收到原响应及其未消费的 body。
         const text = await response.clone().text();

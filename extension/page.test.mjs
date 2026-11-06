@@ -52,6 +52,46 @@ function setup({ mode = "hide", rules = "王者荣耀", initialSettings = true, 
 }
 
 describe("推荐流请求拦截", () => {
+  it.each(["fetch", "text", "json", "arraybuffer"])("%s 空词条仍隐藏广告并记明原因，关闭后保留广告", async transport => {
+    const original = { ...feed(), aweme_list: [
+      { ...feed().aweme_list[0], desc: "会员限时优惠", is_ads: true }, feed().aweme_list[1],
+    ] };
+    const { context, XHR, events, settings } = setup({ rules: "", fetch: async () => new Response(JSON.stringify(original)) });
+    const read = async () => {
+      if (transport === "fetch") return (await context.fetch(feedUrl)).json();
+      const xhr = new XHR(); xhr.open("GET", feedUrl); xhr.respond(structuredClone(original), transport);
+      return transport === "json" ? xhr.response : JSON.parse(transport === "arraybuffer" ? new TextDecoder().decode(xhr.response) : xhr.responseText);
+    };
+    expect((await read()).aweme_list.map(item => item.aweme_id)).toEqual(["7000000000000000002"]);
+    expect(events).toMatchObject([{ id: "7000000000000000001", action: "hidden", matched: ["广告标识"] }]);
+    settings({ mode: "off" });
+    expect((await read()).aweme_list).toHaveLength(2);
+    expect(events).toHaveLength(1);
+  });
+
+  it("广告在只记录模式保留，隐藏并反馈模式只隐藏、不发反馈请求", async () => {
+    const original = { aweme_list: [{ ...feed().aweme_list[0], is_ads: true }] };
+    const { context, XHR, events, settings } = setup({ mode: "observe", fetch: async () => new Response(JSON.stringify(original)) });
+    XHR.prototype.send = vi.fn();
+    expect((await (await context.fetch(feedUrl)).json()).aweme_list).toHaveLength(1);
+    expect(events).toMatchObject([{ action: "observed", matched: ["广告标识", "王者荣耀"] }]);
+    settings({ mode: "dislike" });
+    expect((await (await context.fetch(feedUrl)).json()).aweme_list).toHaveLength(0);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ action: "hidden", matched: ["广告标识", "王者荣耀"] });
+    expect(XHR.prototype.send).not.toHaveBeenCalled();
+  });
+
+  it("首屏和详情中的广告只记为观察，不声称已隐藏", async () => {
+    const ad = { ...feed().aweme_list[0], is_ads: true };
+    const original = new Response(JSON.stringify({ aweme_detail: ad }));
+    const { context, events } = setup({ rules: "", bootstrap: { aweme_list: [ad] }, fetch: async () => original });
+    expect(await context.fetch("/aweme/v1/web/aweme/detail/?aweme_id=7000000000000000001")).toBe(original);
+    expect(context._ROUTER_DATA.aweme_list).toHaveLength(1);
+    expect(events).toMatchObject([{ action: "observed", matched: ["广告标识"] }]);
+    expect(events).toHaveLength(1);
+  });
+
   it.each(["xhr", "fetch"])("%s 在关闭过滤时仍能插入词条视频，搜索经过网页后挂的 XHR 钩子", async transport => {
     const video = id => ({ aweme_id: String(id), desc: "日常", video: { play_addr: { url_list: ["https://example.com/video.mp4"] } } });
     const original = { status_code: 0, aweme_list: [10001, 10002, 10003].map(video), has_more: 1, cursor: 10 };
