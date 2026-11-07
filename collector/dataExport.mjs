@@ -31,40 +31,58 @@ const unavailableErrors = new Set(["voice_resource_missing", "voice_text_unavail
 
 /**
  * @param {ReturnType<typeof buildDataExport>} data
- * @param {(id: string) => Promise<{ id: string, text: string }>} transcribe
+ * @param {(ids: string[]) => Promise<Array<{ id: string, text?: string, error?: string, message?: string }>>} transcribe
  * @param {{ signal?: AbortSignal, onProgress?: (progress: { completed: number, total: number }) => void }} options
  */
 export async function transcribeExportVoices(data, transcribe, { signal, onProgress } = {}) {
   const voices = data.chatMessages.filter(message => message.type === "voice");
-  let completed = 0;
+  const pending = voices.filter(message => message.voiceTranscription?.status !== "done" || !message.text?.trim());
+  // 和 collector/chatVoice.mjs 的 VOICE_BATCH_SIZE 一致（这个文件也打进网页，不引那边的 node 代码）
+  const batches = [];
+  for (let index = 0; index < pending.length; index += 10) batches.push(pending.slice(index, index + 10));
+  let completed = voices.length - pending.length;
   let missing = 0;
+  let next = 0;
   let connectionFailure;
   onProgress?.({ completed, total: voices.length });
-  for (const message of voices) {
+  const transcribeBatch = async batch => {
     signal?.throwIfAborted();
-    if (message.voiceTranscription?.status !== "done" || !message.text?.trim()) {
-      try {
-        if (connectionFailure) throw connectionFailure;
-        const result = await transcribe(message.id);
-        if (result?.id !== message.id || typeof result.text !== "string" || !result.text.trim() || result.text.length > 16_000)
-          throw Object.assign(new Error("抖音未返回有效的语音文字。"), { code: "voice_text_unavailable" });
+    let results;
+    try {
+      if (connectionFailure) throw connectionFailure;
+      results = await transcribe(batch.map(message => message.id));
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (["account_changed", "account_mismatch"].includes(error?.code)) {
+        next = batches.length; // 其余并发的别再领新批次
+        throw error;
+      }
+      const known = typeof error?.code === "string" && typeof error.message === "string";
+      if (!known || connectionErrors.has(error.code)) connectionFailure = error;
+      results = batch.map(message => ({ id: message.id, error: known ? error.code : "unreachable",
+        message: known ? error.message : "转写超时或连接中断，请稍后重新导出。" }));
+    }
+    for (const message of batch) {
+      const result = Array.isArray(results) ? results.find(item => item?.id === message.id) : null;
+      if (typeof result?.text === "string" && result.text.trim() && result.text.length <= 16_000) {
         message.text = result.text.trim();
         message.voiceTranscription = { status: "done" };
-      } catch (error) {
-        signal?.throwIfAborted();
-        if (["account_changed", "account_mismatch"].includes(error?.code)) throw error;
-        const known = typeof error?.code === "string" && typeof error.message === "string";
-        if (!known || connectionErrors.has(error.code)) connectionFailure = error;
-        message.voiceTranscription = {
-          status: unavailableErrors.has(error?.code) ? "unavailable" : "failed",
-          reason: known ? error.message : "转写超时或连接中断，请稍后重新导出。",
-        };
-        message.text ||= "[语音未转写]";
-        missing++;
+        continue;
       }
+      const failure = typeof result?.error === "string" && typeof result.message === "string" ? result
+        : { error: "voice_text_unavailable", message: "抖音未返回有效的语音文字。" };
+      message.voiceTranscription = { status: unavailableErrors.has(failure.error) ? "unavailable" : "failed", reason: failure.message };
+      message.text ||= "[语音未转写]";
+      missing++;
     }
-    onProgress?.({ completed: ++completed, total: voices.length });
-  }
+    completed += batch.length;
+    onProgress?.({ completed, total: voices.length });
+  };
+  // 10 条一批：一批只核对一次账号、发一次请求。先单独转第一批确认登录还有效（失效就不必让并发请求都撞一遍），
+  // 其余几批一起转。ponytail: 固定 4 路，抖音开始限流（rate_limited）再调小
+  if (batches.length) await transcribeBatch(batches[next++]);
+  const worker = async () => { while (next < batches.length) await transcribeBatch(batches[next++]); };
+  await Promise.all(Array.from({ length: 4 }, worker));
   signal?.throwIfAborted();
   if (missing) data.warnings.push(`${missing} 条语音未转写，已保留原消息并注明原因。`);
   return data;

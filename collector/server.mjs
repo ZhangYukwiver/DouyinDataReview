@@ -1144,7 +1144,11 @@ export async function startCollectorServer({
       response.once("close", abort);
       const timeout = setTimeout(abort, 35_000);
       try {
-        const result = await collector.transcribeChatVoice(await readJsonBody(request, 2_048), { signal: controller.signal });
+        const body = await readJsonBody(request, 2_048);
+        // messageIds 是一批（导出用），messageId 是单条（AI 助手的转写工具）
+        const result = Array.isArray(body?.messageIds)
+          ? { results: await collector.transcribeChatVoices(body.messageIds, { signal: controller.signal }) }
+          : await collector.transcribeChatVoice(body, { signal: controller.signal });
         controller.signal.throwIfAborted();
         sendJson(response, 200, result);
       } catch (error) {

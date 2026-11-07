@@ -16,23 +16,41 @@ export function normalizeVoiceResource(value) {
     ...(string(value.skey) ? { skey: string(value.skey) } : {}) };
 }
 
-export async function transcribeVoiceMessage(api, message, { signal } = {}) {
-  const voice = normalizeVoiceResource(message.voiceResource);
-  if (!voice || !/^\d{1,30}$/u.test(message.id))
-    throw new DirectHistoryError("voice_resource_missing", "缺少语音转写资料，请重新读取聊天记录后再导出。");
-  // Native caller: lf3-social.iesdouyin.com/obj/douyin-social-cdn/pcim/static/js/async/__federation_expose_default_export.0ccd0cf4.js
-  // resource_url.uri (plain voice) or tkey + skey (encrypted voice).
-  const payload = await api.request(VOICE_RECOGNITION_PATH, { method: "POST", contentType: "application/json", signal,
-    body: JSON.stringify({ req_list: [{ uri: voice.uri, sec_uid: voice.secUid,
-      uuid: api.session.values.webid || "0", message_id: message.id, message_type: voice.messageType,
-      ...(voice.skey ? { skey: voice.skey } : {}), conv_short_id: voice.conversationShortId }] }) });
-  const results = payload.recognition_results;
-  // Send one message per request. Never attach another message's result.
-  const result = Array.isArray(results) && results.length === 1 ? results[0] : null;
-  if (result?.message_id != null && String(result.message_id) !== message.id)
-    throw new DirectHistoryError("voice_result_mismatch", "抖音返回的转写与当前语音不一致。");
-  const text = typeof result?.text_result === "string" ? result.text_result.trim() : "";
-  if (!text || text.length > 16_000)
-    throw new DirectHistoryError("voice_text_unavailable", "抖音暂未返回这条语音的转写文字。");
-  return { id: message.id, text };
+// 「转文字」接口本来就收一个列表。实测一次带 10 条、0.3 秒全部返回，按 message_id 一一对上；
+// ponytail: 只验证过 10 条，更大的批次没试过
+export const VOICE_BATCH_SIZE = 10;
+
+/** 每条返回 { id, text } 或 { id, error, message }；整批请求失败（登录、限流等）才抛错 */
+export async function transcribeVoiceMessages(api, messages, { signal } = {}) {
+  const items = messages.map(message => ({ message,
+    voice: /^\d{1,30}$/u.test(message.id) ? normalizeVoiceResource(message.voiceResource) : null }));
+  const ready = items.filter(item => item.voice);
+  const byId = new Map();
+  if (ready.length) {
+    // Native caller: lf3-social.iesdouyin.com/obj/douyin-social-cdn/pcim/static/js/async/__federation_expose_default_export.0ccd0cf4.js
+    // resource_url.uri (plain voice) or tkey + skey (encrypted voice).
+    const payload = await api.request(VOICE_RECOGNITION_PATH, { method: "POST", contentType: "application/json", signal,
+      body: JSON.stringify({ req_list: ready.map(({ message, voice }) => ({ uri: voice.uri, sec_uid: voice.secUid,
+        uuid: api.session.values.webid || "0", message_id: message.id, message_type: voice.messageType,
+        ...(voice.skey ? { skey: voice.skey } : {}), conv_short_id: voice.conversationShortId })) }) });
+    // 按 message_id 对号；只发一条时没带编号也算这一条的。有一条对不上号就整批作废，绝不把别人的话安到这条上
+    for (const result of Array.isArray(payload.recognition_results) ? payload.recognition_results : []) {
+      const id = result?.message_id == null && ready.length === 1 ? ready[0].message.id : String(result?.message_id);
+      if (!ready.some(item => item.message.id === id))
+        throw new DirectHistoryError("voice_result_mismatch", "抖音返回的转写与当前语音不一致。");
+      byId.set(id, result);
+    }
+  }
+  return items.map(({ message, voice }) => {
+    if (!voice) return { id: message.id, error: "voice_resource_missing", message: "缺少语音转写资料，请重新读取聊天记录后再导出。" };
+    const text = typeof byId.get(message.id)?.text_result === "string" ? byId.get(message.id).text_result.trim() : "";
+    return text && text.length <= 16_000 ? { id: message.id, text }
+      : { id: message.id, error: "voice_text_unavailable", message: "抖音暂未返回这条语音的转写文字。" };
+  });
+}
+
+export async function transcribeVoiceMessage(api, message, options) {
+  const [result] = await transcribeVoiceMessages(api, [message], options);
+  if (result.error) throw new DirectHistoryError(result.error, result.message);
+  return result;
 }
