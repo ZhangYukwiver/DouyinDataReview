@@ -480,6 +480,7 @@ const FEED_MODES: ReadonlyArray<{ key: FeedFilterMode; label: string; detail: st
   { key: "dislike", label: "隐藏并反馈", detail: "命中词条的普通视频隐藏后再替你点「不感兴趣」，每分钟最多 6 条，多出来的只隐藏。广告只隐藏，不发送反馈。只有网页上会点，软件里刷视频时只隐藏。" },
 ];
 const FEED_ACTIONS: Record<FeedFilterEvent["action"], string> = {
+  inserted: "已插入",
   observed: "只记录", hidden: "已隐藏", disliked: "已反馈", dislike_failed: "已隐藏，反馈没成功", unreadable: "这一页推荐数据读不了，原样放过了",
 };
 
@@ -681,7 +682,7 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
       </View>
       <View style={[styles.row, styles.rowStacked]}>
         <View style={styles.rowHead}>
-          <RowCopy detail={events.length ? `最近 ${events.length} 条，新的在上面。误杀的话回头改词条。` : "还没有记录。先用「只记录」刷一会儿，命中的会记在这里。"} title="处置记录" />
+          <RowCopy detail={events.length ? `最近 ${events.length} 条，新的在上面。` : "还没有记录。命中屏蔽规则或在网页插入词条视频后会显示在这里。"} title="处置记录" />
           <Button appStyle={appStyle} disabled={!events.length} icon={Trash2} kind="danger" label="清空"
             onPress={() => void collectorFeedFilterEvents(baseUrl, token, true).then(setEvents, fail)} testID="settings-feed-clear" />
         </View>
@@ -691,7 +692,7 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
               <Text style={styles.value}>{eventTime(event.t)}</Text>{`  ${FEED_ACTIONS[event.action]}  `}
               <Text style={styles.rowTitle}>{event.desc || (event.id ? "（没有文案）" : "")}</Text>{event.author ? `  @${event.author}` : ""}
             </Text>
-            {event.matched.length ? <Text numberOfLines={1} style={styles.detail}>命中：{event.matched.join("、")}</Text> : null}
+            {event.matched.length ? <Text numberOfLines={1} style={styles.detail}>{event.action === "inserted" ? "搜索词" : "命中"}：{event.matched.join("、")}</Text> : null}
           </View>
         ))}
       </View>

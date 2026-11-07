@@ -1277,10 +1277,10 @@ export interface FeedFilterEvent {
   desc: string;
   author: string;
   matched: string[];
-  action: "observed" | "hidden" | "disliked" | "dislike_failed" | "unreadable";
+  action: "inserted" | "observed" | "hidden" | "disliked" | "dislike_failed" | "unreadable";
 }
 const FEED_FILTER_MODES: readonly string[] = ["off", "observe", "hide", "dislike"];
-const FEED_FILTER_ACTIONS: readonly string[] = ["observed", "hidden", "disliked", "dislike_failed", "unreadable"];
+const FEED_FILTER_ACTIONS: readonly string[] = ["inserted", "observed", "hidden", "disliked", "dislike_failed", "unreadable"];
 
 function parseFeedExtension(value: unknown): FeedExtensionStatus {
   if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务没返回扩展状态。");

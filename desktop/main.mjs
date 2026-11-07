@@ -11,7 +11,7 @@ import { syncFeedExtension } from "./feedExtension.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
 import { REELLAB_INBOX_URL, REELLAB_PROTOCOL, sendToReelLab } from "./reelLab.mjs";
 import { startStaticServer } from "./staticServer.mjs";
-import { isVideoDownload, readVideoDownloadDirectory, uniqueSavePath, writeVideoDownloadDirectory } from "./videoDownloads.mjs";
+import { isVideoDownload, readVideoDownloadDirectory, saveVideoCopy, uniqueSavePath, writeVideoDownloadDirectory } from "./videoDownloads.mjs";
 import { isSameOriginUrl, isStoryUrl } from "./windowPolicy.mjs";
 
 const APP_ID = "com.zhangyukwiver.contentinsights";
@@ -53,6 +53,10 @@ app.setPath("userData", userDataDirectory);
 app.setPath("sessionData", userDataDirectory);
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_ID);
+
+const videoDownloadSettings = path.join(userDataDirectory, "video-downloads.json");
+const videoDownloadDirectory = () => readVideoDownloadDirectory(videoDownloadSettings, path.join(app.getPath("downloads"), "抖音视频"));
+const savingVideos = new Set();
 
 function openExternalUrl(value) {
   try {
@@ -273,6 +277,7 @@ async function startDesktopRuntime() {
   const collector = await startCollectorServer({
     port: COLLECTOR_PORT,
     feedExtensionVersion,
+    saveExtensionDownload: (source, name) => saveVideoCopy(videoDownloadDirectory(), source, name, savingVideos),
     randomPortFallback: true,
     dataDirectory: path.join(app.getPath("userData"), "collector"),
     signerDirectory: app.isPackaged ? path.join(process.resourcesPath, "direct-signer") : undefined,
@@ -364,9 +369,6 @@ async function launch() {
     } catch { /* 拖不起来就什么都不做 */ }
   });
   // 视频下载位置：默认 系统下载/抖音视频，设置 → 数据里可改；页面存 mp4/zip 时直接存进去
-  const videoDownloadSettings = path.join(app.getPath("userData"), "video-downloads.json");
-  const videoDownloadDirectory = () => readVideoDownloadDirectory(videoDownloadSettings, path.join(app.getPath("downloads"), "抖音视频"));
-  const savingVideos = new Set();
   session.defaultSession.on("will-download", (_event, item) => {
     if (!isVideoDownload(item.getFilename())) return;
     try {

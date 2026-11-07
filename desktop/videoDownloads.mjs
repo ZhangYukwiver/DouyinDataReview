@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { constants, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFile } from "node:fs/promises";
 import path from "node:path";
 
 // 页面存视频（单条 mp4、图文/批量 zip）都走 <a download>，由外壳接住直接存进这个文件夹，不再每次弹「存储为」。
@@ -23,6 +24,22 @@ export function uniqueSavePath(directory, fileName, saving = new Set()) {
   mkdirSync(directory, { recursive: true });
   const { name, ext } = path.parse(path.basename(fileName));
   let candidate = path.join(directory, `${name}${ext}`);
-  for (let index = 1; existsSync(candidate) || saving.has(candidate); index += 1) candidate = path.join(directory, `${name} (${index})${ext}`);
+  for (let index = 1; lstatSync(candidate, { throwIfNoEntry: false }) || saving.has(candidate); index += 1) candidate = path.join(directory, `${name} (${index})${ext}`);
   return candidate;
+}
+
+// 扩展下载也落在应用设置的目录；与桌面正在保存的文件共用占位，并防止竞态覆盖。
+export async function saveVideoCopy(directory, source, fileName, saving = new Set()) {
+  for (;;) {
+    const target = uniqueSavePath(directory, fileName, saving);
+    saving.add(target);
+    try {
+      await copyFile(source, target, constants.COPYFILE_EXCL);
+      return path.basename(target);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    } finally {
+      saving.delete(target);
+    }
+  }
 }

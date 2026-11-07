@@ -62,7 +62,7 @@
         }
       } finally { working = false; }
     }
-    function take() {
+    function take(events) {
       for (let count = 0; count < words.length; count += 1) {
         const word = words[turn % words.length]; turn = (turn + 1) % words.length;
         const state = stateFor(word);
@@ -71,6 +71,8 @@
           if (!seen.has(id) && !blocked(item)) {
             remember(id); shownPicks.add(id);
             if (shownPicks.size > 5000) shownPicks.delete(shownPicks.values().next().value);
+            events.push({ id, t: now(), action: "inserted", matched: [word], author: String(item.author?.nickname ?? "").slice(0, 40),
+              desc: String(item.desc || item.caption || item.item_title || "").slice(0, 120) });
             return item;
           }
         }
@@ -82,13 +84,14 @@
       if (Array.isArray(owner?.aweme_list)) for (const item of owner.aweme_list) remember(item?.aweme_id);
       remember((json?.aweme_detail ?? json?.data?.aweme_detail)?.aweme_id);
     }
-    function mix(json) {
+    function mix(json, report) {
       const owner = Array.isArray(json?.aweme_list) ? json : json?.data;
       rememberPage(json);
       // 空页、错误回包不能被候选变成另一页。
       if (!enabled || !words.length || !Array.isArray(owner?.aweme_list) || !owner.aweme_list.length
         || (json.status_code !== undefined && json.status_code !== 0)) return false;
       const result = [];
+      const events = [];
       let changed = false;
       // 只看词条时这页能播的推荐会被换掉，用户没刷到就不算见过，搜到同一条时还能插进来
       if (!every) for (const item of owner.aweme_list) if (playable(item) && !shownPicks.has(String(item.aweme_id))) seen.delete(String(item.aweme_id));
@@ -96,7 +99,7 @@
         // 自己已经插过的作品后来又被原推荐送来时，也只出现一次。
         if (shownPicks.has(String(item?.aweme_id))) { changed = true; continue; }
         // 只看词条：没候选时留原推荐，别让页面空掉
-        const swap = !every && playable(item) ? take() : null;
+        const swap = !every && playable(item) ? take(events) : null;
         if (swap) { result.push(swap); inserted += 1; changed = true; continue; }
         remember(item?.aweme_id);
         result.push(item);
@@ -104,10 +107,11 @@
         if (playable(item)) gap += 1;
         if (gap < every) continue;
         gap = 0;
-        const pick = take();
+        const pick = take(events);
         if (pick) { result.push(pick); inserted += 1; changed = true; }
       }
       if (changed) owner.aweme_list = result;
+      if (events.length) report?.(events);
       return changed;
     }
     return { configure, prefetch, mix, rememberPage, status: () => ({ pickWords: words.length, picksEnabled: enabled,

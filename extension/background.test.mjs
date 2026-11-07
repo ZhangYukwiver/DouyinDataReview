@@ -63,7 +63,7 @@ describe("已打开抖音页的连接恢复", () => {
     await restore();
     expect(scripting.executeScript.mock.calls.map(([request]) => request)).toEqual([
       { target: { tabId: 1 }, world: "MAIN", files: ["filter.js", "picks.js", "page.js"] },
-      { target: { tabId: 1 }, world: "ISOLATED", files: ["bridge.js"] },
+      { target: { tabId: 1 }, world: "ISOLATED", files: ["panel.js", "bridge.js"] },
     ]);
     expect(storage.pageAttachment).toMatchObject({ pages: 1, restored: 1, failed: 0 });
     expect(browserTabs.reload).not.toHaveBeenCalled();
@@ -83,6 +83,6 @@ describe("已打开抖音页的连接恢复", () => {
     scripting.executeScript.mockImplementation(async ({ target }) => { if (target.tabId === 1) throw new Error("Tab closed"); return []; });
     await restore();
     expect(storage.pageAttachment).toMatchObject({ pages: 2, restored: 1, failed: 1 });
-    expect(scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 2 }, world: "ISOLATED", files: ["bridge.js"] });
+    expect(scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 2 }, world: "ISOLATED", files: ["panel.js", "bridge.js"] });
   });
 });

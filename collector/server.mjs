@@ -3,7 +3,7 @@
 import { createReadStream } from "node:fs";
 import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import path from "node:path";
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
@@ -27,6 +27,7 @@ import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
 import { FEED_FILTER_MODES, FEED_FILTER_ORIGINS, FeedFilterStore } from "./feedFilter.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
+import { saveVideoCopy } from "../desktop/videoDownloads.mjs";
 import { UsageSessions } from "./usageSessions.mjs";
 import { UsageAutoConnect, discoverUsageBrowser } from "./usageAutoConnect.mjs";
 import { BrowserUsageMonitor, connectBrowserUsage } from "./browserUsage.mjs";
@@ -250,6 +251,7 @@ export async function startCollectorServer({
   randomPortFallback = false,
   // 扩展文件夹里装的推荐流过滤扩展版本（桌面版给）；扩展发现比自己新就重新加载
   feedExtensionVersion = null,
+  saveExtensionDownload = (source, name) => saveVideoCopy(path.join(homedir(), "Downloads", "抖音视频"), source, name),
   origins = [],
   dataDirectory = path.join(projectDirectory, ".local-data"),
   signerDirectory,
@@ -538,11 +540,11 @@ export async function startCollectorServer({
       sendJson(response, 401, { error: "not_paired" });
       return;
     }
-    // 扩展只能拉设置、送处置记录、报自己已移除，别的接口（记录、聊天、账号）一律不给。按令牌认，
-    // 不按 Origin：浏览器扩展后台发的 GET 不带 Origin
+    // 按令牌认扩展（后台 GET 可能没有 Origin）。只放行推荐流、当前作品下载和扩展下载的进度。
     const fromExtension = scope === "extension" || FEED_FILTER_ORIGINS.includes(origin);
-    if (fromExtension && !((request.method === "GET" && url.pathname === "/v1/feed-filter")
-      || (request.method === "POST" && ["/v1/feed-filter/events", "/v1/feed-filter/removed"].includes(url.pathname)))) {
+    if (fromExtension && !((request.method === "GET" && (["/v1/feed-filter", "/v1/feed-filter/events"].includes(url.pathname)
+      || /^\/v1\/downloads\/[0-9a-f-]{36}$/u.test(url.pathname)))
+      || (request.method === "POST" && ["/v1/feed-filter", "/v1/feed-filter/events", "/v1/feed-filter/removed", "/v1/downloads"].includes(url.pathname)))) {
       sendJson(response, 403, { error: "extension_not_allowed" });
       return;
     }
@@ -864,6 +866,16 @@ export async function startCollectorServer({
     } else if (request.method === "POST" && url.pathname === "/v1/downloads") {
       try {
         const body = await readJsonBody(request);
+        if (fromExtension) {
+          if (typeof body?.videoId !== "string" || !/^\d{5,30}$/u.test(body.videoId)) {
+            sendJson(response, 400, { error: "invalid_url", message: "未识别到当前作品。" });
+            return;
+          }
+          if (rejectWhileSwitching(response)) return;
+          const job = collector.startVideoDownload(`https://www.douyin.com/video/${body.videoId}`, { saveCopy: saveExtensionDownload });
+          sendJson(response, 202, { job: { id: job.id, status: job.status } });
+          return;
+        }
         if (body?.playback !== true && body?.keepExplore !== true) await explorer.close();
         if (rejectWhileSwitching(response)) return;
         const job = collector.startVideoDownload(body?.url, { playback: body?.playback === true });
@@ -891,7 +903,7 @@ export async function startCollectorServer({
         sendJson(response, 404, { error: "download_job_not_found" });
         return;
       }
-      const job = collector.getVideoDownloadJob(jobId);
+      const job = collector.getVideoDownloadJob(jobId, { extensionOnly: fromExtension });
       if (!job) {
         sendJson(response, 404, { error: "download_job_not_found" });
       } else if (match?.[2] === "/file") {
@@ -1000,6 +1012,10 @@ export async function startCollectorServer({
         } else if (request.method === "POST" && url.pathname === "/v1/feed-filter") {
           let body;
           try { body = await readJsonBody(request, 64 * 1024); } catch { body = null; }
+          if (fromExtension && (!body || !Object.keys(body).length || Object.keys(body).some(key => !["rules", "words"].includes(key)))) {
+            sendJson(response, 403, { error: "extension_not_allowed" });
+            return;
+          }
           if (!body || (body.rules !== undefined && typeof body.rules !== "string") || (body.mode !== undefined && !FEED_FILTER_MODES.includes(body.mode))
             || (body.words !== undefined && (typeof body.words !== "string" || body.words.length > 2000))
             || (body.webPicks !== undefined && typeof body.webPicks !== "boolean")

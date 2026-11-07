@@ -670,7 +670,7 @@ describe("collector own-page guard", () => {
 describe("推荐流过滤扩展接口", () => {
   const EXTENSION = "chrome-extension://phliimhdokpkdhmeofkpbcnkncknjkka";
 
-  it("扩展按固定来源免配对码领令牌，只能拉设置、送记录、报已移除；应用改设置、看状态、叫扩展移除", async () => {
+  it("扩展按固定来源配对，共用词条和处置记录，其他设置和账户数据只能由应用管理", async () => {
     const { runtime, headers } = await startPaired("feed-filter-");
     const code = runtime.getPairingCode();
     const fromExtension = (pathname, init = {}) => fetch(`${runtime.baseUrl}${pathname}`,
@@ -696,11 +696,15 @@ describe("推荐流过滤扩展接口", () => {
     expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 }) })).body)
       .toMatchObject({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 });
     expect(await (await bare("/v1/feed-filter")).json()).toMatchObject({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 });
+    expect((await bare("/v1/feed-filter", { method: "POST", body: JSON.stringify({ rules: "带货" }) })).status).toBe(200);
+    expect((await app("/v1/feed-filter")).body).toMatchObject({ rules: "带货", words: "露营\n咖啡", webPicks: true });
+    expect((await bare("/v1/feed-filter", { method: "POST", body: JSON.stringify({ rules: "不应保存", mode: "dislike" }) })).status).toBe(403);
     for (const body of [{ words: [] }, { words: "长".repeat(2001) }, { webPicks: "true" }, { pickEvery: -1 }, { pickEvery: 11 }, { pickEvery: 1.5 }, null])
       expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify(body) })).status).toBe(400);
     const event = { t: 1_790_000_000_000, id: "7000000000000000001", desc: "带货现场", author: "某人", matched: ["带货"], action: "hidden" };
     expect((await fromExtension("/v1/feed-filter/events", { method: "POST", headers: auth, body: JSON.stringify({ events: [event] }) })).status).toBe(200);
-    for (const [pathname, method] of [["/v1/records", "GET"], ["/v1/feed-filter", "POST"], ["/v1/feed-filter/remove", "POST"], ["/v1/feed-filter/events", "GET"], ["/v1/feed-filter/events", "DELETE"], ["/v1/feed-filter/open-extensions", "POST"]])
+    expect(await (await bare("/v1/feed-filter/events")).json()).toEqual({ events: [event] });
+    for (const [pathname, method] of [["/v1/records", "GET"], ["/v1/feed-filter", "POST"], ["/v1/feed-filter/remove", "POST"], ["/v1/feed-filter/events", "DELETE"], ["/v1/feed-filter/open-extensions", "POST"]])
       expect((await fromExtension(pathname, { method, headers: auth })).status).toBe(403);
 
     expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ mode: "nope" }) })).status).toBe(400);
@@ -718,6 +722,23 @@ describe("推荐流过滤扩展接口", () => {
     expect((await app("/v1/feed-filter")).body.extension).toEqual({ lastSeenAt: null, removing: false });
     expect((await app("/v1/feed-filter/events", { method: "DELETE" })).status).toBe(200);
     expect((await app("/v1/feed-filter/events")).body.events).toEqual([]);
+  });
+
+  it("悬浮窗只能以作品号开始下载、读取扩展下载的状态", async () => {
+    const { runtime, headers } = await startPaired("feed-download-");
+    const paired = await fetch(runtime.baseUrl + "/v1/pair", { method: "POST", headers: { Origin: EXTENSION }, body: "{}" }).then(r => r.json());
+    const auth = { Authorization: "Bearer " + paired.token };
+    const start = (headers, body) => fetch(runtime.baseUrl + "/v1/downloads", { method: "POST", headers, body: JSON.stringify(body) });
+    const run = vi.spyOn(DouyinCollector.prototype, "runVideoDownloadJob").mockResolvedValue();
+    try {
+      expect((await start(auth, { url: "https://example.com/test", playback: true })).status).toBe(400);
+      const desktop = await (await start(headers, { url: "https://www.douyin.com/video/123456" })).json();
+      const { job } = await (await start(auth, { videoId: "123456" })).json();
+      const check = path => fetch(runtime.baseUrl + "/v1/downloads/" + path, { headers: auth });
+      expect(await (await check(job.id)).json()).toEqual({ job: { id: job.id, status: "queued", fileName: null, error: null } });
+      expect((await check(desktop.job.id)).status).toBe(404);
+      expect((await check(job.id + "/file")).status).toBe(403);
+    } finally { run.mockRestore(); }
   });
 
   it("软件里刷视频每批现读屏蔽词条，命中的记进处置记录、不发给页面", async () => {
