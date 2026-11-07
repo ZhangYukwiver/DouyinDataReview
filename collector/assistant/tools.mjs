@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { CREATOR_ENDPOINTS } from "../creatorCenter.mjs";
+import { buildDataExport, transcribeExportVoices } from "../dataExport.mjs";
 
 // AI 助手能用的工具：读本机数据的直接在进程里查采集器的内存快照（一次整份 ~20MB，不能交给模型），
 // 用功能的一律调采集器自己的 HTTP 接口（ctx.api），读取权限、换号中、互动开关、requestId 去重这些关卡和工作台点按钮时一样。
@@ -326,7 +329,7 @@ export const TOOLS = [
   },
   {
     kind: "read",
-    def: fn("read_chat", "读本机存的某个私信会话的消息（按时间从旧到新，默认最近 50 条）。群聊的消息本机不存，用 read_live_chat。", {
+    def: fn("read_chat", "读本机存的某个私信会话的消息（按时间从旧到新，默认最近 50 条）。导出本机聊天记录用 export_chat。群聊的消息本机不存，用 read_live_chat。", {
       conversationId: { type: "string" },
       before: { type: "string", description: "只看这个时间以前的，用来往前翻" },
       limit: { type: "integer", description: "默认 50，最多 100" },
@@ -351,6 +354,13 @@ export const TOOLS = [
         })),
       };
     },
+  },
+  {
+    kind: "local",
+    def: fn("export_chat", "把本机保存的聊天记录导出为 JSON 文件，返回完整文件路径。自动把语音转成文字，逐条注明失败原因。", {
+      conversationId: { type: "string", description: "要导出的会话 ID；用户明确要导出全部本机聊天时传 all。" },
+    }, ["conversationId"]),
+    run: exportChat,
   },
   {
     kind: "read",
@@ -641,6 +651,50 @@ export async function sendEach(items, { signal, gap = () => 2_000 + Math.random(
 }
 
 const workName = (video) => (video ? `${video.author ?? ""}的作品《${String(video.title ?? "").slice(0, 40) || "无标题"}》` : "这个作品");
+
+async function exportChat(ctx, { conversationId }, signal) {
+  const collector = ctx.collector();
+  collector.assertReadPermission("chat");
+  if (typeof conversationId !== "string" || !conversationId.trim()) return fail("invalid_request", "请指定要导出的聊天会话。");
+  const accountId = ctx.accounts().activeId;
+  const assertCurrent = () => {
+    signal?.throwIfAborted();
+    if (ctx.collector() !== collector || ctx.accounts().activeId !== accountId)
+      throw Object.assign(new Error("账号已经切换，请重新导出。"), { code: "account_changed" });
+    collector.assertReadPermission("chat");
+  };
+  let snapshot = collector.snapshot;
+  if (conversationId !== "all") {
+    const chatConversations = snapshot.chatConversations.filter(item => item.id === conversationId);
+    if (chatConversations[0]?.kind === "group") return fail("group_not_stored", "本机未保存群聊正文，无法从本机记录导出这个群。");
+    const chatMessages = snapshot.chatMessages.filter(item => item.conversationId === conversationId);
+    if (!chatConversations.length && !chatMessages.length) return fail("conversation_not_found", "本机没有这个会话。");
+    snapshot = { ...snapshot, chatConversations, chatMessages };
+  }
+  const data = buildDataExport(snapshot, { chat: true });
+  const endpoint = `/v1/chat/voice/transcribe?account=${encodeURIComponent(accountId)}`;
+  await transcribeExportVoices(data, async messageId => {
+    assertCurrent();
+    const result = await ctx.api("POST", endpoint, { messageId });
+    if (!result.ok) throw Object.assign(new Error(result.body?.message ?? "抖音语音转写失败。"), {
+      code: result.body?.error ?? "voice_transcription_failed",
+    });
+    return result.body;
+  }, { signal });
+  assertCurrent();
+  const directory = path.resolve(collector.dataDirectory, "exports");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const filePath = path.join(directory, `聊天记录_${data.exportedAt.slice(0, 10)}_${requestId()}.json`);
+  const temporary = `${filePath}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(data), { flag: "wx", mode: 0o600 });
+    assertCurrent();
+    await rename(temporary, filePath);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  return { ok: true, filePath, total: data.chatMessages.length, warnings: data.warnings };
+}
 
 function apiFailure(result) {
   return fail(result.body?.error ?? `http_${result.status}`, result.body?.message ?? "这一步没成功。");

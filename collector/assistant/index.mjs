@@ -29,6 +29,7 @@ const SYSTEM_PROMPT = `你是「内容数据工作台」里的 AI 助手。这�
 规矩：
 - 先用工具查再回答，数字以工具结果为准，不要编。对话里第一次用工具前先调 app_overview，知道现在几点、是哪个账号、有多少数据。
 - 统计类问题（最常看谁、什么时候刷得多、喜欢什么话题）用 record_stats；找具体作品用 search_records。
+- 导出本机聊天记录用 export_chat，把文件路径和未转写提示告诉用户。
 - 发私信、点赞、收藏、关注、评论、分享会被别人看到：工具会先弹卡片让用户确认（用户点过允许后，这一轮里同样的操作换了对象也不再问），你不用再问一遍。用户点名或说清楚范围的几个人（比如「这两天聊过的好友」），先查出是谁，再放进同一次调用（一张卡片一起确认）；不要自己扩大范围，一轮最多 10 个人。用户拒绝了某一个就跳过它，不要换个办法再试。
 - 用简体中文，口语、简洁。回答里不要出现 videoId、conversationId、occurredAt 这种字段名或接口名，用普通说法；提到作品可以附上链接。可以用 Markdown 列表和表格。
 - 工具报错时用一句话说清原因；能自己补救的（比如先开始接收聊天）就先补救。`;
@@ -36,7 +37,7 @@ const SYSTEM_PROMPT = `你是「内容数据工作台」里的 AI 助手。这�
 // 动作列表里给用户看的说法（前面的勾、叉、转圈说明做没做成）
 const LABELS = {
   app_overview: "看应用现状", search_records: "查记录", record_stats: "统计记录", list_folders: "看文件夹", organize_folders: "整理文件夹",
-  list_conversations: "看私信会话", read_chat: "读私信", read_live_chat: "从抖音现读私信", chat_streaks: "看火花", transcribe_voice: "转写语音",
+  list_conversations: "看私信会话", read_chat: "读私信", export_chat: "导出聊天记录", read_live_chat: "从抖音现读私信", chat_streaks: "看火花", transcribe_voice: "转写语音",
   creator_read: "读创作者中心", live_following: "看谁在直播", live_room: "进直播间听几秒", feed_filter_read: "看推荐流控制",
   feed_filter_set: "改推荐流控制", start_reading: "开始读取", stop_reading: "停止读取", download_video: "下载作品", switch_account: "切换账号",
   open_view: "切换页面", send_chat_message: "发私信", douyin_interact: "在抖音上操作",

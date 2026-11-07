@@ -2,8 +2,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { DouyinCollector } from "../douyinCollector.mjs";
 import { startCollectorServer } from "../server.mjs";
 import { createConfirmDesk } from "./confirm.mjs";
 import { countBy, filterRecords, listConversations, sendEach } from "./tools.mjs";
@@ -44,10 +45,10 @@ async function fakeModel(script) {
   return { requests, config: { baseUrl: `http://127.0.0.1:${server.address().port}/v1`, apiKey: "test-key", model: "fake" } };
 }
 
-async function start() {
+async function start({ chatMessages = [], chatConversations = [] } = {}) {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "assistant-"));
   cleanups.push(() => rm(dataDirectory, { recursive: true, force: true }));
-  await writeFile(path.join(dataDirectory, "records.json"), JSON.stringify({ schemaVersion: 2, updatedAt: "2026-10-05T00:00:00.000Z", records: RECORDS, chatMessages: [], chatConversations: [], warnings: [] }));
+  await writeFile(path.join(dataDirectory, "records.json"), JSON.stringify({ schemaVersion: 2, updatedAt: "2026-10-05T00:00:00.000Z", records: RECORDS, chatMessages, chatConversations, warnings: [] }));
   const runtime = await startCollectorServer({ port: 0, dataDirectory, browserSources: [], desktopSupported: false });
   cleanups.push(() => runtime.close());
   const { token } = await fetch(`${runtime.baseUrl}/v1/pair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: runtime.getPairingCode() }) }).then((response) => response.json());
@@ -322,6 +323,42 @@ describe("talking to the assistant", () => {
 });
 
 describe("the MCP endpoint for the user's own AI client", () => {
+  it("exports the requested conversation with native transcripts and per-message failures", async () => {
+    const voice = { conversationId: "friend", conversationType: "friend", type: "voice" };
+    const { runtime, dataDirectory } = await start({ chatMessages: [
+      { ...voice, id: "102" },
+      { ...voice, id: "101", voiceResource: { uri: "test-audio", skey: "local-only", secUid: "MS4wTest", conversationShortId: "1", messageType: 17 } },
+      { ...voice, id: "103", text: "已有转写", voiceTranscription: { status: "done" } },
+      { conversationId: "friend", id: "104", type: "text", text: "普通文字" },
+      { conversationId: "another", id: "105", type: "text", text: "另一个会话" },
+    ] });
+    const request = vi.fn(async () => ({ recognition_results: [{ message_id: "101", text_result: "明天见。" }] }));
+    const upstream = vi.spyOn(DouyinCollector.prototype, "ensureDirectApi").mockResolvedValue({ request, session: { values: {} } });
+    cleanups.push(() => upstream.mockRestore());
+    // MCP 在响应首个请求前会等令牌写入完成。
+    await fetch(`${runtime.baseUrl}/mcp`, { method: "POST", body: "{}" });
+    const token = (await readFile(path.join(dataDirectory, "mcp-token"), "utf8")).trim();
+    const response = await fetch(`${runtime.baseUrl}/mcp`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "export_chat", arguments: { conversationId: "friend" } } }),
+    });
+    const { result } = await response.json();
+    const exported = JSON.parse(result.content[0].text);
+    expect(exported).toMatchObject({ ok: true, total: 4, warnings: [expect.stringContaining("1 条语音未转写")] });
+    const contents = await readFile(exported.filePath, "utf8");
+    expect(contents).not.toMatch(/voiceResource|local-only|另一个会话/);
+    const { chatMessages, warnings, parts } = JSON.parse(contents);
+    expect(parts).toEqual(["chat"]);
+    expect(warnings).toEqual(exported.warnings);
+    expect(chatMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "101", text: "明天见。", voiceTranscription: { status: "done" } }),
+      expect.objectContaining({ id: "102", text: "[语音未转写]", voiceTranscription: { status: "unavailable", reason: expect.stringContaining("缺少语音转写资料") } }),
+      expect.objectContaining({ id: "103", text: "已有转写" }),
+      expect.objectContaining({ id: "104", text: "普通文字" }),
+    ]));
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("answers only the token kept in the data folder, and never a web page", async () => {
     const { runtime, dataDirectory } = await start();
     const post = (body, headers = {}) => fetch(`${runtime.baseUrl}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
