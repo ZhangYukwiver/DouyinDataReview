@@ -57,9 +57,8 @@ describe("voice export", () => {
     Object.assign(input.chatMessages[0]!, { voiceResource: { skey: "do-not-export" } });
     const fetch = vi.fn(async (url, init) => {
       expect(String(url)).toContain("/v1/chat/voice/transcribe?account=account-a");
-      const id = JSON.parse(init.body).messageId;
-      return id === "123" ? new Response(JSON.stringify({ id, text }))
-        : new Response(JSON.stringify({ error: "voice_text_unavailable", message: "暂未返回文字" }), { status: 409 });
+      expect(JSON.parse(init.body).messageIds).toEqual(["123", "456"]);
+      return new Response(JSON.stringify({ results: [{ id: "456", error: "voice_text_unavailable", message: "暂未返回文字" }, { id: "123", text }] }));
     });
     vi.stubGlobal("fetch", fetch);
     const progress = vi.fn();
@@ -87,6 +86,25 @@ describe("voice export", () => {
     vi.stubGlobal("fetch", fetch);
     await expect(buildDataExportWithVoice(voiceSnapshot(), { ...none, chat: true }, options())).rejects.toMatchObject({ code: "account_changed" });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("sends voices ten per request, the first batch alone and the rest together", async () => {
+    const input = voiceSnapshot();
+    input.chatMessages = Array.from({ length: 33 }, (_, index) => ({ ...input.chatMessages[0]!, id: String(100 + index) }));
+    let active = 0, peak = 0;
+    const fetch = vi.fn(async (_url, init) => {
+      peak = Math.max(peak, ++active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      const ids: string[] = JSON.parse(init.body).messageIds;
+      return new Response(JSON.stringify({ results: ids.map(id => ({ id, text: `文字${id}` })) }));
+    });
+    vi.stubGlobal("fetch", fetch);
+    const progress = vi.fn();
+    const result = await buildDataExportWithVoice(input, { ...none, chat: true }, { ...options(), onProgress: progress });
+    expect(fetch.mock.calls.map(([, init]) => JSON.parse(init.body).messageIds.length)).toEqual([10, 10, 10, 3]);
+    expect(peak).toBe(3);
+    expect(result.chatMessages.map(message => message.text)).toEqual(input.chatMessages.map(message => `文字${message.id}`));
+    expect(progress).toHaveBeenLastCalledWith({ completed: 33, total: 33 });
   });
   it("does not retry every remaining voice when credentials have expired", async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ error: "browser_reconnect_required", message: "请重新导入登录凭据" }), { status: 409 }));

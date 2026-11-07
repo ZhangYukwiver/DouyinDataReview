@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { normalizeChatPayload } from "./chatNormalizer.mjs";
-import { normalizeVoiceResource, transcribeVoiceMessage, VOICE_RECOGNITION_PATH } from "./chatVoice.mjs";
+import { normalizeVoiceResource, transcribeVoiceMessage, transcribeVoiceMessages, VOICE_RECOGNITION_PATH } from "./chatVoice.mjs";
 import { directApiFixture, imResponse } from "./fixtures/directClient.mjs";
 import { protoNumber as n, protoString as s, protoMessage as m } from "./directProto.mjs";
 import { CollectorStore } from "./store.mjs";
@@ -55,6 +55,22 @@ describe("Douyin voice transcription", () => {
     finally { await api.close(); }
   });
 
+  it("transcribes several voices in one request and matches each result by message id", async () => {
+    const second = { ...message, id: "7654321098765432188" }, third = { ...message, id: "7654321098765432177" };
+    const { api, fetch } = directApiFixture((url, options) => {
+      expect(JSON.parse(options.data).req_list.map(item => item.message_id)).toEqual([id, second.id, third.id]);
+      return { payload: { status_code: 0, recognition_results: [{ message_id: second.id, text_result: "第二条" }, { message_id: id, text_result: "第一条" }] } };
+    });
+    try {
+      expect(await transcribeVoiceMessages(api, [message, second, third, { id: "1", type: "voice" }])).toEqual([
+        { id, text: "第一条" }, { id: second.id, text: "第二条" },
+        { id: third.id, error: "voice_text_unavailable", message: expect.any(String) },
+        { id: "1", error: "voice_resource_missing", message: expect.any(String) },
+      ]);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally { await api.close(); }
+  });
+
   it("rejects missing resources before any platform request", async () => {
     const api = { request: vi.fn() };
     await expect(transcribeVoiceMessage(api, { id })).rejects.toMatchObject({ code: "voice_resource_missing" });
@@ -69,5 +85,18 @@ describe("Douyin voice transcription", () => {
     await expect(collector.transcribeChatVoice({ messageId: "999" })).rejects.toMatchObject({ code: "voice_not_found" });
     await expect(collector.transcribeChatVoice({ messageId: "123" })).rejects.toMatchObject({ code: "voice_not_found" });
     expect(collector.ensureDirectApi).not.toHaveBeenCalled();
+  });
+
+  it("keeps a finished transcript locally so exporting again does not ask Douyin", async () => {
+    const { api, fetch } = directApiFixture(() => ({ payload: { status_code: 0, recognition_results: [{ message_id: id, text_result: "明天见。" }] } }));
+    const collector = new DouyinCollector({ dataDirectory: "/unused-voice-test", store: {} });
+    collector.snapshot = { chatMessages: [{ ...message }] };
+    collector.ensureDirectApi = vi.fn(async () => api);
+    try {
+      expect(await collector.transcribeChatVoice({ messageId: id })).toEqual({ id, text: "明天见。" });
+      expect(await collector.transcribeChatVoice({ messageId: id })).toEqual({ id, text: "明天见。" });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(collector.snapshot.chatMessages[0]).toMatchObject({ text: "明天见。", voiceTranscription: { status: "done" } });
+    } finally { await api.close(); }
   });
 });

@@ -11,7 +11,7 @@ export async function buildDataExportWithVoice(snapshot: CollectorSnapshot, sele
   onProgress?: (progress: { completed: number; total: number }) => void;
 }) {
   const data = buildDataExport(snapshot, selection);
-  return transcribeExportVoices(data, async messageId => {
+  return transcribeExportVoices(data, async messageIds => {
     if (!options.connection || !options.accountId)
       throw new LocalCollectorError("voice_resource_missing", "请连接原账号后重新导出语音文字。");
     const controller = new AbortController();
@@ -21,11 +21,11 @@ export async function buildDataExportWithVoice(snapshot: CollectorSnapshot, sele
     try {
       const response = await collectorFetch(options.connection, `/v1/chat/voice/transcribe?account=${encodeURIComponent(options.accountId)}`, {
         method: "POST", signal: controller.signal, headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messageId }),
+        body: JSON.stringify({ messageIds }),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new LocalCollectorError(result?.error ?? "voice_transcription_failed", result?.message ?? "抖音语音转写失败。");
-      return result;
+      return result?.results;
     } finally {
       clearTimeout(timeout);
       options.signal.removeEventListener("abort", abort);

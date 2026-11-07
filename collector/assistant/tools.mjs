@@ -673,13 +673,13 @@ async function exportChat(ctx, { conversationId }, signal) {
   }
   const data = buildDataExport(snapshot, { chat: true });
   const endpoint = `/v1/chat/voice/transcribe?account=${encodeURIComponent(accountId)}`;
-  await transcribeExportVoices(data, async messageId => {
+  await transcribeExportVoices(data, async messageIds => {
     assertCurrent();
-    const result = await ctx.api("POST", endpoint, { messageId });
+    const result = await ctx.api("POST", endpoint, { messageIds });
     if (!result.ok) throw Object.assign(new Error(result.body?.message ?? "抖音语音转写失败。"), {
       code: result.body?.error ?? "voice_transcription_failed",
     });
-    return result.body;
+    return result.body?.results;
   }, { signal });
   assertCurrent();
   const directory = path.resolve(collector.dataDirectory, "exports");
