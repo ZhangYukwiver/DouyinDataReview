@@ -95,7 +95,7 @@ describe("推荐流请求拦截", () => {
   it.each(["xhr", "fetch"])("%s 在关闭过滤时仍能插入词条视频，搜索经过网页后挂的 XHR 钩子", async transport => {
     const video = id => ({ aweme_id: String(id), desc: "日常", video: { play_addr: { url_list: ["https://example.com/video.mp4"] } } });
     const original = { status_code: 0, aweme_list: [10001, 10002, 10003].map(video), has_more: 1, cursor: 10 };
-    const { context, XHR, settings } = setup({ mode: "off", rules: "", fetch: async () => new Response(JSON.stringify(original)) });
+    const { context, XHR, settings, events } = setup({ mode: "off", rules: "", fetch: async () => new Response(JSON.stringify(original)) });
     const sent = [];
     const hooked = XHR.prototype.open;
     XHR.prototype.open = function (method, url) { this.signed = true; return hooked.call(this, method, url); };
@@ -107,9 +107,11 @@ describe("推荐流请求拦截", () => {
     // 真实页面开始请求推荐后预取，待候选准备好再读取推荐回包。
     const xhr = new XHR(); xhr.open("GET", feedUrl);
     await new Promise(resolve => setTimeout(resolve, 0));
+    expect(events).toEqual([]);
     const result = transport === "fetch" ? await (await context.fetch(feedUrl)).json()
       : (xhr.respond(original, "json"), xhr.response);
     expect(result.aweme_list.map(item => item.aweme_id)).toEqual(["10001", "10002", "10003", "90001"]);
+    expect(events).toMatchObject([{ action: "inserted", id: "90001", matched: ["露营"] }]);
     expect(result).toMatchObject({ cursor: 10, has_more: 1 });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ signed: true, method: "GET", withCredentials: true, timeout: 10000 });

@@ -55,6 +55,11 @@
     if (active && message?.type === "dyf:ping") respond({ version, ready: probe() });
     return false;
   };
+  const onStorage = (changes, area) => {
+    if (area === "local" && changes.settings?.newValue) deliver("settings", changes.settings.newValue);
+  };
+  let unmount;
+  const mount = () => { if (active) unmount = globalThis.__dyfMountPanel?.(send); };
   function dispose() {
     if (!active) return;
     active = false;
@@ -62,6 +67,9 @@
     timers.clear();
     document.removeEventListener("dyf:events", onEvents);
     document.removeEventListener("dyf:diagnostics", onDiagnostics);
+    document.removeEventListener("DOMContentLoaded", mount);
+    unmount?.();
+    try { chrome.storage?.onChanged.removeListener(onStorage); } catch { /* 旧 runtime 已失效 */ }
     try { chrome.runtime.onMessage.removeListener(onMessage); } catch { /* 旧 runtime 已失效 */ }
   }
   const refresh = () => { ask("cached"); ask("settings"); probe(); };
@@ -69,6 +77,9 @@
   document.addEventListener("dyf:events", onEvents);
   document.addEventListener("dyf:diagnostics", onDiagnostics);
   chrome.runtime.onMessage.addListener(onMessage);
+  chrome.storage?.onChanged.addListener(onStorage);
+  if (document.documentElement) mount();
+  else document.addEventListener("DOMContentLoaded", mount, { once: true });
   // 先用本地缓存，再拉应用里的新设置；重复注入复用同一组监听与计时器。
   timers.add(setInterval(() => ask("settings"), 60_000));
   timers.add(setInterval(probe, 5000));

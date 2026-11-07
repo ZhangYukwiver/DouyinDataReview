@@ -120,7 +120,7 @@
     picks.rememberPage(json);
     prefetchPicks();
     const detail = json?.aweme_detail ?? json?.data?.aweme_detail;
-    const mix = () => !recordOnly && !detail && isRecommendationPage() && picks.mix(json);
+    const mix = () => !recordOnly && !detail && isRecommendationPage() && picks.mix(json, emit);
     if (settings.mode === "off") return mix() ? JSON.stringify(json) : undefined;
     // 详情是已选中作品，删成 null 会破坏播放器；和已送进页面的首屏一样只补记。
     const observe = recordOnly || Boolean(detail) || settings.mode === "observe";

@@ -8,7 +8,7 @@ import { normalizeAweme, normalizeRecord } from "./normalizer.mjs";
 export const FEED_FILTER_EXTENSION_ID = "phliimhdokpkdhmeofkpbcnkncknjkka";
 export const FEED_FILTER_ORIGINS = [`chrome-extension://${FEED_FILTER_EXTENSION_ID}`, `extension://${FEED_FILTER_EXTENSION_ID}`];
 export const FEED_FILTER_MODES = ["off", "observe", "hide", "dislike"];
-const ACTIONS = new Set(["observed", "hidden", "disliked", "dislike_failed", "unreadable"]);
+const ACTIONS = new Set(["inserted", "observed", "hidden", "disliked", "dislike_failed", "unreadable"]);
 const MAX_RULES_CHARACTERS = 20_000;
 const MAX_EVENTS = 500;
 // 内容库「推荐流挡掉的」那一栏：每个作品留最近一次，一条约 1KB

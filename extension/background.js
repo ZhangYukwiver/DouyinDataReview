@@ -55,7 +55,7 @@ async function restoreOpenPages() {
     if (bridge?.version === version && bridge.ready === true) return "connected";
     // page.js 已有安装保护：沿用当前页面的匹配器，不叠加网络拦截。
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", files: ["filter.js", "picks.js", "page.js"] });
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", files: ["bridge.js"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "ISOLATED", files: ["panel.js", "bridge.js"] });
     return "restored";
   }));
   await chrome.storage.local.set({ pageAttachment: { version, checkedAt: Date.now(), pages: targets.length,
@@ -82,7 +82,7 @@ async function connect() {
 }
 
 // 没配过、配对过期（401）或者应用换了端口：重新找一次再试
-async function call(path, init = {}) {
+async function call(path, init = {}, interactive = false) {
   let { base, token } = await chrome.storage.local.get(["base", "token"]);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (!base || !token) ({ base, token } = (await connect()) ?? {});
@@ -90,8 +90,16 @@ async function call(path, init = {}) {
     try {
       const response = await fetch(base + path, { ...init, signal: AbortSignal.timeout(3000),
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } });
-      if (response.status !== 401) return response.ok ? await response.json() : null;
-    } catch { /* 应用关了或者换了端口 */ }
+      if (response.ok) return await response.json();
+      if (response.status !== 401) {
+        if (!interactive) return null;
+        const error = await response.json().catch(() => ({}));
+        return { error: error.message || ([403, 404].includes(response.status) ? "请更新 DouyinDataReview 后再试。" : "操作失败，请稍后重试。") };
+      }
+    } catch {
+      // 已提交的下载遇到断连，不能自动重发而创建第二个任务。
+      if (interactive && init.method === "POST") return { error: "未收到应用回执，请检查应用状态。" };
+    }
     base = token = null;
   }
   return null;
@@ -117,9 +125,7 @@ async function refresh() {
     return null;
   }
   if (typeof value?.rules !== "string" || typeof value?.mode !== "string") return null;
-  const next = { rules: value.rules, mode: value.mode, words: typeof value.words === "string" ? value.words : "", webPicks: value.webPicks === true,
-    pickEvery: Number.isInteger(value.pickEvery) ? value.pickEvery : 3 };
-  await chrome.storage.local.set({ settings: next });
+  const next = await cacheSettings(value);
   // 应用带了更新的扩展、已经换进了浏览器加载的那个文件夹：重新加载一次就是新版。
   // 同一个版本只试一次：万一是从别的文件夹加载的，重载了还是旧版，不能每分钟重载一回
   if (typeof value.version === "string" && isNewerVersion(value.version, chrome.runtime.getManifest().version)) {
@@ -130,6 +136,44 @@ async function refresh() {
     }
   }
   return next;
+}
+
+async function cacheSettings(value) {
+  const settings = { rules: value.rules, mode: value.mode, words: value.words ?? "", webPicks: value.webPicks === true,
+    pickEvery: Number.isInteger(value.pickEvery) ? value.pickEvery : 3 };
+  await chrome.storage.local.set({ settings });
+  return settings;
+}
+
+async function panelRequest(message) {
+  const offline = "请打开 DouyinDataReview，再试一次。";
+  if (message.type === "panel:settings") {
+    const settings = await refresh();
+    return { settings: settings ?? (await chrome.storage.local.get("settings")).settings, offline: !settings };
+  }
+  if (message.type === "panel:history") {
+    const value = await call("/v1/feed-filter/events", {}, true);
+    const { pending = [] } = await chrome.storage.local.get("pending");
+    const events = [...(value?.events ?? []), ...pending].filter(event => event && /^\d{5,30}$/u.test(event.id)
+      && ["inserted", "hidden", "disliked", "dislike_failed"].includes(event.action))
+      .map(({ id, t, desc, author, matched, action }) => ({ id, t, desc, author, matched, action }));
+    return { events, warning: value?.error ?? (!value ? "应用离线，仅显示待同步记录。" : "") };
+  }
+  if (message.type === "panel:save") {
+    const change = {};
+    for (const key of ["words", "rules"]) if (typeof message[key] === "string") change[key] = message[key];
+    if (!Object.keys(change).length) return { error: "请先修改词条。" };
+    const value = await call("/v1/feed-filter", { method: "POST", body: JSON.stringify(change) }, true);
+    if (typeof value?.rules !== "string") return { error: value?.error || offline };
+    return { settings: await cacheSettings(value) };
+  }
+  let value;
+  if (message.type === "panel:download" && typeof message.id === "string" && /^\d{5,30}$/u.test(message.id)) {
+    value = await call("/v1/downloads", { method: "POST", body: JSON.stringify({ videoId: message.id }) }, true);
+  } else if (message.type === "panel:progress" && typeof message.id === "string" && /^[0-9a-f-]{36}$/u.test(message.id)) {
+    value = await call(`/v1/downloads/${message.id}`, {}, true);
+  } else return { error: "无效的作品或下载任务。" };
+  return value ?? { error: offline };
 }
 
 // 每分钟和应用对一次：应用能看到扩展还在，叫移除、有新版也在这时收到；刚装好、浏览器一启动就先对一次
@@ -144,6 +188,11 @@ chrome.runtime.onInstalled.addListener(sync);
 chrome.runtime.onStartup.addListener(sync);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (typeof message?.type === "string" && message.type.startsWith("panel:")) {
+    if (!sender.url?.startsWith("https://www.douyin.com/") || !Number.isInteger(sender.tab?.id) || sender.frameId !== 0) return false;
+    serial(() => panelRequest(message)).then(sendResponse, () => sendResponse({ error: "操作失败，请重试。" }));
+    return true;
+  }
   if (message?.type === "diagnostics") {
     let page;
     try { page = new URL(sender.url); } catch { return false; }

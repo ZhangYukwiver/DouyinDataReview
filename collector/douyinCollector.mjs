@@ -1008,7 +1008,7 @@ export class DouyinCollector {
     return this.publicVideoDownloadJob(job);
   }
 
-  startVideoDownload(sourceUrl, { playback = false } = {}) {
+  startVideoDownload(sourceUrl, { playback = false, saveCopy } = {}) {
     this.assertReadPermission("videos");
     const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
     if (this.visibleBrowserWorkRunning()) {
@@ -1019,6 +1019,7 @@ export class DouyinCollector {
     const job = {
       id: randomUUID(),
       playback,
+      saveCopy,
       ...(playback ? { streamKey: randomBytes(24).toString("base64url") } : {}),
       sourceUrl: normalizedSourceUrl,
       status: "queued",
@@ -1074,9 +1075,12 @@ export class DouyinCollector {
     return url ? { url, referer: job.stream.referer } : null;
   }
 
-  getVideoDownloadJob(jobId) {
+  getVideoDownloadJob(jobId, { extensionOnly = false } = {}) {
     this.pruneVideoDownloadJobs();
-    return this.publicVideoDownloadJob(this.videoDownloadJobs.get(jobId));
+    const job = this.videoDownloadJobs.get(jobId);
+    if (extensionOnly) return job?.saveCopy
+      ? { id: job.id, status: job.status, fileName: job.savedFileName ?? null, error: job.error } : null;
+    return this.publicVideoDownloadJob(job);
   }
 
   getVideoDownloadFilePath(jobId) {
@@ -1137,6 +1141,11 @@ export class DouyinCollector {
         onProgress: (bytes) => this.touchVideoDownloadJob(job, { bytes }),
         onEvidence: (entry) => this.touchVideoDownloadJob(job, { evidence: [...(job.evidence ?? []), entry].slice(-20) }),
       });
+      if (job.saveCopy) {
+        job.filePath = result.filePath;
+        try { job.savedFileName = await job.saveCopy(result.filePath, result.fileName); }
+        catch { throw new VideoDownloadError("save_failed", "无法写入视频下载目录，请检查应用里的下载位置和磁盘空间。"); }
+      }
       this.touchVideoDownloadJob(job, {
         status: "complete",
         ...(Array.isArray(result.evidence) && result.evidence.length ? { evidence: result.evidence.slice(-20) } : {}),
