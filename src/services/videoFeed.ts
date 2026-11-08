@@ -42,7 +42,7 @@ export async function waitForCollector<T>(operation: () => Promise<T>, signal: A
   }
 }
 
-const videoIdOf = (record: PersonalVideoRecord) => record.videoId || /\/(?:video|note)\/(\d+)/u.exec(record.url ?? "")?.[1];
+export const videoIdOf = (record: PersonalVideoRecord) => record.videoId || /\/(?:video|note)\/(\d+)/u.exec(record.url ?? "")?.[1];
 
 /** Own only this player's comment tab; never close search/profile sessions. */
 export function createVideoCommentsSession(connection: ExploreConnection, record: PersonalVideoRecord) {

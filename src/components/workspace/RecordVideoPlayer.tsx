@@ -1,12 +1,13 @@
-import React, { memo, useEffect, useRef, useState } from "react";
+import React, { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Modal } from "react-native";
 import { ArrowUp, ArrowUpRight, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Forward, Heart, Link, Maximize, MessageCircle, Music2, Pause, Play, Search, Smile, Volume2, VolumeX, X } from "lucide-react-native";
 import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreComment, ExploreConnection, ExploreOutcome, ExplorePage, ExploreSharee, WatchedItem } from "../../services/explorer";
-import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, reactVideo, waitForCollector } from "../../services/videoFeed";
+import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, reactVideo, videoIdOf, waitForCollector } from "../../services/videoFeed";
 import { LocalCollectorError, type PlaybackMedia } from "../../services/localCollector";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
+import { PlaybackContext } from "./PlaybackContext";
 import "./RecordVideoPlayer.css";
 
 /** Resolves to a stream URL (or an image post's pictures) that stays valid until `signal` aborts. */
@@ -67,6 +68,13 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
   // 控制栏里的连播 / 清屏 / 倍速，换到下一条也保留
   const [prefs, setPrefs] = useState<PlayerPrefs>({ autoNext: false, clean: false, rate: 1 });
   const active = feed[index]!;
+  const playback = useContext(PlaybackContext);
+  useLayoutEffect(() => {
+    if (!playback) return;
+    const video = { videoId: videoIdOf(active) ?? null, title: active.title, author: active.author };
+    playback.current = video;
+    return () => { if (playback.current === video) playback.current = null; };
+  }, [active, playback]);
   // 离开的那条先记着，等下一条开播时一起报；关掉播放器时单独报（放到微任务里，等每条视频自己的收尾都跑完）
   const left = useRef<WatchedItem | null>(null);
   const seenRef = useRef(onSeen);

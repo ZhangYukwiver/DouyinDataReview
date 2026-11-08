@@ -15,6 +15,12 @@ export interface AssistantConfig {
   model: string;
 }
 
+export interface AssistantVideo {
+  readonly videoId: string | null;
+  readonly title: string;
+  readonly author: string | null;
+}
+
 export interface AssistantAction {
   label: string;
   ok: boolean;
@@ -114,8 +120,8 @@ async function request<T>(connection: ExploreConnection, path: string, init: Req
 export const getAssistant = (connection: ExploreConnection, afterRevision: number | null, signal?: AbortSignal) =>
   request<AssistantView>(connection, `/v1/assistant${afterRevision === null ? "" : `?afterRevision=${afterRevision}`}`, { signal }, 20_000);
 
-export const sendAssistantMessage = (connection: ExploreConnection, text: string, config: AssistantConfig) =>
-  request<AssistantView>(connection, "/v1/assistant/messages", { method: "POST", body: JSON.stringify({ text, config: requestConfig(config) }) });
+export const sendAssistantMessage = (connection: ExploreConnection, text: string, config: AssistantConfig, currentVideo: AssistantVideo | null) =>
+  request<AssistantView>(connection, "/v1/assistant/messages", { method: "POST", body: JSON.stringify({ text, config: requestConfig(config), currentVideo }) });
 
 export const stopAssistant = (connection: ExploreConnection) => request<AssistantView>(connection, "/v1/assistant/stop", { method: "POST" });
 
