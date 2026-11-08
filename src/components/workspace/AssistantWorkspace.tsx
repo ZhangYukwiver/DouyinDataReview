@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { ArrowUp, Check, CircleAlert, Download, ShieldAlert, Sparkles, Square, SquarePen, X } from "lucide-react-native";
 import {
@@ -7,6 +7,7 @@ import {
 } from "../../services/assistant";
 import type { ExploreConnection } from "../../services/explorer";
 import { runtimeProblem } from "./AiRuntimeField";
+import { PlaybackContext } from "./PlaybackContext";
 import { clampSpot, dockPlacement, loadDockSize, loadDockSpot, MIN_SIZE, saveDockSize, saveDockSpot, type DockSide } from "./assistantDock";
 import { kit, SmallButton } from "./CreatorKit";
 import { Markdown } from "./markdownView";
@@ -38,6 +39,7 @@ const grab = web ? ({ cursor: "grab" } as object) : null;
 const message = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
 
 export function AssistantWorkspace({ connection, view, onOpenSettings, onOpenLink, onSaveDownload, onClose }: Props) {
+  const playback = useContext(PlaybackContext);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -60,11 +62,12 @@ export function AssistantWorkspace({ connection, view, onOpenSettings, onOpenLin
     if (!words || busy || !connection) return;
     if (!ready) { onOpenSettings(); return; }
     setLocalError(null);
-    const problem = await runtimeProblem(connection, config.runtime);
-    if (problem) { setLocalError(problem); return; }
+    const currentVideo = playback?.current ?? null;
     setSending(true);
     try {
-      await sendAssistantMessage(connection, words, config);
+      const problem = await runtimeProblem(connection, config.runtime);
+      if (problem) { setLocalError(problem); return; }
+      await sendAssistantMessage(connection, words, config, currentVideo);
       setDraft("");
     } catch (error) {
       setLocalError(message(error, "没发出去，请稍后再试。"));

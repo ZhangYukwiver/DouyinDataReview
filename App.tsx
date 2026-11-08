@@ -105,10 +105,11 @@ import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/servic
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
 import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
-import { getAssistant, type AssistantView } from "./src/services/assistant";
+import { getAssistant, type AssistantVideo, type AssistantView } from "./src/services/assistant";
 import { loadDismissedNotices, loadSiteNotices, saveDismissedNotices, type SiteNotices } from "./src/services/siteNotice";
 import { RELEASE_NOTES } from "./src/components/workspace/releaseNotes";
 import { AssistantDock, AssistantWorkspace } from "./src/components/workspace/AssistantWorkspace";
+import { PlaybackContext } from "./src/components/workspace/PlaybackContext";
 import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/storyData";
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace, FeedWorkspace } from "./src/components/workspace/ExploreWorkspace";
@@ -2191,9 +2192,12 @@ function AppContent() {
 }
 
 export default function App() {
+  const playback = useRef<AssistantVideo | null>(null);
   return (
     <SafeAreaProvider>
-      <AppContent />
+      <PlaybackContext.Provider value={playback}>
+        <AppContent />
+      </PlaybackContext.Provider>
     </SafeAreaProvider>
   );
 }

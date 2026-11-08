@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { LOCAL_RUNTIMES, LocalAiError } from "../localAi.mjs";
-import { AssistantError, KEEP_RESULT, LIMIT_RESULT, MAX_TOOL_CALLS, assistantMessage, recallLines, shorten } from "./chat.mjs";
+import { AssistantError, KEEP_RESULT, LIMIT_RESULT, MAX_TOOL_CALLS, assistantMessage, recallLines, shorten, userMessageText } from "./chat.mjs";
 import { openMcp } from "./mcp.mjs";
 
 // 用本机的 Codex / Claude Code 跑一轮：每条用户消息起一个不落盘的 CLI 进程，它自己跑工具循环，
@@ -40,7 +40,7 @@ export function renderTranscript(entries, maxChars = TRANSCRIPT_CHARS) {
     if (entry.role === "user") {
       flush();
       said.push([lines.length, entry]);
-      lines.push(`用户：${String(entry.content ?? "").trim()}`);
+      lines.push(`用户：${userMessageText(entry).trim()}`);
     } else if (entry.role === "assistant") {
       if (typeof entry.content === "string" && entry.content.trim()) {
         flush();
@@ -87,7 +87,7 @@ export async function runCliConversation({ config, history, tools, system, execu
   const label = LOCAL_RUNTIMES[config.runtime].label;
   if (!localAi) throw new AssistantError("local_runtime_unavailable", "本机 AI 没准备好，请重启应用。", 503);
   const systemPrompt = `${await system()}\n\n${CLI_SYSTEM_NOTE}`;
-  const prompt = [renderTranscript(history.slice(0, -1)), `【用户最新的消息】\n${history.at(-1)?.content ?? ""}`].filter(Boolean).join("\n\n");
+  const prompt = [renderTranscript(history.slice(0, -1)), `【用户最新的消息】\n${userMessageText(history.at(-1))}`].filter(Boolean).join("\n\n");
 
   const parts = [];
   let current = "";

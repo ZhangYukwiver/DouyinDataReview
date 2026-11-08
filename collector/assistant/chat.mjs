@@ -368,13 +368,19 @@ export function trimHistory(history, maxChars = MAX_HISTORY_CHARS) {
 const RECALL_EACH = 200;
 const RECALL_TOTAL = 3_000;
 
+/** 给模型的作品引用跟随原消息，界面继续显示用户输入的原文。 */
+export function userMessageText(entry) {
+  const content = String(entry?.content ?? "");
+  return entry?.playbackVideoId === undefined ? content : `【这条消息发送时的播放器作品 ID：${entry.playbackVideoId ?? "无可用 ID"}】\n${content}`;
+}
+
 /** 被丢掉的那些用户原话，一条一行：每条截到 200 字、合计不超过 3000 字，放不下时留离现在近的。 */
 export function recallLines(entries) {
   const lines = [];
   let total = 0;
   for (const entry of [...entries].reverse()) {
     if (entry?.role !== "user") continue;
-    const words = shorten(String(entry.content ?? "").replace(/\s+/gu, " "), RECALL_EACH);
+    const words = shorten(userMessageText(entry).replace(/\s+/gu, " "), RECALL_EACH);
     if (!words) continue;
     if (total + words.length > RECALL_TOTAL) break;
     total += words.length;
@@ -434,7 +440,8 @@ export async function runConversation({ config, history, tools, system, execute,
   for (;;) {
     signal?.throwIfAborted();
     compactHistory(history);
-    const messages = [{ role: "system", content: await system() }, ...requestHistory(history)];
+    const messages = [{ role: "system", content: await system() }, ...requestHistory(history).map((entry) =>
+      entry.role === "user" ? { role: "user", content: userMessageText(entry) } : entry)];
     let streamed = "";
     let reply;
     try {

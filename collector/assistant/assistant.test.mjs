@@ -195,6 +195,52 @@ describe("the confirm desk", () => {
 });
 
 describe("talking to the assistant", () => {
+  it("uses the message's playback for the confirmation and outgoing card even with an older tool argument", async () => {
+    const { call, until } = await start();
+    const current = { videoId: "7100000000000000001", author: "作者甲", title: "作品甲" };
+    const other = { videoId: "7100000000000000002", author: "作者乙", title: "作品乙" };
+    const api = { session: { uid: "123" }, request: vi.fn(async (_path, { query }) => {
+      const video = [current, other].find((item) => item.videoId === query.aweme_id);
+      return { aweme_detail: { aweme_id: video.videoId, desc: video.title, author: { nickname: video.author } } };
+    }) };
+    const friend = { id: "0:1:123:456", type: 1, name: "好友" };
+    const send = vi.fn(async () => ({ outcome: "confirmed" }));
+    const apiSpy = vi.spyOn(DouyinCollector.prototype, "ensureDirectApi").mockResolvedValue(api);
+    const chatSpy = vi.spyOn(DouyinCollector.prototype, "getDirectChatClient").mockResolvedValue({ api, conversations: new Map([[friend.id, friend]]), send });
+    cleanups.push(() => { apiSpy.mockRestore(); chatSpy.mockRestore(); });
+    const share = (videoId) => ({ call: "douyin_interact", args: { action: "share", shareTo: [friend.name], videoId } });
+    const model = await fakeModel([{ call: "app_overview" }, share(other.videoId), share("current"), "已分享。",
+      share("current"), "请提供链接。", share(current.videoId), "已分享。"]);
+    const submit = (text, currentVideo) => call("POST", "/v1/assistant/messages", { text, currentVideo, config: model.config });
+    const approve = (card) => call("POST", `/v1/assistant/confirm/${card.id}`, { allow: true });
+
+    await submit("把这个视频发给好友", current);
+    const [card] = (await until((view) => view.confirms.length)).confirms;
+    expect(toolResult(model.requests[1]).currentVideo).toEqual(current);
+    expect(toolResult(model.requests[2]).code).toBe("wrong_current_video");
+    expect(card.text).toContain(current.title);
+    expect(send).not.toHaveBeenCalled();
+    await approve(card);
+    await until((view) => !view.busy);
+    expect(send.mock.calls[0][1].content).toMatchObject({ itemId: current.videoId, content_title: current.title });
+
+    await submit("把这个视频发给好友", null);
+    await until((view) => !view.busy);
+    expect(toolResult(model.requests[5]).code).toBe("no_current_video");
+    expect(send).toHaveBeenCalledTimes(1);
+
+    await submit("把第一条消息里的作品发给好友", other);
+    const [explicit] = (await until((view) => view.confirms.length)).confirms;
+    const messages = model.requests.at(-1).messages.filter((message) => message.role === "user");
+    expect(messages.map(({ content }) => content)).toEqual([
+      expect.stringContaining(current.videoId), expect.stringContaining("无可用 ID"), expect.stringContaining(other.videoId),
+    ]);
+    expect(explicit.text).toContain(current.title);
+    await approve(explicit);
+    await until((view) => !view.busy);
+    expect(send.mock.calls[1][1].content.itemId).toBe(current.videoId);
+  });
+
   it("answers from the user's records through a tool and shows what it did", async () => {
     const { call, until } = await start();
     const model = await fakeModel([{ call: "record_stats", args: { by: "author", list: "watch_history" } }, "你最常看示例创作者甲。"]);
@@ -292,10 +338,12 @@ describe("talking to the assistant", () => {
     // 假的本机 CLI：经这一轮的 MCP 调一次 search_records，再说一句话
     const { createAssistant } = await import("./index.mjs");
     let found = null;
+    let cliPrompt;
     const fakeLocalAi = {
       status: async (id) => ({ id, state: "ready" }),
       close: async () => undefined,
-      async converse(id, { mcp, onText }) {
+      async converse(id, { mcp, onText, prompt }) {
+        cliPrompt = prompt;
         const reply = await fetch(mcp.url, { method: "POST", headers: { Authorization: `Bearer ${mcp.secret}`, "Content-Type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_records", arguments: { query: "夜景" } } }) }).then((response) => response.json());
         found = JSON.parse(reply.result.content[0].text);
@@ -313,10 +361,12 @@ describe("talking to the assistant", () => {
       accounts: () => ({ activeId: "default", accounts: [] }), writesEnabled: () => false, localAi: fakeLocalAi,
     });
     cleanups.push(() => assistant.close());
-    await assistant.send("找夜景", { runtime: "codex" });
+    await assistant.send("找夜景", { runtime: "codex" }, { videoId: "7100000000000000003" });
     let view;
     for (let tries = 0; tries < 100 && (view = await assistant.wait(null)).busy; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20));
     expect(found).toMatchObject({ ok: true, total: 1, items: [{ videoId: "1003", title: "#城市散步 夜景" }] });
+    expect(cliPrompt).toContain("7100000000000000003】\n找夜景");
+    expect(view.messages[0]).toEqual({ role: "user", text: "找夜景" });
     expect(view.messages.at(-1)).toMatchObject({ role: "assistant", text: "找到一条夜景。" });
     expect(view.messages[1].actions[0]).toMatchObject({ label: "查记录 · 1 条", ok: true });
   });

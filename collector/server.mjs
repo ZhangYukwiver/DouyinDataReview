@@ -964,7 +964,7 @@ export async function startCollectorServer({
           sendJson(response, 200, await assistant.wait(after !== null && /^\d+$/u.test(after) ? Number(after) : null));
         } else if (request.method === "POST" && url.pathname === "/v1/assistant/messages") {
           const body = await readJsonBody(request, 64 * 1024);
-          sendJson(response, 200, await assistant.send(body?.text, body?.config));
+          sendJson(response, 200, await assistant.send(body?.text, body?.config, body?.currentVideo));
         } else if (request.method === "POST" && url.pathname === "/v1/assistant/stop") sendJson(response, 200, assistant.stop());
         else if (request.method === "DELETE" && url.pathname === "/v1/assistant") sendJson(response, 200, await assistant.reset());
         else if (request.method === "POST" && /^\/v1\/assistant\/confirm\/[0-9a-f]{16}$/u.test(url.pathname)) {

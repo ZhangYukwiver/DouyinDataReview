@@ -177,7 +177,7 @@ const rangeParams = {
 export const TOOLS = [
   {
     kind: "read",
-    def: fn("app_overview", "应用当前状况：现在几点、当前登录的抖音账号和所有账号、各类记录条数和时间范围、聊天会话数、正在读取什么、哪些读取权限开着、互动开关。每次对话先调一次。"),
+    def: fn("app_overview", "应用当前状况：现在几点、当前登录的抖音账号和所有账号、各类记录条数和时间范围、聊天会话数、正在读取什么、哪些读取权限开着、互动开关。应用内消息还带有发送那一刻的播放器作品 currentVideo。每次对话先调一次。"),
     async run(ctx) {
       const collector = ctx.collector();
       const status = collector.getStatus();
@@ -197,6 +197,7 @@ export const TOOLS = [
         reading: { state: status.state, message: status.message },
         readPermissions: status.readPermissions,
         interactionsEnabled: ctx.writesEnabled(),
+        ...(ctx.currentVideo !== undefined ? { currentVideo: ctx.currentVideo } : {}),
       };
     },
   },
@@ -546,7 +547,7 @@ export const TOOLS = [
     kind: "external",
     def: fn("douyin_interact", "以用户的身份在抖音上操作（会先弹卡片让用户确认）：like/unlike 点赞、collect/uncollect 收藏（videoId）；follow/unfollow 关注（userId 是 sec_uid）；comment 评论（videoId + text，回复某条评论再带 replyToCommentId 和读评论那次的 sessionId）；share 把作品分享给一个或几个私信会话（videoId + shareTo 会话名列表，最多 10 个，一张卡片确认后逐个分享，要先在接收聊天；几个人放进同一次调用）。", {
       action: { type: "string", enum: ["like", "unlike", "collect", "uncollect", "follow", "unfollow", "comment", "share"] },
-      videoId: { type: "string" },
+      videoId: { type: "string", description: "作品 ID；应用内分享发消息时正在看的作品用 current" },
       userId: { type: "string" },
       text: { type: "string", description: "评论原文，最多 500 字" },
       replyToCommentId: { type: "string" },
@@ -595,9 +596,17 @@ async function interact(ctx, args, signal) {
     return passThrough(ctx, "POST", "/v1/explore/interact", { sessionId, requestId: requestId(), action: "comment", text: comment, ...(args.replyToCommentId ? { replyTo: String(args.replyToCommentId) } : {}) });
   }
   if (action === "share") {
+    let videoId = args.videoId;
+    if (videoId === "current" || ctx.sharingPlayback) {
+      if (!ctx.currentVideo?.videoId) return fail("no_current_video", "发送这条消息时没有可分享的播放器作品。请用户提供作品链接。");
+      if (ctx.sharingPlayback && videoId && videoId !== "current" && videoId !== ctx.currentVideo.videoId) {
+        return fail("wrong_current_video", "这不是发消息时正在看的作品。请用 videoId=current 重新分享。");
+      }
+      videoId = ctx.currentVideo.videoId;
+    }
     const wanted = [...new Set((Array.isArray(args.shareTo) ? args.shareTo : [args.shareTo]).map((name) => text(name, 60)).filter(Boolean))];
     if (!wanted.length || wanted.length > MAX_BATCH) return fail("invalid_targets", `一次分享给 1 到 ${MAX_BATCH} 个会话。`);
-    const sharees = await ctx.api("POST", "/v1/explore/read", { kind: "sharees", id: args.videoId });
+    const sharees = await ctx.api("POST", "/v1/explore/read", { kind: "sharees", id: videoId });
     if (!sharees.ok) return apiFailure(sharees);
     const items = sharees.body.items ?? [];
     // 对不上的先全部报出来，一个都不发，免得发一半
@@ -610,8 +619,9 @@ async function interact(ctx, args, signal) {
       problems.push(matches.length ? `「${name}」有 ${matches.length} 个重名会话` : `没有叫「${name}」的会话${close.length ? `（名字像的有：${close.join("、")}）` : ""}`);
     }
     if (problems.length) return fail("target_not_found", `${problems.join("；")}。先和用户确认，再一起分享。`);
-    const detail = await ctx.api("POST", "/v1/explore/read", { kind: "detail", id: args.videoId });
-    await ctx.confirm({ action: "分享作品", target: everyone(targets.map((target) => target.name)), text: detail.ok ? workName(detail.body.video) : `作品 ${args.videoId}` });
+    const detail = await ctx.api("POST", "/v1/explore/read", { kind: "detail", id: videoId });
+    const video = detail.body?.video ?? (videoId === ctx.currentVideo?.videoId ? ctx.currentVideo : null);
+    await ctx.confirm({ action: "分享作品", target: everyone(targets.map((target) => target.name)), text: video ? workName(video) : `作品 ${videoId}` });
     return sendEach(targets.map((target) => ({
       name: target.name,
       send: () => ctx.api("POST", "/v1/explore/interact", { sessionId: sharees.body.sessionId, requestId: requestId(), action: "share", targetId: target.id }),
