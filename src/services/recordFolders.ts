@@ -134,18 +134,19 @@ async function request(connection: ExploreConnection, path: string, init: Reques
 }
 
 /** 采集器太旧、还不认识文件夹时返回 null，界面就不显示文件夹 */
-export async function readRecordFolders(connection: ExploreConnection): Promise<RecordFolders | null> {
-  const response = await request(connection, "/v1/folders");
+export async function readRecordFolders(connection: ExploreConnection, accountId?: string) {
+  const path = accountId ? `/v1/folders?account=${encodeURIComponent(accountId)}` : "/v1/folders";
+  const response = await request(connection, path);
   if (response.status === 404) return null;
-  const value = await response.json().catch(() => null) as { error?: string; message?: string } | null;
+  const value = await response.json().catch(() => null) as { error?: string; message?: string; revision?: string } | null;
   if (!response.ok) throw new LocalCollectorError(value?.error ?? "folders_failed", value?.message ?? "文件夹没读到，请稍后再试。");
-  return normalize(value);
+  return { lists: normalize(value), revision: value?.revision };
 }
 
-export async function saveRecordFolders(connection: ExploreConnection, accountId: string | undefined, lists: RecordFolders): Promise<void> {
+export async function saveRecordFolders(connection: ExploreConnection, accountId: string | undefined, lists: RecordFolders, revision?: string): Promise<string | undefined> {
   const path = accountId ? `/v1/folders?account=${encodeURIComponent(accountId)}` : "/v1/folders";
-  const response = await request(connection, path, { method: "POST", body: JSON.stringify({ lists }) });
-  if (response.ok) return;
-  const value = await response.json().catch(() => null) as { error?: string; message?: string } | null;
+  const response = await request(connection, path, { method: "POST", body: JSON.stringify({ lists, revision }) });
+  const value = await response.json().catch(() => null) as { error?: string; message?: string; revision?: string } | null;
+  if (response.ok) return value?.revision;
   throw new LocalCollectorError(value?.error ?? "folders_save_failed", value?.message ?? "文件夹没存上，请稍后再试。");
 }

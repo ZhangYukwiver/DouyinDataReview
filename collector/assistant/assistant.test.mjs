@@ -195,6 +195,26 @@ describe("the confirm desk", () => {
 });
 
 describe("talking to the assistant", () => {
+  it("files unique works, publishes the saved revision, and rejects an invalid batch without changing the folder", async () => {
+    const { call, until } = await start();
+    const organize = (ids) => ({ call: "organize_folders", args: { list: "watch_history", create: ["模型"], move: [{ folder: "模型", videoIds: ids }] } });
+    const model = await fakeModel([
+      organize(["1001", "1001", "1003"]), organize(["1001"]), organize(["1002", "missing"]), { call: "list_folders" }, "整理结束。",
+    ]);
+    await call("POST", "/v1/assistant/messages", { text: "整理进模型文件夹", config: model.config });
+    const view = await until((item) => !item.busy);
+    expect(toolResult(model.requests[1]).done).toContain("2 个作品放进「模型」");
+    expect(toolResult(model.requests[2]).done).toEqual(["0 个作品放进「模型」，1 个已在里面"]);
+    expect(toolResult(model.requests[3])).toMatchObject({ ok: false, code: "unknown_video_ids" });
+    expect(toolResult(model.requests[4]).lists["观看历史"]).toEqual([{ name: "模型", count: 2 }]);
+    const doc = (await call("GET", "/v1/folders")).body;
+    expect(view.foldersRevision).toBe(doc.revision);
+    const [folder] = doc.lists.watch_history.folders;
+    expect(doc.lists.watch_history.items).toEqual({ "1001": folder.id, "1003": folder.id });
+    const actions = view.messages.flatMap((message) => message.actions ?? []);
+    expect(actions).toContainEqual(expect.objectContaining({ label: "整理文件夹", ok: false }));
+  });
+
   it("uses the message's playback for the confirmation and outgoing card even with an older tool argument", async () => {
     const { call, until } = await start();
     const current = { videoId: "7100000000000000001", author: "作者甲", title: "作品甲" };

@@ -1093,6 +1093,7 @@ export async function startCollectorServer({
         sendJson(response, 500, { error: "my_comments_read_failed", message: "评论没读出来，请稍后再试。" });
       }
     } else if (request.method === "GET" && url.pathname === "/v1/folders") {
+      if (rejectStaleAccount(response, url)) return;
       try {
         sendJson(response, 200, await foldersOf(collector).read());
       } catch {
@@ -1119,10 +1120,12 @@ export async function startCollectorServer({
       }
       try {
         // 不回传整份文档：上万条归档时两头各多一次序列化，界面也用不上
-        await foldersOf(target).write(body);
-        sendJson(response, 200, { ok: true });
-      } catch {
-        sendJson(response, 500, { error: "folders_save_failed", message: "文件夹没存上，请稍后再试。" });
+        const { revision } = await foldersOf(target).write(body);
+        assistant.foldersChanged(revision);
+        sendJson(response, 200, { ok: true, revision });
+      } catch (error) {
+        if (error?.code === "folders_changed") sendJson(response, 409, { error: error.code, message: error.message });
+        else sendJson(response, 500, { error: "folders_save_failed", message: "文件夹没存上，请稍后再试。" });
       }
     } else if (request.method === "POST" && url.pathname === "/v1/sync") {
       const started = collector.startSync();

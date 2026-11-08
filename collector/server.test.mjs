@@ -319,12 +319,11 @@ describe("collector account switching edge cases", () => {
 
 describe("collector record folders", () => {
   const emptyList = { folders: [], items: {} };
-  const emptyLists = { lists: { watch_history: emptyList, liked_videos: emptyList, favorite_videos: emptyList } };
+  const emptyLists = { revision: "0", lists: { watch_history: emptyList, liked_videos: emptyList, favorite_videos: emptyList } };
   const sample = { lists: {
     watch_history: { folders: [{ id: "f1k2m3", name: "学习" }], items: { "7300000000000000001": "f1k2m3", "7300000000000000002": "gone" } },
     other: { folders: [{ id: "x", name: "不认" }], items: {} },
   } };
-  const saved = { lists: { ...emptyLists.lists, watch_history: { folders: [{ id: "f1k2m3", name: "学习" }], items: { "7300000000000000001": "f1k2m3" } } } };
   const postFolders = (runtime, headers, body, query = "") => fetch(`${runtime.baseUrl}/v1/folders${query}`, {
     method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body),
   }).then(async (response) => ({ status: response.status, body: await response.json() }));
@@ -336,7 +335,9 @@ describe("collector record folders", () => {
     expect(await call("/v1/folders")).toEqual({ status: 200, body: emptyLists });
     expect(await exists(path.join(dataDirectory, "folders.json"))).toBe(false);
 
-    expect(await postFolders(runtime, headers, sample, "?account=default")).toEqual({ status: 200, body: { ok: true } });
+    const result = await postFolders(runtime, headers, sample, "?account=default");
+    expect(result).toEqual({ status: 200, body: { ok: true, revision: expect.any(String) } });
+    const saved = { revision: result.body.revision, lists: { ...emptyLists.lists, watch_history: { folders: [{ id: "f1k2m3", name: "学习" }], items: { "7300000000000000001": "f1k2m3" } } } };
     expect(await call("/v1/folders")).toEqual({ status: 200, body: saved });
     expect(JSON.parse(await readFile(path.join(dataDirectory, "folders.json"), "utf8"))).toMatchObject({ schemaVersion: 1, lists: saved.lists });
 
@@ -345,6 +346,7 @@ describe("collector record folders", () => {
     expect(await postFolders(runtime, headers, {})).toMatchObject({ status: 400, body: { error: "invalid_request" } });
     expect(await postFolders(runtime, headers, { lists: [] })).toMatchObject({ status: 400, body: { error: "invalid_request" } });
     expect(await postFolders(runtime, headers, emptyLists, "?account=0123456789ab")).toMatchObject({ status: 409, body: { error: "account_changed" } });
+    expect(await postFolders(runtime, headers, emptyLists, "?account=default")).toMatchObject({ status: 409, body: { error: "folders_changed" } });
     expect((await call("/v1/folders")).body).toEqual(saved);
 
     // 清除本地缓存只清记录，文件夹还在
