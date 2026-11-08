@@ -51,6 +51,14 @@ export function uniqueDownloadVideos<T extends PersonalVideoRecord>(records: T[]
   });
 }
 
+/** Already queued overflow goes first, followed by selections that have never been queued. */
+export function nextVideoBatch(records: PersonalVideoRecord[], offset: number, previous: BatchItem[] = []) {
+  const carry = previous.filter((item) => item.status === "pending" || item.code === "batch_size_limit");
+  const added = records.slice(offset, offset + MAX_BATCH_VIDEOS - carry.length);
+  const items: BatchItem[] = [...carry.map((item) => item.record), ...added].map((record) => ({ record, status: "pending" }));
+  return { items, offset: offset + added.length };
+}
+
 function wait(signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const abort = () => { clearTimeout(timer); reject(signal.reason); };
