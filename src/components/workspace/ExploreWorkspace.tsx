@@ -6,9 +6,10 @@ import { loadFeedWords } from "../../services/appStyle";
 import { readFeedPreferences } from "../../services/feedPreferences";
 import { loadCollectorVideo, LocalCollectorError } from "../../services/localCollector";
 import { waitForCollector } from "../../services/videoFeed";
-import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
+import { uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
+import { BatchDownloadRangePicker } from "./BatchDownloadRangePicker";
 import { DarenCard } from "./DarenCard";
 import { HotTopicsCard } from "./HotTopicsCard";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
@@ -120,10 +121,9 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
   function toggle(item: ExploreVideo) {
     const key = videoDownloadKey(item);
     if (!key) return;
-    const listed = new Set(candidates.map((record) => videoDownloadKey(record)!));
     setSelected((current) => {
-      const next = new Set([...current].filter((value) => listed.has(value)));
-      if (next.has(key)) next.delete(key); else if (next.size < MAX_BATCH_VIDEOS) next.add(key);
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
       return next;
     });
   }
@@ -219,7 +219,7 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
     return <View onLayout={(event) => setGridWidth(event.nativeEvent.layout.width)} style={styles.grid}>{(data.items as ExploreVideo[]).map((item) => {
       const key = picking ? videoDownloadKey(item) : null;
       const checked = Boolean(key && selected.has(key));
-      const blocked = picking && (!key || (!checked && chosen.length >= MAX_BATCH_VIDEOS));
+      const blocked = picking && !key;
       const open = () => picking ? toggle(item) : void load({ kind: "detail", id: item.videoId! }, "detail");
       const savedKey = videoDownloadKey(item);
       return <View {...ws("e-box", checked && "on")} key={item.id} style={[styles.videoCard, { width: cardWidth }, checked && styles.cardChecked, blocked && styles.disabled]}>
@@ -278,13 +278,13 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
           {onDownloadRecord && (selecting || candidates.length > 0) ? <Button label={selecting ? "退出多选" : "批量下载"} disabled={busy} onPress={() => { setSelecting(!selecting); setSelected(new Set()); }}><Download size={15} color={color.text} /></Button> : null}</View></View>
       {selecting ? <View {...ws("e-box", "sticky")} style={[styles.batchBar, stickyBar]}>
         <Text style={styles.cardTitle}>已选 {chosen.length} / {candidates.length} 个可下载视频{saved.size ? `，已保存 ${saved.size} 个` : ""}</Text>
+        <BatchDownloadRangePicker candidates={fresh} skipSaved={saved.size > 0} onSelect={setSelected} />
         <View style={styles.actionsRow}>
-          <Button label={fresh.length > MAX_BATCH_VIDEOS ? "选择前 50 个" : "全选"} disabled={!fresh.length} onPress={() => setSelected(new Set(fresh.slice(0, MAX_BATCH_VIDEOS).map((item) => videoDownloadKey(item)!)))} />
           <Button label="清空选择" disabled={!chosen.length} onPress={() => setSelected(new Set())} />
           <Button label={`下载所选（${chosen.length}）`} primary disabled={!chosen.length || exploring} onPress={() => setBatch(chosen)}><Download size={14} color={color.buttonText} /></Button>
         </View>
       </View> : null}
-      {selecting ? <Text style={styles.muted}>一次最多 50 个、合计 500 MB。作品多的话，先点页面底部的“加载更多”，再分几批下载；已经保存过的会自动跳过。图文没法批量下载，退出多选后可以在卡片上单独下。</Text> : null}
+      {selecting ? <Text style={styles.muted}>范围按已加载的视频计算，跳过本次已存入 ZIP 的作品。要选更早的作品，可在页面底部加载更多。每个 ZIP 最多 50 个视频、合计 500 MB。图文可退出多选后单独下载。</Text> : null}
       {profile?.items.length ? videoCards(profile, true) : !loading ? <Text style={styles.emptyText}>暂无可查看的公开作品。</Text> : null}
       {moreButton(profile, { kind: "profile", id: user.id }, "profile")}
     </> : null}
@@ -339,7 +339,15 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
     </Modal>
     {batch && connection ? <BatchVideoDownloadDialog records={batch} connection={connection} privacy={false} keepExplore onClose={(done) => {
       setBatch(null);
-      if (done.length) { setSaved((current) => new Set([...current, ...done.flatMap((record) => videoDownloadKey(record) ?? [])])); setSelected(new Set()); }
+      if (done.length) {
+        const keys = done.map((record) => videoDownloadKey(record)!);
+        setSaved((current) => new Set([...current, ...keys]));
+        setSelected((current) => {
+          const next = new Set(current);
+          for (const key of keys) next.delete(key);
+          return next;
+        });
+      }
     }} /> : null}
     {playing && connection ? <RecordVideoPlayer record={playing} records={(profile?.items ?? (results?.kind === "videos" ? results.items : [])) as ExploreVideo[]}
       onDownload={onDownloadRecord ? (item) => void onDownloadRecord(item as ExploreVideo) : undefined} downloadStates={downloadStates}

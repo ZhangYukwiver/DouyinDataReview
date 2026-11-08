@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { unzipSync } from "fflate";
 import type { PersonalVideoRecord } from "../domain/personalRecords";
 import { LocalCollectorError } from "./localCollector";
-import { createVideoBatchZip, loadBatchVideoFile, MAX_BATCH_BYTES, runVideoBatch, uniqueDownloadVideos, type BatchItem } from "./batchVideoDownload";
+import { createVideoBatchZip, loadBatchVideoFile, MAX_BATCH_BYTES, nextVideoBatch, runVideoBatch, uniqueDownloadVideos, type BatchItem } from "./batchVideoDownload";
 
 const record = (id: string, extra: Partial<PersonalVideoRecord> = {}): PersonalVideoRecord => ({ id, title: `视频 ${id}`, author: null, occurredAt: null, mediaType: "video", url: `https://www.douyin.com/video/${id}`, ...extra });
 const file = (text = "video bytes") => ({ blob: new Blob([text], { type: "video/mp4" }), fileName: "相同标题.mp4" });
@@ -24,6 +24,22 @@ describe("batch selection", () => {
 });
 
 describe("batch queue", () => {
+  it("carries byte overflow into the next ZIP and fills it from the untouched selection in order", () => {
+    const records = Array.from({ length: 107 }, (_, i) => record(String(i + 1)));
+    const first = nextVideoBatch(records, 0);
+    expect(first.items).toHaveLength(50);
+    const downloaded = first.items.map((item, i): BatchItem => {
+      if (i === 10) return { ...item, status: "failed", code: "unavailable" };
+      if (i === 48) return { ...item, status: "failed", code: "batch_size_limit" };
+      return i < 48 ? { ...item, status: "complete" } : item;
+    });
+    const second = nextVideoBatch(records, first.offset, downloaded);
+    expect(second.items).toEqual(records.slice(48, 98).map((record) => ({ record, status: "pending" })));
+    const third = nextVideoBatch(records, second.offset, second.items.map((item) => ({ ...item, status: "complete" })));
+    expect(third.items.map((item) => item.record)).toEqual(records.slice(98));
+    expect(third.offset).toBe(records.length);
+  });
+
   it("runs sequentially, continues after failures, and retries only unfinished files", async () => {
     let active = 0;
     let maxActive = 0;

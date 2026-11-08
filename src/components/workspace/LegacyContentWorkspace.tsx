@@ -80,7 +80,8 @@ import { LiveRoomPlayer, type LiveTarget } from "./LiveRoomPlayer";
 import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../services/liveRoom";
 import { waitForCollector } from "../../services/videoFeed";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
-import { MAX_BATCH_VIDEOS, uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
+import { uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
+import { BatchDownloadRangePicker } from "./BatchDownloadRangePicker";
 import { earliestRecordDate, searchRecords } from "../../services/recordSearch";
 import {
   ALL_FOLDERS,
@@ -1116,7 +1117,7 @@ function RecordsGallery({
   const openLive = Platform.OS === "web" && !privacy
     ? (record: PersonalVideoRecord) => record.url && setLiveTarget({ room: record.url, title: record.title, anchor: record.author, cover: record.coverUrl })
     : undefined;
-  // 多选有两种：批量下载（按作品去重、每批 50 个）和整理进文件夹（按记录选、不限条数）
+  // 下载按作品去重，整理进文件夹按记录选
   const [selectMode, setSelectMode] = useState<"download" | "folder" | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRecords, setBatchRecords] = useState<PersonalVideoRecord[] | null>(null);
@@ -1289,13 +1290,12 @@ function RecordsGallery({
     const key = videoDownloadKey(record);
     return {
       checked: Boolean(key && selected.has(key)),
-      disabled: !key || (chosen.length >= MAX_BATCH_VIDEOS && !selected.has(key)),
+      disabled: !key,
       toggle: () => {
         if (!key) return;
         setSelected((current) => {
-          const next = new Set(chosen.map((item) => videoDownloadKey(item)!));
-          if (current.has(key)) next.delete(key);
-          else if (next.size < MAX_BATCH_VIDEOS) next.add(key);
+          const next = new Set(current);
+          if (!next.delete(key)) next.add(key);
           return next;
         });
       },
@@ -1345,10 +1345,8 @@ function RecordsGallery({
     </View> : null}
     {selectMode === "download" ? <View {...ws("w-batch")} style={styles.batchToolbar}>
       <Text style={styles.batchMeta}>已选 {chosen.length} / {candidates.length} 个可下载视频</Text>
+      <BatchDownloadRangePicker key={`${folderFilter}:${query}`} candidates={candidates} onSelect={setSelected} />
       <View style={styles.batchActions}>
-        <Pressable {...ws("btn")} accessibilityRole="button" onPress={() => setSelected(new Set(candidates.slice(0, MAX_BATCH_VIDEOS).map((record) => videoDownloadKey(record)!)))} style={styles.batchButton}>
-          <Text style={styles.batchButtonText}>{candidates.length > MAX_BATCH_VIDEOS ? "选择前 50 个" : "全选"}</Text>
-        </Pressable>
         <Pressable {...ws("btn")} accessibilityRole="button" onPress={() => setSelected(new Set())} style={styles.batchButton}><Text style={styles.batchButtonText}>清空选择</Text></Pressable>
         <Pressable {...ws("btn-solid")} accessibilityRole="button" accessibilityState={{ disabled: chosen.length === 0 }} disabled={chosen.length === 0}
           onPress={() => { if (!commentsConnection) { onOpenSettings(); return; } setPlayingRecord(null); setBatchRecords(chosen); }}
@@ -1356,7 +1354,7 @@ function RecordsGallery({
           <Download size={14} color={color.buttonText} /><Text style={styles.batchPrimaryText}>下载所选（{chosen.length}）</Text>
         </Pressable>
       </View>
-      <Text style={styles.batchHint}>每批最多 50 个；重复作品自动合并，图文、直播和无有效链接的记录不可选。</Text>
+      <Text style={styles.batchHint}>重复作品只选一次，图文、直播和无有效链接的记录会跳过。每个 ZIP 最多 50 个视频、合计 500 MB。</Text>
     </View> : null}
     <FlatList
       testID="record-grid"
@@ -1539,7 +1537,14 @@ function RecordsGallery({
     {liveTarget && Platform.OS === "web" && !privacy ? (
       <LiveRoomPlayer target={liveTarget} connection={commentsConnection ?? null} onClose={() => setLiveTarget(null)} onOpenRecord={onOpenRecord} onOpenSettings={onOpenSettings} />
     ) : null}
-    {batchRecords && commentsConnection ? <BatchVideoDownloadDialog records={batchRecords} connection={commentsConnection} privacy={privacy} onClose={() => setBatchRecords(null)} /> : null}
+    {batchRecords && commentsConnection ? <BatchVideoDownloadDialog records={batchRecords} connection={commentsConnection} privacy={privacy} onClose={(saved) => {
+      setBatchRecords(null);
+      if (saved.length) setSelected((current) => {
+        const next = new Set(current);
+        for (const record of saved) next.delete(videoDownloadKey(record)!);
+        return next;
+      });
+    }} /> : null}
     {folderDialog && list ? (
       <FolderDialog
         list={list}
