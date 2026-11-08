@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { browserDirectories, connectExternalBrowser } from "../collector/browserConnection.mjs";
 import { startCollectorServer } from "../collector/server.mjs";
 import { createAppUpdateController } from "./appUpdater.mjs";
+import { DesktopUpdateProvider } from "./updateProvider.mjs";
+import { DOWNLOAD_MIRRORS, RELEASE_REPOSITORY } from "../docs/downloadSources.mjs";
 import { syncFeedExtension } from "./feedExtension.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
 import { REELLAB_INBOX_URL, REELLAB_PROTOCOL, sendToReelLab } from "./reelLab.mjs";
@@ -326,14 +328,20 @@ async function launch() {
   const updater = app.isPackaged && (process.platform === "win32" || process.platform === "darwin")
     ? electronUpdater.autoUpdater
     : null;
-  if (updater && process.platform === "win32") {
-    // 国内直连 GitHub 下一百多兆的安装包经常断。版本信息和 sha512 仍从 GitHub
-    // 直连读取，只把安装包改走加速线路，下完 electron-updater 会按 sha512 校验。
-    // ponytail: 写死一条第三方线路，失效就换成 docs/index.html 里的下一条
-    session.fromPartition("electron-updater", { cache: false }).webRequest.onBeforeRequest(
-      { urls: ["https://github.com/ZhangYukwiver/DouyinDataReview/releases/download/*"] },
-      ({ url }, callback) => callback(url.endsWith(".exe") ? { redirectURL: `https://gh-proxy.com/${url}` } : {}),
-    );
+  if (updater) {
+    const updateSession = session.fromPartition("electron-updater", { cache: false });
+    const [owner, repo] = RELEASE_REPOSITORY.split("/");
+    updater.setFeedURL({
+      provider: "custom", updateProvider: DesktopUpdateProvider, owner, repo,
+      fetch: (url, options) => updateSession.fetch(url, options),
+    });
+    if (process.platform === "win32") {
+      // 应用内下载沿用官方清单里的 sha512 校验安装包。
+      updateSession.webRequest.onBeforeRequest(
+        { urls: [`https://github.com/${RELEASE_REPOSITORY}/releases/download/*`] },
+        ({ url }, callback) => callback(url.endsWith(".exe") ? { redirectURL: DOWNLOAD_MIRRORS[0] + url } : {}),
+      );
+    }
   }
   appUpdateController = createAppUpdateController({
     updater,
@@ -344,9 +352,7 @@ async function launch() {
       if (state.phase === "error") updateInstallRequested = false;
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("desktop:app-update-state", state);
     },
-    openDownloadPage: process.platform === "darwin"
-      ? () => openExternalUrl("https://zhangyukwiver.github.io/DouyinDataReview/")
-      : null,
+    openDownloadPage: url => shell.openExternal(url),
     beforeInstall: async () => {
       // The updater schedules app.quit() only after it has accepted the
       // downloaded installer. Stop the local services from before-quit so a

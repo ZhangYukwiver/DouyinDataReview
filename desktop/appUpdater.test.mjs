@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
 import { createAppUpdateController } from "./appUpdater.mjs";
+import { DOWNLOAD_PAGE } from "../docs/downloadSources.mjs";
 
 class FakeUpdater extends EventEmitter {
   checkForUpdates = vi.fn(async () => undefined);
@@ -115,10 +116,10 @@ describe("desktop app updater", () => {
     expect(controller.getState().manualDownload).toBe(true);
 
     updater.emit("update-available", { version: "1.3.0" });
-    expect(controller.getState().message).toContain("下载页");
+    expect(controller.getState().message).toContain("手动下载");
     await controller.download();
 
-    expect(openDownloadPage).toHaveBeenCalledWith("1.3.0");
+    expect(openDownloadPage).toHaveBeenCalledWith(DOWNLOAD_PAGE);
     expect(updater.downloadUpdate).not.toHaveBeenCalled();
     expect(controller.getState().phase).toBe("available");
   });
@@ -139,10 +140,18 @@ describe("desktop app updater", () => {
   it("turns updater errors into a retryable state", async () => {
     const updater = new FakeUpdater();
     updater.checkForUpdates.mockRejectedValueOnce(new Error("network unavailable"));
-    const { controller } = controllerFor(updater);
+    const openDownloadPage = vi.fn();
+    const { controller } = controllerFor(updater, { openDownloadPage });
 
     await controller.check();
 
-    expect(controller.getState()).toMatchObject({ phase: "error", error: "network unavailable" });
+    expect(controller.getState()).toMatchObject({ phase: "error", manualDownload: true, error: "network unavailable" });
+    await controller.download();
+    expect(openDownloadPage).toHaveBeenCalledWith(DOWNLOAD_PAGE);
+    updater.checkForUpdates.mockImplementationOnce(async () => updater.emit("update-available", { version: "1.3.0" }));
+    await controller.check();
+    expect(controller.getState()).toMatchObject({ phase: "available", manualDownload: false });
+    await controller.download();
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
   });
 });

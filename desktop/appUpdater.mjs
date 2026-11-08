@@ -1,3 +1,5 @@
+import { DOWNLOAD_PAGE } from "../docs/downloadSources.mjs";
+
 const DEFAULT_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 const DEFAULT_INITIAL_DELAY_MS = 10 * 1_000;
 const MAX_RELEASE_TEXT_LENGTH = 4_000;
@@ -84,9 +86,6 @@ export function createAppUpdateController(options = {}) {
     currentVersion = "0.0.0",
     emit = () => undefined,
     beforeInstall = async () => undefined,
-    // When set, "download" opens the release page instead of letting the
-    // updater install. macOS needs this: ad-hoc signed builds are rejected by
-    // Squirrel.Mac because each build's designated requirement is its own cdhash.
     openDownloadPage = null,
     schedule = (callback, delay) => setTimeout(callback, delay),
     clearSchedule = (timer) => clearTimeout(timer),
@@ -95,7 +94,8 @@ export function createAppUpdateController(options = {}) {
     now = () => new Date(),
   } = options;
 
-  const manualDownload = typeof openDownloadPage === "function";
+  const manualDownload = platform === "darwin";
+  let manualUrl = DOWNLOAD_PAGE;
   let state = { ...baseState(currentVersion), manualDownload };
   let checkPromise = null;
   let installInFlight = false;
@@ -146,13 +146,19 @@ export function createAppUpdateController(options = {}) {
   on("checking-for-update", () => {
     publish({ phase: "checking", message: "正在检查应用更新…", error: null, progress: null });
   });
+  on("checking-update-source", (source) => {
+    publish({ phase: "checking", message: `正在通过 ${source} 检查更新…`, error: null });
+  });
   on("update-available", (info) => {
     const details = infoPatch(info);
+    manualUrl = info.manualInstallerUrl || DOWNLOAD_PAGE;
+    const manual = manualDownload || Boolean(info.manualInstallerUrl);
     publish({
       ...details,
       phase: "available",
-      message: manualDownload
-        ? `发现新版本${details.version ? ` v${details.version}` : ""}，去下载页下载安装包替换旧版。`
+      manualDownload: manual,
+      message: manual
+        ? `发现新版本${details.version ? ` v${details.version}` : ""}，可手动下载安装包。`
         : details.version ? `发现新版本 v${details.version}，可以下载。` : "发现新版本，可以下载。",
       error: null,
       progress: 0,
@@ -202,6 +208,7 @@ export function createAppUpdateController(options = {}) {
     });
   });
   on("error", (error) => {
+    if (checkPromise) return; // check() publishes the final failure after all sources finish.
     publish({
       phase: "error",
       message: "检查或接收更新失败。",
@@ -225,13 +232,15 @@ export function createAppUpdateController(options = {}) {
     if (checkPromise) return checkPromise;
 
     clearTimer();
-    publish({ phase: "checking", message: "正在检查应用更新…", error: null, checkedAt: null });
+    manualUrl = DOWNLOAD_PAGE;
+    publish({ ...baseState(currentVersion), phase: "checking", manualDownload, message: "正在检查应用更新…" });
     checkPromise = Promise.resolve()
       .then(() => updater.checkForUpdates())
       .then(() => state)
-      .catch((error) => publish({
+      .catch((error) => disposed ? state : publish({
         phase: "error",
-        message: "检查或接收更新失败。",
+        message: "暂时无法检查更新，可重试或手动下载。",
+        manualDownload: typeof openDownloadPage === "function",
         error: errorText(error),
         checkedAt: now().toISOString(),
       }))
@@ -243,12 +252,17 @@ export function createAppUpdateController(options = {}) {
   }
 
   async function download() {
-    if (disposed || !supported || !updater || typeof updater.downloadUpdate !== "function") return state;
-    if (state.phase !== "available") return state;
-    if (manualDownload) {
-      openDownloadPage(state.version);
+    if (disposed || !supported) return state;
+    if ((state.phase === "available" || state.phase === "error") && state.manualDownload) {
+      if (!openDownloadPage) return state;
+      try {
+        await openDownloadPage(manualUrl);
+      } catch (error) {
+        publish({ error: `打开下载链接失败：${errorText(error)}` });
+      }
       return state;
     }
+    if (state.phase !== "available" || typeof updater.downloadUpdate !== "function") return state;
     publish({ phase: "downloading", message: "正在下载更新。", error: null, progress: 0 });
     try {
       await updater.downloadUpdate();

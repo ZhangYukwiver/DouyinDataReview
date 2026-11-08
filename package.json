@@ -81,6 +81,7 @@
     "electronDist": "node_modules/electron/dist",
     "files": [
       "desktop/**/*",
+      "docs/downloadSources.mjs",
       "collector/**/*",
       "dist/**/*",
       "build/icon.png",
