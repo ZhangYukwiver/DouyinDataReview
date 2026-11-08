@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { copyFile, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
@@ -5,8 +6,8 @@ const SCHEMA_VERSION = 1;
 const LIST_NAMES = ["watch_history", "liked_videos", "favorite_videos"];
 const FOLDER_ID_PATTERN = /^[A-Za-z0-9_-]{1,40}$/u;
 const MAX_NAME_CHARACTERS = 40;
-const MAX_FOLDERS = 200;
-const MAX_ITEMS = 200_000;
+export const MAX_FOLDERS = 200;
+export const MAX_ITEMS = 200_000;
 const MAX_KEY_LENGTH = 300;
 
 function isPlainObject(value) {
@@ -64,17 +65,18 @@ export class RecordFolderStore {
     try {
       text = await readFile(this.filePath, "utf8");
     } catch (error) {
-      if (error?.code === "ENOENT") return sanitizeRecordFolders(null);
+      if (error?.code === "ENOENT") return { ...sanitizeRecordFolders(null), revision: "0" };
       throw error;
     }
     try {
-      return sanitizeRecordFolders(JSON.parse(text));
+      const doc = JSON.parse(text);
+      return { ...sanitizeRecordFolders(doc), revision: typeof doc?.revision === "string" ? doc.revision : "0" };
     } catch (error) {
       if (!(error instanceof SyntaxError)) throw error;
       // 半截文件先留底再当空的用；留不了底就报错，免得下次存盘把它盖掉
       const broken = `${this.filePath}.broken-${Date.now()}`;
       await rename(this.filePath, broken).catch(() => copyFile(this.filePath, broken)).catch(() => { throw error; });
-      return sanitizeRecordFolders(null);
+      return { ...sanitizeRecordFolders(null), revision: "0" };
     }
   }
 
@@ -92,18 +94,23 @@ export class RecordFolderStore {
     const { lists } = sanitizeRecordFolders(value);
     return this.enqueue(async () => {
       // 没读过就先读一次：坏文件得先留了底，不能直接被这次写盖掉
-      await this.ensureLoaded();
+      const current = await this.ensureLoaded();
+      // AI 和页面都整份写回。旧客户端可以照旧保存，新客户端只能改自己读过的版本。
+      if (value?.revision !== undefined && current.revision !== value.revision) {
+        throw Object.assign(new Error("文件夹已有新改动，请重新读取后再整理。"), { code: "folders_changed" });
+      }
+      const next = { lists, revision: randomUUID() };
       const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
       const file = await open(temporaryPath, "w", 0o600);
       try {
-        await file.writeFile(`${JSON.stringify({ schemaVersion: SCHEMA_VERSION, updatedAt: new Date().toISOString(), lists })}\n`);
+        await file.writeFile(`${JSON.stringify({ schemaVersion: SCHEMA_VERSION, updatedAt: new Date().toISOString(), ...next })}\n`);
         // 先落盘再改名，断电也不会留下改名成功、内容却是半截的文件
         await file.sync();
       } finally {
         await file.close();
       }
       await rename(temporaryPath, this.filePath);
-      this.cached = { lists };
+      this.cached = next;
       return this.cached;
     });
   }

@@ -120,6 +120,7 @@ export interface ContentWorkspaceProps {
   creator?: React.ReactNode;
   /** AI 助手是可选功能：没装就不传，侧栏也不出这一项 */
   assistant?: React.ReactNode;
+  foldersRevision?: string | null;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
   /** 读取中这一轮新读到、还不在 records 里的记录：只进列表和侧栏计数，报告等读完拿到整份再算 */
@@ -251,6 +252,7 @@ export function ContentWorkspace({
   onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
+  foldersRevision,
   downloadStates = {},
   sendStates = {},
   onOpenSettings,
@@ -321,7 +323,7 @@ export function ContentWorkspace({
   );
   const [watchedVideos, watchedLives] = useMemo(() => splitLive(records.watch_history), [records.watch_history]);
   const [incomingVideos, incomingLives] = useMemo(() => splitLive(liveRecords?.watch_history ?? NO_RECORDS), [liveRecords?.watch_history]);
-  const folders = useRecordFolders(commentsConnection, status?.account?.id);
+  const folders = useRecordFolders(commentsConnection, status?.account?.id, foldersRevision);
   const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
   const myComments = useMyComments(commentsConnection, status?.account?.id, status?.state, activeView === "comments");
   const counts: Record<SideKey, number> = {
@@ -781,7 +783,7 @@ const FEED_ACTION_LABEL: Record<NonNullable<PersonalVideoRecord["feedFilter"]>["
 // 成就「文件夹整理」：放进文件夹的作品，按不同作品记（三类里同一条只算一次）
 const noteFiledWorks = (lists: RecordFolders) => noteAchievementWorks("organize", Object.values(lists).flatMap((list) => Object.keys(list.items)));
 
-function useRecordFolders(connection: ExploreConnection | null | undefined, accountId: string | undefined) {
+function useRecordFolders(connection: ExploreConnection | null | undefined, accountId: string | undefined, foldersRevision?: string | null) {
   const owner = connection ? `${connection.baseUrl}|${accountId ?? ""}` : null;
   const [state, setState] = useState<{ owner: string; lists: RecordFolders } | null>(null);
   // 读不到和存不上分开记：重读失败不能把「刚才没存上」盖掉
@@ -791,7 +793,7 @@ function useRecordFolders(connection: ExploreConnection | null | undefined, acco
   const latest = useRef({ connection, accountId, owner, lists });
   latest.current = { connection, accountId, owner, lists };
   // 采集器那边确认过的最后一份：读到的、存成功的
-  const confirmed = useRef<{ owner: string; lists: RecordFolders } | null>(null);
+  const confirmed = useRef<{ owner: string; lists: RecordFolders; revision?: string } | null>(null);
   const saving = useRef(Promise.resolve());
   // 每改一次加一：排队的保存发现后面还有更新的就不发，整份文档里已经带着它了
   const sequence = useRef(0);
@@ -802,11 +804,16 @@ function useRecordFolders(connection: ExploreConnection | null | undefined, acco
     const current = latest.current.connection;
     if (!owner || !current) return;
     let alive = true;
-    readRecordFolders(current)
-      .then((value) => {
-        if (!alive) return;
-        confirmed.current = value ? { owner, lists: value } : null;
-        if (value) noteFiledWorks(value);
+    const seq = sequence.current;
+    // 其他窗口或 AI 保存后重读。等本地保存完成，读的途中若又有手动整理就保留新状态。
+    saving.current
+      .then(async () => {
+        if (!alive || sequence.current !== seq) return;
+        const value = await readRecordFolders(current, accountId);
+        if (!alive || sequence.current !== seq) return;
+        confirmed.current = value ? { owner, ...value } : null;
+        if (value) noteFiledWorks(value.lists);
+        latest.current.lists = value?.lists ?? null;
         setState(confirmed.current);
         setError((shown) => (shown?.kind === "read" ? null : shown));
       })
@@ -814,7 +821,7 @@ function useRecordFolders(connection: ExploreConnection | null | undefined, acco
         if (alive) setError((shown) => (shown?.kind === "save" ? shown : { kind: "read", message: cause instanceof Error ? cause.message : "文件夹没读到，请稍后再试。" }));
       });
     return () => { alive = false; };
-  }, [owner, attempt]);
+  }, [owner, accountId, attempt, foldersRevision]);
   const change = useCallback((type: PersonalRecordType, update: (list: RecordFolderList) => RecordFolderList) => {
     const { connection: target, accountId: account, owner: who, lists: current } = latest.current;
     if (!target || !who || !current) return;
@@ -828,8 +835,8 @@ function useRecordFolders(connection: ExploreConnection | null | undefined, acco
     saving.current = saving.current.then(async () => {
       if (gen !== generation.current || seq !== sequence.current) return;
       try {
-        await saveRecordFolders(target, account, next);
-        if (latest.current.owner === who) confirmed.current = { owner: who, lists: next };
+        const revision = await saveRecordFolders(target, account, next, confirmed.current?.revision);
+        if (latest.current.owner === who) confirmed.current = { owner: who, lists: next, revision };
         noteFiledWorks(next);
       } catch (cause) {
         if (latest.current.owner !== who) return;
@@ -839,7 +846,6 @@ function useRecordFolders(connection: ExploreConnection | null | undefined, acco
         const back = confirmed.current?.owner === who ? confirmed.current : null;
         latest.current.lists = back?.lists ?? null;
         setState(back);
-        // ponytail: 撤回后马上再读一遍对齐采集器；失败后几毫秒内又改的那一下可能被这次重读盖掉，概率很小先不管
         setAttempt((value) => value + 1);
       }
     });

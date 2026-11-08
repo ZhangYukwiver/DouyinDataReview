@@ -4,6 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { CREATOR_ENDPOINTS } from "../creatorCenter.mjs";
+import { MAX_FOLDERS, MAX_ITEMS } from "../recordFolders.mjs";
 import { buildDataExport, transcribeExportVoices } from "../dataExport.mjs";
 
 // AI 助手能用的工具：读本机数据的直接在进程里查采集器的内存快照（一次整份 ~20MB，不能交给模型），
@@ -48,6 +49,13 @@ function listsOf(list) {
   return LIST_NAMES.includes(list) ? [list] : null;
 }
 
+// 和内容库的分区芯片一样，同一作品只数一次，观看历史中的直播另有页面。
+function folderKeys(snapshot, list) {
+  return new Set((snapshot.records?.[list] ?? [])
+    .filter((record) => list !== "watch_history" || record.mediaType !== "live")
+    .map((record) => record.videoId || record.id));
+}
+
 /** 本地记录的筛选：搜索词照工作台搜索框（每个词都要出现在标题、作者、音乐或词条里），再按作者、时间、文件夹。 */
 export function filterRecords(snapshot, args, folders = null) {
   const lists = listsOf(args.list);
@@ -70,7 +78,7 @@ export function filterRecords(snapshot, args, folders = null) {
       if ((from !== null || to !== null) && Number.isNaN(time)) continue;
       if (from !== null && time < from) continue;
       if (to !== null && time > to) continue;
-      if (inFolder && !inFolder.has(record.videoId || record.id)) continue;
+      if (inFolder && (!inFolder.has(record.videoId || record.id) || (list === "watch_history" && record.mediaType === "live"))) continue;
       if (terms.length) {
         const haystack = [record.title, record.author, record.music?.title, record.music?.author, ...(record.topics ?? [])].join(" ").toLowerCase();
         if (!terms.every((term) => haystack.includes(term))) continue;
@@ -114,6 +122,7 @@ export function listConversations(snapshot, args) {
 const row = ({ list, record }) => ({
   list: LISTS[list],
   videoId: record.videoId ?? null,
+  ...(!record.videoId ? { recordKey: record.id } : {}),
   title: record.title || "（没有标题）",
   author: record.author ?? null,
   authorId: record.authorId ?? null,
@@ -216,8 +225,9 @@ export const TOOLS = [
     async run(ctx, args) {
       const collector = ctx.collector();
       collector.assertReadPermission("videos");
-      const folders = args.folder ? (await ctx.api("GET", "/v1/folders")).body : null;
-      const rows = filterRecords(collector.snapshot, args, folders);
+      const folders = args.folder ? await ctx.api("GET", `/v1/folders?account=${encodeURIComponent(ctx.accounts().activeId)}`) : null;
+      if (folders && !folders.ok) return apiFailure(folders);
+      const rows = filterRecords(collector.snapshot, args, folders?.body);
       if (!rows) return fail("invalid_list", "list 只能是 watch_history、liked_videos、favorite_videos 或 all。");
       const sort = args.sort ?? "newest";
       rows.sort(sort === "most_liked" ? (left, right) => (right.record.stats?.diggCount ?? 0) - (left.record.stats?.diggCount ?? 0)
@@ -250,13 +260,19 @@ export const TOOLS = [
     kind: "read",
     def: fn("list_folders", "本机内容库里用户自己建的文件夹，以及每个文件夹里有几条。"),
     async run(ctx) {
-      const { body } = await ctx.api("GET", "/v1/folders");
+      const collector = ctx.collector();
+      collector.assertReadPermission("videos");
+      const read = await ctx.api("GET", `/v1/folders?account=${encodeURIComponent(ctx.accounts().activeId)}`);
+      if (!read.ok) return apiFailure(read);
       return {
         ok: true,
         lists: Object.fromEntries(LIST_NAMES.map((list) => {
-          const doc = body?.lists?.[list] ?? { folders: [], items: {} };
+          const doc = read.body.lists[list];
           const counts = new Map();
-          for (const id of Object.values(doc.items)) counts.set(id, (counts.get(id) ?? 0) + 1);
+          for (const key of folderKeys(collector.snapshot, list)) {
+            const id = doc.items[key];
+            if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+          }
           return [LISTS[list], doc.folders.map((folder) => ({ name: folder.name, count: counts.get(folder.id) ?? 0 }))];
         })),
       };
@@ -269,15 +285,19 @@ export const TOOLS = [
       create: { type: "array", items: { type: "string" }, description: "要新建的文件夹名" },
       rename: { type: "array", items: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } },
       remove: { type: "array", items: { type: "string" }, description: "要删的文件夹名（里面的作品回到未归档）" },
-      move: { type: "array", items: { type: "object", properties: { videoIds: { type: "array", items: { type: "string" } }, folder: { type: ["string", "null"], description: "文件夹名；null 表示移出文件夹" } }, required: ["videoIds"] } },
+      move: { type: "array", items: { type: "object", properties: { videoIds: { type: "array", items: { type: "string" }, description: "同一栏目 search_records 返回的 videoId 原文；没有 videoId 的用 recordKey" }, folder: { type: ["string", "null"], description: "文件夹名；null 表示移出文件夹" } }, required: ["videoIds", "folder"] } },
     }, ["list"]),
     async run(ctx, args) {
       if (!LIST_NAMES.includes(args.list)) return fail("invalid_list", "list 只能是 watch_history、liked_videos 或 favorite_videos。");
-      const read = await ctx.api("GET", "/v1/folders");
+      const collector = ctx.collector();
+      const foldersPath = `/v1/folders?account=${encodeURIComponent(ctx.accounts().activeId)}`;
+      if (args.move?.length) collector.assertReadPermission("videos");
+      const read = await ctx.api("GET", foldersPath);
       if (!read.ok) return fail(read.body?.error ?? "folders_read_failed", read.body?.message ?? "文件夹没读出来。");
       // 接口是整份替换：三栏都带上，只改这一栏
       const doc = structuredClone(read.body);
       const list = doc.lists[args.list];
+      list.items = Object.assign(Object.create(null), list.items);
       const byName = (name) => list.folders.find((folder) => folder.name === name);
       const done = [];
       for (const name of (args.create ?? []).map((item) => text(item, 40)).filter(Boolean)) {
@@ -298,19 +318,37 @@ export const TOOLS = [
         for (const [key, id] of Object.entries(list.items)) if (id === folder.id) delete list.items[key];
         done.push(`删除「${folder.name}」`);
       }
-      const known = new Set((ctx.collector().snapshot.records?.[args.list] ?? []).map((record) => record.videoId || record.id));
-      for (const { videoIds = [], folder: name = null } of args.move ?? []) {
+      const known = args.move?.length ? folderKeys(collector.snapshot, args.list) : null;
+      for (const { videoIds, folder: name } of args.move ?? []) {
+        if (name === undefined) return fail("missing_folder", "请指定目标文件夹，移回未分区时请传 null。");
         const folder = name === null ? null : byName(text(name, 40));
         if (name !== null && !folder) return fail("folder_not_found", `没有叫「${name}」的文件夹，先新建。`);
-        const ids = videoIds.map(String).filter((id) => known.has(id));
+        if (!Array.isArray(videoIds) || !videoIds.length) return fail("missing_video_ids", "请先查出要整理的作品。");
+        const ids = new Set(videoIds);
+        const missing = [...ids].filter((id) => !known.has(id));
+        if (missing.length) return {
+          ...fail("unknown_video_ids", `有 ${missing.length} 个作品 ID 在「${LISTS[args.list]}」里没找到，本次没有保存。请用该栏目查到的 ID 重试。`),
+          unknownIds: missing.slice(0, MAX_ROWS),
+        };
+        let moved = 0;
         for (const id of ids) {
+          const current = list.items[id] ?? null;
+          if (current === (folder?.id ?? null)) continue;
           if (folder) list.items[id] = folder.id;
           else delete list.items[id];
+          moved++;
         }
-        done.push(folder ? `${ids.length} 条放进「${folder.name}」` : `${ids.length} 条移出文件夹`);
+        const already = ids.size - moved;
+        const action = folder ? `放进「${folder.name}」` : "移出文件夹";
+        const unchanged = already ? `，${already} 个${folder ? "已在里面" : "原本未分区"}` : "";
+        done.push(`${moved} 个作品${action}${unchanged}`);
       }
-      if (!done.length) return { ok: true, message: "没有要改的。" };
-      const saved = await ctx.api("POST", `/v1/folders?account=${encodeURIComponent(ctx.accounts().activeId)}`, doc);
+      if (!done.length) {
+        if (args.create?.length && args.create.every((name) => byName(text(name, 40)))) return { ok: true, done: ["文件夹已存在"] };
+        return fail("missing_folder_action", "没有指定要执行的文件夹操作。");
+      }
+      if (list.folders.length > MAX_FOLDERS || Object.keys(list.items).length > MAX_ITEMS) return fail("folder_limit", "超过这一栏可保存的文件夹或作品数量，本次没有保存。");
+      const saved = await ctx.api("POST", foldersPath, doc);
       if (!saved.ok) return fail(saved.body?.error ?? "folders_save_failed", saved.body?.message ?? "文件夹没存上。");
       return { ok: true, done };
     },

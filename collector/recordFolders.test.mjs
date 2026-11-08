@@ -95,7 +95,7 @@ describe("RecordFolderStore", () => {
 
   it("reads three empty lists when there is no file yet", async () => {
     const directory = await makeDirectory();
-    expect(await new RecordFolderStore(directory).read()).toEqual(emptyLists);
+    expect(await new RecordFolderStore(directory).read()).toEqual({ ...emptyLists, revision: "0" });
     expect(await readdir(directory)).toEqual([]);
   });
 
@@ -117,7 +117,7 @@ describe("RecordFolderStore", () => {
     const directory = await makeDirectory();
     await writeFile(path.join(directory, "folders.json"), '{"lists":{"watch_his');
     const store = new RecordFolderStore(directory);
-    expect(await store.read()).toEqual(emptyLists);
+    expect(await store.read()).toEqual({ ...emptyLists, revision: "0" });
     const names = await readdir(directory);
     expect(names).toHaveLength(1);
     expect(names[0]).toMatch(/^folders\.json\.broken-\d+$/u);
@@ -150,6 +150,6 @@ describe("RecordFolderStore", () => {
     const store = new RecordFolderStore(path.join(directory, "missing"));
     await expect(store.write(sample)).rejects.toMatchObject({ code: "ENOENT" });
     // 没写成就还是原来的内容
-    expect(await store.read()).toEqual(emptyLists);
+    expect(await store.read()).toEqual({ ...emptyLists, revision: "0" });
   });
 });

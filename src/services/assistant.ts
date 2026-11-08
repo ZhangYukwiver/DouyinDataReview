@@ -57,6 +57,7 @@ export interface AssistantView {
   streaming: { text: string; actions: AssistantAction[] } | null;
   error: string | null;
   confirms: AssistantConfirm[];
+  foldersRevision?: string | null;
   ui: { type: "open_view"; view: string; seq: number } | null;
 }
 

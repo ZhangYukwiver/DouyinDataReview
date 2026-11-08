@@ -2059,6 +2059,7 @@ function AppContent() {
         />
       ) : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
+          foldersRevision={assistantView?.foldersRevision}
           // 年志盖在工作台上面时别让刷视频在底下接着放
           feed={!feedShown ? undefined : storySrc ? null : <FeedWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord}
             onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} />}
