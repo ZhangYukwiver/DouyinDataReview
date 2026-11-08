@@ -366,11 +366,7 @@ a{color:var(--accent)}
   </div>
 </div>
 <p class="route"><label for="route">下载慢或打不开就换一条线路：</label>
-  <!-- ponytail: 第三方公共加速，按 itdog.cn 国内连通率排序（09-28：99% / 96% / 66%），失效就删掉或换新的 -->
   <select id="route">
-    <option value="https://gh-proxy.com/">线路 1</option>
-    <option value="https://ghproxy.net/">线路 2</option>
-    <option value="https://ghfast.top/">线路 3</option>
     <option value="">GitHub 原站</option>
   </select>
 </p>
@@ -474,13 +470,15 @@ a{color:var(--accent)}
   <a href="guide.html">使用指南</a> · <a href="llms.txt">项目事实索引</a> · <a href="sitemap.xml">网站地图</a>。
 </footer>
 </main>
-<script>
-const REPO = 'ZhangYukwiver/DouyinDataReview';
+<script type="module">
+import { DOWNLOAD_MIRRORS, RELEASE_REPOSITORY as REPO } from './downloadSources.mjs';
 const RELEASES = `https://github.com/${REPO}/releases`;
 const route = document.getElementById('route');
 const cards = {mac: /-arm64\.dmg$/, win: /-Setup-.*\.exe$/};
 let assets = [];
 
+DOWNLOAD_MIRRORS.forEach((url, index) => route.add(new Option(`线路 ${index + 1}`, url), index));
+route.selectedIndex = 0;
 try { const v = localStorage.getItem('route'); if (v !== null && [...route.options].some(o => o.value === v)) route.value = v; } catch {}
 route.onchange = () => { try { localStorage.setItem('route', route.value); } catch {} render(); };
 

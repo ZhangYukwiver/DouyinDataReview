@@ -1149,6 +1149,9 @@ function AppUpdatePanel({
           <View style={styles.updateTitleRow}><Hand style={styles.updateTitle}>应用更新</Hand>{fresh ? <Hand style={styles.updateBadge}>有新版!</Hand> : null}</View>
           <Text style={styles.fine}>当前 v{state.currentVersion}</Text>
         </View>
+        {state.phase === "error" && state.manualDownload ? (
+          <SketchButton compact={compact} icon={Download} kind="small" label="手动下载" onPress={() => void onDownload()} seed="update-manual" />
+        ) : null}
         {action ? <SketchButton accessibilityLabel={action.label} busy={checking || downloading} compact={compact} disabled={action.disabled} icon={action.icon} kind="small" label={action.label} onPress={() => void action.onPress()} seed="update-action" /> : null}
       </View>
       <Text numberOfLines={tight ? 1 : 2} style={styles.meta}>{state.message}</Text>

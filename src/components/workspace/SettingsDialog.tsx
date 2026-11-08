@@ -850,6 +850,9 @@ function About({ appStyle, appUpdate, feedbackUrl = null, installBlocked = false
             </View>
           ) : null}
         </View>
+        {appUpdate.phase === "error" && appUpdate.manualDownload ? (
+          <Button appStyle={appStyle} label="手动下载" icon={Download} onPress={() => void onDownloadAppUpdate()} testID="settings-update-manual" />
+        ) : null}
         {action ? (
           <Button
             appStyle={appStyle}
