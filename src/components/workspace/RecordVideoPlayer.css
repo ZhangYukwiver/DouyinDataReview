@@ -103,7 +103,9 @@
 .rv-comment-body strong { display: block; color: #b8b8c1; font-size: 12px; font-weight: 500; }
 .rv-comment-body p { margin: 5px 0; color: #f0f0f3; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rv-comment-body small { color: #82828d; font-size: 10px; }
-.rv-comment-image { display: block; max-width: 100%; width: 160px; max-height: 190px; object-fit: contain; object-position: left; margin: 8px 0; border-radius: 6px; }
+.rv-comment-body .comment-image-thumbnails { flex-direction: column; align-items: flex-start; gap: 8px; margin: 8px 0; }
+.rv-comment-body .comment-image-thumbnails > button { background: transparent; cursor: zoom-in; }
+.rv-comment-body .comment-image-thumbnails img { width: 160px; height: auto; max-height: 190px; object-fit: contain; object-position: left; }
 .rv-comment-likes { display: flex; flex-direction: column; align-items: center; gap: 5px; color: #929298; font-size: 10px; padding-top: 8px; }
 .rv-replies { margin: 7px 0 0 44px; }
 .rv-reply { padding: 10px 0; }

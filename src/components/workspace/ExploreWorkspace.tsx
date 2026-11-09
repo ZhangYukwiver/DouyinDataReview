@@ -14,6 +14,7 @@ import { DarenCard } from "./DarenCard";
 import { HotTopicsCard } from "./HotTopicsCard";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
 import { RecordVideoPlayer } from "./RecordVideoPlayer";
+import { CommentImagePreview, CommentImageThumbnails } from "./CommentImagePreview";
 import { renderEmojiText } from "./emojiText";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
@@ -74,6 +75,7 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
   const [profile, setProfile] = useState<ExplorePage | null>(null);
   const [detail, setDetail] = useState<ExplorePage | null>(null);
   const [comments, setComments] = useState<ExplorePage | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [commentText, setCommentText] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -313,7 +315,10 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
         <View {...ws("e-box")} style={styles.composer}><TextInput accessibilityLabel="评论内容" multiline value={commentText} onChangeText={setCommentText} maxLength={500} editable={!busy} placeholder="说说你的想法…" placeholderTextColor={color.textMuted} style={styles.commentInput} /><View style={styles.between}><Text style={styles.muted}>{commentText.length}/500</Text><Button label={pending.includes(pendingKey("comment")) ? "发送结果待核验" : "发表评论"} primary disabled={busy || !commentText.trim() || pending.includes(pendingKey("comment"))} onPress={() => setIntent({ action: "comment", label: "发表评论", text: commentText.trim() })} /></View></View>
         {comments ? <>{(comments.items as ExploreComment[]).map((comment) => <View key={comment.id} style={styles.comment}>
           <Pressable accessibilityRole="button" accessibilityLabel={`查看评论作者：${comment.name}`} disabled={busy || !comment.author} onPress={() => comment.author && openProfile(comment.author)}><Avatar user={comment.author} size={32} /></Pressable>
-          <View style={styles.commentBody}><Text style={styles.commentName}>{comment.name}</Text><Text style={styles.bio}>{renderEmojiText(comment.text)}</Text><Text style={styles.muted}>{date(comment.publishedAt)} · {count(comment.likes)} 赞{comment.replies ? ` · ${comment.replies} 条回复（原页查看）` : ""}</Text></View>
+          <View style={styles.commentBody}><Text style={styles.commentName}>{comment.name}</Text>
+            {comment.text ? <Text style={styles.bio}>{renderEmojiText(comment.text)}</Text> : null}
+            <CommentImageThumbnails images={comment.images} onPreview={setPreviewImage} />
+            <Text style={styles.muted}>{date(comment.publishedAt)} · {count(comment.likes)} 赞{comment.replies ? ` · ${comment.replies} 条回复（原页查看）` : ""}</Text></View>
         </View>)}{!comments.items.length ? <Text style={styles.emptyText}>暂时没有评论。</Text> : null}{moreButton(comments, { kind: "comments", id: video.videoId! }, "comments")}</> : <View style={styles.commentEmpty}><MessageCircle size={24} color={color.textMuted} /><Text style={styles.muted}>点击“读取评论”查看大家的讨论</Text></View>}
       </View>
     </View> : null}
@@ -349,6 +354,7 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
         });
       }
     }} /> : null}
+    {previewImage && <CommentImagePreview src={previewImage} onClose={() => setPreviewImage(null)} />}
     {playing && connection ? <RecordVideoPlayer record={playing} records={(profile?.items ?? (results?.kind === "videos" ? results.items : [])) as ExploreVideo[]}
       onDownload={onDownloadRecord ? (item) => void onDownloadRecord(item as ExploreVideo) : undefined} downloadStates={downloadStates}
       commentsConnection={connection} onOpenRecord={onOpenRecord}
