@@ -70,7 +70,6 @@ import {
   stopCollectorChatObservation,
   removeCollectorAccount,
   fetchCollectorVideoFiles,
-  type DownloadMode,
   setCollectorTokenRenewal,
   type CollectorAccounts,
   canReadCollector,
@@ -115,7 +114,7 @@ import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/s
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace, FeedWorkspace } from "./src/components/workspace/ExploreWorkspace";
 import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
-import { SingleDownloadDialog } from "./src/components/workspace/DownloadModePicker";
+import { SingleDownloadDialog, type DownloadOptions } from "./src/components/workspace/DownloadOptionsPicker";
 import { zipVideoFiles } from "./src/services/batchVideoDownload";
 import { countAchievement, noteAchievementWorks, syncDataAchievements, unlockAchievement } from "./src/components/workspace/achievements";
 import { buildDataExportWithVoice, type DataExportSelection } from "./src/services/exportData";
@@ -1694,7 +1693,7 @@ function AppContent() {
     setDownloadStates((current) => ({ ...current, [recordId]: state }));
   }
 
-  async function downloadRecord(record: PersonalVideoRecord, keepExplore = false, mode?: DownloadMode): Promise<void> {
+  async function downloadRecord(record: PersonalVideoRecord, keepExplore = false, options?: DownloadOptions): Promise<void> {
     if (Platform.OS !== "web") {
       showAlert("暂不支持下载", "请在桌面 Web 工作台中将视频保存到本地。");
       return;
@@ -1713,7 +1712,7 @@ function AppContent() {
     if (downloadInFlightRef.current.has(record.id)) return;
     const existing = downloadJobs[record.id];
     if (existing?.status === "queued" || existing?.status === "running") return;
-    if (!mode && record.mediaType !== "image") {
+    if (!options && record.mediaType !== "image") {
       setDownloadChoice({ record, keepExplore });
       return;
     }
@@ -1722,7 +1721,7 @@ function AppContent() {
     downloadInFlightRef.current.add(record.id);
     markDownloadState(record.id, "queued");
     try {
-      let job = await startCollectorVideoDownload(baseUrl, token, sourceUrl, undefined, false, keepExplore, mode);
+      let job = await startCollectorVideoDownload(baseUrl, token, sourceUrl, undefined, false, keepExplore, options?.mode, options?.quality);
       if (downloadRequestRef.current !== requestId) return;
       rememberDownloadJob(record.id, job);
 
@@ -2207,9 +2206,9 @@ function AppContent() {
           onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} />}
       {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={closeDataExport} onExport={exportSelectedData} progress={exportProgress} /> : null}
       {downloadChoice ? <SingleDownloadDialog title={privacy ? undefined : downloadChoice.record.title} onClose={() => setDownloadChoice(null)}
-        onDownload={mode => {
+        onDownload={options => {
           setDownloadChoice(null);
-          void downloadRecord(downloadChoice.record, downloadChoice.keepExplore, mode);
+          void downloadRecord(downloadChoice.record, downloadChoice.keepExplore, options);
         }} /> : null}
     </SafeAreaView>
   );

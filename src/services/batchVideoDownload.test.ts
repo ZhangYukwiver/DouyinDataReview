@@ -148,8 +148,8 @@ describe("collector batch integration", () => {
   it("asks the server to keep explore sessions only when started from an explore page", async () => {
     const fetch = vi.fn().mockImplementation(async () => job("failed", { errorCode: "content_unavailable", error: "x" }));
     vi.stubGlobal("fetch", fetch);
-    await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal, true)).rejects.toThrow("x");
-    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual({ url: record("111").url, keepExplore: true });
+    await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal, true, "combined", "720p")).rejects.toThrow("x");
+    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual({ url: record("111").url, keepExplore: true, quality: "720p" });
     await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal)).rejects.toThrow("x");
     expect(JSON.parse(fetch.mock.calls[1]?.[1].body)).toEqual({ url: record("111").url });
   });
@@ -159,8 +159,8 @@ describe("collector batch integration", () => {
     const fetch = vi.fn().mockResolvedValueOnce(job("complete", { mode: "split", fileNames, bytes: 10 }))
       .mockResolvedValueOnce(new Response("video")).mockResolvedValueOnce(new Response("audio"));
     vi.stubGlobal("fetch", fetch);
-    const download = await loadBatchVideoFiles(connection, record("111"), 10, new AbortController().signal, true, "split");
-    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toMatchObject({ mode: "split" });
+    const download = await loadBatchVideoFiles(connection, record("111"), 10, new AbortController().signal, true, "split", "720p");
+    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toMatchObject({ quality: "720p", mode: "split" });
     expect(fetch.mock.lastCall?.[0]).toBe(`${connection.baseUrl}/v1/downloads/${id}/file?index=1`);
     const zip = await createVideoBatchZip([{ record: record("111"), status: "complete", download }]);
     const entries = unzipSync(new Uint8Array(await zip.arrayBuffer()));

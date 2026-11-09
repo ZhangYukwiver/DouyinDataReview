@@ -1014,7 +1014,7 @@ export class DouyinCollector {
     return this.publicVideoDownloadJob(job);
   }
 
-  startVideoDownload(sourceUrl, { playback = false, saveCopy, mode = "combined" } = {}) {
+  startVideoDownload(sourceUrl, { playback = false, saveCopy, quality = "auto", mode = "combined" } = {}) {
     this.assertReadPermission("videos");
     const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
     if (this.visibleBrowserWorkRunning()) {
@@ -1026,6 +1026,7 @@ export class DouyinCollector {
       id: randomUUID(),
       playback,
       saveCopy,
+      quality,
       mode,
       ...(playback ? { streamKey: randomBytes(24).toString("base64url") } : {}),
       sourceUrl: normalizedSourceUrl,
@@ -1146,6 +1147,7 @@ export class DouyinCollector {
       const result = job.playback ? {} : await downloadDouyinVideo({
         context,
         sourceUrl: job.sourceUrl,
+        quality: job.quality,
         mode: job.mode,
         outputDirectory: path.join(this.dataDirectory, "downloads"),
         signal: controller.signal,

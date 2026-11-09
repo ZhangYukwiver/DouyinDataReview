@@ -169,6 +169,7 @@ function pushCandidate(candidates, candidate) {
     type: candidate.type ?? mediaTypeForUrl(url, candidate.contentType, candidate.pathHint),
     width: numberOrZero(candidate.width),
     height: numberOrZero(candidate.height),
+    resolution: candidate.resolution ?? Math.min(numberOrZero(candidate.width), numberOrZero(candidate.height)),
     fps: numberOrZero(candidate.fps),
     bitrate: numberOrZero(candidate.bitrate),
     totalBytes: numberOrZero(candidate.totalBytes),
@@ -179,6 +180,8 @@ function pushCandidate(candidates, candidate) {
     candidates.push(normalized);
     return;
   }
+  // 同一地址可能也出现在作品级 play_addr 中，具体转码的档位比继承的作品尺寸更可靠。
+  if (normalized.resolution && (!existing.resolution || candidate.rendition)) existing.resolution = normalized.resolution;
   for (const key of ["width", "height", "fps", "bitrate", "totalBytes"]) {
     existing[key] = Math.max(existing[key] ?? 0, normalized[key] ?? 0);
   }
@@ -197,7 +200,10 @@ export function collectDouyinMediaCandidates(payload, candidates = []) {
     seen.add(node);
     const pathText = pathParts.join(".");
     if (/cover|poster|thumbnail|avatar|dynamic_cover|origin_cover/iu.test(pathText)) return;
+    const ownResolution = Math.min(numberOrZero(node.width), numberOrZero(node.height));
+    const gearResolution = String(node.gear_name ?? "").match(/(?:^|_)(\d{3,4})p?(?:_|$)/u)?.[1];
     const metadata = {
+      resolution: ownResolution || numberOrZero(gearResolution) || inherited.resolution || 0,
       width: numberOrZero(node.width ?? inherited.width),
       height: numberOrZero(node.height ?? inherited.height),
       fps: numberOrZero(node.fps ?? node.FPS ?? node.video_fps ?? inherited.fps),
@@ -208,10 +214,13 @@ export function collectDouyinMediaCandidates(payload, candidates = []) {
     if (Array.isArray(urlList)) {
       for (const rawUrl of urlList) {
         if (typeof rawUrl !== "string") continue;
+        const ratio = rawUrl.match(/[?&]ratio=(\d{3,4})p(?:&|$)/iu)?.[1];
         pushCandidate(candidates, {
           url: rawUrl,
           type: mediaTypeForUrl(rawUrl, "", pathText),
           ...metadata,
+          resolution: ownResolution || numberOrZero(ratio) || metadata.resolution,
+          rendition: pathParts.includes("bit_rate"),
           pathHint: pathText,
           source: "detail-json",
         });
@@ -220,7 +229,9 @@ export function collectDouyinMediaCandidates(payload, candidates = []) {
     for (const [key, child] of Object.entries(node)) {
       if (key === "url_list" || key === "urlList" || key === "urls") continue;
       if (Array.isArray(child)) {
-        for (const item of child) walk(item, metadata, [...pathParts, key], depth + 1);
+        // bit_rate 里的每一项都是独立转码，作品的总宽高不能当作该档位的尺寸。
+        const parent = key === "bit_rate" ? { ...metadata, resolution: 0 } : metadata;
+        for (const item of child) walk(item, parent, [...pathParts, key], depth + 1);
       } else if (child && typeof child === "object") {
         walk(child, metadata, [...pathParts, key], depth + 1);
       }
@@ -269,9 +280,15 @@ export function extractDouyinMetadata(payload, canonicalUrl = "") {
   };
 }
 
-function candidateScore(candidate) {
+function candidateScore(candidate, target, mode) {
+  const shortEdge = candidate.resolution ?? Math.min(candidate.width || 0, candidate.height || 0);
+  // 指定档位先取不超过目标的最高档，其次取更高档中最小的，未知尺寸排最后。
+  let qualityRank = shortEdge;
+  if (target && !shortEdge) qualityRank = -Infinity;
+  else if (target && shortEdge > target) qualityRank = -shortEdge;
   return [
-    candidate.type === "video+audio" ? 1 : 0,
+    mode !== "video" && candidate.type === "video+audio" ? 1 : 0,
+    qualityRank,
     (candidate.width || 0) * (candidate.height || 0),
     candidate.bitrate || 0,
     candidate.fps || 0,
@@ -279,12 +296,13 @@ function candidateScore(candidate) {
   ];
 }
 
-export function selectDouyinMediaCandidate(candidates) {
+export function selectDouyinMediaCandidate(candidates, quality = "auto", mode = "combined") {
+  const target = Number.parseInt(quality, 10);
   const playable = (Array.isArray(candidates) ? candidates : [])
     .filter((candidate) => candidate?.type !== "audio" && isAllowedMediaUrl(candidate?.url));
   playable.sort((left, right) => {
-    const a = candidateScore(left);
-    const b = candidateScore(right);
+    const a = candidateScore(left, target, mode);
+    const b = candidateScore(right, target, mode);
     for (let index = 0; index < a.length; index += 1) {
       if (a[index] !== b[index]) return b[index] - a[index];
     }
@@ -360,7 +378,7 @@ function isCompleteContentRange(status, contentRange, declaredLength) {
 }
 
 /** Resolve through the signed HTTP client after login, without loading a page. */
-async function discoverDirectVideo(api, sourceUrl, { signal, onEvidence } = {}) {
+async function discoverDirectVideo(api, sourceUrl, { signal, onEvidence, quality, mode } = {}) {
   let canonicalUrl = normalizeDouyinVideoUrl(sourceUrl);
   let videoId;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
@@ -395,7 +413,7 @@ async function discoverDirectVideo(api, sourceUrl, { signal, onEvidence } = {}) 
   const metadata = extractDouyinMetadata(payload, canonicalUrl);
   const candidates = collectDouyinMediaCandidates(payload);
   const album = extractDouyinAlbum(payload);
-  const media = album ? null : selectDouyinMediaCandidate(candidates);
+  const media = album ? null : selectDouyinMediaCandidate(candidates, quality, mode);
   if (!media && !album) throw new VideoDownloadError("media_not_found", "作品接口没有返回可播放的媒体地址。");
   return { sourceUrl: normalizeDouyinVideoUrl(sourceUrl), canonicalUrl, ...metadata, media, ...album, candidates };
 }
@@ -405,8 +423,10 @@ export async function discoverDouyinVideo(context, sourceUrl, {
   mediaWaitMs = DEFAULT_MEDIA_WAIT_MS,
   signal,
   onEvidence,
+  quality = "auto",
+  mode = "combined",
 } = {}) {
-  if (context?.directApi) return discoverDirectVideo(context, sourceUrl, { signal, onEvidence });
+  if (context?.directApi) return discoverDirectVideo(context, sourceUrl, { signal, onEvidence, quality, mode });
   signal?.throwIfAborted();
   const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
   if (!context || typeof context.newPage !== "function") {
@@ -531,7 +551,7 @@ export async function discoverDouyinVideo(context, sourceUrl, {
 
     for (const candidate of await runtimeMediaCandidates(page)) add(candidate);
     const canonicalUrl = page.url();
-    const selected = album ? null : selectDouyinMediaCandidate(candidates);
+    const selected = album ? null : selectDouyinMediaCandidate(candidates, quality, mode);
     if (!selected && !album) {
       const text = await bodyText(page);
       if (await pageNeedsVerification(page)) {
@@ -868,16 +888,21 @@ export async function downloadDouyinVideo({
   mediaWaitMs,
   timeoutMs,
   onEvidence,
+  quality = "auto",
   mode = "combined",
 } = {}) {
   if (typeof mode !== "string" || !Object.hasOwn(downloadModes, mode)) throw new VideoDownloadError("invalid_mode", "请选择支持的下载方式。", { retryable: false });
-  const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal, onEvidence });
+  const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal, onEvidence, quality, mode });
   signal?.throwIfAborted();
-  const fileName = makeVideoFileName({
+  let fileName = makeVideoFileName({
     title: parsed.title,
     videoId: parsed.videoId,
     sourceUrl: parsed.sourceUrl,
   });
+  if (quality !== "auto" && parsed.media) {
+    const resolution = parsed.media.resolution;
+    fileName = fileName.replace(/\.mp4$/u, resolution ? `-${resolution}p.mp4` : "-清晰度未知.mp4");
+  }
   const referer = parsed.canonicalUrl || "https://www.douyin.com/";
   const options = { context, media: parsed.media, outputDirectory, fileName, referer, signal, onProgress, onEvidence, timeoutMs };
   if (mode !== "combined") {

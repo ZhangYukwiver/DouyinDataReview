@@ -27,6 +27,7 @@ import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
 import { FEED_FILTER_MODES, FEED_FILTER_ORIGINS, FeedFilterStore } from "./feedFilter.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
+import downloadQualities from "./downloadQualities.json" with { type: "json" };
 import downloadModes from "./downloadModes.json" with { type: "json" };
 import { saveVideoCopies } from "../desktop/videoDownloads.mjs";
 import { UsageSessions } from "./usageSessions.mjs";
@@ -867,6 +868,11 @@ export async function startCollectorServer({
     } else if (request.method === "POST" && url.pathname === "/v1/downloads") {
       try {
         const body = await readJsonBody(request);
+        const quality = body?.quality === undefined ? "auto" : body.quality;
+        if (typeof quality !== "string" || !Object.hasOwn(downloadQualities, quality)) {
+          sendJson(response, 400, { error: "invalid_quality", message: "请选择支持的下载清晰度。" });
+          return;
+        }
         const mode = body?.mode === undefined ? "combined" : body.mode;
         if (typeof mode !== "string" || !Object.hasOwn(downloadModes, mode)) {
           sendJson(response, 400, { error: "invalid_mode", message: "请选择支持的下载方式。" });
@@ -878,13 +884,13 @@ export async function startCollectorServer({
             return;
           }
           if (rejectWhileSwitching(response)) return;
-          const job = collector.startVideoDownload(`https://www.douyin.com/video/${body.videoId}`, { saveCopy: saveExtensionDownload, mode });
+          const job = collector.startVideoDownload(`https://www.douyin.com/video/${body.videoId}`, { saveCopy: saveExtensionDownload, quality, mode });
           sendJson(response, 202, { job: { id: job.id, status: job.status } });
           return;
         }
         if (body?.playback !== true && body?.keepExplore !== true) await explorer.close();
         if (rejectWhileSwitching(response)) return;
-        const job = collector.startVideoDownload(body?.url, { playback: body?.playback === true, mode });
+        const job = collector.startVideoDownload(body?.url, { playback: body?.playback === true, quality, mode });
         sendJson(response, 202, { job });
       } catch (error) {
         const code = ["invalid_url", "collector_busy"].includes(error?.code) ? error.code : "download_start_failed";
@@ -1011,7 +1017,7 @@ export async function startCollectorServer({
         if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
           if (fromExtension) {
             const { rules, mode, words, webPicks, pickEvery, remove } = await feedFilter.touch();
-            sendJson(response, 200, { rules, mode, words, webPicks, pickEvery, remove, version: feedExtensionVersion, downloadModes });
+            sendJson(response, 200, { rules, mode, words, webPicks, pickEvery, remove, version: feedExtensionVersion, downloadQualities, downloadModes });
           } else {
             const value = await feedFilter.read();
             sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, pickEvery: value.pickEvery, extension: extensionState(value) });
@@ -1031,7 +1037,7 @@ export async function startCollectorServer({
             return;
           }
           const value = await feedFilter.setSettings(body);
-          sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, pickEvery: value.pickEvery, extension: extensionState(value), ...(fromExtension ? { downloadModes } : {}) });
+          sendJson(response, 200, { rules: value.rules, mode: value.mode, words: value.words, webPicks: value.webPicks, pickEvery: value.pickEvery, extension: extensionState(value), ...(fromExtension ? { downloadQualities, downloadModes } : {}) });
         } else if (request.method === "POST" && url.pathname === "/v1/feed-filter/remove") {
           // 点了移除：扩展下次来对接（一分钟内）时自己卸载；remove=false 是取消
           let body;

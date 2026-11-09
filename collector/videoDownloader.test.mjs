@@ -87,6 +87,55 @@ describe("media candidate selection", () => {
     });
   });
 
+  it("selects the requested short edge across orientations and falls back within streams with sound", () => {
+    const clip = (name, width, height, type = "video+audio") => ({ url: `https://p3.douyinvod.com/${name}.mp4`, width, height, type });
+    const clips = [clip("portrait", 720, 1280), clip("landscape", 1920, 1080), clip("small", 540, 960),
+      clip("unknown", 0, 0), clip("silent", 2560, 1440, "video"), clip("soundtrack", 480, 640, "audio")];
+    const choose = quality => selectDouyinMediaCandidate(clips, quality);
+    expect(choose("720p")).toBe(clips[0]);
+    expect(choose("1080p")).toBe(clips[1]);
+    expect(choose("1440p")).toBe(clips[1]);
+    expect(selectDouyinMediaCandidate(clips, "1440p", "video")).toBe(clips[4]);
+    expect(choose("480p")).toBe(clips[2]);
+    expect(choose()).toBe(clips[1]);
+    expect(selectDouyinMediaCandidate([clips[3]], "1080p")).toBe(clips[3]);
+  });
+
+  it("uses the rendition metadata when play_addr repeats a lower-quality URL with inherited work dimensions", () => {
+    const low = "https://p3.douyinvod.com/low.mp4", high = "https://p3.douyinvod.com/high.mp4";
+    const candidates = collectDouyinMediaCandidates({ video: {
+      width: 1920, height: 1080, play_addr: { url_list: [low] },
+      bit_rate: [
+        { gear_name: "normal_540_0", bit_rate: 3000, play_addr: { url_list: [low] } },
+        { gear_name: "normal_1080_0", bit_rate: 2000, play_addr: { url_list: [high] } },
+      ],
+    } });
+    expect(selectDouyinMediaCandidate(candidates).url).toBe(high);
+    expect(selectDouyinMediaCandidate(candidates, "720p").url).toBe(low);
+  });
+
+  it("saves distinct bytes for automatic and manual downloads of the same work, naming a fallback by its actual resolution", async () => {
+    const videoId = "1234567890";
+    const mediaUrl = name => `https://p3.douyinvod.com/${name}.mp4`;
+    const context = { directApi: true, request: async () => ({ aweme_detail: { aweme_id: videoId, desc: "示例", video: {
+      width: 1920, height: 1080, play_addr: { url_list: [mediaUrl("high")] }, bit_rate: [
+        { gear_name: "normal_540_0", play_addr: { url_list: [mediaUrl("low")] } },
+        { play_addr: { url_list: [mediaUrl("unknown")] } },
+      ],
+    } } }) };
+    const bytes = name => Buffer.from("\x00\x00\x00\x18ftypisom" + name);
+    vi.stubGlobal("fetch", vi.fn(async url => new Response(bytes(new URL(url).pathname))));
+    const outputDirectory = await mkdtemp(path.join(tmpdir(), "download-quality-"));
+    temporaryDirectories.push(outputDirectory);
+    const options = { context, sourceUrl: `https://www.douyin.com/video/${videoId}`, outputDirectory };
+    const high = await downloadDouyinVideo(options);
+    const low = await downloadDouyinVideo({ ...options, quality: "720p" });
+    expect(high.fileName).toBe(`示例-${videoId}.mp4`);
+    expect(low.fileName).toBe(`示例-${videoId}-540p.mp4`);
+    expect(await readFile(high.filePath)).toEqual(bytes("/high.mp4"));
+    expect(await readFile(low.filePath)).toEqual(bytes("/low.mp4"));
+  });
+
   it("takes an image post as all of its pictures and zips every one, live clips included", async () => {
     // 真实图文的形状：video.play_addr 是配乐，实况照片各带一段短视频，页面还会顺带请求这些短视频
     const picture = (n) => `https://p3-pc-sign.douyinpic.com/tos/p${n}~tplv-dy-aweme-images:q75`;

@@ -71,8 +71,8 @@
         .save,.download { border-radius:8px;padding:7px 12px;font-weight:600 }
         .save { background:#3b3d45 }
         footer { border-top:1px solid #404148;margin-top:14px;padding-top:12px;flex-direction:column;align-items:stretch }
-        .download-mode { display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px }
-        .download-mode select { background:#17181c;border:1px solid #51525b;border-radius:7px;padding:4px 8px }
+        .quality { display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px }
+        .quality select { background:#17181c;border:1px solid #51525b;border-radius:7px;padding:4px 8px }
         .download { background:#8fe7d9;color:#102820;width:100% }
         .status:not(:empty) { margin-top:7px;overflow-wrap:anywhere }
         .list { list-style:none;margin:0;padding:0;max-height:290px;overflow:auto;overscroll-behavior:contain }
@@ -94,14 +94,17 @@
             <button class="save">保存词条</button><div class="status" id="save-status" role="status"></div>
           </div>
           <div class="history" hidden><ul class="list"></ul><div class="status" id="history-status" role="status"></div></div>
-          <footer><label class="download-mode">下载方式<select id="download-mode"><option value="combined">音画合一（默认）</option></select></label>
+          <footer><label class="quality">下载清晰度<select id="quality"><option value="auto">自动（最高可用）</option></select></label>
+            <div class="note" id="quality-hint" hidden>缺少所选档位时优先选较低档，只有更高档时选其中最低档。</div>
+            <label class="quality">下载方式<select id="download-mode"><option value="combined">音画合一（默认）</option></select></label>
             <button class="download">下载当前视频</button><div class="status" id="download-status" role="status"></div></footer>
         </section>
       </div>`;
     const $ = selector => root.querySelector(selector);
     const launcher = $(".launcher"), panel = $(".panel"), words = $("#words"), rules = $("#rules");
     const save = $(".save"), download = $(".download");
-    const downloadMode = $("#download-mode");
+    const quality = $("#quality"), downloadMode = $("#download-mode");
+    quality.onchange = () => { $("#quality-hint").hidden = quality.value === "auto"; };
     let tab = "settings", base = null, saving = false, disposed = false;
     let historyRequest = 0, historyTimer, progressTimer, drag = null;
     const request = async message => {
@@ -114,6 +117,13 @@
     }
     function showSettings(settings) {
       // 外部设置更新只替换未编辑的字段。
+      if (!base || JSON.stringify(settings.downloadQualities) !== JSON.stringify(base.downloadQualities)) {
+        const choices = settings.downloadQualities ?? { auto: "自动（最高可用）" };
+        const selected = quality.value;
+        quality.replaceChildren(...Object.entries(choices).map(([key, label]) => new Option(label, key)));
+        quality.value = Object.hasOwn(choices, selected) ? selected : "auto";
+        quality.onchange();
+      }
       if (!base || words.value === base.words) words.value = settings.words;
       if (!base || JSON.stringify(settings.downloadModes) !== JSON.stringify(base.downloadModes)) {
         const choices = settings.downloadModes ?? { combined: "音画合一（默认）" };
@@ -205,17 +215,17 @@
         progressTimer = setTimeout(() => progress(id), 1500);
       } else {
         status.textContent = job?.status === "complete" ? "已存入视频下载目录 · " + (job.fileNames ?? [job.fileName]).join("、") : job?.error || error || "下载失败。";
-        download.disabled = downloadMode.disabled = false;
+        download.disabled = quality.disabled = downloadMode.disabled = false;
       }
     }
     download.onclick = async event => {
       if (!event.isTrusted || download.disabled) return;
       const id = currentVideoId(), status = $("#download-status");
       if (!id) { status.textContent = "未识别到当前视频，请打开作品详情后重试。"; return; }
-      download.disabled = downloadMode.disabled = true; status.textContent = "正在连接应用…";
-      const value = await request({ type:"panel:download", id, mode: downloadMode.value });
+      download.disabled = quality.disabled = downloadMode.disabled = true; status.textContent = "正在连接应用…";
+      const value = await request({ type:"panel:download", id, quality: quality.value, mode: downloadMode.value });
       if (value.job) { progress(value.job.id); return; }
-      status.textContent = value.error || "下载未启动。"; download.disabled = downloadMode.disabled = false;
+      status.textContent = value.error || "下载未启动。"; download.disabled = quality.disabled = downloadMode.disabled = false;
     };
     function position(left, top) {
       const rect = host.getBoundingClientRect();
