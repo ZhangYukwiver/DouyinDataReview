@@ -23,7 +23,21 @@ vi.mock("lucide-react-native", () => {
 });
 
 import type { ChatMessage } from "../../domain/chatRecords";
-import { buildChatConversationRows, MessageContent } from "./ChatWorkspace";
+import { buildChatConversationRows, isOwnMessage, MessageContent } from "./ChatWorkspace";
+
+describe("isOwnMessage", () => {
+  it("uses the logged-in UID even when a friend sends more messages", () => {
+    expect(isOwnMessage({ senderId: "self", senderName: null } as ChatMessage, "self")).toBe(true);
+    expect(isOwnMessage({ senderId: "friend", senderName: "我" } as ChatMessage, "self")).toBe(false);
+  });
+  it("does not mistake the local account directory ID for a Douyin UID", () => {
+    expect(isOwnMessage({ senderId: "123456789", senderName: null } as ChatMessage, "abcdef123456")).toBe(false);
+  });
+  it("retains explicit self labels for older snapshots without a UID", () => {
+    expect(isOwnMessage({ senderId: null, senderName: "我" } as ChatMessage, null)).toBe(true);
+    expect(isOwnMessage({ senderId: "friend", senderName: "好友" } as ChatMessage, null)).toBe(false);
+  });
+});
 
 function message(id: string, conversationId: string, sentAt: string, text: string | null, type: ChatMessage["type"] = "text"): ChatMessage {
   return {
