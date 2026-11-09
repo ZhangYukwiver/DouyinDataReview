@@ -32,7 +32,7 @@ export interface ChatComment {
 export interface ChatMessage {
   id: string;
   conversationId: string | null;
-  /** 群聊正文不会落盘；该字段用于把群聊和好友对话分开。 */
+  /** 用于区分好友与群聊，群正文由本机白名单控制。 */
   conversationType?: ChatConversationKind;
   conversationName: string | null;
   senderId: string | null;
@@ -55,6 +55,10 @@ export interface ChatMessage {
 export interface ChatConversationSummary {
   id: string;
   kind: ChatConversationKind;
+  /** 当前授权保存正文的群。 */
+  storesMessages?: boolean;
+  /** 当前仍在群聊存储白名单内。 */
+  storageEnabled?: boolean;
   name: string | null;
   /** 联系人/群聊头像地址；旧快照可能没有该字段。 */
   avatarUrl?: string | null;

@@ -37,6 +37,18 @@ describe("selected data export", () => {
   it("rejects an empty selection", () => {
     expect(() => buildDataExport(snapshot, none)).toThrow("至少选择");
   });
+
+  it("round-trips allowed group bodies and excludes groups removed from the allowlist", () => {
+    const group = { ...snapshot.chatMessages[0]!, id: "group-message", conversationId: "101", conversationType: "group" as const, text: "群消息" };
+    const data: CollectorSnapshot = { ...snapshot, chatMessages: [...snapshot.chatMessages, group],
+      chatConversations: [...snapshot.chatConversations, { id: "101", kind: "group", name: "白名单群", messageCount: 1, ownMessageCount: 0 }],
+      groupChatStorage: { conversationIds: ["101"] } };
+    const exported = buildDataExport(data, { ...none, chat: true });
+    expect(parseExportedSnapshot(exported)?.chatMessages.map(item => item.id)).toContain("group-message");
+    expect(parseExportedSnapshot(exported)?.chatConversations.find(item => item.id === "101")?.storesMessages).toBe(true);
+    data.groupChatStorage!.conversationIds = [];
+    expect(buildDataExport(data, { ...none, chat: true }).chatMessages.map(item => item.id)).not.toContain("group-message");
+  });
   it.each(["liked_videos", "favorite_videos"] as const)("exports only the selected video category %s", part => {
     const data = buildDataExport(snapshot, { ...none, [part]: true });
     expect(data.records[part]).toEqual(snapshot.records[part]);

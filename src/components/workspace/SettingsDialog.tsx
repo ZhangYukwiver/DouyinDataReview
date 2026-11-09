@@ -9,10 +9,11 @@ import { readFeedPreferences } from "../../services/feedPreferences";
 import { usageAutoSettings, type UsageAutoSettings } from "../../services/usageSessions";
 import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, mcpCommands, saveAssistantConfig, type AssistantConfig, type McpClient } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
+import { confirmAlert } from "../../services/confirmAlert";
 import {
-  collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites,
+  collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites, collectorGroupChatStorage,
   findTwinAccount, formatAccountAddedDay, getBrowserLoginSources,
-  type BrowserLoginSource, type CollectorAccounts, type FeedExtensionStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings,
+  type BrowserLoginSource, type CollectorAccounts, type FeedExtensionStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings, type GroupChatStorageSettings,
 } from "../../services/localCollector";
 import { ease, revealFrom, ws } from "./motion";
 import { RELEASE_NOTES } from "./releaseNotes";
@@ -38,6 +39,7 @@ export interface SettingsDialogProps {
   onTogglePrivacy: () => void;
   /** 连上的采集器：「允许在抖音上操作」存在采集器那边 */
   collector?: { baseUrl: string; token: string } | null;
+  onGroupChatStorageChanged?: () => Promise<unknown>;
   connected: boolean;
   accounts: CollectorAccounts | null;
   /** 当前账号的显示名（采集器状态里的昵称优先） */
@@ -336,7 +338,7 @@ function AutoUsageSettings({ collector, appStyle }: Pick<SettingsDialogProps, "c
   </>;
 }
 
-function Privacy({ collector, onTogglePrivacy, privacy }: SettingsDialogProps) {
+function Privacy({ collector, onTogglePrivacy, privacy, accounts, onGroupChatStorageChanged }: SettingsDialogProps) {
   // null：还没读到（没连采集器，或者老版本采集器没有这个开关）
   const [writes, setWrites] = useState<boolean | null>(null);
   const [writesError, setWritesError] = useState<string | null>(null);
@@ -372,8 +374,63 @@ function Privacy({ collector, onTogglePrivacy, privacy }: SettingsDialogProps) {
         />
         <Toggle disabled={writes === null} label="允许在抖音上操作" onPress={toggleWrites} testID="settings-writes" value={writes === true} />
       </View>
+      <GroupChatStoragePanel collector={collector} accountId={accounts?.activeId ?? null} onChanged={onGroupChatStorageChanged} />
     </>
   );
+}
+
+function GroupChatStoragePanel({ collector, accountId, onChanged }: { collector: SettingsDialogProps["collector"]; accountId: string | null; onChanged?: () => Promise<unknown> }) {
+  const [settings, setSettings] = useState<GroupChatStorageSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const baseUrl = collector?.baseUrl, token = collector?.token;
+  const generation = useRef(0);
+  const pending = useRef(false);
+  useEffect(() => {
+    const current = ++generation.current;
+    setSettings(null); setError(null); setSaving(false);
+    if (!baseUrl || !token) return;
+    collectorGroupChatStorage(baseUrl, token).then(value => {
+      if (current === generation.current && (!accountId || value.accountId === accountId)) setSettings(value);
+    }, issue => { if (current === generation.current) setError(issue instanceof Error ? issue.message : "白名单读取失败。"); });
+    return () => { generation.current++; };
+  }, [baseUrl, token, accountId]);
+  async function toggle(id: string) {
+    if (!settings || !baseUrl || !token || pending.current) return;
+    const current = generation.current;
+    const removing = settings.conversationIds.includes(id);
+    const conversationIds = removing ? settings.conversationIds.filter(item => item !== id) : [...settings.conversationIds, id];
+    const group = settings.groups.find(item => item.id === id);
+    pending.current = true;
+    setSaving(true); setError(null);
+    try {
+      if (removing) {
+        const confirmed = await new Promise<boolean>(resolve => confirmAlert(
+          "关闭保存并删除群聊历史",
+          `会关闭消息保存，并删除这台电脑上「${group?.name ?? "群聊"}」已保存的 ${group?.storedMessages ?? 0} 条消息。抖音上的消息不受影响。重新开启保存后，需要重新读取历史。`,
+          "关闭并删除", resolve, true,
+        ));
+        if (!confirmed || current !== generation.current) return;
+      }
+      const next = await collectorGroupChatStorage(baseUrl, token, { accountId: settings.accountId, conversationIds,
+        deleteConversationIds: removing ? [id] : [] });
+      if (current === generation.current) { setSettings(next); await onChanged?.(); }
+    } catch (issue) {
+      if (current === generation.current) setError(issue instanceof Error ? issue.message : "白名单保存失败。");
+    } finally { pending.current = false; if (current === generation.current) setSaving(false); }
+  }
+  return <View testID="settings-group-chat-storage">
+    <View style={styles.row}><RowCopy title="保存群聊消息" detail="默认不保存群聊正文。仅勾选的群会保存收到的消息和可读取的历史，并允许导出；设置按抖音账号分别保存。已读取的消息会直接保存，实时接收保持原有状态；缺少的历史按需补读。关闭时需确认，将删除该群已保存的本地消息，并停止保存新消息。" /></View>
+    {!settings ? <Text style={styles.detail}>{error ?? (collector ? "正在读取群聊白名单…" : "连接采集器后可配置白名单。")}</Text> : <>
+      {settings.groups.length === 0 ? <Text style={styles.detail}>尚无群聊列表，请先开始接收聊天。</Text> : null}
+      {settings.groups.map(group => <View key={group.id} style={styles.row}>
+        <RowCopy title={group.name} detail={`已保存 ${group.storedMessages} 条消息`} />
+        <Toggle label={`保存${group.name}的消息`} testID={`settings-group-${group.id}`} disabled={saving}
+          value={settings.conversationIds.includes(group.id)} onPress={() => { void toggle(group.id); }} />
+      </View>)}
+      {error ? <Text accessibilityRole="alert" style={styles.detail}>{error}</Text> : null}
+    </>}
+  </View>;
 }
 
 function Account({ accountBlocked, accounts, activeAccountName, appStyle, connected, onActivateAccount, onAddAccount, onClose, onRemoveAccount, switchingAccount = false, browserConnection, onShowLogin, loginExpired = false, visible }: SettingsDialogProps) {

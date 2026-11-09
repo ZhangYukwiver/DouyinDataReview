@@ -38,7 +38,7 @@
       },
       "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告，按关键词屏蔽推荐视频、把想看的词条混进推荐。说明数据覆盖范围，以及数据会发到哪里。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-11-05",
+      "dateModified": "2026-11-09",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -100,8 +100,8 @@ html{scroll-padding-top:24px}
 <main>
 <a href="./">DouyinDataReview 下载与项目介绍</a>
 <h1>抖音数据导出与年度报告使用指南</h1>
-<p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏和好友聊天记录保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
-<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-11-05">2026 年 11 月 5 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
+<p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏、好友聊天及白名单群消息保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
+<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-11-09">2026 年 11 月 9 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
 <nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#feed-control">控制推荐流</a><a href="#coverage">数据范围</a><a href="#privacy">数据去向</a><a href="#sources">源码依据</a></nav>
 
 <h2 id="export">如何导出抖音观看历史和聊天记录？</h2>
@@ -113,7 +113,7 @@ html{scroll-padding-top:24px}
   <li>在「设置 → 数据」点「导出数据」，勾选需要的部分后保存 JSON。聊天默认不勾选；没有勾选的类型不会写入导出文件。转不了的语音保留原消息并注明原因。</li>
   <li>换电脑时，在新电脑的采集器页选择这份备份，再点「并入本机记录」。登录凭据不在备份内；需要继续在线采集时，重新登录并导入。</li>
 </ol>
-<p class="note">聊天备份包含已保存的好友消息及会话信息（含群聊统计），不包含群聊正文。接口不再返回的历史数据无法由本工具恢复。</p>
+<p class="note">聊天备份包含已保存的好友消息、当前保存白名单内的群聊正文及会话信息（含群聊统计）。群聊正文默认不保存，可在「设置 → 隐私 → 保存群聊消息」中勾选；关闭保存时需确认并删除该群本地正文，群名和统计保留。接口不再返回的历史数据无法由本工具恢复。</p>
 <p>桌面版自带采集器和扫码入口。从源码运行 Web 工作台时，需启动本地采集器，并通过 Chrome 144+、带远程调试开关的 Edge 或 macOS Comet 导入凭据；导入完成后可关闭浏览器。详见 <a href="https://github.com/ZhangYukwiver/DouyinDataReview#快速开始">README 快速开始</a>。</p>
 
 <h2 id="official-archive">能不登录，直接导入抖音官方档案吗？</h2>
@@ -146,7 +146,7 @@ html{scroll-padding-top:24px}
   <thead><tr><th scope="col">内容</th><th scope="col">处理方式</th><th scope="col">边界</th></tr></thead>
   <tbody>
     <tr><th scope="row">观看、喜欢、收藏</th><td>读取本人账号可访问的接口，归一化后保存本机，可选择导出 JSON；每类不限条数</td><td>全部记录合计能存约 38 万条，快存满时会提示；不保证全部历史；记录缺少日期或字段会影响报告</td></tr>
-    <tr><th scope="row">好友与群聊</th><td>保存好友聊天，接收新消息；群聊按需在线读取</td><td>群聊正文不写入记录备份；官方火花状态不等于本地估算</td></tr>
+    <tr><th scope="row">好友与群聊</th><td>保存好友聊天和白名单群正文，接收新消息；其他群按需在线读取</td><td>群聊默认不保存正文，仅当前白名单群可导出；关闭时确认删除本地正文；官方火花状态不等于本地估算</td></tr>
     <tr><th scope="row">我的评论</th><td>读取时整理抖音的评论通知，保存自己发过的评论和评论下的回复；在应用里发的评论也记进去</td><td>抖音通知只留最近 100 条，只有收到过回复的评论读得到；只在应用里看，不写进 JSON 导出</td></tr>
     <tr><th scope="row">使用记录</th><td>本机记下软件窗口和浏览器抖音网页每次使用的开始、结束时间和时长，重叠时段只算一次</td><td>只记这台电脑，手机上的时间记不到；浏览器要先打开远程调试，每次连接时点允许，退出采集程序后停止记录</td></tr>
     <tr><th scope="row">创作者中心</th><td>展示本人账号的数据总览、作品与粉丝指标，作品数据和粉丝画像能导出 CSV 表格；评论管理里可以作者身份发评论和回复</td><td>按平台当前权限返回；不代表可以查看任意账号的后台数据</td></tr>

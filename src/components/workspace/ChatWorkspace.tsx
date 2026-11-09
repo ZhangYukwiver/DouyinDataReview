@@ -98,15 +98,14 @@ export interface ChatConversationRow {
   preview: string;
   initials: string;
   accent: string;
+  storageEnabled?: boolean;
 }
 
 const avatarPalette = color.avatars;
 const MESSAGE_AUTO_SCROLL_THRESHOLD = 72;
 /**
  * Build the list shown by the chat UI from the collector's normalized
- * conversation catalog and friend message snapshot. Group message bodies are
- * intentionally absent at the collector boundary, so group rows remain
- * summary-only and never pretend to contain readable content.
+ * conversation catalog and authorized local message snapshot.
  */
 export function buildChatConversationRows(
   messages: readonly ChatMessage[],
@@ -121,6 +120,7 @@ export function buildChatConversationRows(
     messageCount: number;
     ownMessageCount: number;
     lastActiveAt: string | null;
+    storageEnabled?: boolean;
   }>();
 
   for (const conversation of conversations) {
@@ -133,11 +133,13 @@ export function buildChatConversationRows(
       messageCount: Math.max(0, conversation.messageCount),
       ownMessageCount: Math.max(0, conversation.ownMessageCount),
       lastActiveAt: conversation.lastActiveAt ?? null,
+      storageEnabled: conversation.storageEnabled,
     });
   }
 
+  const storedGroups = new Set(conversations.filter(item => item.storesMessages).map(item => item.id));
   for (const message of messages) {
-    if (message.conversationType === "group") continue;
+    if (message.conversationType === "group" && !storedGroups.has(message.conversationId ?? "")) continue;
     const id = message.conversationId?.trim()
       || (message.conversationName?.trim() ? `name:${message.conversationName.trim()}` : `message:${message.id}`);
     const current = byId.get(id) ?? {
@@ -185,6 +187,7 @@ export function buildChatConversationRows(
       preview: readableLatest ? chatPreview(readableLatest) : entry.kind === "group" ? `群聊 · 已采集 ${entry.messageCount} 条消息` : "暂无可显示的消息正文",
       initials: "",
       accent: avatarPalette[hashString(entry.id) % avatarPalette.length] ?? avatarPalette[0]!,
+      ...(entry.storageEnabled === undefined ? {} : { storageEnabled: entry.storageEnabled }),
     } satisfies ChatConversationRow;
   });
 
@@ -622,7 +625,7 @@ function ConversationListItem({
         </View>
         <Text numberOfLines={1} style={styles.conversationPreview}>{visiblePreview}</Text>
         <View style={styles.conversationMeta}>
-          <Text style={styles.conversationKind}>{row.kind === "group" ? "群聊摘要" : row.kind === "unknown" ? "私聊" : "好友对话"}</Text>
+          <Text style={styles.conversationKind}>{row.kind === "group" ? row.messages.length ? "本地群聊" : row.storageEnabled ? "白名单群聊" : "群聊摘要" : row.kind === "unknown" ? "私聊" : "好友对话"}</Text>
           <Text {...ws("mono c-count")} style={styles.conversationCount}>{formatCount(row.messageCount)} 条</Text>
         </View>
       </View>
@@ -665,7 +668,7 @@ function ChatDetailPane({
   sendBlock,
   spark,
 }: {
-  /** 能现读抖音网页时给连接：群消息不落盘，打开群才从那边读 */
+  /** 群聊有本地历史时先展示本地内容，用户可明确选择从抖音补读。 */
   live: ChatSendConnection | null;
   mobile: boolean;
   onBack: () => void;
@@ -682,7 +685,8 @@ function ChatDetailPane({
   const [cardOpen, setCardOpen] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const stickToBottomRef = useRef(true);
-  const group = row?.kind === "group" && live ? live : null;
+  const [remoteEnabled, setRemoteEnabled] = useState(false);
+  const group = row?.kind === "group" && (remoteEnabled || !row.messages.length) && live ? live : null;
   const groupMessages = useGroupMessages(group, row?.id ?? null);
 
   // 网页端直接按 DOM 尺寸定位：FlatList 自带的 scrollToEnd 靠尚未量到的行高估算，
@@ -732,10 +736,12 @@ function ChatDetailPane({
       setExportError(null);
     } catch (error) { setExportError(error instanceof Error ? error.message : "导出失败，请重试。"); }
   };
-  const visibleMessages = group ? groupMessages.messages : row.messages.length > CHAT_MESSAGE_RENDER_LIMIT
-    ? row.messages.slice(-CHAT_MESSAGE_RENDER_LIMIT)
-    : row.messages;
-  const omitted = group ? 0 : row.messages.length - visibleMessages.length;
+  const localMessages = row.messages.slice(-CHAT_MESSAGE_RENDER_LIMIT);
+  const visibleMessages = group
+    ? [...new Map([...localMessages, ...groupMessages.messages].map(message => [message.id, message])).values()]
+      .sort((left, right) => messageTime(left.sentAt) - messageTime(right.sentAt))
+    : localMessages;
+  const omitted = row.messages.length - localMessages.length;
   const loadOlder = () => {
     const node = messageListRef.current?.getScrollableNode?.();
     groupMessages.loadOlder(typeof node?.scrollHeight === "number" ? (node.firstElementChild?.offsetHeight ?? node.scrollHeight) - node.scrollTop : null);
@@ -751,7 +757,7 @@ function ChatDetailPane({
   };
 
   return (
-    <View {...fx({ motion: "fade" })} style={[styles.detailPane, mobile && styles.detailPaneMobile]}>
+    <View {...fx({ motion: "fade" })} style={[styles.detailPane, mobile && styles.detailPaneMobile]} testID="chat-detail-pane">
       <View {...ws("c-dhead")} style={styles.detailHeader}>
         {mobile ? (
           <Pressable accessibilityLabel="返回聊天列表" accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.detailBackButton, pressed && styles.pressed, webPointer]}>
@@ -762,7 +768,7 @@ function ChatDetailPane({
         <View style={styles.detailHeaderCopy}>
           <Text {...ws("c-dtitle")} numberOfLines={1} style={styles.detailTitle}>{visibleName}</Text>
           <Text {...ws("mono")} style={styles.detailMeta}>
-            {row.kind === "group" ? group ? "群消息从抖音现读，不存到本机" : "群聊统计摘要" : `${formatCount(row.messageCount)} 条本地消息`}
+            {row.kind === "group" ? group ? "群消息从抖音现读；白名单群会保存" : row.messages.length ? `${formatCount(row.messages.length)} 条本地群消息` : row.storageEnabled ? "白名单已生效，等待本地消息" : "群聊统计摘要" : `${formatCount(row.messageCount)} 条本地消息`}
           </Text>
         </View>
         <View style={styles.detailHeaderActions}>
@@ -778,7 +784,7 @@ function ChatDetailPane({
           </> : null}
           <View {...ws("stamp-ghost c-ro")} style={styles.readonlyBadge}>
             <ShieldCheck color={color.green} size={13} strokeWidth={2} />
-            <Text style={styles.readonlyBadgeText}>{group ? "不存本机" : "本地保存"}</Text>
+            <Text style={styles.readonlyBadgeText}>{row.kind === "group" && !row.storageEnabled ? "不存本机" : "本地保存"}</Text>
           </View>
           {/* 一条消息都没有、也没有火花的会话，卡上没什么可写 */}
           {row.messageCount > 0 || spark ? (
@@ -799,7 +805,7 @@ function ChatDetailPane({
         </View>
       ) : null}
 
-      {row.kind === "group" && !group ? (
+      {row.kind === "group" && !group && !row.messages.length ? (
         <GroupSummary row={row} privacy={privacy} />
       ) : (
         <FlatList
@@ -807,8 +813,13 @@ function ChatDetailPane({
           data={visibleMessages}
           keyExtractor={(item) => item.id}
           ListEmptyComponent={group ? <Text style={styles.messageLimitNotice}>{groupMessages.error ?? "正在从抖音读取群消息…"}</Text> : <MessageListEmpty privacy={privacy} />}
-          ListHeaderComponent={group ? (visibleMessages.length ? <GroupHistoryHeader error={groupMessages.error} hasMore={groupMessages.hasMore} loading={groupMessages.loading} onLoad={loadOlder} /> : null)
-            : omitted > 0 ? <Text style={styles.messageLimitNotice}>仅显示最近 {CHAT_MESSAGE_RENDER_LIMIT} 条，另有 {omitted} 条更早消息保留在本地快照中。</Text> : <ConversationDateDivider />}
+          ListHeaderComponent={<>
+            {omitted > 0 ? <Text style={styles.messageLimitNotice}>仅显示最近 {CHAT_MESSAGE_RENDER_LIMIT} 条，另有 {omitted} 条更早消息保留在本地快照中。</Text> : !group ? <ConversationDateDivider /> : null}
+            {group ? (visibleMessages.length ? <GroupHistoryHeader error={groupMessages.error} hasMore={groupMessages.hasMore} loading={groupMessages.loading} onLoad={loadOlder} /> : null)
+              : row.kind === "group" && live ? <Pressable accessibilityRole="button" onPress={() => { setRemoteEnabled(true); }} style={[styles.groupHistoryHead, webPointer]} testID="chat-group-fetch-older">
+                <Text style={[styles.messageLimitNotice, styles.groupHistoryLink]}>从抖音补读历史</Text>
+              </Pressable> : null}
+          </>}
           // 群消息是用户自己一页页翻出来的，全部渲染，免得虚拟列表估高让插入的旧消息跳位
           initialNumToRender={Math.max(CHAT_MESSAGE_RENDER_LIMIT, visibleMessages.length)}
           windowSize={group ? 999 : undefined}
@@ -835,24 +846,24 @@ function ChatDetailPane({
           if (group) groupMessages.refresh();
         }}
         // 读不到群消息时（没在接收），发出去这里看不到，只能靠一句提示
-        sentNotice={row.kind === "group" && !group ? "已发到群里。群消息不会存到本机，所以这里不显示。" : undefined}
+        sentNotice={row.kind === "group" && !group && !row.messages.length ? "已发到群里。白名单群的消息会在采集后显示。" : undefined}
       />
       {cardOpen ? <MemorialCard group={group ? groupMessages.messages : null} onClose={() => setCardOpen(false)} privacy={privacy} row={row} selfId={selfId} spark={spark} /> : null}
     </View>
   );
 }
 
-// 打开那一刻的统计就是卡上的数；群里用的是这次现读到的那批消息（不存本机）
+// 打开那一刻的统计就是卡上的数；群聊使用当前展示的本地或现读消息。
 function MemorialCard({ group, onClose, privacy, row, selfId, spark }: { group: ChatMessage[] | null; onClose: () => void; privacy: boolean; row: ChatConversationRow; selfId: string | null; spark: Spark | null }) {
   const [memorial] = useState(() => {
-    const built = buildChatMemorial({ id: row.id, kind: row.kind, name: row.name, messages: group ?? (row.kind === "group" ? [] : row.messages), messageCount: row.messageCount, ownMessageCount: row.ownMessageCount }, selfId, spark);
+    const built = buildChatMemorial({ id: row.id, kind: row.kind, name: row.name, messages: group ?? row.messages, messageCount: row.messageCount, ownMessageCount: row.ownMessageCount }, selfId, spark);
     return privacy ? scrubMemorial(built) : built;
   });
   return <SparkCardPreview memorial={memorial} onClose={onClose} />;
 }
 
-// 群消息只在打开群时从采集器里的抖音网页读：先拿网页手里的最新一批（不用点开会话），
-// 往上翻到顶才让网页再加载更早的一页；开着的时候每 20 秒补一次新消息。结果只在内存里。
+// 远程读取只在启用连接后开始；已有本地历史的群需用户明确选择补读。
+// 开着远程视图时每 20 秒刷新；采集器按白名单决定是否同时保存正文。
 function useGroupMessages(connection: ChatSendConnection | null, conversationId: string | null) {
   const [state, setState] = useState<{ messages: ChatMessage[]; hasMore: boolean; loading: boolean; error: string | null }>({ messages: [], hasMore: false, loading: false, error: null });
   const keepFromBottom = useRef<number | null>(null);
@@ -908,7 +919,7 @@ function GroupSummary({ row, privacy }: { row: ChatConversationRow; privacy: boo
         <UsersRound color={row.accent} size={30} strokeWidth={1.7} />
       </View>
       <Text {...ws("w-emptytitle")} style={styles.groupSummaryTitle}>{privacy ? "群聊" : row.name}</Text>
-      <Text style={styles.groupSummaryBody}>群聊正文不会落盘，这里只展示采集到的统计信息。</Text>
+      <Text style={styles.groupSummaryBody}>{row.storageEnabled ? "已加入白名单。已读取的消息会保存到本地，缺少的历史会在接收时按需补读。" : "默认保存群聊统计，可在「设置 → 隐私」勾选需要保存正文的群。"}</Text>
       <View style={styles.groupFacts}>
         <ChatFact label="已采集消息" value={formatCount(row.messageCount)} />
         <ChatFact label="本人发言" value={formatCount(row.ownMessageCount)} />
@@ -916,7 +927,7 @@ function GroupSummary({ row, privacy }: { row: ChatConversationRow; privacy: boo
       </View>
       <View {...ws("stamp-bar")} style={styles.groupPrivacyNote}>
         <ShieldCheck color={color.green} size={16} strokeWidth={2} />
-        <Text style={styles.groupPrivacyNoteText}>为保护群聊成员隐私，群聊正文从采集边界开始即被丢弃。</Text>
+        <Text style={styles.groupPrivacyNoteText}>{row.storageEnabled ? "白名单已生效，收到的群消息会继续保存在本地。" : "群聊正文仅在加入本机白名单后保存。"}</Text>
       </View>
     </ScrollView>
   );

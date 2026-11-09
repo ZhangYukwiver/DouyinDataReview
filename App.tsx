@@ -7,6 +7,7 @@ import {
   StyleSheet,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
+import { confirmAlert } from "./src/services/confirmAlert";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -208,29 +209,6 @@ function showAlert(title: string, message: string) {
     return;
   }
   Alert.alert(title, message);
-}
-
-function confirmAlert(
-  title: string,
-  message: string,
-  confirmText: string,
-  onDecision: (confirmed: boolean) => void,
-  destructive = false,
-) {
-  let settled = false;
-  const settle = (confirmed: boolean) => {
-    if (settled) return;
-    settled = true;
-    onDecision(confirmed);
-  };
-  if (Platform.OS === "web" && typeof window !== "undefined") {
-    settle(window.confirm(`${title}\n\n${message}`));
-    return;
-  }
-  Alert.alert(title, message, [
-    { text: "取消", style: "cancel", onPress: () => settle(false) },
-    { text: confirmText, style: destructive ? "destructive" : "default", onPress: () => settle(true) },
-  ], { cancelable: true, onDismiss: () => settle(false) });
 }
 
 // 「5,086 条观看、1,377 条喜欢和 766 条聊天」，为 0 的不列
@@ -686,6 +664,7 @@ function AppContent() {
       ...current,
       chatMessages: chat.chatMessages,
       chatConversations: chat.chatConversations,
+      groupChatStorage: chat.groupChatStorage,
       warnings: current.warnings.join("\n") === chat.warnings.join("\n") ? current.warnings : chat.warnings,
     });
     return true;
@@ -2173,6 +2152,7 @@ function AppContent() {
         privacy={privacy}
         onTogglePrivacy={() => setPrivacy((value) => !value)}
         collector={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null}
+        onGroupChatStorageChanged={() => collectorToken ? refreshCollectorChat(collectorUrl, collectorToken, pollRequest.current) : Promise.resolve(false)}
         connected={collectorToken !== null}
         accounts={collectorAccounts}
         activeAccountName={accountName}

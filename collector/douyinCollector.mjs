@@ -71,7 +71,7 @@ const CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
 const DIRECT_CREDENTIAL_EXPORT_TIMEOUT_MS = 45_000;
 const LEGACY_CHAT_OBSERVATION_WARNING = "聊天监听模式：使用无头浏览器自动读取；群聊只保存群名和消息统计，好友对话保存已加载的完整消息内容。";
 const LEGACY_CHAT_SNAPSHOT_WARNING = "聊天读取（单次）：使用无头浏览器自动读取，完成后自动停止；群聊只保存群名和消息统计，好友对话保存已加载的完整消息内容。";
-const CHAT_OBSERVATION_WARNING = "聊天实时接收：整理历史后保持连接，新消息自动更新；暂停接收或关闭采集器后停止。群聊只保存群名和消息统计，好友对话保存已接收的内容。";
+const CHAT_OBSERVATION_WARNING = "聊天实时接收：整理历史后保持连接，新消息自动更新；暂停接收或关闭采集器后停止。好友对话和白名单群保存正文，其他群只保存群名和消息统计。";
 const DIRECT_COMPLETE_WARNING_PREFIX = "无界面读取完成：";
 const DOWNLOAD_JOB_RETENTION_MS = 30 * 60 * 1_000;
 const DOWNLOAD_JOB_LIMIT = 64;
@@ -709,10 +709,61 @@ export class DouyinCollector {
     return structuredClone(this.snapshot);
   }
 
+  allowsGroupStorage(id) { return this.store.groupChatStorage?.allows(id) === true; }
+
+  getGroupChatStorage() {
+    const counts = new Map();
+    for (const message of this.snapshot.chatMessages) counts.set(message.conversationId, (counts.get(message.conversationId) ?? 0) + 1);
+    const known = new Map(this.snapshot.chatConversations.filter(item => item.kind === "group").map(item => [item.id, item]));
+    for (const id of this.store.groupChatStorage?.conversationIds ?? []) if (!known.has(id)) known.set(id, { id, name: `群聊 ${id}` });
+    return {
+      conversationIds: [...(this.store.groupChatStorage?.conversationIds ?? [])],
+      groups: [...known.values()].map(item => ({
+        id: item.id, name: item.name ?? "群聊", storedMessages: counts.get(item.id) ?? 0,
+      })),
+    };
+  }
+
+  async setGroupChatStorage(conversationIds, { deleteConversationIds = [] } = {}) {
+    const previous = new Set(this.store.groupChatStorage.conversationIds);
+    const deleted = new Set(deleteConversationIds);
+    if ([...previous].some(id => !conversationIds.includes(id) && !deleted.has(id)))
+      throw Object.assign(new Error("关闭保存会删除该群的本地历史，请先确认。"), { code: "group_history_confirmation_required" });
+    if (deleteConversationIds.some(id => conversationIds.includes(id)))
+      throw Object.assign(new Error("请先关闭该群的消息保存，再删除历史。"), { code: "invalid_group_allowlist" });
+    // 和所有快照写入共用队列，配置落盘与正文清理完成后才对外返回成功。
+    const work = (this.saveChain ?? Promise.resolve()).catch(() => undefined).then(async () => {
+      const storage = this.store.groupChatStorage;
+      const previousIds = [...storage.conversationIds];
+      await storage.save(conversationIds);
+      try {
+        this.snapshot = await this.store.save(this.snapshot.records, this.snapshot.warnings, this.snapshot);
+      } catch (error) {
+        await storage.save(previousIds);
+        throw error;
+      }
+    });
+    this.saveChain = work;
+    await work;
+    const observation = this.chat;
+    const client = observation?.client ?? this.directApi?.chatClient;
+    for (const id of deleted) client?.messagePages?.delete(id);
+    await observation?.forgetGroups?.(deleted);
+    const cached = conversationIds.filter(id => !previous.has(id)).flatMap(id => (client?.messagePages?.get(id)?.messages ?? [])
+      .filter(message => message.conversationId === id).map(message => ({ ...message, conversationType: "group" })));
+    // 先把已经取到的预览纳入同一个累积器，配置改变不关闭连接，也不重读已知页面。
+    if (observation?.active && observation.acceptRead && cached.length)
+      await observation.acceptRead({ messages: cached, conversations: [] });
+    if (cached.length) await this.saveSnapshot(snapshot => [snapshot.records, snapshot.warnings, { ...snapshot, chatMessages: [...snapshot.chatMessages, ...cached] }]);
+    this.updateStatus({ updatedAt: this.snapshot.updatedAt, counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations) });
+    observation?.queueGroupHistory?.(conversationIds.filter(id => !previous.has(id)));
+    return this.getGroupChatStorage();
+  }
+
   // 只来了聊天时界面取这一份就够，不用每条消息都搬一遍几 MB 的记录
   getChatSnapshot() {
-    const { schemaVersion, updatedAt, chatMessages, chatConversations, warnings } = this.snapshot;
-    return structuredClone({ schemaVersion, updatedAt, chatMessages, chatConversations, warnings });
+    const { schemaVersion, updatedAt, chatMessages, chatConversations, warnings, groupChatStorage } = this.snapshot;
+    return structuredClone({ schemaVersion, updatedAt, chatMessages, chatConversations, warnings, groupChatStorage });
   }
 
   // 读取中只取第 after 条以后新读到的记录；问的不是这一轮就从头给，工作台按返回的 run 和 after 对齐
@@ -1468,6 +1519,21 @@ export class DouyinCollector {
 
   async readChatMessages(input) {
     const { pageMessages, ...result } = await this.chatClientForReading().messages(input);
+    if (this.allowsGroupStorage(input.conversationId)) {
+      // 手动翻页和实时接收使用同一个累积器，避免下一次推送覆盖刚补读的历史。
+      if (this.chat?.acceptRead) {
+        await this.chat.acceptRead({ messages: pageMessages ?? [], conversations: [] });
+        return result;
+      }
+      await this.saveSnapshot(snapshot => {
+        const chatMessages = [...snapshot.chatMessages, ...(pageMessages ?? []).map(message => ({ ...message, conversationType: "group" }))];
+        const count = new Set(chatMessages.filter(message => message.conversationId === input.conversationId).map(message => message.id)).size;
+        return [snapshot.records, snapshot.warnings, { ...snapshot, chatMessages,
+          chatConversations: snapshot.chatConversations.map(item => item.id === input.conversationId ? { ...item, messageCount: Math.max(item.messageCount, count) } : item),
+        }];
+      });
+      this.updateStatus({ updatedAt: this.snapshot.updatedAt, counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations) });
+    }
     return result;
   }
 
@@ -1586,7 +1652,7 @@ export class DouyinCollector {
         }
         conversations.addMessages(normalized.map(message=>message.conversationType === "group"
           ? { id: message.id, conversationId: message.conversationId, conversationType: "group", senderId: message.senderId } : message));
-        messages.addMessages(normalized.filter(message=>message.conversationType !== "group"));
+        messages.addMessages(normalized.filter(message=>message.conversationType !== "group" || this.allowsGroupStorage(message.conversationId)));
         unsaved = true;
         if (observation.historyReady || Date.now() - lastSavedAt >= this.progressPersistIntervalMs) await persist();
       });
@@ -1594,6 +1660,59 @@ export class DouyinCollector {
       return work;
     };
     observation.acceptSent = message=>{ void accept({ messages: [message], conversations: [] }).catch(()=>{}); };
+    observation.acceptRead = accept;
+    // 新增白名单群只补这个群缺少的历史；复用已读取页面的游标，接收连接一直保留。
+    const pendingGroups = new Set();
+    let groupHistoryWork = null;
+    const readConversationHistory = async (conversation) => {
+      const allowed = () => conversation.type !== 2 || this.allowsGroupStorage(conversation.id);
+      if (!allowed()) return;
+      const cached = conversation.type === 2 ? client.messagePages?.get(conversation.id) : null;
+      let page = cached ? { pageMessages: cached.messages, hasMore: cached.hasMore }
+        : await client.messages({ conversationId: conversation.id }, { signal });
+      await accept({ messages: page.pageMessages, conversations: [conversation] });
+      for (let count = 1; page.hasMore && count < this.chatHistoryPageLimit && allowed(); count += 1) {
+        signal.throwIfAborted(); this.assertChatActive(runId);
+        page = await client.messages({ conversationId: conversation.id, older: true }, { signal });
+        await accept({ messages: page.pageMessages, conversations: [] });
+        await delay(200, undefined, { signal });
+        await this.yieldToForeground(() => signal.aborted || runId !== this.chatRunId);
+      }
+    };
+    const hydratePendingGroups = () => {
+      if (!observation.historyReady || groupHistoryWork || !observation.active || signal.aborted) return;
+      groupHistoryWork = (async () => {
+        while (pendingGroups.size && observation.active && !signal.aborted) {
+          const id = pendingGroups.values().next().value;
+          pendingGroups.delete(id);
+          const conversation = client.conversations.get(id);
+          if (!this.allowsGroupStorage(id) || conversation?.type !== 2) continue;
+          try {
+            await this.yieldToForeground(() => signal.aborted || runId !== this.chatRunId);
+            signal.throwIfAborted(); this.assertChatActive(runId);
+            await readConversationHistory(conversation);
+          } catch (error) {
+            if (signal.aborted || runId !== this.chatRunId) return;
+            this.updateChat({ message: safeMessage(error, "白名单群历史暂时没补全，实时接收继续运行。") });
+          }
+        }
+      })().finally(() => {
+        groupHistoryWork = null;
+        if (pendingGroups.size) hydratePendingGroups();
+      });
+    };
+    observation.queueGroupHistory = ids => {
+      for (const id of ids) pendingGroups.add(id);
+      hydratePendingGroups();
+    };
+    observation.forgetGroups = ids => {
+      const work = processing.then(() => {
+        for (const id of ids) pendingGroups.delete(id);
+        for (const [id, message] of messages.messages) if (ids.has(message.conversationId)) messages.messages.delete(id);
+      });
+      processing = work.catch(() => {});
+      return work;
+    };
     try {
       this.updateChat({ state: "observing", connection: "connecting", progress: { current: 0, total: 0 }, message: "正在通过接口读取聊天会话" });
       await client.initialize({ signal, onPayload: accept, onProgress: progress=>this.updateChat({ progress: { current: progress.pages, total: progress.pages }, message: `已读取 ${progress.conversations} 个会话` }) });
@@ -1608,7 +1727,7 @@ export class DouyinCollector {
       }, onError: error=>{
         if (observation.active && runId === this.chatRunId) this.updateChat({ message: safeMessage(error, "实时消息暂不可用，正在重连") });
       } });
-      const friends = [...client.conversations.values()].filter(c=>c.type===1);
+      const friends = [...client.conversations.values()].filter(c=>c.type===1 || (c.type===2 && this.allowsGroupStorage(c.id)));
       let skipped = 0;
       for (const [index, conversation] of friends.entries()) {
         await this.yieldToForeground(() => signal.aborted || runId !== this.chatRunId);
@@ -1617,14 +1736,8 @@ export class DouyinCollector {
         // 一个好友读失败就跳过这个好友，别让整个接收停掉、下次又从头读；登录失效、限流这类整个账号的问题照旧停下。
         // 翻到页数上限就停在那里，读到的都留着
         try {
-          let page = await client.messages({ conversationId: conversation.id }, { signal });
-          await accept({ messages: page.pageMessages, conversations: [conversation] });
-          for (let count = 1; page.hasMore && count < this.chatHistoryPageLimit; count += 1) {
-            page = await client.messages({ conversationId: conversation.id, older: true }, { signal });
-            await accept({ messages: page.pageMessages, conversations: [] });
-            await delay(200, undefined, { signal });
-            await this.yieldToForeground(() => signal.aborted || runId !== this.chatRunId);
-          }
+          pendingGroups.delete(conversation.id);
+          await readConversationHistory(conversation);
         } catch (error) {
           if (signal.aborted || runId !== this.chatRunId || CHAT_ACCOUNT_ERRORS.has(error?.code)) throw error;
           skipped += 1;
@@ -1632,14 +1745,15 @@ export class DouyinCollector {
       }
       await flush();
       observation.historyReady = true;
+      hydratePendingGroups();
       this.updateChat({ progress: null, message: skipped
-        ? `正在通过接口实时接收消息，有 ${skipped} 个好友的聊天历史这次没读到，下次开始接收时再读`
+        ? `正在通过接口实时接收消息，有 ${skipped} 个好友或白名单群的聊天历史这次没读到，下次开始接收时再读`
         : "正在通过接口实时接收消息" });
       await observation.stopPromise;
     } finally {
       // 停止时 chatRunId 已经换了，这里不再认它：新的一轮要等这一轮的 promise 收尾才开得起来，补存不会盖掉别人。
       // 补存失败记在 observation 上，停止提示据此说明最后一批没存上
-      controller.abort(); await client.close(); await flush().catch((error)=>{ observation.saveError = error; });
+      controller.abort(); await client.close(); await groupHistoryWork?.catch(() => {}); await flush().catch((error)=>{ observation.saveError = error; });
     }
   }
 

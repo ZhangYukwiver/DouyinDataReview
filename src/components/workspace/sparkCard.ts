@@ -89,7 +89,7 @@ export function sparkCardLines(m: ChatMemorial): SparkCardLines {
 
   const latest = m.latest ? new Date(m.latest) : null;
   const sharedTotal = m.shares.mine + m.shares.theirs;
-  const sampleNote = group ? (m.sample ? `按最近读到的 ${n(m.sample)} 条算` : "群消息不存本机，打开群聊读到消息后才有") : "";
+  const sampleNote = group ? (m.sample ? `按最近读到的 ${n(m.sample)} 条算` : "打开群聊或将群加入存储白名单后读取消息") : "";
   const run = m.longestRun;
   const runNote = !m.total ? "" : !m.hours ? "消息都没有记下时间，算不出是哪天" : !run ? "还没有两个人同一天都说话的时候" : run.days < 2 ? "还没有连着两天都互发过"
     // 抖音的火花比本机记录长时，说清楚这是本机记下的那一段

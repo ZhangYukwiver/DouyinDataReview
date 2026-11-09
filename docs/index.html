@@ -44,7 +44,7 @@
       "name": "抖音数据导出与年度报告（Douyin Wrapped）· DouyinDataReview",
       "description": "DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告，还能在电脑上刷抖音推荐、按关键词屏蔽视频、看创作者中心数据。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-11-05",
+      "dateModified": "2026-11-09",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -56,7 +56,7 @@
       "@type": "SoftwareApplication",
       "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#software",
       "name": "DouyinDataReview",
-      "description": "DouyinDataReview 是免费开源的抖音数据导出与年度报告桌面应用，支持 Windows x64 和 macOS Apple Silicon。它保存本人账号可访问的观看历史、喜欢、收藏和好友聊天记录，可选择导出为 JSON，并在本机生成抖音年度回顾（Douyin Wrapped）；还能在电脑上刷抖音推荐、按关键词屏蔽不想看的视频、把想看的词条混进推荐、查看本人创作者中心数据，并提供可选的 AI 助手。",
+      "description": "DouyinDataReview 是免费开源的抖音数据导出与年度报告桌面应用，支持 Windows x64 和 macOS Apple Silicon。它保存本人账号可访问的观看历史、喜欢、收藏、好友聊天及白名单群消息，可选择导出为 JSON，并在本机生成抖音年度回顾（Douyin Wrapped）；还能在电脑上刷抖音推荐、按关键词屏蔽不想看的视频、把想看的词条混进推荐、查看本人创作者中心数据，并提供可选的 AI 助手。",
       "url": "https://zhangyukwiver.github.io/DouyinDataReview/",
       "downloadUrl": "https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest",
       "sameAs": "https://github.com/ZhangYukwiver/DouyinDataReview",
@@ -74,6 +74,7 @@
       "screenshot": "https://zhangyukwiver.github.io/DouyinDataReview/screenshots/dashboard-trace.jpg",
       "featureList": [
         "抖音观看历史、喜欢、收藏与好友聊天记录采集及 JSON 导出，导出时语音消息转成文字；每类不限条数，全部记录合计能存约 38 万条",
+        "群聊正文按抖音账号配置保存白名单，默认不保存；关闭时确认删除本地正文，当前白名单群消息可导出",
         "本应用备份与抖音官方 JSON / ZIP 个人档案导入",
         "在电脑上刷抖音首页推荐（工作台默认页），可看评论、点赞收藏、下载当前视频",
         "本地内容搜索、视频及图文下载、批量 ZIP 下载，默认存到系统「下载」文件夹的「抖音视频」，可在设置里改",
@@ -133,7 +134,7 @@
           "name": "怎么导出抖音观看历史和聊天记录？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "安装桌面版，在首屏用抖音 App 扫码，核对账号并勾选「读取视频」和／或「读取聊天」后确认导入。读取完成后，在「设置 → 数据」点「导出数据」，勾选需要的观看历史、喜欢、收藏或聊天，保存为 JSON。聊天默认不勾选，导出不会重新读取记录；勾选聊天时，语音消息会经抖音转成文字写进文件，这一步需要联网并登着原账号。聊天备份含已保存的好友消息及会话信息，不含群聊正文。"
+            "text": "安装桌面版，在首屏用抖音 App 扫码，核对账号并勾选「读取视频」和／或「读取聊天」后确认导入。读取完成后，在「设置 → 数据」点「导出数据」，勾选需要的观看历史、喜欢、收藏或聊天，保存为 JSON。聊天默认不勾选，导出不会重新读取记录；勾选聊天时，语音消息会经抖音转成文字写进文件，这一步需要联网并登着原账号。聊天备份包含已保存的好友消息及当前保存白名单内的群聊正文，可在「设置 → 隐私 → 保存群聊消息」选择群聊。群聊正文默认不保存，关闭保存时需确认并删除该群本地正文，群名和统计保留。"
           }
         },
         {
@@ -373,7 +374,7 @@ a{color:var(--accent)}
 
 <h2 id="features">DouyinDataReview 能做什么？</h2>
 <!-- geo:facts:start -->
-<p>DouyinDataReview 是免费开源的抖音数据导出与年度报告桌面应用，支持 Windows x64 和 macOS Apple Silicon。它保存本人账号可访问的观看历史、喜欢、收藏和好友聊天记录，可选择导出为 JSON，并在本机生成抖音年度回顾（Douyin Wrapped）；还能在电脑上刷抖音推荐、按关键词屏蔽不想看的视频、把想看的词条混进推荐、查看本人创作者中心数据，并提供可选的 AI 助手。</p>
+<p>DouyinDataReview 是免费开源的抖音数据导出与年度报告桌面应用，支持 Windows x64 和 macOS Apple Silicon。它保存本人账号可访问的观看历史、喜欢、收藏、好友聊天及白名单群消息，可选择导出为 JSON，并在本机生成抖音年度回顾（Douyin Wrapped）；还能在电脑上刷抖音推荐、按关键词屏蔽不想看的视频、把想看的词条混进推荐、查看本人创作者中心数据，并提供可选的 AI 助手。</p>
 <dl class="facts">
   <div><dt>项目性质</dt><dd>独立开发的非官方开源工具，与抖音及字节跳动无隶属、授权或合作关系。</dd></div>
   <div><dt>支持平台</dt><dd>Windows 10 / 11 x64；macOS Apple Silicon（M1 及更新）；界面语言为中文。</dd></div>
@@ -419,7 +420,7 @@ a{color:var(--accent)}
 <h3 id="what-is-douyindatareview">DouyinDataReview 是什么？适合谁用？</h3>
 <p>DouyinDataReview 是免费开源的抖音数据导出与分析桌面应用，适合备份本人抖音观看历史、喜欢、收藏和好友聊天记录，整理内容库、在电脑上刷抖音推荐、查看创作者数据，以及制作个人年度回顾。它是独立开发的非官方工具，面向抖音（Douyin），不支持国际版 TikTok。</p>
 <h3 id="export-douyin-data">怎么导出抖音观看历史和聊天记录？</h3>
-<p>安装桌面版，在首屏用抖音 App 扫码，核对账号并勾选「读取视频」和／或「读取聊天」后确认导入。读取完成后，在「设置 → 数据」点「导出数据」，勾选需要的观看历史、喜欢、收藏或聊天，保存为 JSON。聊天默认不勾选，导出不会重新读取记录；勾选聊天时，语音消息会经抖音转成文字写进文件，这一步需要联网并登着原账号。聊天备份含已保存的好友消息及会话信息，不含群聊正文。</p>
+<p>安装桌面版，在首屏用抖音 App 扫码，核对账号并勾选「读取视频」和／或「读取聊天」后确认导入。读取完成后，在「设置 → 数据」点「导出数据」，勾选需要的观看历史、喜欢、收藏或聊天，保存为 JSON。聊天默认不勾选，导出不会重新读取记录；勾选聊天时，语音消息会经抖音转成文字写进文件，这一步需要联网并登着原账号。聊天备份包含已保存的好友消息及当前保存白名单内的群聊正文，可在「设置 → 隐私 → 保存群聊消息」选择群聊。群聊正文默认不保存，关闭保存时需确认并删除该群本地正文，群名和统计保留。</p>
 <h3 id="complete-history">能导出全部抖音历史记录吗？</h3>
 <p>不能保证。DouyinDataReview 只能读取抖音接口当前返回且本人账号有权访问的记录，无法恢复接口已经不提供的数据。年度报告只反映已保存记录及其日期和字段；持续采集可以积累记录，也可导入抖音官方个人信息下载档案补充分析。</p>
 <h3 id="large-favorites">抖音收藏有几万条，能全部备份吗？</h3>

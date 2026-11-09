@@ -6,6 +6,10 @@
 export function buildDataExport(snapshot, selection, exportedAt = new Date().toISOString()) {
   const parts = /** @type {ExportPart[]} */ (Object.keys(selection)).filter(part => selection[part]);
   if (!parts.length) throw new Error("请至少选择一部分数据。");
+  const allowed = new Set(snapshot.groupChatStorage?.conversationIds ?? []);
+  const groups = new Set(snapshot.chatConversations.filter(item => item.kind === "group").map(item => item.id));
+  for (const id of snapshot.groupChatStorage?.conversationIds ?? []) groups.add(id);
+  const messages = snapshot.chatMessages.filter(message => (message.conversationType !== "group" && !groups.has(message.conversationId)) || allowed.has(message.conversationId));
   return {
     schemaVersion: /** @type {const} */ (2), exportedAt, source: "collector", parts, updatedAt: snapshot.updatedAt,
     records: {
@@ -14,7 +18,8 @@ export function buildDataExport(snapshot, selection, exportedAt = new Date().toI
       favorite_videos: selection.favorite_videos ? snapshot.records.favorite_videos : [],
     },
     chatConversations: selection.chat ? snapshot.chatConversations : [],
-    chatMessages: selection.chat ? snapshot.chatMessages.map(portableMessage) : [],
+    chatMessages: selection.chat ? messages.map(portableMessage) : [],
+    ...(selection.chat && allowed.size ? { groupChatStorage: { conversationIds: [...allowed] } } : {}),
     warnings: /** @type {string[]} */ ([]),
   };
 }

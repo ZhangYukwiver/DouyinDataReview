@@ -81,6 +81,13 @@ describe("buildChatConversationRows", () => {
     expect(rows[0]).toMatchObject({ kind: "group", name: "测试群", messageCount: 12, messages: [], preview: "群聊 · 已采集 12 条消息" });
   });
 
+  it("shows locally authorized group history and its latest preview", () => {
+    const rows = buildChatConversationRows([
+      { ...message("stored", "101", "2026-11-01T12:00:00Z", "本地群消息"), conversationType: "group" },
+    ], [{ id: "101", kind: "group", name: "白名单群", storesMessages: true, messageCount: 3, ownMessageCount: 0 }]);
+    expect(rows[0]).toMatchObject({ kind: "group", preview: "本地群消息", messages: [{ id: "stored" }] });
+  });
+
   it("leaves out chats that only hold Douyin's own notice, keeps real chats that also have one", () => {
     const notice = (id: string, conversationId: string) => ({ ...message(id, conversationId, "2026-09-26T12:41:49Z", "对方回复或关注你之前，只能发送一条文字消息。"), type: "system" as const });
     const rows = buildChatConversationRows([notice("n-1", "phantom"), notice("n-2", "real"), message("r-1", "real", "2026-09-20T10:00:00Z", "早")], [

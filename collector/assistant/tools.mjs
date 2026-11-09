@@ -96,7 +96,10 @@ export function filterRecords(snapshot, args, folders = null) {
  */
 export function listConversations(snapshot, args) {
   const latest = new Map();
+  const localCounts = new Map();
+  const storageEnabled = new Set(snapshot?.groupChatStorage?.conversationIds ?? []);
   for (const message of snapshot?.chatMessages ?? []) {
+    localCounts.set(message.conversationId, (localCounts.get(message.conversationId) ?? 0) + 1);
     const time = new Date(message.sentAt).getTime();
     if (Number.isNaN(time) || (latest.get(message.conversationId)?.time ?? -Infinity) >= time) continue;
     latest.set(message.conversationId, { time, message });
@@ -115,6 +118,8 @@ export function listConversations(snapshot, args) {
     items: items.slice(0, clampInt(args.limit, 1, MAX_ROWS, 30)).map(({ conversation, last, time }) => ({
       conversationId: conversation.id, name: conversation.name ?? "抖音用户", group: conversation.kind === "group",
       messages: conversation.messageCount ?? 0, mine: conversation.ownMessageCount ?? 0, lastActive: time === null ? null : localTime(time),
+      localMessageCount: localCounts.get(conversation.id) ?? 0,
+      ...(conversation.kind === "group" ? { storageEnabled: storageEnabled.has(conversation.id) } : {}),
       ...(last ? { lastMessage: `${last.senderName ?? "对方"}：${String(last.text || (last.share?.title ? `分享了《${last.share.title}》` : `[${last.type ?? "消息"}]`)).slice(0, 40)}` } : {}),
     })),
   };
@@ -184,6 +189,8 @@ const rangeParams = {
  * 工具表：{ kind: read | local | external, def: OpenAI function 的 function 部分, run(ctx, args) }。
  * ctx：{ api(method, path, body?) → { ok, status, body }, collector(), accounts(), writesEnabled(), confirm(spec), ui(event), seen: Map }
  */
+const GROUP_READ_RULE = "群聊先调用 list_conversations：仅当 storageEnabled=true 且 localMessageCount>0 时使用 read_chat，其他情况一律使用 read_live_chat。";
+
 export const TOOLS = [
   {
     kind: "read",
@@ -356,7 +363,7 @@ export const TOOLS = [
   },
   {
     kind: "read",
-    def: fn("list_conversations", "本机存的私信会话（好友和群），按最近一条消息的时间从新到旧，带最后一句。群聊消息本机不存，群的时间和最后一句是空的，要知道就用 read_live_chat。", {
+    def: fn("list_conversations", "返回好友和群会话，按最近消息排序。group 标识群聊；群聊的 storageEnabled 表示当前是否在保存白名单；localMessageCount 是本地正文数量，messages 是采集统计数量。" + GROUP_READ_RULE, {
       query: { type: "string", description: "按会话名筛" },
       since: { type: "string", description: "只要这个时间以后还有消息的，如 2026-10-29" },
       limit: { type: "integer", description: "默认 30，最多 50" },
@@ -369,7 +376,7 @@ export const TOOLS = [
   },
   {
     kind: "read",
-    def: fn("read_chat", "读本机存的某个私信会话的消息（按时间从旧到新，默认最近 50 条）。导出本机聊天记录用 export_chat。群聊的消息本机不存，用 read_live_chat。", {
+    def: fn("read_chat", "读取本机保存的聊天消息，按时间从旧到新，默认最近 50 条。好友消息使用本工具。" + GROUP_READ_RULE, {
       conversationId: { type: "string" },
       before: { type: "string", description: "只看这个时间以前的，用来往前翻" },
       limit: { type: "integer", description: "默认 50，最多 100" },
@@ -404,7 +411,7 @@ export const TOOLS = [
   },
   {
     kind: "read",
-    def: fn("read_live_chat", "从抖音现读某个会话（包括群聊）的消息，一次一页，older=true 往前翻。要先在接收聊天（start_reading kind=chat）。", {
+    def: fn("read_live_chat", "从抖音实时读取聊天消息，一次一页，older=true 往前翻。要先在接收聊天（start_reading kind=chat）。" + GROUP_READ_RULE, {
       conversationId: { type: "string" },
       older: { type: "boolean" },
     }, ["conversationId"]),
@@ -512,7 +519,7 @@ export const TOOLS = [
   },
   {
     kind: "local",
-    def: fn("start_reading", "开始读取：new 补读新记录、full 从头重读全部记录（慢）、chat 开始接收私信（读群聊、发私信、看火花前要先开）。", {
+    def: fn("start_reading", "开始读取：new 补读新记录、full 从头重读全部记录（慢）、chat 开始接收私信（使用 read_live_chat、发私信、看火花前要先开）。", {
       kind: { type: "string", enum: ["new", "full", "chat"] },
     }, ["kind"]),
     run: (ctx, args) => passThrough(ctx, "POST", { new: "/v1/experimental/records-direct", full: "/v1/sync", chat: "/v1/chat/observe" }[args.kind] ?? "/v1/experimental/records-direct", {}),
@@ -708,21 +715,26 @@ async function exportChat(ctx, { conversationId }, signal) {
   collector.assertReadPermission("chat");
   if (typeof conversationId !== "string" || !conversationId.trim()) return fail("invalid_request", "请指定要导出的聊天会话。");
   const accountId = ctx.accounts().activeId;
+  let exportingGroups = [];
   const assertCurrent = () => {
     signal?.throwIfAborted();
     if (ctx.collector() !== collector || ctx.accounts().activeId !== accountId)
       throw Object.assign(new Error("账号已经切换，请重新导出。"), { code: "account_changed" });
     collector.assertReadPermission("chat");
+    if (exportingGroups.some(id => !collector.allowsGroupStorage(id)))
+      throw Object.assign(new Error("群聊已移出白名单，请重新导出。"), { code: "group_not_stored" });
   };
   let snapshot = collector.snapshot;
   if (conversationId !== "all") {
     const chatConversations = snapshot.chatConversations.filter(item => item.id === conversationId);
-    if (chatConversations[0]?.kind === "group") return fail("group_not_stored", "本机未保存群聊正文，无法从本机记录导出这个群。");
+    if (chatConversations[0]?.kind === "group" && !collector.allowsGroupStorage(conversationId))
+      return fail("group_not_stored", "只有当前白名单内的群聊可以导出，请在设置 → 隐私中配置。");
     const chatMessages = snapshot.chatMessages.filter(item => item.conversationId === conversationId);
     if (!chatConversations.length && !chatMessages.length) return fail("conversation_not_found", "本机没有这个会话。");
     snapshot = { ...snapshot, chatConversations, chatMessages };
   }
   const data = buildDataExport(snapshot, { chat: true });
+  exportingGroups = [...new Set(data.chatMessages.filter(message => message.conversationType === "group").map(message => message.conversationId))];
   const endpoint = `/v1/chat/voice/transcribe?account=${encodeURIComponent(accountId)}`;
   await transcribeExportVoices(data, async messageIds => {
     assertCurrent();

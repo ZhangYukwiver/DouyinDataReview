@@ -24,6 +24,7 @@ import { DirectHistoryError } from "./directHistory.mjs";
 import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
+import { parseGroupConversationIds } from "./groupChatStorage.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
 import { FEED_FILTER_MODES, FEED_FILTER_ORIGINS, FeedFilterStore } from "./feedFilter.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
@@ -994,6 +995,31 @@ export async function startCollectorServer({
           error: known ? error.code : malformed ? "invalid_request" : "assistant_failed",
           message: known ? error.message : malformed ? "请求无效，请重试。" : "AI 助手出错了，请稍后再试。",
         });
+      }
+    } else if (url.pathname === "/v1/settings/group-chat-storage" && ["GET", "POST"].includes(request.method)) {
+      try {
+        if (request.method === "POST") {
+          const body = await readJsonBody(request);
+          const ids = parseGroupConversationIds(body?.conversationIds);
+          const deleteConversationIds = parseGroupConversationIds(body?.deleteConversationIds ?? []);
+          if (url.searchParams.get("account") !== accounts.active().id) {
+            sendJson(response, 409, { error: "account_changed", message: "账号已切换，请重新打开设置。" }); return;
+          }
+          const settings = collector.getGroupChatStorage();
+          const known = new Set([...settings.groups.map(group => group.id), ...settings.conversationIds]);
+          if ([...ids, ...deleteConversationIds].some(id => !known.has(id))) {
+            sendJson(response, 400, { error: "invalid_group_allowlist", message: "请从当前账号已读取的群聊中选择。" }); return;
+          }
+          // 和账号切换共用操作锁，保存途中不能切换到其他账号。
+          if (accountWork) { sendJson(response, 409, { error: "collector_busy" }); return; }
+          const work = collector.setGroupChatStorage(ids, { deleteConversationIds });
+          accountWork = work;
+          try { await work; } finally { if (accountWork === work) accountWork = null; }
+        }
+        sendJson(response, 200, { ...collector.getGroupChatStorage(), accountId: accounts.active().id });
+      } catch (error) {
+        sendJson(response, error.code === "group_history_confirmation_required" ? 409 : error.code === "invalid_group_allowlist" || error instanceof SyntaxError ? 400 : 500,
+          { error: error.code ?? "settings_save_failed", message: error.message ?? "群聊设置没存上。" });
       }
     } else if (url.pathname === "/v1/settings/writes" && ["GET", "POST"].includes(request.method)) {
       if (request.method === "POST") {

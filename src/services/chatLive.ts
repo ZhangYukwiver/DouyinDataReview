@@ -3,7 +3,7 @@ import type { OfficialStreak } from "../domain/chatSparks";
 import type { ChatSendConnection } from "./chatSend";
 import { LocalCollectorError, collectorFetch } from "./localCollector";
 
-// 群消息和抖音自己的火花天数都是从采集器里开着的抖音网页现读的，不落盘。
+// 显式请求抖音的群消息和火花；群正文是否保存由采集器白名单控制。
 async function call<T>(connection: ChatSendConnection, path: string, body?: unknown): Promise<T> {
   const controller = new AbortController();
   // 往上翻一页最多要滚十来次，留足时间

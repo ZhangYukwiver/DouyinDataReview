@@ -117,6 +117,7 @@ export interface CollectorSnapshot {
   records: PersonalRecordCollection;
   chatMessages: ChatMessage[];
   chatConversations: ChatConversationSummary[];
+  groupChatStorage?: { conversationIds: string[] };
   warnings: string[];
 }
 
@@ -646,14 +647,19 @@ function parseSnapshot(value: unknown): CollectorSnapshot {
   if (!isObject(value) || (value.schemaVersion !== 1 && value.schemaVersion !== 2)) {
     throw new LocalCollectorError("invalid_response", "采集服务版本不兼容。");
   }
-  const chatConversations = parseChatConversations(value.chatConversations);
+  const policy = isObject(value.groupChatStorage) ? value.groupChatStorage : {};
+  const ids = (input: unknown): string[] => Array.isArray(input) ? input.filter((id): id is string => typeof id === "string" && /^\d{1,30}$/u.test(id)) : [];
+  const groupChatStorage = { conversationIds: ids(policy.conversationIds) };
+  const enabled = new Set(groupChatStorage.conversationIds);
+  const chatConversations = parseChatConversations(value.chatConversations).map(item => item.kind === "group" ? { ...item, storesMessages: enabled.has(item.id), storageEnabled: enabled.has(item.id) } : item);
   const groupIds = new Set(chatConversations.filter((conversation) => conversation.kind === "group").map((conversation) => conversation.id));
   return {
     schemaVersion: 2,
     updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
     records: parseRecords(value.records, value.schemaVersion === 1 ? "platform_action" : "unknown"),
-    chatMessages: parseChatMessages(value.chatMessages).filter((message) => message.conversationType !== "group" && (!message.conversationId || !groupIds.has(message.conversationId))),
+    chatMessages: parseChatMessages(value.chatMessages).filter((message) => (message.conversationType !== "group" && (!message.conversationId || !groupIds.has(message.conversationId))) || enabled.has(message.conversationId ?? "")),
     chatConversations,
+    ...(enabled.size ? { groupChatStorage } : {}),
     warnings: Array.isArray(value.warnings)
       ? value.warnings.filter((item): item is string => typeof item === "string")
       : [],
@@ -1082,10 +1088,10 @@ export async function getCollectorNewRecords(baseUrl: string, token: string, run
 }
 
 // 只取聊天：记录没换时不用每来一条消息就搬一遍、解析一遍几 MB 的记录
-export async function getCollectorChat(baseUrl: string, token: string): Promise<Pick<CollectorSnapshot, "chatMessages" | "chatConversations" | "warnings">> {
+export async function getCollectorChat(baseUrl: string, token: string): Promise<Pick<CollectorSnapshot, "chatMessages" | "chatConversations" | "warnings" | "groupChatStorage">> {
   const value = await requestJson(baseUrl, "/v1/records?part=chat", {}, token);
-  const { chatMessages, chatConversations, warnings } = parseSnapshot(isObject(value) ? { ...value, records: createEmptyPersonalRecords() } : value);
-  return { chatMessages, chatConversations, warnings };
+  const { chatMessages, chatConversations, warnings, groupChatStorage } = parseSnapshot(isObject(value) ? { ...value, records: createEmptyPersonalRecords() } : value);
+  return { chatMessages, chatConversations, warnings, groupChatStorage };
 }
 
 export async function startCollectorVideoDownload(
@@ -1277,6 +1283,20 @@ export async function collectorWrites(baseUrl: string, token: string, enabled?: 
     enabled === undefined ? {} : { method: "POST", body: JSON.stringify({ enabled }) }, token);
   if (!isObject(value) || typeof value.enabled !== "boolean") throw new LocalCollectorError("invalid_response", "采集服务没返回操作开关。");
   return value.enabled;
+}
+
+export interface GroupChatStorageSettings {
+  accountId: string;
+  conversationIds: string[];
+  groups: Array<{ id: string; name: string; storedMessages: number }>;
+}
+
+export async function collectorGroupChatStorage(baseUrl: string, token: string, update?: { accountId: string; conversationIds: string[]; deleteConversationIds?: string[] }): Promise<GroupChatStorageSettings> {
+  const route = "/v1/settings/group-chat-storage" + (update ? `?account=${encodeURIComponent(update.accountId)}` : "");
+  const value = await requestJson(baseUrl, route, update ? { method: "POST", body: JSON.stringify({ conversationIds: update.conversationIds, deleteConversationIds: update.deleteConversationIds ?? [] }) } : {}, token, 120_000);
+  if (!isObject(value) || typeof value.accountId !== "string" || !Array.isArray(value.conversationIds) || !Array.isArray(value.groups))
+    throw new LocalCollectorError("invalid_response", "采集器未返回群聊白名单。");
+  return value as unknown as GroupChatStorageSettings;
 }
 
 export type FeedFilterMode = "off" | "observe" | "hide" | "dislike";

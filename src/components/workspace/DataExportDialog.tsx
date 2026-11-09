@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import type { CollectorSnapshot } from "../../services/localCollector";
 import type { DataExportSelection } from "../../services/exportData";
+import { buildDataExport } from "../../services/exportData";
 import { ease, useCountUp } from "./motion";
 import { workspaceColors as color } from "./workspaceTheme";
 
@@ -12,11 +13,12 @@ export function DataExportDialog({ snapshot, onClose, onExport, progress = null 
   progress?: { completed: number; total: number } | null;
 }) {
   const [selection, setSelection] = useState<DataExportSelection>({ watch_history: true, liked_videos: true, favorite_videos: true, chat: false });
+  const exportableChatCount = buildDataExport(snapshot, { chat: true }).chatMessages.length;
   const parts = [
     { key: "watch_history", label: "观看历史", count: snapshot.records.watch_history.length, detail: `${snapshot.records.watch_history.length} 条记录` },
     { key: "liked_videos", label: "喜欢的视频", count: snapshot.records.liked_videos.length, detail: `${snapshot.records.liked_videos.length} 条记录` },
     { key: "favorite_videos", label: "收藏的视频", count: snapshot.records.favorite_videos.length, detail: `${snapshot.records.favorite_videos.length} 条记录` },
-    { key: "chat", label: "聊天数据", count: snapshot.chatMessages.length, detail: `${snapshot.chatMessages.length} 条好友消息 · ${snapshot.chatConversations.length} 个会话（含群聊统计）` },
+    { key: "chat", label: "聊天数据", count: exportableChatCount, detail: `${exportableChatCount} 条好友及白名单群消息 · ${snapshot.chatConversations.length} 个会话` },
   ] as const;
   const empty = !Object.values(selection).some(Boolean);
   const exporting = progress !== null;

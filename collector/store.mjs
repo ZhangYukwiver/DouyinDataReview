@@ -4,6 +4,7 @@ import path from "node:path";
 import { hasChatShareEvidence, isSyntheticChatPlaceholder } from "./chatNormalizer.mjs";
 import { normalizeVoiceResource } from "./chatVoice.mjs";
 import { createEmptyRecords, normalizeRecord } from "./normalizer.mjs";
+import { GroupChatStorage } from "./groupChatStorage.mjs";
 
 export const SCHEMA_VERSION = 2;
 const LEGACY_SCHEMA_VERSION = 1;
@@ -143,7 +144,6 @@ function normalizeChatMessage(value) {
   const id = chatString(value.id, 300);
   if (!id) return null;
   const conversationType = chatConversationKind(value.conversationType);
-  if (conversationType === "group") return null;
   const rawType = CHAT_TYPES.has(value.type) ? value.type : "unknown";
   const rawDuration = typeof value.callDurationSeconds === "number" && Number.isFinite(value.callDurationSeconds)
     && value.callDurationSeconds >= 0 && value.callDurationSeconds <= 86_400
@@ -214,17 +214,18 @@ function normalizeChatMessage(value) {
   return result;
 }
 
-function normalizeChatCollection(value, groupConversationIds = new Set()) {
+function normalizeChatCollection(value, groupConversationIds = new Set(), allowedGroups = new Set()) {
   if (!Array.isArray(value)) return [];
   const seen = new Set();
   const messages = [];
   for (const item of value) {
     const message = normalizeChatMessage(item);
+    const group = message && (message.conversationType === "group" || groupConversationIds.has(message.conversationId));
+    if (group && !allowedGroups.has(message.conversationId)) continue;
+    if (message && group) message.conversationType = "group";
     if (
       !message
       || isSyntheticChatPlaceholder(message)
-      || message.conversationType === "group"
-      || groupConversationIds.has(message.conversationId)
       || seen.has(message.id)
     ) continue;
     seen.add(message.id);
@@ -318,9 +319,11 @@ export class CollectorStore {
     this.maxFileBytes = maxFileBytes;
     this.filePath = path.join(dataDirectory, "records.json");
     this.recordsRevision = 0;
+    this.groupChatStorage = new GroupChatStorage(dataDirectory);
   }
 
   async load() {
+    await this.groupChatStorage.load();
     try {
       const parsed = JSON.parse(await readFile(this.filePath, "utf8"));
       if (
@@ -334,7 +337,8 @@ export class CollectorStore {
       const groupConversationIds = new Set(chatConversations
         .filter((conversation) => conversation.kind === "group")
         .map((conversation) => conversation.id));
-      const normalizedChatMessages = normalizeChatCollection(parsed.chatMessages, groupConversationIds);
+      for (const id of this.groupChatStorage.conversationIds) groupConversationIds.add(id);
+      const normalizedChatMessages = normalizeChatCollection(parsed.chatMessages, groupConversationIds, new Set(this.groupChatStorage.conversationIds));
       const snapshot = {
         schemaVersion: SCHEMA_VERSION,
         updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : null,
@@ -346,6 +350,7 @@ export class CollectorStore {
         chatMessages: normalizedChatMessages,
         warnings: normalizedWarnings(parsed.warnings),
         directSync: normalizeDirectSyncState(parsed.directSync, parsed.warnings),
+        ...(this.groupChatStorage.conversationIds.length ? { groupChatStorage: { conversationIds: [...this.groupChatStorage.conversationIds] } } : {}),
       };
       if (!snapshot.records) return emptyStoredSnapshot();
       // Persist the canonical v2 shape after reading a v1 snapshot.  Failure to
@@ -383,14 +388,16 @@ export class CollectorStore {
     const groupConversationIds = new Set(normalizedConversations
       .filter((conversation) => conversation.kind === "group")
       .map((conversation) => conversation.id));
+    for (const id of this.groupChatStorage.conversationIds) groupConversationIds.add(id);
     const snapshot = {
       schemaVersion: SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
       records: normalizedRecords,
       chatConversations: normalizedConversations,
-      chatMessages: normalizeChatCollection(chatMessages, groupConversationIds),
+      chatMessages: normalizeChatCollection(chatMessages, groupConversationIds, new Set(this.groupChatStorage.conversationIds)),
       warnings: normalizedWarnings(warnings),
       directSync: normalizeDirectSyncState(directSync),
+      ...(this.groupChatStorage.conversationIds.length ? { groupChatStorage: { conversationIds: [...this.groupChatStorage.conversationIds] } } : {}),
     };
     await this.writeSnapshot(snapshot);
     // 聊天存盘会把上次存好的那份记录原样传回来，只有换了记录才加一；界面据此判断要不要重拉整份记录
