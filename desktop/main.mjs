@@ -16,8 +16,11 @@ import { startStaticServer } from "./staticServer.mjs";
 import { isVideoDownload, readVideoDownloadDirectory, saveVideoCopies, uniqueSavePath, writeVideoDownloadDirectory } from "./videoDownloads.mjs";
 import { isSameOriginUrl, isStoryUrl } from "./windowPolicy.mjs";
 
-const APP_ID = "com.zhangyukwiver.contentinsights";
-const APP_NAME = "DouyinDataReview";
+// 显式指定开发目录时，桌面壳、会话和采集数据均使用这一份独立工作区。
+const DEVELOPMENT_USER_DATA = !app.isPackaged && process.env.DY2_DEV_USER_DATA?.trim()
+  ? path.resolve(process.env.DY2_DEV_USER_DATA) : null;
+const APP_ID = `com.zhangyukwiver.contentinsights${DEVELOPMENT_USER_DATA ? ".dev" : ""}`;
+const APP_NAME = DEVELOPMENT_USER_DATA ? "DouyinDataReview Dev" : "DouyinDataReview";
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(moduleDirectory, "..");
 const ICON_PATH = path.join(projectDirectory, "build", "icon.png");
@@ -28,9 +31,9 @@ const HIDDEN_ARG = "--hidden";
 const LOGIN_ITEM = { args: [HIDDEN_ARG] };
 // 页面的设置（风格、自动补读等）存在 localStorage 里，而 localStorage 按 origin（含端口）分开存：
 // 端口每次随机的话，重启后就读不到上次的设置。所以页面服务优先用固定端口，绑不上（被占用、被系统保留）才退回随机端口。
-const WEB_PORT = 47651;
+const WEB_PORT = DEVELOPMENT_USER_DATA ? 47661 : 47651;
 // 推荐流过滤扩展按这个端口找采集器；和页面服务的 47651 挨着，被占时退回随机端口（扩展就连不上了）
-const COLLECTOR_PORT = 47652;
+const COLLECTOR_PORT = DEVELOPMENT_USER_DATA ? 47662 : 47652;
 
 let mainWindow = null;
 let desktopRuntime = null;
@@ -49,7 +52,7 @@ const liveNotifications = new Set();
 const storyWindows = new Set();
 
 // 保留旧版的数据和 Chromium 会话目录，应用改名后继续读取已有记录、凭据和设置。
-const userDataDirectory = path.join(app.getPath("appData"), "内容数据工作台");
+const userDataDirectory = DEVELOPMENT_USER_DATA ?? path.join(app.getPath("appData"), "内容数据工作台");
 mkdirSync(userDataDirectory, { recursive: true });
 app.setPath("userData", userDataDirectory);
 app.setPath("sessionData", userDataDirectory);
