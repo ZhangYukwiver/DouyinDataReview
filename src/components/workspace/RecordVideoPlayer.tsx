@@ -8,6 +8,7 @@ import { buildVideoFeed, createVideoCommentsSession, createVideoShareSession, cr
 import { LocalCollectorError, type PlaybackMedia } from "../../services/localCollector";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
 import { PlaybackContext } from "./PlaybackContext";
+import { CommentImagePreview, CommentImageThumbnails } from "./CommentImagePreview";
 import "./RecordVideoPlayer.css";
 
 /** Resolves to a stream URL (or an image post's pictures) that stays valid until `signal` aborts. */
@@ -130,7 +131,7 @@ export function RecordVideoPlayer({ record, records, onLoadVideo, commentsConnec
   const dismiss = () => shareOpen ? toggleShare() : commentsOpen ? toggleComments() : onClose?.();
   const player = <div ref={rootRef} className={inline ? "rv-backdrop rv-inline" : "rv-backdrop"} tabIndex={-1} onClick={(event) => { if (event.target === event.currentTarget) onClose?.(); }}
       // 弹窗的 Esc 由 Modal 的 onRequestClose 接；嵌在页面里只能自己接，而且评论和分享面板会拦下冒泡，得在捕获阶段接
-      onKeyDownCapture={inline ? (event) => { if (event.key === "Escape" && (shareOpen || commentsOpen)) { event.stopPropagation(); dismiss(); } } : undefined}
+      onKeyDownCapture={inline ? (event) => { if (event.key === "Escape" && !(event.target as Element).closest("dialog[open]") && (shareOpen || commentsOpen)) { event.stopPropagation(); dismiss(); } } : undefined}
       onKeyDown={(event) => {
         if ((event.target as Element).closest("input,a,[data-comments-panel],[data-share-panel]")) return;
         if (["ArrowDown", "PageDown", "ArrowUp", "PageUp"].includes(event.key)) {
@@ -300,6 +301,7 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [paused, setPaused] = useState(true);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -433,8 +435,8 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
           : <img key={i} src={image.url} alt="" hidden={i !== slide} referrerPolicy="no-referrer" draggable={false} />)}
         {album.music ? <audio ref={audioRef} src={album.music} loop muted={muted} preload="auto" /> : null}
       </div> : <video ref={videoRef} aria-label={`${record.title}，视频播放`} src={src ?? undefined} poster={record.coverUrl ?? undefined}
-        loop={!prefs.autoNext} playsInline muted={muted} preload="auto" onClick={toggle} tabIndex={0}
-        onEnded={() => { if (active && prefs.autoNext) onEnded(); }}
+        loop={!prefs.autoNext || Boolean(previewImage)} playsInline muted={muted} preload="auto" onClick={toggle} tabIndex={0}
+        onEnded={() => { if (active && prefs.autoNext && !previewImage) onEnded(); }}
         onLoadedData={() => setReadyToPlay(true)}
         onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
         onTimeUpdate={() => { const at = videoRef.current?.currentTime ?? 0; setElapsed(at); if (active) reached.current = Math.max(reached.current, at); }}
@@ -512,13 +514,15 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
       {toast ? <p className="rv-toast" role="status">{toast}</p> : null}
       {active && shareOpen ? <VideoShare record={record} connection={commentsConnection} onClose={onToggleShare} /> : null}
     </div>
-    {active && commentsOpen ? <VideoComments record={record} connection={commentsConnection} ready={Boolean(media || error)} onClose={onToggleComments} onOpenRecord={onOpenRecord} /> : null}
+    {active && commentsOpen ? <VideoComments record={record} connection={commentsConnection} ready={Boolean(media || error)} onClose={onToggleComments} onOpenRecord={onOpenRecord}
+      previewImage={previewImage} onPreviewImage={setPreviewImage} /> : null}
   </>;
 }
 
-const VideoComments = memo(function VideoComments({ record, connection, ready, onClose, onOpenRecord }: {
+const VideoComments = memo(function VideoComments({ record, connection, ready, onClose, onOpenRecord, previewImage, onPreviewImage }: {
   record: PersonalVideoRecord; connection: ExploreConnection | null; ready: boolean; onClose: () => void;
   onOpenRecord?: (url: string) => Promise<void>;
+  previewImage: string | null; onPreviewImage: (url: string | null) => void;
 }) {
   const [page, setPage] = useState<ExplorePage | null>(null);
   const [loading, setLoading] = useState(false);
@@ -575,9 +579,9 @@ const VideoComments = memo(function VideoComments({ record, connection, ready, o
       {connection && (!ready || loading) ? <div className="rv-comment-notice" role="status" aria-label="评论加载中"><span className="rv-spinner" /></div> : null}
       {error ? <div className="rv-comment-notice" role="alert"><p>{error}</p><button className="rv-button" onClick={() => setAttempt((value) => value + 1)}>重试</button></div> : null}
       {threads.map((comment) => <article className="rv-comment" key={posted.has(comment.id) ? `mine:${comment.id}` : `${page!.sessionId}:${comment.id}`} data-comment-id={comment.id}>
-        <CommentRow comment={comment} onReply={reply} />
-        {mine.filter((item) => item.parentId === comment.id).map((item) => <article className="rv-reply rv-replies" key={item.id} data-reply-id={item.id}><CommentRow comment={item} onReply={reply} /></article>)}
-        {comment.replies > 0 && sessionRef.current ? <CommentReplies comment={comment} session={sessionRef.current} hidden={posted} onReply={reply} onRefresh={() => setSessionVersion((value) => value + 1)} /> : null}
+        <CommentRow comment={comment} onReply={reply} onPreviewImage={onPreviewImage} />
+        {mine.filter((item) => item.parentId === comment.id).map((item) => <article className="rv-reply rv-replies" key={item.id} data-reply-id={item.id}><CommentRow comment={item} onReply={reply} onPreviewImage={onPreviewImage} /></article>)}
+        {comment.replies > 0 && sessionRef.current ? <CommentReplies comment={comment} session={sessionRef.current} hidden={posted} onReply={reply} onPreviewImage={onPreviewImage} onRefresh={() => setSessionVersion((value) => value + 1)} /> : null}
       </article>)}
       {page && !threads.length && !loading && !error ? <p className="rv-comment-notice">暂时没有评论</p> : null}
       {page?.limited ? <p className="rv-comment-notice">已显示 500 条</p> : page && page.hasMore !== false ?
@@ -585,15 +589,16 @@ const VideoComments = memo(function VideoComments({ record, connection, ready, o
     </div>
     <footer className="rv-comments-footer">{connection ? <CommentComposer key={record.id} disabled={!page} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} onSend={send} />
       : record.url && onOpenRecord ? <button className="rv-more" onClick={() => void onOpenRecord(record.url!)}>在抖音参与讨论 <ArrowUpRight color="#ddd" size={15} /></button> : null}</footer>
+    {previewImage && <CommentImagePreview src={previewImage} onClose={() => onPreviewImage(null)} />}
   </section>;
 });
 
-function CommentRow({ comment, onReply }: { comment: ExploreComment; onReply?: (comment: ExploreComment) => void }) {
+function CommentRow({ comment, onReply, onPreviewImage }: { comment: ExploreComment; onReply?: (comment: ExploreComment) => void; onPreviewImage: (url: string) => void }) {
   return <div className="rv-comment-row">
     <div className="rv-comment-avatar">{comment.author?.avatar ? <img src={comment.author.avatar} alt="" referrerPolicy="no-referrer" loading="lazy" /> : comment.name.slice(0, 1)}</div>
     <div className="rv-comment-body"><strong>{comment.name}{comment.replyToName ? <span className="rv-reply-to"> 回复 @{comment.replyToName}</span> : null}</strong>
       {comment.text ? <p><EmojiText text={comment.text} /></p> : !comment.images?.length ? <p>[图片]</p> : null}
-      {comment.images?.map((url) => <img className="rv-comment-image" key={url} src={url} alt="评论图片或表情" referrerPolicy="no-referrer" loading="lazy" />)}
+      <CommentImageThumbnails images={comment.images} onPreview={onPreviewImage} />
       <div className="rv-comment-meta"><small>{date(comment.publishedAt)}</small>
         {onReply ? <button className="rv-reply-action" aria-label={`回复 ${comment.name}`} onClick={() => onReply(comment)}>回复</button> : null}</div></div>
     <div className="rv-comment-likes" aria-label={`${count(comment.likes)} 个赞`}><Heart color="#929298" size={15} /><span>{count(comment.likes)}</span></div>
@@ -601,9 +606,10 @@ function CommentRow({ comment, onReply }: { comment: ExploreComment; onReply?: (
 }
 
 // 和抖音网页一样：点「展开 N 条回复」读第一页，之后「展开更多」接着翻；读过的收起再展开不重读
-function CommentReplies({ comment, session, hidden, onReply, onRefresh }: {
+function CommentReplies({ comment, session, hidden, onReply, onPreviewImage, onRefresh }: {
   comment: ExploreComment; session: ReturnType<typeof createVideoCommentsSession>; hidden: Set<string>;
   onReply?: (comment: ExploreComment) => void; onRefresh: () => void;
+  onPreviewImage: (url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [page, setPage] = useState<ExplorePage | null>(null);
@@ -622,7 +628,7 @@ function CommentReplies({ comment, session, hidden, onReply, onRefresh }: {
   }, [session, comment.id, attempt]);
   return <div className="rv-replies">
     <div id={`rv-replies-${comment.id}`} hidden={!expanded}>
-      {(page?.items as ExploreComment[] | undefined)?.filter((reply) => !hidden.has(reply.id)).map((reply) => <article className="rv-reply" key={reply.id} data-reply-id={reply.id}><CommentRow comment={reply} onReply={onReply} /></article>)}
+      {(page?.items as ExploreComment[] | undefined)?.filter((reply) => !hidden.has(reply.id)).map((reply) => <article className="rv-reply" key={reply.id} data-reply-id={reply.id}><CommentRow comment={reply} onReply={onReply} onPreviewImage={onPreviewImage} /></article>)}
       {error ? <div className="rv-reply-notice" role="alert"><p>{error.message}</p><button className="rv-reply-toggle" onClick={error.refresh ? onRefresh : () => setAttempt((value) => value + 1)}>{error.refresh ? "刷新评论" : "重试"}</button></div> : null}
       {page && !page.items.length && !loading && !error ? <p className="rv-reply-notice">暂无回复</p> : null}
     </div>

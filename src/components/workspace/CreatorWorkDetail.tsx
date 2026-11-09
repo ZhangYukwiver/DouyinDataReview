@@ -12,6 +12,7 @@ import { reactExplore, type ExploreConnection } from "../../services/explorer";
 import { Bars, BarList, chartPalette, Donut, LineChart } from "./CreatorCharts";
 import { Empty, ErrorLine, kit, Loading, MetricTile, Panel, RankTable, Segmented, SmallButton, Tabs, useCreator, type Raw } from "./CreatorKit";
 import { renderEmojiText } from "./emojiText";
+import { CommentImagePreview, CommentImageThumbnails } from "./CommentImagePreview";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
 
@@ -425,6 +426,7 @@ function Comments({ ctx }: { ctx: DetailContext }) {
   const [draft, setDraft] = useState("");
   const [keyword, setKeyword] = useState("");
   const [list, setList] = useState<CreatorComment[]>([]);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [cursor, setCursor] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -533,8 +535,8 @@ function Comments({ ctx }: { ctx: DetailContext }) {
       const more = state ? state.more && (remaining > 0 || state.more) : remaining > 0;
       const open = state?.open ?? true;
       return <View key={comment.id} style={styles.comment}>
-        <CommentBody comment={comment} onReply={() => setTarget({ comment, parent: null })} />
-        {open ? comment.replies.map((reply) => <View key={reply.id} style={styles.reply}><CommentBody comment={reply} onReply={() => setTarget({ comment: reply, parent: comment })} /></View>) : null}
+        <CommentBody comment={comment} onReply={() => setTarget({ comment, parent: null })} onPreviewImage={setPreviewImage} />
+        {open ? comment.replies.map((reply) => <View key={reply.id} style={styles.reply}><CommentBody comment={reply} onReply={() => setTarget({ comment: reply, parent: comment })} onPreviewImage={setPreviewImage} /></View>) : null}
         {state?.loading ? <Loading /> : open && loaded && !more ? <Pressable accessibilityRole="button" onPress={() => setReplyState((current) => ({ ...current, [comment.id]: { ...(state ?? { cursor: 0, more: false, loading: false }), open: false } }))}><Text style={styles.link}>收起</Text></Pressable>
           : open && (more || remaining > 0) ? <Pressable accessibilityRole="button" onPress={() => void loadReplies(comment)}><Text style={styles.link}>查看{remaining || 10}条回复</Text></Pressable>
             : !open ? <Pressable accessibilityRole="button" onPress={() => setReplyState((current) => ({ ...current, [comment.id]: { ...state!, open: true } }))}><Text style={styles.link}>查看{comment.replyCount || loaded}条回复</Text></Pressable> : null}
@@ -543,16 +545,17 @@ function Comments({ ctx }: { ctx: DetailContext }) {
     {loading || !secId ? <Loading /> : shown.length ? (hasMore ? <View style={{ alignItems: "center" }}><SmallButton label="加载更多评论" onPress={() => void load(false)} /></View> : <Text style={[kit.muted, { textAlign: "center" }]}>没有更多评论</Text>)
       : filtered ? <Empty lines={["暂无符合条件的评论", "换个条件试试吧"]} />
         : <View style={{ alignItems: "center", gap: 8, paddingVertical: 30 }}><Text style={kit.muted}>暂无更多评论</Text><Pressable accessibilityRole="button" onPress={() => void load(true)}><Text style={styles.link}>点击刷新</Text></Pressable></View>}
+    {previewImage && <CommentImagePreview src={previewImage} onClose={() => setPreviewImage(null)} />}
   </Panel>;
 }
 
-function CommentBody({ comment, onReply }: { comment: CreatorComment; onReply: () => void }) {
+function CommentBody({ comment, onReply, onPreviewImage }: { comment: CreatorComment; onReply: () => void; onPreviewImage: (url: string) => void }) {
   return <View style={styles.commentRow}>
     {comment.avatar ? <Image source={{ uri: comment.avatar }} style={styles.commentAvatar} /> : <View style={[styles.commentAvatar, { backgroundColor: color.surfaceMuted }]} />}
     <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
       <View style={kit.row}><Text style={styles.commentName}>{comment.name}</Text>{comment.isAuthor ? <Text {...ws("cr-note")} style={styles.author}>作者</Text> : null}</View>
       <Text style={kit.body}>{comment.folded ? "该评论被折叠" : <>{comment.replyTo ? `回复 ${comment.replyTo}：` : ""}{renderEmojiText(comment.text)}</>}</Text>
-      {comment.images.length ? <View style={kit.row}>{comment.images.map((uri) => <Image key={uri} source={{ uri }} style={styles.commentImage} />)}</View> : null}
+      <CommentImageThumbnails images={comment.images} onPreview={onPreviewImage} />
       <View style={kit.row}><Text style={kit.muted}>{comment.createTime ? commentTime(comment.createTime) : ""}</Text><ThumbsUp size={12} color={color.textMuted} /><Text style={kit.muted}>{comment.likes}</Text>
         <Pressable accessibilityRole="button" accessibilityLabel={`回复 ${comment.name}`} onPress={onReply}><Text style={styles.replyAction}>回复</Text></Pressable></View>
     </View>
@@ -575,7 +578,6 @@ const styles = StyleSheet.create({
   commentAvatar: { width: 32, height: 32, borderRadius: 16 },
   commentName: { color: color.text, fontFamily: font.body, fontSize: 12, fontWeight: "600" },
   author: { color: color.accent, fontFamily: font.body, fontSize: 10, paddingHorizontal: 5, borderRadius: 4, borderWidth: 1, borderColor: color.accent },
-  commentImage: { width: 80, height: 80, borderRadius: 6, backgroundColor: color.surfaceMuted },
   reply: { marginLeft: 42 },
   link: { color: color.cyan, fontFamily: font.body, fontSize: 12, marginLeft: 42 },
   replyAction: { color: color.textMuted, fontFamily: font.body, fontSize: 12 },
