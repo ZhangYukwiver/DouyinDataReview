@@ -10,6 +10,7 @@ import {
   type PersonalVideoStats,
 } from "../domain/personalRecords";
 import { estimateWatchProgress } from "../domain/watchProgress";
+import type downloadQualities from "../../collector/downloadQualities.json";
 import downloadModes from "../../collector/downloadModes.json";
 import { hasChatShareEvidence, type ChatConversationKind, type ChatConversationSummary, type ChatMessage, type ChatMessageType, type ChatShare } from "../domain/chatRecords";
 
@@ -120,6 +121,7 @@ export interface CollectorSnapshot {
 }
 
 export type VideoDownloadJobStatus = "queued" | "running" | "complete" | "failed";
+export type DownloadQuality = keyof typeof downloadQualities;
 export type DownloadMode = keyof typeof downloadModes;
 
 export interface VideoEvidenceEntry {
@@ -1095,11 +1097,12 @@ export async function startCollectorVideoDownload(
   /** 从探索页发起的下载：别关掉探索会话，回去还能接着加载更多 */
   keepExplore = false,
   mode: DownloadMode = "combined",
+  quality: DownloadQuality = "auto",
 ): Promise<VideoDownloadJob> {
   if (!url.trim()) throw new LocalCollectorError("invalid_url", "该记录没有可下载的抖音链接。");
   const value = await requestJson(baseUrl, "/v1/downloads", {
     method: "POST",
-    body: JSON.stringify({ url: url.trim(), ...(playback ? { playback: true } : {}), ...(keepExplore ? { keepExplore: true } : {}), ...(mode !== "combined" ? { mode } : {}) }),
+    body: JSON.stringify({ url: url.trim(), ...(playback ? { playback: true } : {}), ...(keepExplore ? { keepExplore: true } : {}), ...(quality !== "auto" ? { quality } : {}), ...(mode !== "combined" ? { mode } : {}) }),
     signal,
   }, token);
   if (!isObject(value)) throw new LocalCollectorError("invalid_response", "采集服务未返回下载任务。");

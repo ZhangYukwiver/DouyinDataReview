@@ -140,7 +140,7 @@ async function refresh() {
 
 async function cacheSettings(value) {
   const settings = { rules: value.rules, mode: value.mode, words: value.words ?? "", webPicks: value.webPicks === true,
-    pickEvery: Number.isInteger(value.pickEvery) ? value.pickEvery : 3, downloadModes: value.downloadModes };
+    pickEvery: Number.isInteger(value.pickEvery) ? value.pickEvery : 3, downloadQualities: value.downloadQualities, downloadModes: value.downloadModes };
   await chrome.storage.local.set({ settings });
   return settings;
 }
@@ -169,7 +169,7 @@ async function panelRequest(message) {
   }
   let value;
   if (message.type === "panel:download" && typeof message.id === "string" && /^\d{5,30}$/u.test(message.id)) {
-    value = await call("/v1/downloads", { method: "POST", body: JSON.stringify({ videoId: message.id, mode: message.mode }) }, true);
+    value = await call("/v1/downloads", { method: "POST", body: JSON.stringify({ videoId: message.id, quality: message.quality, mode: message.mode }) }, true);
   } else if (message.type === "panel:progress" && typeof message.id === "string" && /^[0-9a-f-]{36}$/u.test(message.id)) {
     value = await call(`/v1/downloads/${message.id}`, {}, true);
   } else return { error: "无效的作品或下载任务。" };

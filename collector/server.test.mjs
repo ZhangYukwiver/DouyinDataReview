@@ -735,8 +735,10 @@ describe("推荐流过滤扩展接口", () => {
     try {
       expect((await start(auth, { url: "https://example.com/test", playback: true })).status).toBe(400);
       const desktop = await (await start(headers, { url: "https://www.douyin.com/video/123456" })).json();
+      expect((await start(auth, { videoId: "123456", quality: "bad" })).status).toBe(400);
       expect((await start(auth, { videoId: "123456", mode: "bad" })).status).toBe(400);
-      const { job } = await (await start(auth, { videoId: "123456", mode: "split" })).json();
+      const { job } = await (await start(auth, { videoId: "123456", quality: "720p", mode: "split" })).json();
+      expect(run.mock.calls.map(([queued]) => queued.quality)).toEqual(["auto", "720p"]);
       expect(run.mock.calls.map(([queued]) => queued.mode)).toEqual(["combined", "split"]);
       const check = path => fetch(runtime.baseUrl + "/v1/downloads/" + path, { headers: auth });
       expect(await (await check(job.id)).json()).toEqual({ job: { id: job.id, status: "queued", fileName: null, error: null } });

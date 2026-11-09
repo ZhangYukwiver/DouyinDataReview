@@ -2,8 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
-import { DownloadModePicker } from "./DownloadModePicker";
-import type { DownloadMode } from "../../services/localCollector";
+import { defaultDownloadOptions, DownloadOptionsPicker } from "./DownloadOptionsPicker";
 import { createVideoBatchZip, downloadBytes, loadBatchVideoFiles, MAX_BATCH_VIDEOS, nextVideoBatch, runVideoBatch } from "../../services/batchVideoDownload";
 import { isDesktopApp } from "../../desktopRuntime";
 import { noteAchievementWorks } from "./achievements";
@@ -21,7 +20,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
 }) {
   const [{ items, offset, part }, setBatch] = useState(() => ({ ...nextVideoBatch(records, 0), part: 1 }));
   const [running, setRunning] = useState(false);
-  const [mode, setMode] = useState<DownloadMode>("combined");
+  const [options, setOptions] = useState(defaultDownloadOptions);
   const [stopping, setStopping] = useState(false);
   const [packing, setPacking] = useState(false);
   const [error, setError] = useState("");
@@ -58,7 +57,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
     setRunning(true); setStopping(false); setError("");
     try {
       await runVideoBatch(toDownload, {
-        load: (record, remaining) => loadBatchVideoFiles(connection, record, remaining, controller.current!.signal, keepExplore, mode),
+        load: (record, remaining) => loadBatchVideoFiles(connection, record, remaining, controller.current!.signal, keepExplore, options.mode, options.quality),
         shouldStop: () => stop.current,
         onUpdate: (next) => { if (mounted.current) setBatch((current) => ({ ...current, items: next })); },
       });
@@ -105,7 +104,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
       <View {...ws("w-dialog")} accessibilityViewIsModal style={styles.dialog} testID="batch-download-dialog">
         <Text accessibilityRole="header" style={styles.title}>批量下载视频</Text>
         <Text accessibilityLiveRegion="polite" style={styles.meta}>共选 {records.length} 个{savedRecords.size > 0 ? `，已保存 ${savedRecords.size} 个` : ""} · 第 {part} 包共 {items.length} 个 · 已完成 {complete} · 失败 {failed} · 待下载 {pending + overflow}</Text>
-        <DownloadModePicker value={mode} onChange={setMode} disabled={running || part > 1 || pending !== items.length} />
+        <DownloadOptionsPicker value={options} onChange={setOptions} disabled={running || part > 1 || pending !== items.length} />
         <Text style={styles.hint}>每个 ZIP 最多 {MAX_BATCH_VIDEOS} 个视频、合计 500 MB。下载期间请保持此页面打开。</Text>
         <Text style={styles.hint}>下载时会重新检查当前详情；公开且仍可访问的旧作品不受“发布后三小时”限制。约 3/24 小时是单条签名地址的估算有效期。详情拒绝时会停止，不复用旧地址；请确认自己有权保存和使用这些内容。</Text>
         <Text style={styles.hint}>ZIP 会附带脱敏的请求证据 `evidence.json`，不含签名 URL 或 Cookie；作品变为不可访问后的应急取回不在本功能范围内。</Text>

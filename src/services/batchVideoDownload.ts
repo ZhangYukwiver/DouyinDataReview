@@ -1,7 +1,7 @@
 import { Zip, ZipPassThrough } from "fflate";
 import type { PersonalVideoRecord } from "../domain/personalRecords";
 import type { ExploreConnection } from "./explorer";
-import { fetchCollectorVideoFiles, getCollectorVideoDownload, LocalCollectorError, startCollectorVideoDownload, type DownloadMode, type VideoDownloadFile, type VideoEvidenceEntry } from "./localCollector";
+import { fetchCollectorVideoFiles, getCollectorVideoDownload, LocalCollectorError, startCollectorVideoDownload, type DownloadMode, type DownloadQuality, type VideoDownloadFile, type VideoEvidenceEntry } from "./localCollector";
 
 export const MAX_BATCH_VIDEOS = 50;
 export const MAX_BATCH_BYTES = 500 * 1024 * 1024;
@@ -71,11 +71,11 @@ function wait(signal: AbortSignal): Promise<void> {
   });
 }
 
-export async function loadBatchVideoFiles(connection: ExploreConnection, record: PersonalVideoRecord, remainingBytes: number, signal: AbortSignal, keepExplore = false, mode: DownloadMode = "combined"): Promise<DownloadedWork> {
+export async function loadBatchVideoFiles(connection: ExploreConnection, record: PersonalVideoRecord, remainingBytes: number, signal: AbortSignal, keepExplore = false, mode: DownloadMode = "combined", quality: DownloadQuality = "auto"): Promise<DownloadedWork> {
   signal.throwIfAborted();
   if (remainingBytes <= 0) throw new LocalCollectorError("batch_size_limit", BATCH_FULL);
   const deadline = Date.now() + 15 * 60 * 1000;
-  let job = await startCollectorVideoDownload(connection.baseUrl, connection.token, record.url!, signal, false, keepExplore, mode);
+  let job = await startCollectorVideoDownload(connection.baseUrl, connection.token, record.url!, signal, false, keepExplore, mode, quality);
   while (job.status === "queued" || job.status === "running") {
     if (Date.now() >= deadline) throw new LocalCollectorError("timeout", "视频下载超时，请稍后重试。");
     await wait(signal);
