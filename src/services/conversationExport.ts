@@ -2,6 +2,16 @@ import { buildDataExport } from "./exportData";
 import type { CollectorSnapshot } from "./localCollector";
 import type { ChatConversationSummary, ChatMessage } from "../domain/chatRecords";
 
+const pad = (value: number) => String(value).padStart(2, "0");
+const localDay = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+
+/** 文本是给人读的，按这台电脑的时区写；JSON 保留原始 UTC。 */
+function localStamp(value: string | null): string {
+  const date = new Date(value ?? NaN);
+  if (!Number.isFinite(date.getTime())) return "时间未提供";
+  return `${localDay(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 /** Select by immutable conversation ID, never by nickname or visible list size. */
 export function buildConversationExport(conversation: ChatConversationSummary, messages: readonly ChatMessage[]) {
   if (conversation.kind !== "friend") throw new Error("仅支持导出好友的本地聊天记录。");
@@ -24,7 +34,7 @@ export function conversationText(data: ReturnType<typeof buildConversationExport
   for (const message of data.chatMessages) {
     const own = selfId && message.senderId === selfId;
     const sender = own ? "我" : message.senderName || "对方";
-    lines.push(`[${message.sentAt ?? "时间未提供"}] ${sender}`);
+    lines.push(`[${localStamp(message.sentAt)}] ${sender}`);
     lines.push(message.text || `[${message.type}]`);
     if (message.share?.title) lines.push(message.share.title);
     if (message.share?.url) lines.push(message.share.url);
@@ -36,7 +46,7 @@ export function conversationText(data: ReturnType<typeof buildConversationExport
 
 export function conversationExportName(name: string | null, extension: "json" | "txt"): string {
   const safe = (name || "好友聊天").replace(/[<>:"/\\|?*\u0000-\u001f]/gu, "_").replace(/[. ]+$/u, "").slice(0, 60) || "好友聊天";
-  return `抖音聊天_${safe}_${new Date().toISOString().slice(0, 10)}.${extension}`;
+  return `抖音聊天_${safe}_${localDay(new Date())}.${extension}`;
 }
 
 export function saveConversationExport(data: ReturnType<typeof buildConversationExport>, selfId: string | null, format: "json" | "txt"): void {

@@ -28,4 +28,13 @@ describe("single conversation export", () => {
     expect(conversationText(buildConversationExport(friend, [message(1)]), "self")).toContain("] 我\r\n测试 1");
     expect(conversationExportName('../a:<b>', "txt")).not.toMatch(/[<>:"/\\|?*]/u);
   });
+  it("writes text timestamps in local time and leaves JSON in UTC", () => {
+    const sentAt = "2026-11-09T18:30:05.000Z";
+    const data = buildConversationExport(friend, [{ ...message(1), sentAt }]);
+    const stamp = /\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\]/u.exec(conversationText(data, "self"));
+    // 不带时区后缀的时间按本地解析，能还原成同一时刻才算写对
+    expect(new Date(`${stamp?.[1]}T${stamp?.[2]}`).toISOString()).toBe(sentAt);
+    expect(data.chatMessages[0]?.sentAt).toBe(sentAt);
+    expect(conversationText(buildConversationExport(friend, [{ ...message(1), sentAt: null }]), "self")).toContain("[时间未提供]");
+  });
 });
