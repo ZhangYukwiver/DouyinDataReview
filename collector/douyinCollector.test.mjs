@@ -592,14 +592,14 @@ describe("login identity", () => {
       account: { id: "default", nickname: null, avatar: null, uid: null },
       onAccountIdentity,
     });
-    expect(collector.getStatus().account).toEqual({ id: "default", nickname: null, avatar: null });
+    expect(collector.getStatus().account).toEqual({ id: "default", uid: null, nickname: null, avatar: null });
     const page = { evaluate: vi.fn().mockResolvedValue({ uid: "123", secUid: "MS4w-x", nickname: "我", avatar }) };
     // 采集流程只等核对，不等名单落盘
     await collector.assertAccountMatches(page);
     expect(onAccountIdentity).toHaveBeenCalledWith({ uid: "123", secUid: "MS4w-x", nickname: "我", avatar });
-    expect(collector.getStatus().account).toEqual({ id: "default", nickname: null, avatar: null });
+    expect(collector.getStatus().account).toEqual({ id: "default", uid: null, nickname: null, avatar: null });
     finishWrite();
-    await vi.waitFor(() => expect(collector.getStatus().account).toEqual({ id: "default", nickname: "我", avatar }));
+    await vi.waitFor(() => expect(collector.getStatus().account).toEqual({ id: "default", uid: "123", nickname: "我", avatar }));
     const revision = collector.getStatus().revision;
     await collector.assertAccountMatches(page);
     expect(collector.getStatus().revision).toBe(revision);
@@ -608,7 +608,7 @@ describe("login identity", () => {
     await expect(collector.assertAccountMatches({ evaluate: vi.fn().mockRejectedValue(new Error("closed")) })).resolves.toBeUndefined();
     onAccountIdentity.mockImplementation(() => Promise.reject(new Error("disk full")));
     await expect(collector.assertAccountMatches({ evaluate: vi.fn().mockResolvedValue({ uid: "123", nickname: "改名了" }) })).resolves.toBeUndefined();
-    await vi.waitFor(() => expect(collector.getStatus().account).toEqual({ id: "default", nickname: "改名了", avatar }));
+    await vi.waitFor(() => expect(collector.getStatus().account).toEqual({ id: "default", uid: "123", nickname: "改名了", avatar }));
   });
 
   describe("when CDP imports another Douyin account", () => {

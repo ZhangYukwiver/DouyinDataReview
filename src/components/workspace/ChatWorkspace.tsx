@@ -55,6 +55,7 @@ import { ease, fx, useCountUp, ws } from "./motion";
 import { CHAT_EMOJI } from "../../domain/chatEmoji";
 import { renderEmojiText } from "./emojiText";
 import { SparkCardPreview } from "./SparkCardPreview";
+import { buildConversationExport, saveConversationExport } from "../../services/conversationExport";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 const CHAT_MESSAGE_RENDER_LIMIT = 320;
@@ -216,7 +217,9 @@ export function ChatWorkspace({
   onOpenSettings,
 }: ChatWorkspaceProps) {
   const rows = useMemo(() => buildChatConversationRows(messages, conversations), [conversations, messages]);
-  const selfId = useMemo(() => inferSelfId(messages), [messages]);
+  // Use the authenticated Douyin UID, not the local account directory ID or
+  // the most frequent sender (which can be a friend or the self-chat thread).
+  const selfId = status?.account?.uid?.trim() || null;
   const [sparkBoard, setSparkBoard] = useState(false);
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [query, setQuery] = useState("");
@@ -677,6 +680,7 @@ function ChatDetailPane({
 }) {
   const messageListRef = useRef<FlatList<ChatMessage>>(null);
   const [cardOpen, setCardOpen] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const stickToBottomRef = useRef(true);
   const group = row?.kind === "group" && live ? live : null;
   const groupMessages = useGroupMessages(group, row?.id ?? null);
@@ -721,6 +725,13 @@ function ChatDetailPane({
   }
 
   const visibleName = privacy ? (row.kind === "group" ? "群聊" : "好友") : row.name;
+  const exportConversation = (format: "json" | "txt") => {
+    try {
+      saveConversationExport(buildConversationExport({ id: row.id, kind: row.kind, name: row.name,
+        messageCount: row.messageCount, ownMessageCount: row.ownMessageCount }, row.messages), selfId, format);
+      setExportError(null);
+    } catch (error) { setExportError(error instanceof Error ? error.message : "导出失败，请重试。"); }
+  };
   const visibleMessages = group ? groupMessages.messages : row.messages.length > CHAT_MESSAGE_RENDER_LIMIT
     ? row.messages.slice(-CHAT_MESSAGE_RENDER_LIMIT)
     : row.messages;
@@ -755,6 +766,16 @@ function ChatDetailPane({
           </Text>
         </View>
         <View style={styles.detailHeaderActions}>
+          {Platform.OS === "web" && !privacy && row.kind === "friend" && row.messages.length > 0 ? <>
+            <Pressable {...ws("btn small")} accessibilityRole="button" accessibilityLabel="导出当前好友 JSON"
+              onPress={() => exportConversation("json")} style={styles.receptionButton} testID="chat-export-json">
+              <Text style={styles.receptionButtonText}>导出 JSON</Text>
+            </Pressable>
+            <Pressable {...ws("btn small")} accessibilityRole="button" accessibilityLabel="导出当前好友文本"
+              onPress={() => exportConversation("txt")} style={styles.receptionButton} testID="chat-export-text">
+              <Text style={styles.receptionButtonText}>导出文本</Text>
+            </Pressable>
+          </> : null}
           <View {...ws("stamp-ghost c-ro")} style={styles.readonlyBadge}>
             <ShieldCheck color={color.green} size={13} strokeWidth={2} />
             <Text style={styles.readonlyBadgeText}>{group ? "不存本机" : "本地保存"}</Text>
@@ -770,6 +791,7 @@ function ChatDetailPane({
         </View>
       </View>
 
+      {exportError ? <Text accessibilityRole="alert" style={styles.messageLimitNotice}>{exportError}</Text> : null}
       {privacy ? (
         <View {...ws("stamp-bar")} style={styles.privacyNotice}>
           <LockKeyhole color={color.cyan} size={15} strokeWidth={2} />
@@ -1719,21 +1741,8 @@ function ChatAvatar({
   );
 }
 
-function inferSelfId(messages: readonly ChatMessage[]): string | null {
-  const counts = new Map<string, number>();
-  for (const message of messages) {
-    const senderId = message.senderId?.trim();
-    if (senderId) counts.set(senderId, (counts.get(senderId) ?? 0) + 1);
-  }
-  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1]);
-  const first = ranked[0];
-  const second = ranked[1];
-  if (!first || first[1] < 2 || (second && first[1] < second[1] * 1.35)) return null;
-  return first[0];
-}
-
-function isOwnMessage(message: ChatMessage, selfId: string | null): boolean {
-  if (selfId && message.senderId === selfId) return true;
+export function isOwnMessage(message: ChatMessage, selfId: string | null): boolean {
+  if (selfId) return message.senderId?.trim() === selfId;
   return Boolean(message.senderName && /^(我|本人|自己)$/u.test(message.senderName.trim()));
 }
 

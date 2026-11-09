@@ -928,9 +928,9 @@ describe("saved Douyin accounts", () => {
 
     const added = await addCollectorAccount(baseUrl, "session-secret");
     expect(added.accounts.activeId).toBe("a1b2c3d4e5f6");
-    expect(added.status.account).toEqual({ id: "a1b2c3d4e5f6", nickname: null, avatar: null });
+    expect(added.status.account).toEqual({ id: "a1b2c3d4e5f6", uid: null, nickname: null, avatar: null });
     const switched = await activateCollectorAccount(baseUrl, "session-secret", "default");
-    expect(switched.status.account).toEqual({ id: "default", nickname: "我", avatar: "https://p3.douyinpic.com/me.jpeg" });
+    expect(switched.status.account).toEqual({ id: "default", uid: null, nickname: "我", avatar: "https://p3.douyinpic.com/me.jpeg" });
     await expect(removeCollectorAccount(baseUrl, "session-secret", "a1b2c3d4e5f6")).resolves.toMatchObject({ activeId: "default", accounts: [{ id: "default" }] });
 
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([

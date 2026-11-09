@@ -500,7 +500,7 @@ export class DouyinCollector {
       chat: { state: "idle", connection: null, message: null, progress: null, code: null },
       chatConnection: null,
       // 当前是哪个账号；昵称头像登录后从页面读到才有
-      account: account ? { id: account.id, nickname: account.nickname ?? null, avatar: account.avatar ?? null } : null,
+      account: account ? { id: account.id, uid: account.uid ?? null, nickname: account.nickname ?? null, avatar: account.avatar ?? null } : null,
     };
   }
 
@@ -904,7 +904,7 @@ export class DouyinCollector {
     } catch {
       // 回写账号列表失败不影响采集
     }
-    this.updateStatus({ account: { ...this.status.account, nickname, avatar } });
+    this.updateStatus({ account: { ...this.status.account, uid, nickname, avatar } });
   }
 
   // 只算要存成文件的下载；边下边播可以直接停掉
