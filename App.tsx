@@ -69,7 +69,8 @@ import {
   stopCollectorSync,
   stopCollectorChatObservation,
   removeCollectorAccount,
-  fetchCollectorVideoFile,
+  fetchCollectorVideoFiles,
+  type DownloadMode,
   setCollectorTokenRenewal,
   type CollectorAccounts,
   canReadCollector,
@@ -114,6 +115,8 @@ import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/s
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace, FeedWorkspace } from "./src/components/workspace/ExploreWorkspace";
 import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
+import { SingleDownloadDialog } from "./src/components/workspace/DownloadModePicker";
+import { zipVideoFiles } from "./src/services/batchVideoDownload";
 import { countAchievement, noteAchievementWorks, syncDataAchievements, unlockAchievement } from "./src/components/workspace/achievements";
 import { buildDataExportWithVoice, type DataExportSelection } from "./src/services/exportData";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
@@ -165,6 +168,13 @@ const RECONNECT_NOTICE = "抖音登录凭据失效了，打开工作台，在设
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function prepareVideoDownload(baseUrl: string, token: string, job: VideoDownloadJob, deadline?: number) {
+  const files = await fetchCollectorVideoFiles(baseUrl, token, job, deadline);
+  if (files.length === 1 || isDesktopApp()) return files;
+  const fileName = (job.fileName ?? "抖音视频").replace(/-画面\.mp4$/u, "") + "-音画分离.zip";
+  return [{ blob: await zipVideoFiles(files), fileName }];
 }
 
 function triggerBrowserDownload(blob: Blob, fileName: string | null): void {
@@ -309,6 +319,7 @@ function AppContent() {
   // 「送去拆片工坊」的进度，和下载一样按记录 id 记；同时在送的任务也记在 downloadInFlightRef 里（键带 reellab: 前缀）
   const [sendStates, setSendStates] = useState<Record<string, RecordDownloadState>>({});
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
+  const [downloadChoice, setDownloadChoice] = useState<{ record: PersonalVideoRecord; keepExplore: boolean } | null>(null);
   const [batchDownloadActive, setBatchDownloadActive] = useState(false);
   const [appStyle, setAppStyle] = useState<AppStyle>(() => (Platform.OS === "web" ? loadAppStyle() : "archive"));
   const [appUpdate, setAppUpdate] = useState<DesktopUpdateState | null>(null);
@@ -1230,6 +1241,7 @@ function AppContent() {
     const token = collectorToken;
     if (!token) return;
     userDisconnectedRef.current = true;
+    setDownloadChoice(null);
     pendingManualSyncRef.current = false;
     pollRequest.current += 1;
     downloadRequestRef.current += 1;
@@ -1290,6 +1302,7 @@ function AppContent() {
 
   // 已经换到别的账号了：旧账号留在前端的东西（下载、续火花、报告、导入的文件、冻结的旧样本）收掉，免得串到新账号上
   function forgetPreviousAccount() {
+    setDownloadChoice(null);
     downloadRequestRef.current += 1;
     downloadInFlightRef.current.clear();
     sparkRenewJob.reset();
@@ -1681,7 +1694,7 @@ function AppContent() {
     setDownloadStates((current) => ({ ...current, [recordId]: state }));
   }
 
-  async function downloadRecord(record: PersonalVideoRecord, keepExplore = false): Promise<void> {
+  async function downloadRecord(record: PersonalVideoRecord, keepExplore = false, mode?: DownloadMode): Promise<void> {
     if (Platform.OS !== "web") {
       showAlert("暂不支持下载", "请在桌面 Web 工作台中将视频保存到本地。");
       return;
@@ -1700,12 +1713,16 @@ function AppContent() {
     if (downloadInFlightRef.current.has(record.id)) return;
     const existing = downloadJobs[record.id];
     if (existing?.status === "queued" || existing?.status === "running") return;
+    if (!mode && record.mediaType !== "image") {
+      setDownloadChoice({ record, keepExplore });
+      return;
+    }
 
     const requestId = downloadRequestRef.current;
     downloadInFlightRef.current.add(record.id);
     markDownloadState(record.id, "queued");
     try {
-      let job = await startCollectorVideoDownload(baseUrl, token, sourceUrl, undefined, false, keepExplore);
+      let job = await startCollectorVideoDownload(baseUrl, token, sourceUrl, undefined, false, keepExplore, mode);
       if (downloadRequestRef.current !== requestId) return;
       rememberDownloadJob(record.id, job);
 
@@ -1724,9 +1741,9 @@ function AppContent() {
         throw new LocalCollectorError(job.errorCode ?? "download_failed", job.error ?? "视频下载失败，请稍后重试。");
       }
 
-      const file = await fetchCollectorVideoFile(baseUrl, token, job.id);
+      const files = await prepareVideoDownload(baseUrl, token, job, deadline);
       if (downloadRequestRef.current !== requestId) return;
-      triggerBrowserDownload(file.blob, file.fileName ?? job.fileName);
+      for (const file of files) triggerBrowserDownload(file.blob, file.fileName);
       markDownloadState(record.id, "complete");
       noteAchievementWorks("download", [record.videoId || record.id]);
     } catch (error) {
@@ -1959,8 +1976,9 @@ function AppContent() {
   async function saveAssistantDownload(id: string, fileName: string | null) {
     if (!collectorToken) return;
     try {
-      const file = await fetchCollectorVideoFile(collectorUrl, collectorToken, id);
-      triggerBrowserDownload(file.blob, file.fileName ?? fileName);
+      const job = await getCollectorVideoDownload(collectorUrl, collectorToken, id);
+      const files = await prepareVideoDownload(collectorUrl, collectorToken, job);
+      for (const file of files) triggerBrowserDownload(file.blob, file.fileName ?? fileName);
     } catch (error) {
       showAlert("没保存下来", collectorErrorMessage(error));
     }
@@ -2188,6 +2206,11 @@ function AppContent() {
           connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
           onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} />}
       {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={closeDataExport} onExport={exportSelectedData} progress={exportProgress} /> : null}
+      {downloadChoice ? <SingleDownloadDialog title={privacy ? undefined : downloadChoice.record.title} onClose={() => setDownloadChoice(null)}
+        onDownload={mode => {
+          setDownloadChoice(null);
+          void downloadRecord(downloadChoice.record, downloadChoice.keepExplore, mode);
+        }} /> : null}
     </SafeAreaView>
   );
 }

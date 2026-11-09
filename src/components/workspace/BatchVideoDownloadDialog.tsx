@@ -2,7 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreConnection } from "../../services/explorer";
-import { createVideoBatchZip, loadBatchVideoFile, MAX_BATCH_VIDEOS, nextVideoBatch, runVideoBatch } from "../../services/batchVideoDownload";
+import { DownloadModePicker } from "./DownloadModePicker";
+import type { DownloadMode } from "../../services/localCollector";
+import { createVideoBatchZip, downloadBytes, loadBatchVideoFiles, MAX_BATCH_VIDEOS, nextVideoBatch, runVideoBatch } from "../../services/batchVideoDownload";
 import { isDesktopApp } from "../../desktopRuntime";
 import { noteAchievementWorks } from "./achievements";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -19,6 +21,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
 }) {
   const [{ items, offset, part }, setBatch] = useState(() => ({ ...nextVideoBatch(records, 0), part: 1 }));
   const [running, setRunning] = useState(false);
+  const [mode, setMode] = useState<DownloadMode>("combined");
   const [stopping, setStopping] = useState(false);
   const [packing, setPacking] = useState(false);
   const [error, setError] = useState("");
@@ -42,7 +45,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
   const failed = items.filter((item) => item.status === "failed" && item.code !== "batch_size_limit").length;
   const overflow = items.filter((item) => item.code === "batch_size_limit").length;
   const pending = items.filter((item) => item.status === "pending").length;
-  const bytes = items.reduce((total, item) => total + (item.file?.blob.size ?? 0), 0);
+  const bytes = items.reduce((total, item) => total + downloadBytes(item.download), 0);
   const saved = complete > 0 && items.every((item) => item.status !== "complete" || savedRecords.has(item.record));
   const full = overflow > 0;
   const hasNext = full || offset < records.length;
@@ -55,7 +58,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
     setRunning(true); setStopping(false); setError("");
     try {
       await runVideoBatch(toDownload, {
-        load: (record, remaining) => loadBatchVideoFile(connection, record, remaining, controller.current!.signal, keepExplore),
+        load: (record, remaining) => loadBatchVideoFiles(connection, record, remaining, controller.current!.signal, keepExplore, mode),
         shouldStop: () => stop.current,
         onUpdate: (next) => { if (mounted.current) setBatch((current) => ({ ...current, items: next })); },
       });
@@ -102,6 +105,7 @@ export function BatchVideoDownloadDialog({ records, connection, onClose, privacy
       <View {...ws("w-dialog")} accessibilityViewIsModal style={styles.dialog} testID="batch-download-dialog">
         <Text accessibilityRole="header" style={styles.title}>批量下载视频</Text>
         <Text accessibilityLiveRegion="polite" style={styles.meta}>共选 {records.length} 个{savedRecords.size > 0 ? `，已保存 ${savedRecords.size} 个` : ""} · 第 {part} 包共 {items.length} 个 · 已完成 {complete} · 失败 {failed} · 待下载 {pending + overflow}</Text>
+        <DownloadModePicker value={mode} onChange={setMode} disabled={running || part > 1 || pending !== items.length} />
         <Text style={styles.hint}>每个 ZIP 最多 {MAX_BATCH_VIDEOS} 个视频、合计 500 MB。下载期间请保持此页面打开。</Text>
         <Text style={styles.hint}>下载时会重新检查当前详情；公开且仍可访问的旧作品不受“发布后三小时”限制。约 3/24 小时是单条签名地址的估算有效期。详情拒绝时会停止，不复用旧地址；请确认自己有权保存和使用这些内容。</Text>
         <Text style={styles.hint}>ZIP 会附带脱敏的请求证据 `evidence.json`，不含签名 URL 或 Cookie；作品变为不可访问后的应急取回不在本功能范围内。</Text>

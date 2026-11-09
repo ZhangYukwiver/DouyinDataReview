@@ -939,6 +939,10 @@ export class DouyinCollector {
   scheduleVideoDownloadFileCleanup(job) {
     if (typeof job?.filePath !== "string" || !job.filePath) return;
     const downloadsDirectory = path.resolve(this.dataDirectory, "downloads");
+    if (job.trackDirectory && path.dirname(path.resolve(job.trackDirectory)) === downloadsDirectory && path.basename(job.trackDirectory).startsWith("tracks-")) {
+      void rm(job.trackDirectory, { recursive: true, force: true }).catch(() => undefined);
+      return;
+    }
     const resolved = path.resolve(job.filePath);
     if (resolved === downloadsDirectory || !resolved.startsWith(`${downloadsDirectory}${path.sep}`)) return;
     void rm(resolved, { force: true }).catch(() => undefined);
@@ -985,6 +989,8 @@ export class DouyinCollector {
       sourceUrl: job.sourceUrl,
       status: job.status,
       fileName: job.fileName,
+      ...(job.mode && job.mode !== "combined" ? { mode: job.mode } : {}),
+      ...(job.files ? { fileNames: job.files.map(file => file.fileName) } : {}),
       bytes: job.bytes,
       errorCode: job.errorCode,
       error: job.error,
@@ -1008,7 +1014,7 @@ export class DouyinCollector {
     return this.publicVideoDownloadJob(job);
   }
 
-  startVideoDownload(sourceUrl, { playback = false, saveCopy } = {}) {
+  startVideoDownload(sourceUrl, { playback = false, saveCopy, mode = "combined" } = {}) {
     this.assertReadPermission("videos");
     const normalizedSourceUrl = normalizeDouyinVideoUrl(sourceUrl);
     if (this.visibleBrowserWorkRunning()) {
@@ -1020,6 +1026,7 @@ export class DouyinCollector {
       id: randomUUID(),
       playback,
       saveCopy,
+      mode,
       ...(playback ? { streamKey: randomBytes(24).toString("base64url") } : {}),
       sourceUrl: normalizedSourceUrl,
       status: "queued",
@@ -1079,16 +1086,19 @@ export class DouyinCollector {
     this.pruneVideoDownloadJobs();
     const job = this.videoDownloadJobs.get(jobId);
     if (extensionOnly) return job?.saveCopy
-      ? { id: job.id, status: job.status, fileName: job.savedFileName ?? null, error: job.error } : null;
+      ? { id: job.id, status: job.status, fileName: job.savedFileNames?.[0] ?? null,
+        ...(job.savedFileNames?.length > 1 ? { fileNames: job.savedFileNames } : {}), error: job.error } : null;
     return this.publicVideoDownloadJob(job);
   }
 
-  getVideoDownloadFilePath(jobId) {
+  getVideoDownloadFilePath(jobId, index = 0) {
     const job = this.videoDownloadJobs.get(jobId);
     if (!job || job.status !== "complete" || !job.filePath) return null;
+    const filePath = index === 0 ? job.filePath : job.files?.[index]?.filePath;
+    if (!filePath) return null;
     const downloadsDirectory = path.resolve(this.dataDirectory, "downloads");
-    const resolved = path.resolve(job.filePath);
-    if (resolved !== downloadsDirectory && !resolved.startsWith(`${downloadsDirectory}${path.sep}`)) return null;
+    const resolved = path.resolve(filePath);
+    if (!resolved.startsWith(`${downloadsDirectory}${path.sep}`)) return null;
     return resolved;
   }
 
@@ -1136,14 +1146,19 @@ export class DouyinCollector {
       const result = job.playback ? {} : await downloadDouyinVideo({
         context,
         sourceUrl: job.sourceUrl,
+        mode: job.mode,
         outputDirectory: path.join(this.dataDirectory, "downloads"),
         signal: controller.signal,
         onProgress: (bytes) => this.touchVideoDownloadJob(job, { bytes }),
         onEvidence: (entry) => this.touchVideoDownloadJob(job, { evidence: [...(job.evidence ?? []), entry].slice(-20) }),
       });
+      if (result.files) {
+        job.files = result.files;
+        job.trackDirectory = result.trackDirectory;
+      }
       if (job.saveCopy) {
         job.filePath = result.filePath;
-        try { job.savedFileName = await job.saveCopy(result.filePath, result.fileName); }
+        try { job.savedFileNames = await job.saveCopy(result.files ?? [result]); }
         catch { throw new VideoDownloadError("save_failed", "无法写入视频下载目录，请检查应用里的下载位置和磁盘空间。"); }
       }
       this.touchVideoDownloadJob(job, {

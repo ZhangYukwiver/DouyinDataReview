@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pageNeedsVerification, prepareReadOnlyPage } from "./readOnlyPage.mjs";
 import { Readable, Transform } from "node:stream";
@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { zipSync } from "fflate";
 import { makeVideoDetailEvidence, makeVideoMediaEvidence } from "./videoEvidence.mjs";
+import downloadModes from "./downloadModes.json" with { type: "json" };
 
 const MAX_SOURCE_URL_LENGTH = 2_048;
 const MAX_TITLE_LENGTH = 90;
@@ -807,6 +808,56 @@ async function downloadImageAlbum({ images, outputDirectory, fileName, referer, 
   return { filePath, fileName, bytes: zip.length, skipped: false };
 }
 
+// 在任务自己的目录内逐轨封装，保留编码和时间戳。整组文件准备好之后才交给保存端。
+async function downloadSelectedTracks(options, mode) {
+  const { fileName, outputDirectory, signal } = options;
+  const { Input, MP4, MATROSKA, FilePathSource, Output, Mp4OutputFormat, PathedTarget, FilePathTarget, Conversion } = await import("mediabunny");
+  await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
+  const directory = await mkdtemp(path.join(outputDirectory, "tracks-"));
+  try {
+    const source = await downloadMediaFile({ ...options, outputDirectory: directory, fileName: "source.mp4" });
+    const input = new Input({ formats: [MP4, MATROSKA], source: new FilePathSource(source.filePath) });
+    const files = [];
+    try {
+      for (const kind of mode === "split" ? ["video", "audio"] : [mode]) {
+        signal?.throwIfAborted();
+        const audio = kind === "audio";
+        const track = audio ? await input.getPrimaryAudioTrack() : await input.getPrimaryVideoTrack();
+        if (!track) throw new VideoDownloadError("track_missing", audio ? "这个视频没有音轨。" : "这个文件没有视频轨。", { retryable: false });
+        const extension = audio ? ".m4a" : ".mp4";
+        const filePath = path.join(directory, kind + extension);
+        const conversion = await Conversion.init({
+          input,
+          output: new Output({
+            format: new Mp4OutputFormat({ fastStart: false }),
+            target: new PathedTarget(filePath, () => new FilePathTarget(filePath)),
+          }),
+          tracks: "primary", video: { discard: audio }, audio: { discard: !audio },
+          trim: { start: 0 }, copy: { mode: "forced" }, tags: {}, showWarnings: false,
+        });
+        if (!conversion.isValid) throw new VideoDownloadError("unsupported_track", "该媒体编码暂不支持音画分离。", { retryable: false });
+        const cancel = () => { void conversion.cancel().catch(() => {}); };
+        signal?.throwIfAborted();
+        signal?.addEventListener("abort", cancel, { once: true });
+        try { await conversion.execute(); }
+        catch (error) {
+          await conversion.output.cancel();
+          throw error;
+        }
+        finally { signal?.removeEventListener("abort", cancel); }
+        files.push({ filePath, fileName: path.parse(fileName).name + (audio ? "-音频" : "-画面") + extension, bytes: (await stat(filePath)).size });
+      }
+    } finally { input.dispose(); }
+    await rm(source.filePath);
+    return { ...files[0], files, trackDirectory: directory, bytes: files.reduce((sum, file) => sum + file.bytes, 0) };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    if (signal?.aborted) throw new VideoDownloadError("download_aborted", "视频下载已取消。");
+    if (error instanceof VideoDownloadError) throw error;
+    throw new VideoDownloadError("track_export_failed", "音画分离失败，请检查视频文件和可用磁盘空间。");
+  }
+}
+
 export async function downloadDouyinVideo({
   context,
   sourceUrl,
@@ -817,7 +868,9 @@ export async function downloadDouyinVideo({
   mediaWaitMs,
   timeoutMs,
   onEvidence,
+  mode = "combined",
 } = {}) {
+  if (typeof mode !== "string" || !Object.hasOwn(downloadModes, mode)) throw new VideoDownloadError("invalid_mode", "请选择支持的下载方式。", { retryable: false });
   const parsed = await discoverDouyinVideo(context, sourceUrl, { pageTimeoutMs, mediaWaitMs, signal, onEvidence });
   signal?.throwIfAborted();
   const fileName = makeVideoFileName({
@@ -826,9 +879,14 @@ export async function downloadDouyinVideo({
     sourceUrl: parsed.sourceUrl,
   });
   const referer = parsed.canonicalUrl || "https://www.douyin.com/";
+  const options = { context, media: parsed.media, outputDirectory, fileName, referer, signal, onProgress, onEvidence, timeoutMs };
+  if (mode !== "combined") {
+    if (parsed.images) throw new VideoDownloadError("not_video", "这是图文作品，请选择默认下载方式保存图片。", { retryable: false });
+    return { ...parsed, ...await downloadSelectedTracks(options, mode) };
+  }
   const downloaded = parsed.images
     ? await downloadImageAlbum({ images: parsed.images, outputDirectory, fileName: fileName.replace(/\.mp4$/u, ".zip"), referer, signal, onProgress })
-    : await downloadMediaFile({ context, media: parsed.media, outputDirectory, fileName, referer, signal, onProgress, onEvidence, timeoutMs });
+    : await downloadMediaFile(options);
   return { ...parsed, ...downloaded };
 }
 

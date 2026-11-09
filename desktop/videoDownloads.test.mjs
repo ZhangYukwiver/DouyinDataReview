@@ -8,6 +8,7 @@ import { isVideoDownload, readVideoDownloadDirectory, uniqueSavePath, writeVideo
 it("视频和 zip 进下载文件夹、同名不覆盖、设置坏了退回默认", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "video-downloads-"));
   expect(isVideoDownload("a.mp4")).toBe(true);
+  expect(isVideoDownload("作品-音频.m4a")).toBe(true);
   expect(isVideoDownload("抖音视频_3个.ZIP")).toBe(true);
   expect(isVideoDownload("抖音数据.json")).toBe(false);
 

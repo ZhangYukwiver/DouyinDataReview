@@ -13,7 +13,7 @@ import { syncFeedExtension } from "./feedExtension.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
 import { REELLAB_INBOX_URL, REELLAB_PROTOCOL, sendToReelLab } from "./reelLab.mjs";
 import { startStaticServer } from "./staticServer.mjs";
-import { isVideoDownload, readVideoDownloadDirectory, saveVideoCopy, uniqueSavePath, writeVideoDownloadDirectory } from "./videoDownloads.mjs";
+import { isVideoDownload, readVideoDownloadDirectory, saveVideoCopies, uniqueSavePath, writeVideoDownloadDirectory } from "./videoDownloads.mjs";
 import { isSameOriginUrl, isStoryUrl } from "./windowPolicy.mjs";
 
 const APP_ID = "com.zhangyukwiver.contentinsights";
@@ -279,7 +279,7 @@ async function startDesktopRuntime() {
   const collector = await startCollectorServer({
     port: COLLECTOR_PORT,
     feedExtensionVersion,
-    saveExtensionDownload: (source, name) => saveVideoCopy(videoDownloadDirectory(), source, name, savingVideos),
+    saveExtensionDownload: files => saveVideoCopies(videoDownloadDirectory(), files, savingVideos),
     randomPortFallback: true,
     dataDirectory: path.join(app.getPath("userData"), "collector"),
     signerDirectory: app.isPackaged ? path.join(process.resourcesPath, "direct-signer") : undefined,
@@ -374,7 +374,7 @@ async function launch() {
       event.sender.startDrag({ file: feedExtensionDirectory(), icon: nativeImage.createFromPath(path.join(feedExtensionDirectory(), "icon-128.png")).resize({ width: 64 }) });
     } catch { /* 拖不起来就什么都不做 */ }
   });
-  // 视频下载位置：默认 系统下载/抖音视频，设置 → 数据里可改；页面存 mp4/zip 时直接存进去
+  // 单条媒体和 ZIP 都存到设置 → 数据里选的目录。
   session.defaultSession.on("will-download", (_event, item) => {
     if (!isVideoDownload(item.getFilename())) return;
     try {
