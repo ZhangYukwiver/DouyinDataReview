@@ -79,6 +79,7 @@ import { RecordVideoPlayer, type RecordVideoLoader } from "./RecordVideoPlayer";
 import { LiveRoomPlayer, type LiveTarget } from "./LiveRoomPlayer";
 import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../services/liveRoom";
 import { waitForCollector } from "../../services/videoFeed";
+import { useRecordCover } from "../../services/recordCovers";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
 import { uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import { BatchDownloadRangePicker } from "./BatchDownloadRangePicker";
@@ -1104,6 +1105,8 @@ function RecordsGallery({
   width: number;
 }) {
   const [layout, setLayout] = useState<"grid" | "list">("grid");
+  // 重新导入凭据后也重新尝试失败的封面，不必切走内容库。
+  const coverOwner = JSON.stringify([status?.account?.id, status?.browserSource?.credentials]);
   const columns = mobile ? 2 : width < 760 ? 3 : width < 1120 ? 4 : 5;
   // 网格每行的 key 是这一行几条记录的 id 拼起来的：插进不满一行的新记录，下面每一行都要整个重挂、封面重新加载。
   // 新读到的凑满整行才放上去，零头等下一页，读完整份刷新时一起出来
@@ -1528,10 +1531,12 @@ function RecordsGallery({
               onOpenRecord={handlers.open}
               privacy={privacy}
               record={item}
+              coverConnection={commentsConnection}
+              coverOwner={coverOwner}
               type={activeType}
               enter={enterOrder.get(item.id)}
             />
-          : <RecordRow enter={enterOrder.get(item.id)} folderName={folderName} onFolderMenu={onFolderMenu} selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} />;
+          : <RecordRow enter={enterOrder.get(item.id)} folderName={folderName} onFolderMenu={onFolderMenu} selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} coverConnection={commentsConnection} coverOwner={coverOwner} />;
       }}
       // 上万条记录靠滚轮翻太慢，留一条常驻、能拖的滚动条（样式见 motionCss 的 data-scrollbar）
       {...{ dataSet: { scrollbar: "" } }}
@@ -1657,6 +1662,8 @@ const RecordTile = memo(function RecordTile({
   onFolderMenu,
   onPlayRecord,
   record,
+  coverConnection,
+  coverOwner,
   type,
   privacy,
   onOpenRecord,
@@ -1676,20 +1683,22 @@ const RecordTile = memo(function RecordTile({
   onFolderMenu?: (record: PersonalVideoRecord, at: MenuPoint) => void;
   onPlayRecord?: (record: PersonalVideoRecord) => void;
   record: PersonalVideoRecord;
+  coverConnection?: ExploreConnection | null;
+  coverOwner?: string;
   type: PersonalRecordType;
   privacy: boolean;
   onOpenRecord: (url: string) => Promise<void>;
   /** 读取中刚放上来的第几条，进场按它错开 */
   enter?: number;
 }) {
-  const [imageFailed, setImageFailed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const tileRef = useRef<View | null>(null);
   const [, inView] = useInView(tileRef);
+  const { coverUrl, onError: onCoverError } = useRecordCover(record, coverConnection, coverOwner, inView && !privacy);
   const focusCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accent = type === "liked_videos" ? color.accent : type === "favorite_videos" ? color.amber : color.cyan;
-  const imageAvailable = Boolean(record.coverUrl && !privacy && !imageFailed);
+  const imageAvailable = Boolean(coverUrl);
   const downloading = downloadState === "queued" || downloadState === "running";
   const showActions = !selection && Platform.OS === "web" && Boolean(record.url) && !privacy && (hovered || focused);
   const downloadLabel = downloading
@@ -1757,9 +1766,9 @@ const RecordTile = memo(function RecordTile({
             <ImageBackground
               accessibilityLabel={privacy ? "已隐藏的视频封面" : `${record.title}的视频封面`}
               imageStyle={[styles.tileImage, easeImage("transform", 900), hovered && styles.tileImageZoom]}
-              onError={() => setImageFailed(true)}
+              onError={onCoverError}
               resizeMode="cover"
-              source={{ uri: record.coverUrl! }}
+              source={{ uri: coverUrl! }}
               style={styles.tileImage}
             />
           ) : (
@@ -1876,9 +1885,11 @@ const RecordTile = memo(function RecordTile({
   );
 });
 
-const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, selection, folderName, onFolderMenu, enter }: {
+const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, selection, folderName, onFolderMenu, enter, coverConnection, coverOwner }: {
   enter?: number;
   record: PersonalVideoRecord;
+  coverConnection?: ExploreConnection | null;
+  coverOwner?: string;
   type: PersonalRecordType;
   privacy: boolean;
   onOpenRecord: (url: string) => Promise<void>;
@@ -1886,11 +1897,13 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
   folderName?: string;
   onFolderMenu?: (record: PersonalVideoRecord, at: MenuPoint) => void;
 }) {
-  const [imageFailed, setImageFailed] = useState(false);
+  const [rowRef, inView] = useInView();
+  const { coverUrl, onError: onCoverError } = useRecordCover(record, coverConnection, coverOwner, inView && !privacy);
   const accent = type === "liked_videos" ? color.accent : type === "favorite_videos" ? color.amber : color.cyan;
-  const imageAvailable = Boolean(record.coverUrl && !privacy && !imageFailed);
+  const imageAvailable = Boolean(coverUrl);
   return (
     <Pressable
+      ref={rowRef}
       accessibilityLabel={selection ? `${selection.disabled && !selection.checked ? "不可选择" : "选择视频"}：${record.title}` : `${privacy ? "已隐藏内容" : record.title}${record.url ? "，打开抖音视频" : ""}`}
       accessibilityRole={selection ? "checkbox" : record.url ? "link" : undefined}
       accessibilityState={selection ? { checked: selection.checked, disabled: selection.disabled } : undefined}
@@ -1904,7 +1917,7 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
       {selection ? <SelectionMark selection={selection} /> : null}
       <View {...ws("w-thumb")} style={[styles.rowThumb, { backgroundColor: fallbackColor(record.id) }]}>
         {imageAvailable ? (
-          <ImageBackground onError={() => setImageFailed(true)} resizeMode="cover" source={{ uri: record.coverUrl! }} style={styles.rowThumbImage} />
+          <ImageBackground onError={onCoverError} resizeMode="cover" source={{ uri: coverUrl! }} style={styles.rowThumbImage} />
         ) : <Music2 color={accent} size={22} />}
       </View>
       <View style={styles.rowCopy}>
