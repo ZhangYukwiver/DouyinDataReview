@@ -53,7 +53,7 @@ export interface CollectorStatus {
   /** 聊天接收自己的一份状态，和记录读取、视频下载互不影响 */
   chat: CollectorChatStatus;
   /** 正在用的抖音账号；老版本采集器没有这一项 */
-  account?: { id: string; nickname: string | null; avatar: string | null } | null;
+  account?: { id: string; uid?: string | null; nickname: string | null; avatar: string | null } | null;
   browserSource?: { mode: "independent" | "cdp"; browser: BrowserLoginSource["id"] | null; connected: boolean;
     credentials?: "ready" | "exporting" | "reconnect_required" };
 }
@@ -736,7 +736,7 @@ const ACCOUNT_ID = /^(?:default|[0-9a-f]{12})$/u;
 
 function parseStatusAccount(value: unknown): CollectorStatus["account"] {
   if (!isObject(value) || typeof value.id !== "string" || !ACCOUNT_ID.test(value.id)) return null;
-  return { id: value.id, nickname: cleanRecordString(value.nickname, 100), avatar: parseImageUrl(value.avatar) };
+  return { id: value.id, uid: cleanRecordString(value.uid, 100), nickname: cleanRecordString(value.nickname, 100), avatar: parseImageUrl(value.avatar) };
 }
 
 function parseAccounts(value: unknown): CollectorAccounts {
