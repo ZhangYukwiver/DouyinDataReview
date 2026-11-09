@@ -81,7 +81,7 @@ describe("collector accounts", () => {
     expect(initial.body.accounts).toHaveLength(1);
     expect((await call("/v1/records")).body.records.liked_videos).toHaveLength(1);
     const before = (await call("/v1/status")).body;
-    expect(before.account).toEqual({ id: "default", nickname: null, avatar: null });
+    expect(before.account).toEqual({ id: "default", uid: null, nickname: null, avatar: null });
 
     // 工作台一直挂着状态长轮询；切换时它要直接拿到新账号的状态
     let settled = false;
@@ -95,7 +95,7 @@ describe("collector accounts", () => {
     const newId = created.body.activeId;
     expect(newId).toMatch(/^[0-9a-f]{12}$/u);
     expect(created.body.accounts.map((account) => account.id)).toEqual(["default", newId]);
-    expect(created.body.status.account).toEqual({ id: newId, nickname: null, avatar: null });
+    expect(created.body.status.account).toEqual({ id: newId, uid: null, nickname: null, avatar: null });
     expect(created.body.status.revision).toBeGreaterThan(before.revision);
     const polled = await polling;
     expect(polled.account.id).toBe(newId);
@@ -185,14 +185,14 @@ describe("collector accounts", () => {
       const avatar = "https://p3-pc-sign.douyinpic.com/aweme/100x100/me.jpeg";
       await opened.at(-1).assertAccountMatches({ evaluate: async () => ({ uid: "123456789012345", secUid: "MS4w-me", nickname: "我", avatar }) });
       // 状态里出现新昵称时，名单已经落盘
-      await vi.waitFor(async () => expect((await call("/v1/status")).body.account).toEqual({ id: "default", nickname: "我", avatar }));
+      await vi.waitFor(async () => expect((await call("/v1/status")).body.account).toEqual({ id: "default", uid: "123456789012345", nickname: "我", avatar }));
       expect((await call("/v1/accounts")).body.accounts[0]).toMatchObject({
         id: "default", nickname: "我", avatar, uid: "123456789012345",
       });
       // 重开采集服务也还认得
       const restarted = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath });
       runtimes.push(restarted);
-      expect(opened.at(-1).getStatus().account).toEqual({ id: "default", nickname: "我", avatar });
+      expect(opened.at(-1).getStatus().account).toEqual({ id: "default", uid: "123456789012345", nickname: "我", avatar });
     } finally {
       spy.mockRestore();
     }
