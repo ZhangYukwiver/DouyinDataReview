@@ -4,6 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { CREATOR_ENDPOINTS } from "../creatorCenter.mjs";
+import downloadModes from "../downloadModes.json" with { type: "json" };
 import { MAX_FOLDERS, MAX_ITEMS } from "../recordFolders.mjs";
 import { buildDataExport, transcribeExportVoices } from "../dataExport.mjs";
 
@@ -525,9 +526,10 @@ export const TOOLS = [
     kind: "local",
     def: fn("download_video", "把一条抖音作品下载到本机（等下完再返回，最多 5 分钟）。下完用户可以在对话里点「保存」存到自己的文件夹。", {
       url: { type: "string", description: "作品链接；只有作品 id 时写成 https://www.douyin.com/video/<id>" },
+      mode: { type: "string", enum: Object.keys(downloadModes), description: Object.entries(downloadModes).map(([key, label]) => key + " " + label).join(" / ") },
     }, ["url"]),
     async run(ctx, args, signal) {
-      const started = await ctx.api("POST", "/v1/downloads", { url: args.url });
+      const started = await ctx.api("POST", "/v1/downloads", { url: args.url, ...(args.mode !== undefined ? { mode: args.mode } : {}) });
       if (!started.ok) return apiFailure(started);
       const deadline = Date.now() + DOWNLOAD_WAIT_MS;
       let job = started.body.job;
@@ -539,7 +541,8 @@ export const TOOLS = [
       }
       if (job?.status === "failed") return fail(job.errorCode ?? "download_failed", job.error ?? "没下载下来。");
       if (job?.status !== "complete") return fail("download_slow", "5 分钟还没下完，还在后台下着，过会儿再看。");
-      return { ok: true, downloadId: job.id, fileName: job.fileName, megabytes: job.bytes ? Math.round(job.bytes / 1e5) / 10 : null };
+      return { ok: true, downloadId: job.id, fileName: job.fileName, ...(job.fileNames ? { fileNames: job.fileNames } : {}),
+        megabytes: job.bytes ? Math.round(job.bytes / 1e5) / 10 : null };
     },
   },
   {

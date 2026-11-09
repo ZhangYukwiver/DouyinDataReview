@@ -13,6 +13,7 @@ const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|
 const runtimeDependencyRoots = new Set([
   "ws",
   "fflate",
+  "mediabunny",
   "electron-updater",
   "builder-util-runtime",
   "debug",
@@ -100,6 +101,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     "extension/filter.js", // 刷视频和扩展共用的词条匹配，采集器一启动就要加载
     "desktop/updateProvider.mjs", "docs/downloadSources.mjs",
     "node_modules/ws/index.js",
+    "collector/downloadModes.json", "node_modules/mediabunny/dist/modules/src/index.js",
     "node_modules/ws/wrapper.mjs", "node_modules/ws/lib/websocket.js",
   ]) {
     assert.deepEqual(extractFile(archive, relative), await readFile(path.join(sourceDirectory, relative)), `Outdated packaged source: ${relative}`);

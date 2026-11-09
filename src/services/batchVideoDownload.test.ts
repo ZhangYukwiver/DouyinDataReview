@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { unzipSync } from "fflate";
 import type { PersonalVideoRecord } from "../domain/personalRecords";
 import { LocalCollectorError } from "./localCollector";
-import { createVideoBatchZip, loadBatchVideoFile, MAX_BATCH_BYTES, nextVideoBatch, runVideoBatch, uniqueDownloadVideos, type BatchItem } from "./batchVideoDownload";
+import { createVideoBatchZip, loadBatchVideoFiles, MAX_BATCH_BYTES, nextVideoBatch, runVideoBatch, uniqueDownloadVideos, type BatchItem } from "./batchVideoDownload";
 
 const record = (id: string, extra: Partial<PersonalVideoRecord> = {}): PersonalVideoRecord => ({ id, title: `视频 ${id}`, author: null, occurredAt: null, mediaType: "video", url: `https://www.douyin.com/video/${id}`, ...extra });
-const file = (text = "video bytes") => ({ blob: new Blob([text], { type: "video/mp4" }), fileName: "相同标题.mp4" });
+const work = (text = "video bytes", fileName = "相同标题.mp4") => ({ files: [{ blob: new Blob([text], { type: "video/mp4" }), fileName }] });
 const items = (): BatchItem[] => [record("111"), record("222"), record("333")].map((item) => ({ record: item, status: "pending" }));
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
@@ -47,7 +47,7 @@ describe("batch queue", () => {
       active += 1; maxActive = Math.max(maxActive, active);
       await Promise.resolve(); active -= 1;
       if (item.id === "222") throw new Error("作品已删除");
-      return file(item.id);
+      return work(item.id);
     });
     const update = vi.fn();
     const result = await runVideoBatch(items(), { load, onUpdate: update, shouldStop: () => false });
@@ -55,30 +55,30 @@ describe("batch queue", () => {
     expect(result.map((item) => item.status)).toEqual(["complete", "failed", "complete"]);
     expect(result[1]?.error).toBe("作品已删除");
     expect(load.mock.calls.map(([item]) => item.id)).toEqual(["111", "222", "333"]);
-    const retry = vi.fn(async () => file("retry"));
+    const retry = vi.fn(async () => work("retry"));
     const retried = await runVideoBatch(result, { load: retry, onUpdate: update, shouldStop: () => false });
     expect(retry).toHaveBeenCalledTimes(1);
     expect(retried.every((item) => item.status === "complete")).toBe(true);
-    expect(retried[0]?.file).toBe(result[0]?.file);
+    expect(retried[0]?.download).toBe(result[0]?.download);
   });
 
   it("finishes the active file on stop and resumes pending items without redownloading successes", async () => {
     let stop = false;
-    const load = vi.fn(async () => { stop = true; return file(); });
+    const load = vi.fn(async () => { stop = true; return work(); });
     const result = await runVideoBatch(items(), { load, onUpdate: () => {}, shouldStop: () => stop });
     expect(load).toHaveBeenCalledTimes(1);
     expect(result.map((item) => item.status)).toEqual(["complete", "pending", "pending"]);
-    const resume = vi.fn(async () => file());
+    const resume = vi.fn(async () => work());
     const resumed = await runVideoBatch(result, { load: resume, onUpdate: () => {}, shouldStop: () => false });
     expect(resume).toHaveBeenCalledTimes(2);
     expect(resumed.every((item) => item.status === "complete")).toBe(true);
   });
 
   it("enforces the archive byte limit without discarding successful files", async () => {
-    const first = { blob: { size: MAX_BATCH_BYTES } as Blob, fileName: "full.mp4" };
-    const load = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(file());
+    const first = { files: [{ blob: { size: MAX_BATCH_BYTES } as Blob, fileName: "full.mp4" }] };
+    const load = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(work());
     const result = await runVideoBatch(items(), { load, onUpdate: () => {}, shouldStop: () => false });
-    expect(result[0]?.file).toBe(first);
+    expect(result[0]?.download).toBe(first);
     expect(result[1]?.status).toBe("failed");
     expect(result[1]?.error).toContain("500 MB");
     expect(load.mock.calls[1]?.[1]).toBe(0);
@@ -88,7 +88,7 @@ describe("batch queue", () => {
 describe("batch queue stops", () => {
   it("stops at a collector-wide failure and leaves the rest pending instead of failing them one by one", async () => {
     const load = vi.fn()
-      .mockResolvedValueOnce(file("a"))
+      .mockResolvedValueOnce(work("a"))
       .mockRejectedValueOnce(new LocalCollectorError("collector_busy", "请先停止手动监听，再下载视频。"));
     const result = await runVideoBatch(items(), { load, onUpdate: () => {}, shouldStop: () => false });
     expect(result.map((item) => item.status)).toEqual(["complete", "failed", "pending"]);
@@ -110,8 +110,8 @@ describe("batch queue stops", () => {
     const id = "12345678-1234-1234-1234-123456789abc";
     const done = (bytes: number) => new Response(JSON.stringify({ job: { id, status: "complete", sourceUrl: record("111").url, createdAt: "2026-09-16T00:00:00Z", bytes } }));
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(done(200)).mockResolvedValueOnce(done(MAX_BATCH_BYTES + 1)));
-    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal)).rejects.toMatchObject({ code: "batch_size_limit", message: expect.stringContaining("下一批") });
-    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal)).rejects.toMatchObject({ code: "video_too_large", message: expect.stringContaining("单独下载") });
+    await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal)).rejects.toMatchObject({ code: "batch_size_limit", message: expect.stringContaining("下一批") });
+    await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal)).rejects.toMatchObject({ code: "video_too_large", message: expect.stringContaining("单独下载") });
   });
 });
 
@@ -134,11 +134,11 @@ describe("collector batch integration", () => {
       }))
       .mockResolvedValueOnce(new Response("video", { headers: { "Content-Type": "video/mp4" } }));
     vi.stubGlobal("fetch", fetch);
-    const pending = loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal);
+    const pending = loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal);
     await vi.advanceTimersByTimeAsync(1600);
     const result = await pending;
-    expect(await result.blob.text()).toBe("video");
-    expect(result.fileName).toBe("video.mp4");
+    expect(await result.files[0]!.blob.text()).toBe("video");
+    expect(result.files[0]?.fileName).toBe("video.mp4");
     expect(result.evidence).toMatchObject([{ kind: "media", status: 206, host: "v3-dy-o.zjcdn.com", sha256: "a".repeat(64) }]);
     expect(fetch.mock.calls[0]?.[1].body).toBe(JSON.stringify({ url: record("111").url }));
     expect(fetch.mock.calls.every(([, init]) => init.headers.Authorization === "Bearer test-token")).toBe(true);
@@ -148,19 +148,33 @@ describe("collector batch integration", () => {
   it("asks the server to keep explore sessions only when started from an explore page", async () => {
     const fetch = vi.fn().mockImplementation(async () => job("failed", { errorCode: "content_unavailable", error: "x" }));
     vi.stubGlobal("fetch", fetch);
-    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal, true)).rejects.toThrow("x");
+    await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal, true)).rejects.toThrow("x");
     expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toEqual({ url: record("111").url, keepExplore: true });
-    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal)).rejects.toThrow("x");
+    await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal)).rejects.toThrow("x");
     expect(JSON.parse(fetch.mock.calls[1]?.[1].body)).toEqual({ url: record("111").url });
+  });
+
+  it("saves both split tracks as separate entries in the same batch ZIP", async () => {
+    const fileNames = ["作品-画面.mp4", "作品-音频.m4a"];
+    const fetch = vi.fn().mockResolvedValueOnce(job("complete", { mode: "split", fileNames, bytes: 10 }))
+      .mockResolvedValueOnce(new Response("video")).mockResolvedValueOnce(new Response("audio"));
+    vi.stubGlobal("fetch", fetch);
+    const download = await loadBatchVideoFiles(connection, record("111"), 10, new AbortController().signal, true, "split");
+    expect(JSON.parse(fetch.mock.calls[0]?.[1].body)).toMatchObject({ mode: "split" });
+    expect(fetch.mock.lastCall?.[0]).toBe(`${connection.baseUrl}/v1/downloads/${id}/file?index=1`);
+    const zip = await createVideoBatchZip([{ record: record("111"), status: "complete", download }]);
+    const entries = unzipSync(new Uint8Array(await zip.arrayBuffer()));
+    expect(Object.keys(entries)).toEqual(fileNames.map(name => "001_" + name));
+    expect(Object.values(entries).map(bytes => new TextDecoder().decode(bytes))).toEqual(["video", "audio"]);
   });
 
   it("does not fetch an oversized file or a failed job", async () => {
     const fetch = vi.fn().mockResolvedValueOnce(job("complete", { bytes: 200 }));
     vi.stubGlobal("fetch", fetch);
-    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal)).rejects.toMatchObject({ code: "batch_size_limit" });
+    await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal)).rejects.toMatchObject({ code: "batch_size_limit" });
     expect(fetch).toHaveBeenCalledTimes(1);
     fetch.mockResolvedValueOnce(job("failed", { errorCode: "content_unavailable", error: "作品不可访问" }));
-    await expect(loadBatchVideoFile(connection, record("111"), 100, new AbortController().signal)).rejects.toThrow("作品不可访问");
+    await expect(loadBatchVideoFiles(connection, record("111"), 100, new AbortController().signal)).rejects.toThrow("作品不可访问");
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -169,7 +183,7 @@ describe("collector batch integration", () => {
     const controller = new AbortController();
     const fetch = vi.fn().mockResolvedValueOnce(job("queued"));
     vi.stubGlobal("fetch", fetch);
-    const pending = loadBatchVideoFile(connection, record("111"), 100, controller.signal);
+    const pending = loadBatchVideoFiles(connection, record("111"), 100, controller.signal);
     const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError" });
     await vi.advanceTimersByTimeAsync(0);
     controller.abort(); await rejected;
@@ -182,8 +196,8 @@ describe("collector batch integration", () => {
 describe("ZIP export", () => {
   it("produces an extractable ZIP with exact bytes, distinct safe names, and only successful videos", async () => {
     const source = items();
-    source[0] = { ...source[0]!, status: "complete", file: { ...file("first"), fileName: "../相同标题.mp4" } };
-    source[1] = { ...source[1]!, status: "complete", file: { ...file("second"), fileName: "../相同标题.mp4" } };
+    source[0] = { ...source[0]!, status: "complete", download: work("first", "../相同标题.mp4") };
+    source[1] = { ...source[1]!, status: "complete", download: work("second", "../相同标题.mp4") };
     source[2] = { ...source[2]!, status: "failed", error: "unavailable" };
     const archive = await createVideoBatchZip(source);
     const entries = unzipSync(new Uint8Array(await archive.arrayBuffer()));
@@ -196,8 +210,8 @@ describe("ZIP export", () => {
     const source = items();
     source[0] = {
       ...source[0]!, status: "complete",
-      file: {
-        ...file("first"),
+      download: {
+        ...work("first"),
         evidence: [{
           kind: "media", observedAt: "2026-10-28T08:42:45.000Z", host: "v3-dy-o.zjcdn.com", status: 206,
           outcome: "downloaded", bytes: 5, declaredBytes: 5, sha256: "a".repeat(64),
