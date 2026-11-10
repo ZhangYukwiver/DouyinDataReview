@@ -48,7 +48,7 @@ function metadata(page) {
     {
       "@type": "SoftwareApplication", "@id": softwareId, name, description: summary,
       url: siteUrl, downloadUrl: releaseUrl, sameAs: repository, author: person,
-      applicationCategory: "UtilitiesApplication", operatingSystem: "Windows 10 / 11 x64; macOS Apple Silicon",
+      applicationCategory: "UtilitiesApplication", operatingSystem: "Windows 10 / 11 x64; macOS Apple Silicon; Linux x64",
       inLanguage: "zh-CN", isAccessibleForFree: true, license: licenseUrl,
       image: absolute("icon.png"), screenshot: absolute("screenshots/dashboard-trace.jpg"),
       featureList: features, offers: { "@type": "Offer", price: "0", priceCurrency: "CNY", url: releaseUrl }

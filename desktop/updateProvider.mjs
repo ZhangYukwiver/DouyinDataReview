@@ -24,7 +24,7 @@ export class DesktopUpdateProvider extends GitHubProvider {
     this.repository = `${options.owner}/${options.repo}`;
     this.api = `https://api.github.com/repos/${this.repository}/releases`;
     this.releases = `https://github.com/${this.repository}/releases`;
-    this.manifest = this.platform === "win32" ? "latest.yml" : "latest-mac.yml";
+    this.manifest = { win32: "latest.yml", linux: "latest-linux.yml" }[this.platform] ?? "latest-mac.yml";
   }
 
   async getLatestVersion() {
@@ -63,7 +63,10 @@ export class DesktopUpdateProvider extends GitHubProvider {
   installerName(version) {
     if (typeof version !== "string" || !/^\d+\.\d+\.\d+$/u.test(version)) throw new Error("版本号无效");
     this.updater.currentVersion.compare(version);
-    return this.platform === "win32" ? `DouyinDataReview-Setup-${version}.exe` : `DouyinDataReview-${version}-arm64.dmg`;
+    if (this.platform === "win32") return `DouyinDataReview-Setup-${version}.exe`;
+    // AppImage 运行时带 APPIMAGE 环境变量，没有就是 deb 装的
+    if (this.platform === "linux") return process.env.APPIMAGE ? `DouyinDataReview-${version}-x86_64.AppImage` : `DouyinDataReview-${version}-amd64.deb`;
+    return `DouyinDataReview-${version}-arm64.dmg`;
   }
 
   async request(url, accept = "application/octet-stream") {

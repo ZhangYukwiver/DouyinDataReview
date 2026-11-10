@@ -24,6 +24,8 @@ jobs:
             runner: windows-latest
           - platform: macos-arm64
             runner: macos-15
+          - platform: linux-x64
+            runner: ubuntu-latest
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     env:
@@ -43,8 +45,8 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - name: Install Windows Electron
-        if: runner.os == 'Windows'
+      - name: Install Electron
+        if: runner.os != 'macOS'
         run: node node_modules/electron/install.js
       - name: Install Windows media build dependencies
         if: runner.os == 'Windows'
@@ -82,6 +84,16 @@ jobs:
           MEDIA_TARGET_ARCH: arm64
           MEDIA_TOOLS_SOURCE_DIR: ${{ runner.temp }}/media-tools
         run: bash scripts/build-media-tools.sh
+      - name: Build redistributable Linux media tools
+        if: runner.os == 'Linux'
+        env:
+          MEDIA_TARGET_PLATFORM: linux
+          MEDIA_TARGET_ARCH: x64
+          MEDIA_TOOLS_SOURCE_DIR: ${{ runner.temp }}/media-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends nasm
+          bash scripts/build-media-tools.sh
       - name: Stage redistributable media tools
         env:
           MEDIA_TOOLS_SOURCE_DIR: ${{ runner.temp }}/media-tools
@@ -102,6 +114,9 @@ jobs:
       - name: Package Apple Silicon installers
         if: runner.os == 'macOS'
         run: npx electron-builder --mac --arm64 --publish never
+      - name: Package Linux installers
+        if: runner.os == 'Linux'
+        run: npx electron-builder --linux --x64 --publish never
       - name: Verify Windows package
         if: runner.os == 'Windows'
         run: node scripts/verify-release-package.mjs release/win-unpacked/resources
@@ -110,6 +125,20 @@ jobs:
         run: |
           node scripts/verify-release-package.mjs 'release/mac-arm64/DouyinDataReview.app/Contents/Resources'
           test "$(lipo -archs 'release/mac-arm64/DouyinDataReview.app/Contents/MacOS/DouyinDataReview')" = arm64
+      - name: Verify Linux package
+        if: runner.os == 'Linux'
+        run: |
+          node scripts/verify-release-package.mjs release/linux-unpacked/resources
+          # 媒体工具要静态链接，不跟着构建机的 glibc 版本走
+          for tool in ffmpeg ffprobe; do
+            file "release/linux-unpacked/resources/media-tools/linux-x64/$tool" | grep --quiet -E 'static(ally|-pie) linked'
+          done
+          # 在虚拟显示器上真起一次：页面服务最后才启动，它能答上来说明应用和采集器都起来了
+          xvfb-run --auto-servernum release/linux-unpacked/DouyinDataReview --no-sandbox &
+          curl --fail --silent --show-error --output /dev/null --retry 30 --retry-delay 1 --retry-connrefused http://127.0.0.1:47651/
+          # 再等几秒建窗口和托盘；这期间崩了的话进程已经没了，kill 会报错
+          sleep 5
+          kill $!
       - name: Upload Windows installer
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -130,6 +159,18 @@ jobs:
             release/DouyinDataReview-*-arm64.dmg
             release/DouyinDataReview-*-arm64.zip
             release/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Linux installers
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: desktop-linux-x64
+          path: |
+            release/DouyinDataReview-*-x86_64.AppImage
+            release/DouyinDataReview-*-amd64.deb
+            release/latest-linux.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -164,22 +205,25 @@ jobs:
           const { version } = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           assert.equal(process.env.GITHUB_REF_NAME, `v${version}`);
           const expected = [
+            `DouyinDataReview-${version}-amd64.deb`,
             `DouyinDataReview-${version}-arm64.dmg`,
             `DouyinDataReview-${version}-arm64.zip`,
+            `DouyinDataReview-${version}-x86_64.AppImage`,
             `DouyinDataReview-Setup-${version}.exe`,
             `DouyinDataReview-Setup-${version}.exe.blockmap`,
+            'latest-linux.yml',
             'latest-mac.yml',
             'latest.yml',
           ].sort();
           assert.deepEqual(fs.readdirSync('release-assets').sort(), expected);
-          const installers = expected.filter(name => /\.(?:dmg|zip|exe)$/u.test(name));
+          const installers = expected.filter(name => /\.(?:dmg|zip|exe|AppImage|deb)$/u.test(name));
           const sums = installers.map(name => {
             const digest = createHash('sha256').update(fs.readFileSync(path.join('release-assets', name))).digest('hex');
             return `${digest}  ${name}`;
           });
           fs.writeFileSync('release-assets/SHA256SUMS', `${sums.join('\n')}\n`);
           NODE
-      - name: Publish both installers together
+      - name: Publish all installers together
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

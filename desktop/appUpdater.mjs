@@ -3,7 +3,7 @@ import { DOWNLOAD_PAGE } from "../docs/downloadSources.mjs";
 const DEFAULT_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 const DEFAULT_INITIAL_DELAY_MS = 10 * 1_000;
 const MAX_RELEASE_TEXT_LENGTH = 4_000;
-const SUPPORTED_PLATFORMS = new Set(["win32", "darwin"]);
+const SUPPORTED_PLATFORMS = new Set(["win32", "darwin", "linux"]);
 
 export const UPDATE_PHASES = Object.freeze([
   "idle",
@@ -94,7 +94,9 @@ export function createAppUpdateController(options = {}) {
     now = () => new Date(),
   } = options;
 
-  const manualDownload = platform === "darwin";
+  // ponytail: 只有 Windows 在应用里下载安装。Mac 没有开发者签名装不上；Linux 先和 Mac 一样提示后去下载页。
+  // 要让 AppImage 自己更新，先确认打 deb 时写进 resources 的 package-type 没跟着进 AppImage（electron-updater 靠它选更新器）
+  const manualDownload = platform !== "win32";
   let manualUrl = DOWNLOAD_PAGE;
   let state = { ...baseState(currentVersion), manualDownload };
   let checkPromise = null;

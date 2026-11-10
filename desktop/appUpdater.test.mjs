@@ -109,10 +109,10 @@ describe("desktop app updater", () => {
     expect(controller.getState().phase).toBe("downloading");
   });
 
-  it("opens the release page instead of downloading when manual download is set", async () => {
+  it.each(["darwin", "linux"])("opens the release page instead of downloading on %s", async (platform) => {
     const updater = new FakeUpdater();
     const openDownloadPage = vi.fn();
-    const { controller } = controllerFor(updater, { platform: "darwin", openDownloadPage });
+    const { controller } = controllerFor(updater, { platform, openDownloadPage });
     expect(controller.getState().manualDownload).toBe(true);
 
     updater.emit("update-available", { version: "1.3.0" });
@@ -131,9 +131,9 @@ describe("desktop app updater", () => {
     expect(development.getState()).toMatchObject({ phase: "unsupported", message: "开发模式不会检查应用更新。" });
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
 
-    const linux = createAppUpdateController({ updater, isPackaged: true, platform: "linux" });
-    await linux.check();
-    expect(linux.getState().phase).toBe("unsupported");
+    const other = createAppUpdateController({ updater, isPackaged: true, platform: "freebsd" });
+    await other.check();
+    expect(other.getState().phase).toBe("unsupported");
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
   });
 

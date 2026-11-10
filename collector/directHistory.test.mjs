@@ -139,9 +139,21 @@ describe("direct signer process", () => {
     ]);
   });
 
+  it("runs the signer under the Node permission boundary on Linux", () => {
+    const configuration = directSignerProcessConfiguration({
+      platform: "linux",
+      executablePath: "/usr/bin/node",
+      runtimeDirectory,
+      runnerPath,
+    });
+
+    expect(configuration.command).toBe("/usr/bin/node");
+    expect(configuration.args[0]).toBe("--permission");
+  });
+
   it("rejects platforms without an implemented process boundary", () => {
     expect(() => directSignerProcessConfiguration({
-      platform: "linux",
+      platform: "freebsd",
       executablePath: "/usr/bin/node",
       runtimeDirectory,
       runnerPath,

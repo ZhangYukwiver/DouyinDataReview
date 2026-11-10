@@ -25,6 +25,8 @@ const BACKGROUND_SYNC_MS = 3 * 60 * 60 * 1000;
 // Windows 的开机启动项靠这个参数认出自己，读写登录项设置时也要带同一组参数
 const HIDDEN_ARG = "--hidden";
 const LOGIN_ITEM = { args: [HIDDEN_ARG] };
+// 登录项只有 macOS 和 Windows 有；Linux 上托盘菜单和设置面板都不显示「开机后在后台运行」
+const LOGIN_ITEM_SUPPORTED = process.platform === "darwin" || process.platform === "win32";
 // 页面的设置（风格、自动补读等）存在 localStorage 里，而 localStorage 按 origin（含端口）分开存：
 // 端口每次随机的话，重启后就读不到上次的设置。所以页面服务优先用固定端口，绑不上（被占用、被系统保留）才退回随机端口。
 const WEB_PORT = 47651;
@@ -193,13 +195,12 @@ function buildTrayMenu() {
     { label: "打开工作台", click: showMainWindow },
     { label: "现在读取一次新记录", click: () => requestBackgroundSync({ manual: true }) },
     { type: "separator" },
-    {
+    ...(LOGIN_ITEM_SUPPORTED ? [{
       label: "开机后在后台运行",
       type: "checkbox",
       checked: openAtLogin(),
       click: (item) => setOpenAtLogin(item.checked),
-    },
-    { type: "separator" },
+    }, { type: "separator" }] : []),
     { label: "退出", click: () => app.quit() },
   ]);
 }
@@ -338,9 +339,7 @@ async function launch() {
   // electron-updater must be created after Electron is ready. In development
   // we intentionally do not touch its singleton, so `npm run desktop` never
   // tries to read a missing app-update.yml.
-  const updater = app.isPackaged && (process.platform === "win32" || process.platform === "darwin")
-    ? electronUpdater.autoUpdater
-    : null;
+  const updater = app.isPackaged ? electronUpdater.autoUpdater : null;
   if (updater) {
     const updateSession = session.fromPartition("electron-updater", { cache: false });
     const [owner, repo] = RELEASE_REPOSITORY.split("/");
@@ -415,11 +414,10 @@ async function launch() {
   ipcMain.handle("desktop:install-app-update", () => appUpdateController?.install() ?? false);
   // 正常启动时页面挂载比窗口 show() 早，这时直接看 isVisible() 会答「不可见」，被当成后台启动
   ipcMain.handle("desktop:is-window-visible", () => lastOnScreen ?? !launchedHidden);
-  // 设置面板里的「开机后在后台运行」；登录项只有 macOS 和 Windows 有，别的平台答 null，页面就不显示这一行
-  const loginItemSupported = process.platform === "darwin" || process.platform === "win32";
-  ipcMain.handle("desktop:get-open-at-login", () => (loginItemSupported ? openAtLogin() : null));
+  // 设置面板里的「开机后在后台运行」；不支持登录项的平台答 null，页面就不显示这一行
+  ipcMain.handle("desktop:get-open-at-login", () => (LOGIN_ITEM_SUPPORTED ? openAtLogin() : null));
   ipcMain.handle("desktop:set-open-at-login", (_event, enabled) => {
-    if (!loginItemSupported) return null;
+    if (!LOGIN_ITEM_SUPPORTED) return null;
     if (typeof enabled !== "boolean") return openAtLogin();
     return setOpenAtLogin(enabled);
   });

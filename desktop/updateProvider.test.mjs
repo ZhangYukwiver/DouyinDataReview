@@ -9,6 +9,7 @@ const releases = `https://github.com/${RELEASE_REPOSITORY}/releases`;
 const api = `https://api.github.com/repos/${RELEASE_REPOSITORY}/releases`;
 const exe = `DouyinDataReview-Setup-${version}.exe`;
 const dmg = `DouyinDataReview-${version}-arm64.dmg`;
+const deb = `DouyinDataReview-${version}-amd64.deb`;
 const sha512 = Buffer.alloc(64, 1).toString("base64");
 const manifest = name => `version: ${version}\nfiles:\n  - url: ${name}\n    sha512: ${sha512}\n`;
 const release = () => Response.json({ tag_name: `v${version}`, assets: [{ name: exe }, { name: dmg }, { name: "latest.yml", id: 2 }] });
@@ -61,7 +62,7 @@ describe("desktop update sources", () => {
     expect(openDownloadPage).toHaveBeenCalledWith(DOWNLOAD_PAGE);
   });
 
-  it.each([["darwin", "latest-mac.yml", dmg], ["win32", "latest.yml", exe]])("skips failed/invalid mirrors and uses the working %s route", async (platform, channel, installer) => {
+  it.each([["darwin", "latest-mac.yml", dmg], ["win32", "latest.yml", exe], ["linux", "latest-linux.yml", deb]])("skips failed/invalid mirrors and uses the working %s route", async (platform, channel, installer) => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 403 }))
       .mockResolvedValueOnce(new Response("<html>gateway</html>"))
