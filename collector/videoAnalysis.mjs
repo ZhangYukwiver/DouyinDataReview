@@ -52,7 +52,7 @@ function result(request, entries, article) {
       ({ title: `${i + 1}. ${entry.title}`, text: entry.text })), { title: "AI 总结", text: article.summary }];
     const contents = chapters.map(({ title }) => {
       const slug = title.toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu, "").replace(/ /gu, "-");
-      return `- [${title.replace(/[[\]]/gu, "\\$&")}](#${slug})`;
+      return `- [${title.replace(/[\\[\]]/gu, "\\$&")}](#${slug})`;
     });
     const markdown = [`# ${article.title}`, `> 来源链接：${article.sourceUrl}`, "## 目录", contents.join("\n"),
       ...chapters.flatMap(({ title, text }) => [`## ${title}`, text])].join("\n\n");
