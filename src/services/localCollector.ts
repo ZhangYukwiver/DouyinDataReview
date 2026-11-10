@@ -1310,6 +1310,13 @@ function parseFeedExtension(value: unknown): FeedExtensionStatus {
   return { lastSeenAt: typeof value.lastSeenAt === "number" && Number.isFinite(value.lastSeenAt) ? value.lastSeenAt : null, removing: value.removing === true };
 }
 
+export async function exportMobileFeedProfile(baseUrl: string, token: string) {
+  const value = await requestJson(baseUrl, "/v1/feed-filter/mobile-export", { method: "POST" }, token, 180_000);
+  if (!isObject(value) || value.format !== "douyin-review-feed/1" || !Array.isArray(value.candidates))
+    throw new LocalCollectorError("invalid_response", "请更新采集器后再导出手机推荐流配置。");
+  return { json: JSON.stringify(value), count: value.candidates.length };
+}
+
 /** 推荐流过滤的词条、过滤方式和扩展状态；带上 change 就是改 */
 export async function collectorFeedFilter(baseUrl: string, token: string, change?: Partial<Pick<FeedFilterSettings, "rules" | "mode" | "words" | "webPicks" | "pickEvery">>): Promise<FeedFilterSettings> {
   const value = await requestJson(baseUrl, "/v1/feed-filter", change ? { method: "POST", body: JSON.stringify(change) } : {}, token);

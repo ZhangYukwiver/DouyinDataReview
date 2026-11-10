@@ -26,6 +26,7 @@ import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
 import { FEED_FILTER_MODES, FEED_FILTER_ORIGINS, FeedFilterStore } from "./feedFilter.mjs";
+import { mobileFeedProfile } from "./mobileFeedProfile.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
 import downloadQualities from "./downloadQualities.json" with { type: "json" };
 import downloadModes from "./downloadModes.json" with { type: "json" };
@@ -1019,7 +1020,18 @@ export async function startCollectorServer({
     } else if (url.pathname.startsWith("/v1/feed-filter")) {
       const extensionState = ({ lastSeenAt, remove }) => ({ lastSeenAt, removing: remove });
       try {
-        if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
+        if (request.method === "POST" && url.pathname === "/v1/feed-filter/mobile-export") {
+          if (rejectWhileSwitching(response)) return;
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          response.once("close", abort);
+          try {
+            const owner = collector;
+            const profile = await mobileFeedProfile(await feedFilter.read(), () => owner.ensureDirectApi({ signal: controller.signal }), controller.signal);
+            if (owner !== collector) sendJson(response, 409, { error: "account_changed" });
+            else if (!response.destroyed && !rejectWhileSwitching(response)) sendJson(response, 200, profile);
+          } finally { response.off("close", abort); }
+        } else if (request.method === "GET" && url.pathname === "/v1/feed-filter") {
           if (fromExtension) {
             const { rules, mode, words, webPicks, pickEvery, remove } = await feedFilter.touch();
             sendJson(response, 200, { rules, mode, words, webPicks, pickEvery, remove, version: feedExtensionVersion, downloadQualities, downloadModes });
