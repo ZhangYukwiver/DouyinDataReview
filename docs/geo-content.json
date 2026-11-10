@@ -3,14 +3,14 @@
   "siteUrl": "https://zhangyukwiver.github.io/DouyinDataReview/",
   "repository": "https://github.com/ZhangYukwiver/DouyinDataReview",
   "author": "ZhangYukwiver",
-  "summary": "DouyinDataReview 是免费开源的抖音数据导出与年度报告桌面应用，支持 Windows x64 和 macOS Apple Silicon。它保存本人账号可访问的观看历史、喜欢、收藏和好友聊天记录，可选择导出为 JSON，并在本机生成抖音年度回顾（Douyin Wrapped）；还能在电脑上刷抖音推荐、按关键词屏蔽不想看的视频、把想看的词条混进推荐、查看本人创作者中心数据，并提供可选的 AI 助手。",
+  "summary": "DouyinDataReview 是免费开源的抖音数据导出与年度报告桌面应用，支持 Windows x64、macOS Apple Silicon 和 Linux x64。它保存本人账号可访问的观看历史、喜欢、收藏和好友聊天记录，可选择导出为 JSON，并在本机生成抖音年度回顾（Douyin Wrapped）；还能在电脑上刷抖音推荐、按关键词屏蔽不想看的视频、把想看的词条混进推荐、查看本人创作者中心数据，并提供可选的 AI 助手。",
   "pages": [
     {
       "path": "index.html",
       "url": "",
       "title": "抖音数据导出与年度报告（Douyin Wrapped）· DouyinDataReview",
-      "description": "DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告，还能在电脑上刷抖音推荐、按关键词屏蔽视频、看创作者中心数据。Windows x64 / macOS Apple Silicon，桌面版扫码登录，本机保存。",
-      "modified": "2026-11-05"
+      "description": "DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告，还能在电脑上刷抖音推荐、按关键词屏蔽视频、看创作者中心数据。Windows x64 / macOS Apple Silicon / Linux x64，桌面版扫码登录，本机保存。",
+      "modified": "2026-11-10"
     },
     {
       "path": "guide.html",
@@ -27,7 +27,7 @@
     },
     {
       "label": "支持平台",
-      "value": "Windows 10 / 11 x64；macOS Apple Silicon（M1 及更新）；界面语言为中文。"
+      "value": "Windows 10 / 11 x64；macOS Apple Silicon（M1 及更新）；Linux x64（.deb 与 AppImage）；界面语言为中文。"
     },
     {
       "label": "数据来源",
@@ -156,7 +156,7 @@
     {
       "id": "supported-platforms",
       "question": "支持哪些系统？能在手机或 Intel Mac 上安装吗？",
-      "answer": "已提供的桌面安装包支持 Windows 10 / 11 x64 和 macOS Apple Silicon（M1 及更新）。目前没有原生手机安装包、Intel Mac 安装包或 Linux 安装包。开发者可从源码运行 Web 工作台；手机在可信局域网连接电脑采集器的方式见仓库 README。"
+      "answer": "已提供的桌面安装包支持 Windows 10 / 11 x64、macOS Apple Silicon（M1 及更新）和 Linux x64（.deb 与 AppImage）。目前没有原生手机安装包或 Intel Mac 安装包。开发者可从源码运行 Web 工作台；手机在可信局域网连接电脑采集器的方式见仓库 README。"
     }
   ]
 }

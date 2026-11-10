@@ -7,10 +7,11 @@ const path = require("node:path");
 module.exports = async ({ appOutDir, electronPlatformName, packager }) => {
   const appPath = path.join(appOutDir, `${packager.appInfo.productFilename}.app`);
   const mac = electronPlatformName === "darwin";
-  if (mac || electronPlatformName === "win32") {
+  const mediaTarget = { darwin: "darwin-arm64", win32: "win32-x64", linux: "linux-x64" }[electronPlatformName];
+  if (mediaTarget) {
     const resources = mac ? path.join(appPath, "Contents", "Resources") : path.join(appOutDir, "resources");
     for (const tool of ["ffmpeg", "ffprobe"])
-      accessSync(path.join(resources, "media-tools", mac ? "darwin-arm64" : "win32-x64", mac ? tool : tool + ".exe"));
+      accessSync(path.join(resources, "media-tools", mediaTarget, electronPlatformName === "win32" ? tool + ".exe" : tool));
   }
   if (!mac) return;
   // The signer files are installed read-only (0400) in .local-data; shipped copies must be 0644 or

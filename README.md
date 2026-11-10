@@ -3,7 +3,7 @@
   <h1>DouyinDataReview | 抖音数据导出与年度报告工作台</h1>
   <p><strong>把你的抖音数据，留在自己的电脑上</strong></p>
   <p>导出观看历史与聊天记录，在电脑上刷抖音推荐，管理喜欢和收藏、批量下载视频，生成自己的抖音年度回顾。<br>
-  免费开源 · Windows / macOS · 本地保存 · MIT 许可</p>
+  免费开源 · Windows / macOS / Linux · 本地保存 · MIT 许可</p>
   <p>问题反馈与交流请联系 QQ 940537208，或加入 QQ 群 DDDouyin（群号 1124211302），见<a href="#交流与反馈">交流与反馈</a>。</p>
   <p>
     <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="https://img.shields.io/github/v/release/ZhangYukwiver/DouyinDataReview?style=flat-square&label=Release" alt="Release" /></a>
@@ -26,7 +26,7 @@
 
 **DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它用你本人登录的抖音会话读取观看历史、喜欢、收藏和好友聊天记录，保存在本机，并生成持续报告和抖音年度报告（Douyin Wrapped）。工作台还能在电脑上刷抖音推荐、按关键词屏蔽视频、下载视频、实时聊天、看创作者中心和直播，另有可选的 AI 助手。
 
-只支持抖音（中国版），不支持国际版 TikTok；提供 Windows x64 和 macOS Apple Silicon 安装包。本项目是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。完整步骤见[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)，给检索工具读的项目事实在 [llms.txt](llms.txt)。
+只支持抖音（中国版），不支持国际版 TikTok；提供 Windows x64、macOS Apple Silicon 和 Linux x64 安装包。本项目是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。完整步骤见[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)，给检索工具读的项目事实在 [llms.txt](llms.txt)。
 
 > [!NOTE]
 > 只能读到本人账号在接口当前返回的记录，不保证取回全部历史。采集用的是抖音没有公开承诺的接口，可能失效，也可能触发账号风控。
@@ -70,7 +70,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ## 快速开始
 
-1. 从[最新 Release](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest) 下载安装包：Windows 用 `DouyinDataReview-Setup-<version>.exe`，macOS（Apple Silicon）用 `DouyinDataReview-<version>-arm64.dmg`。
+1. 从[最新 Release](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest) 下载安装包：Windows 用 `DouyinDataReview-Setup-<version>.exe`，macOS（Apple Silicon）用 `DouyinDataReview-<version>-arm64.dmg`，Linux x64 用 `DouyinDataReview-<version>-amd64.deb`（Debian / Ubuntu 系）或 `DouyinDataReview-<version>-x86_64.AppImage`。
 
    **macOS 首次打开前需在终端执行一次 `xattr -cr "/Applications/DouyinDataReview.app"`，否则会提示应用已损坏；Windows 出现 SmartScreen 时点「更多信息」，再点「仍要运行」。**
 
@@ -137,7 +137,7 @@ npm run collector
 npm run web
 ```
 
-- 桌面开发版：`npm run desktop`；打安装包：`npm run desktop:build`（Windows）或 `npm run desktop:build:mac`（Apple Silicon），输出到 `release/`。
+- 桌面开发版：`npm run desktop`；打安装包：`npm run desktop:build`（Windows）、`npm run desktop:build:mac`（Apple Silicon）或 `npm run desktop:build:linux`（x64，要先装 nasm），输出到 `release/`。
 - 验证：`npm run typecheck`、`npm test`、`npm run build:web`。
 - 手机连接：电脑和手机在同一可信局域网时，用 `npm run collector -- --lan --origin http://<手机打开的页面地址>` 启动采集器，手机上把服务地址改成采集器显示的局域网地址。
 
@@ -152,7 +152,7 @@ npm run web
 
 ## English
 
-**DouyinDataReview is a free, open-source desktop app for exporting and analyzing your own Douyin data on Windows x64 and macOS Apple Silicon.** It targets Douyin in China; international TikTok is not supported. It saves watch history, likes, favorites and friend chats locally as JSON, generates rolling reports and a year-in-review ("Douyin Wrapped"), and lets you browse your Douyin feed, block feed videos by keyword, download videos, chat, check Creator Center stats and watch live streams. This is an independent, unofficial project; the interface is in Chinese and the source is MIT-licensed. Download it from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest) and see the [export and privacy guide](https://zhangyukwiver.github.io/DouyinDataReview/guide.html).
+**DouyinDataReview is a free, open-source desktop app for exporting and analyzing your own Douyin data on Windows x64, macOS Apple Silicon and Linux x64.** It targets Douyin in China; international TikTok is not supported. It saves watch history, likes, favorites and friend chats locally as JSON, generates rolling reports and a year-in-review ("Douyin Wrapped"), and lets you browse your Douyin feed, block feed videos by keyword, download videos, chat, check Creator Center stats and watch live streams. This is an independent, unofficial project; the interface is in Chinese and the source is MIT-licensed. Download it from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest) and see the [export and privacy guide](https://zhangyukwiver.github.io/DouyinDataReview/guide.html).
 
 - **How does it work?** Scan the Douyin login QR code on the first screen, or import credentials from Chrome / Edge / Comet or the Douyin desktop client. A local Node.js collector then reads your records with signed, paginated HTTP requests, and reports are computed on your computer.
 - **Is there a Douyin Wrapped?** Yes, built from your own records whenever you want; [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) without installing anything.

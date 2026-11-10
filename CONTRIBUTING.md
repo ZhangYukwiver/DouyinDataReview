@@ -32,7 +32,7 @@ npm test
 
 修改公开功能说明或下载页时，按 [GEO 内容维护](GEO.md) 同步 README、使用指南与 `docs/geo-content.json`，运行 `npm run sync:geo` 和 `npm run check:geo`，保持可见问答与结构化数据一致。
 
-每个 Pull Request 都会在 Windows 和 macOS 上各跑一遍检查（GEO 校验、类型检查、测试、打包），两项都通过才能合并。第一次参与的人，检查要等维护者批准后才会开始。维护者会审每个 Pull Request，可能请你再改一改。
+每个 Pull Request 都会在 Windows、macOS 和 Linux 上各跑一遍检查（GEO 校验、类型检查、测试、打包），都通过才能合并。第一次参与的人，检查要等维护者批准后才会开始。维护者会审每个 Pull Request，可能请你再改一改。
 
 你贡献的代码和项目其余部分一样按 [MIT 许可证](LICENSE) 发布，不需要另外签协议。
 

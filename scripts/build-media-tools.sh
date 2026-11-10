@@ -33,7 +33,7 @@ lame_source="$build_directory/lame-${lame_version}"
 lame_prefix="$cache_directory/lame-prefix-${build_suffix}"
 prefix="$cache_directory/prefix-${build_suffix}-lame${lame_version}"
 
-if [[ "$target" != "darwin-arm64" && "$target" != "win32-x64" ]]; then
+if [[ "$target" != "darwin-arm64" && "$target" != "win32-x64" && "$target" != "linux-x64" ]]; then
   echo "Unsupported media tool target: $target" >&2
   exit 1
 fi
@@ -105,6 +105,9 @@ if [[ ! -x "$prefix/bin/ffmpeg" || ! -x "$prefix/bin/ffprobe" ]]; then
     configure_args+=(--enable-cross-compile --target-os=mingw32 --arch=x86_64
       --cc=x86_64-w64-mingw32-gcc --ar=ar --nm=nm --ranlib=ranlib --strip=strip --windres=windres
       --pkg-config=pkg-config --extra-libs=-static)
+  elif [[ "$platform" == "linux" ]]; then
+    # 静态链接：不跟着构建机的 glibc 版本走，老一点的发行版也能跑
+    configure_args+=(--extra-libs=-static)
   fi
   (cd "$source" && PKG_CONFIG_PATH="$lame_prefix/lib/pkgconfig" ./configure "${configure_args[@]}"
     make -j"${JOBS:-2}" && make install)

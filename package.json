@@ -32,6 +32,7 @@
     "sync:geo": "node scripts/sync-geo.mjs",
     "check:geo": "node scripts/sync-geo.mjs --check",
     "desktop:build:mac": "npm run build:web && npm run direct:setup && npm run build:media-tools && npm run stage:media-tools && electron-builder --mac --publish never",
+    "desktop:build:linux": "npm run build:web && npm run direct:setup && npm run build:media-tools && npm run stage:media-tools && electron-builder --linux --publish never",
     "test:ops": "vitest run scripts/ops/github-traffic.test.mjs"
   },
   "dependencies": {
@@ -70,7 +71,10 @@
     "appId": "com.zhangyukwiver.contentinsights",
     "productName": "DouyinDataReview",
     "extraMetadata": {
-      "main": "desktop/main.mjs"
+      "main": "desktop/main.mjs",
+      "desktopName": "DouyinDataReview.desktop",
+      "license": "MIT",
+      "homepage": "https://zhangyukwiver.github.io/DouyinDataReview/"
     },
     "directories": {
       "output": "release"
@@ -185,6 +189,31 @@
       ],
       "icon": "build/icon.icns",
       "artifactName": "DouyinDataReview-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "executableName": "DouyinDataReview",
+      "category": "Utility",
+      "synopsis": "抖音数据导出与年度报告工作台",
+      "description": "把本人抖音账号的观看历史、喜欢、收藏和好友聊天记录保存到自己的电脑上，并在本机生成年度报告。",
+      "maintainer": "ZhangYukwiver <144537130+ZhangYukwiver@users.noreply.github.com>",
+      "artifactName": "DouyinDataReview-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "packageName": "douyin-data-review"
     }
   }
 }

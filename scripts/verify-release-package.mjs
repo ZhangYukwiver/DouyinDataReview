@@ -155,7 +155,8 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     assert(packagedFiles.includes(`extension/${relative}`), `Feed filter extension is missing ${relative}`);
   for (const relative of packagedFiles) {
     assertPublicPackagePath(relative);
-    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("extension/") || relative.startsWith("direct-signer/") || relative.startsWith("media-tools/"), `Unexpected resource: ${relative}`);
+    // package-type 和 apparmor-profile 是 electron-builder 打 deb 时写进来的
+    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || relative === "package-type" || relative === "apparmor-profile" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("extension/") || relative.startsWith("direct-signer/") || relative.startsWith("media-tools/"), `Unexpected resource: ${relative}`);
     // 推荐流过滤扩展原样带上（浏览器从拷出去的这份加载），不许多出或改动文件
     if (relative.startsWith("extension/")) {
       assert(!relative.endsWith(".test.mjs"), `Test file in package: ${relative}`);
@@ -178,7 +179,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
   const targetDirectories = [...new Set(mediaFiles.filter((relative) => relative.includes("/")).map((relative) => relative.split("/")[0]))];
   assert.equal(targetDirectories.length, 1, "Media resources must contain one target platform directory");
   const target = targetDirectories[0];
-  assert.match(target, /^(?:darwin-arm64|win32-x64)$/u, "Unexpected media tool platform");
+  assert.match(target, /^(?:darwin-arm64|win32-x64|linux-x64)$/u, "Unexpected media tool platform");
   const extension = target.startsWith("win32-") ? ".exe" : "";
   assert.deepEqual(mediaFiles.sort(), ["LICENSES.txt", `${target}/ffmpeg${extension}`, `${target}/ffprobe${extension}`].sort(), "Unexpected media resource files");
   assert.deepEqual(await readFile(path.join(mediaDirectory, "LICENSES.txt")), await readFile(path.join(sourceDirectory, "build/media-tools/LICENSES.txt")), "Media license notice differs from source");
