@@ -366,7 +366,7 @@ function Privacy({ collector, onTogglePrivacy, privacy }: SettingsDialogProps) {
       </View>
       <View style={styles.row}>
         <RowCopy
-          detail={writesError ?? (writes === null ? "先在采集器页连上采集器，才能改这一项。"
+          detail={writesError ?? (writes === null ? "先在「连接与采集」连上采集器，才能改这一项。"
             : "打开后可以在工作台里点赞、收藏、关注和评论。这些别人都看得到，用的是你自己的抖音号，做得太多太快可能被抖音限制甚至封号，所以默认关着。回私信、分享给朋友和续火花不受这一项限制。")}
           title="允许在抖音上操作"
         />
@@ -380,7 +380,7 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
   if (!connected) {
     return (
       <View style={styles.row}>
-        <RowCopy detail="先在采集器页连上采集器，这里才能切换、添加或删除抖音账号。" title="抖音账号" />
+        <RowCopy detail="先在「连接与采集」连上采集器，这里才能切换、添加或删除抖音账号。" title="抖音账号" />
       </View>
     );
   }
@@ -427,8 +427,8 @@ function Account({ accountBlocked, accounts, activeAccountName, appStyle, connec
       {browserConnection ? <BrowserConnectionPanel {...browserConnection} visible={visible} blocked={blocked} />
         : onShowLogin ? <View style={styles.row}>
           {loginExpired
-            ? <RowCopy detail="抖音登录过期了或者要安全验证，搜索、下载和读取都停了。到采集器页首屏重新扫码就好。" title="登录失效了" />
-            : <RowCopy detail="在采集器页首屏扫码登录；也可以在那里改用 Chrome、Edge 或 Comet 导入。" title="登录与凭据" />}
+            ? <RowCopy detail="抖音登录过期了或者要安全验证，搜索、下载和读取都停了。到「连接与采集」重新扫码就好。" title="登录失效了" />
+            : <RowCopy detail="在「连接与采集」扫码登录；也可以在那里改用 Chrome、Edge 或 Comet 导入。" title="登录与凭据" />}
           <Button appStyle={appStyle} kind={loginExpired ? "primary" : "secondary"} label="去扫码登录" onPress={() => { onClose(); onShowLogin(); }} testID="settings-show-login" />
         </View> : null}
     </>
@@ -458,7 +458,7 @@ function Data({ appStyle, canClear, connected, onClearCache, onExportData }: Set
         <View style={styles.row}>
           <RowCopy
             detail={connected
-              ? "分别选择观看历史、喜欢、收藏和聊天数据，只把勾选的内容存成 JSON 文件，换电脑或重装以后可以在采集器页导入回来。"
+              ? "分别选择观看历史、喜欢、收藏和聊天数据，只把勾选的内容存成 JSON 文件，换电脑或重装以后可以在「连接与采集」导入回来。"
               : "连上采集器以后，可以把读到的记录存成一个文件，换电脑或重装以后再导入回来。"}
             title="导出数据"
           />
@@ -603,7 +603,7 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
     return () => { live = false; clearInterval(timer); };
   }, [baseUrl, token]);
   if (!baseUrl || !token) {
-    return <View style={styles.row}><RowCopy detail="先在采集器页连上采集器，才能改这一页。" title="推荐流过滤" /></View>;
+    return <View style={styles.row}><RowCopy detail="先在「连接与采集」连上采集器，才能改这一页。" title="推荐流过滤" /></View>;
   }
   const save = (change: Partial<Pick<FeedFilterSettings, "rules" | "mode">>) => {
     setSaving(true);
