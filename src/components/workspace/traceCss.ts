@@ -158,7 +158,6 @@ const blocks: string[] = [
   rule(sel("w-nav on", ' [data-ws~="w-navlabel"]'), `font-family:${SERIF}!important;font-style:italic;font-weight:400!important;font-size:15px!important;letter-spacing:.04em!important`),
   rule(sel("w-navcount"), `font-family:${MONO}!important;font-size:10px!important;letter-spacing:.04em!important`),
   rule(sel("w-days", " div[dir]"), `${mono(8.5, ".12em")};text-transform:none;line-height:1.5!important`),
-  rule(sel("w-settings"), "min-height:46px!important"),
   rule(sel("w-top"), "height:auto!important;min-height:92px!important;padding-top:14px!important;padding-bottom:14px!important;border-bottom-color:rgba(254,255,252,.12)!important;background-color:transparent!important"),
   rule(sel("w-title"), `${serif(34, 1.1, "-.01em")};margin-top:8px!important;max-width:70%!important`),
   rule(sel("w-count"), `${figure(34, { weight: 300, line: 1.1, glow: 0.6 })};color:${AMBER}!important;margin-left:8px!important`),

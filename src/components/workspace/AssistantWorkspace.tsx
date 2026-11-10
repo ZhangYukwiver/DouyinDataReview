@@ -80,7 +80,7 @@ export function AssistantWorkspace({ connection, view, onOpenSettings, onOpenLin
   if (!connection) {
     return <View style={styles.root}>{close ? <View style={[styles.head, styles.panelHead, grab]} testID="assistant-panel-head"><Text style={[styles.panelTitle, { flex: 1 }]}>AI 助手</Text>{close}</View> : null}<View style={styles.gate}>
       <Text style={styles.gateTitle}>先连上采集器</Text>
-      <Text style={kit.muted}>AI 助手读的是采集器里的数据，到采集器页连上以后再来。</Text>
+      <Text style={kit.muted}>AI 助手读的是采集器里的数据，到「连接与采集」连上以后再来。</Text>
     </View></View>;
   }
 

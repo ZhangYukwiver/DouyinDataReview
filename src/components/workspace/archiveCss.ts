@@ -198,7 +198,6 @@ const blocks: string[] = [
   "@media (max-height:720px){" + [
     rule(sel("w-nav"), "min-height:46px!important"),
     rule(sel("w-days"), "margin-top:10px!important"),
-    rule(sel("w-settings"), "min-height:42px!important"),
   ].join("") + "}",
 ];
 

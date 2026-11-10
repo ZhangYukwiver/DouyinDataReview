@@ -55,6 +55,9 @@ import {
   Star,
   Trash2,
   TvMinimalPlay,
+  ChevronsUpDown,
+  UserRound,
+  UsersRound,
 } from "lucide-react-native";
 
 import type {
@@ -104,6 +107,9 @@ import {
   type RecordFolders,
 } from "../../services/recordFolders";
 import { useContextMenu, type MenuEntry } from "./ContextMenu";
+import type { SettingsSection } from "./SettingsDialog";
+import { credentialsExpired, desktopLoginNeeded } from "./setupModel";
+import { isDesktopApp } from "../../desktopRuntime";
 import { BadgeWall } from "./AchievementShelf";
 import { noteAchievementWorks, countAchievement, unlockAchievement } from "./achievements";
 import { ReportDashboard } from "./ReportDashboard";
@@ -112,9 +118,11 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "sources";
 
 export interface ContentWorkspaceProps {
+  /** 连接与采集：嵌在外壳里的一页，自带顶栏；入口在侧栏底部的账号菜单 */
+  sources?: React.ReactNode;
   /** 刷视频：进工作台默认就是这一页 */
   feed?: React.ReactNode;
   explore?: React.ReactNode;
@@ -158,8 +166,8 @@ export interface ContentWorkspaceProps {
   appStyle?: AppStyle;
   /** 极简风格打开报告时借用的那套故事页（决定「重看」按钮叫什么） */
   storyStyle?: StoryStyle;
-  /** 打开设置面板；不传就不显示侧栏的「设置」 */
-  onOpenPreferences?: () => void;
+  /** 打开设置面板（可指定页签）；不传账号菜单里就没有「设置」「切换账号」 */
+  onOpenPreferences?: (section?: SettingsSection) => void;
 }
 
 export type RecordDownloadState = "idle" | "queued" | "running" | "complete" | "failed";
@@ -190,22 +198,23 @@ const navItems: NavItem[] = [
 ];
 
 
-// 观看历史、直播、喜欢、收藏、推荐流挡掉的是同一种记录列表，我的评论也放在一起：侧栏只占「内容库」一项，进去用页签切换
+// 一级入口在侧栏，二级用页内页签：观看历史、直播、喜欢、收藏、推荐流挡掉的、我的评论并成「内容库」，持续报告和变化线索并成「报告」
 const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered", "comments"];
 const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
-type SideKey = WorkspaceViewKey | "library";
+type SideKey = WorkspaceViewKey | "library" | "report";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
+const reportItems = navItems.filter((item) => isReportView(item.id));
 // 刷视频、探索、创作者中心和 AI 助手是工具页：不显示条数、隐私和重新读取
 const toolView = (view: SideKey) => view === "feed" || view === "explore" || view === "creator" || view === "assistant";
+// 「报告」这一项也不挂条数：条数在它的页签上
+const showsCount = (view: SideKey) => !toolView(view) && view !== "report";
 const sideItem = (id: SideKey) => navItems.find((item) => item.id === id)!;
-// 侧栏按功能分区：看视频 / 我的记录 / 报告 / 创作工具，区和区之间一道细线
-const sideItems: NavItem<SideKey>[] = [
-  sideItem("feed"), sideItem("explore"),
-  { id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan }, sideItem("chat"),
-  sideItem("summary"), sideItem("highlights"),
-  sideItem("creator"), sideItem("assistant"),
+// 侧栏按「来这儿做什么」分三组：发现（看新的）/ 我的（自己留下的）/ 洞察（从记录里看出什么）
+const sideGroups: ReadonlyArray<{ label: string; items: NavItem<SideKey>[] }> = [
+  { label: "发现", items: [sideItem("feed"), sideItem("explore")] },
+  { label: "我的", items: [{ id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan }, sideItem("chat")] },
+  { label: "洞察", items: [{ id: "report", label: "报告", icon: LayoutDashboard, accent: color.green }, sideItem("creator"), sideItem("assistant")] },
 ];
-const SECTION_STARTS: ReadonlySet<SideKey> = new Set(["library", "summary", "creator"]);
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -228,6 +237,7 @@ function Text({ style, ...rest }: TextProps) {
 }
 
 export function ContentWorkspace({
+  sources,
   feed,
   explore,
   creator,
@@ -282,12 +292,15 @@ export function ContentWorkspace({
   // root 的桌面内边距与 stage 边框会占掉 36px，使用同一个主区宽度供各内容页计算。
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
   const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
-  const sideKey: SideKey = isLibraryView(activeView) ? "library" : activeView;
+  const sideKey: SideKey = isLibraryView(activeView) ? "library" : reportView ? "report" : activeView;
   // 刷视频和 AI 助手都能在设置里隐藏，没传就不进侧栏（feed 传 null 是年志盖着时先不挂播放器，侧栏照常有它）
-  const sides = sideItems.filter((item) => (item.id !== "assistant" || assistant) && (item.id !== "feed" || feed !== undefined));
-  // 点侧栏「内容库」回到上次看的那一栏
+  const groups = sideGroups.map((group) => ({ ...group, items: group.items.filter((item) => (item.id !== "assistant" || assistant) && (item.id !== "feed" || feed !== undefined)) }));
+  const sides = groups.flatMap((group) => group.items);
+  // 点侧栏「内容库」「报告」回到上次看的那一栏
   const lastLibraryView = useRef<WorkspaceViewKey>(isLibraryView(activeView) ? activeView : "watch_history");
   if (isLibraryView(activeView)) lastLibraryView.current = activeView;
+  const lastReportView = useRef<WorkspaceViewKey>(reportView ? activeView : "summary");
+  if (reportView) lastReportView.current = activeView;
   const [reportUpdateNotice, setReportUpdateNotice] = useState(false);
   // 侧栏当前项的指示条：一根，随选中项滑动（各按钮 onLayout 报自己的 y）
   const [navTops, setNavTops] = useState<Record<string, number>>({});
@@ -328,6 +341,7 @@ export function ContentWorkspace({
   const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
   const myComments = useMyComments(commentsConnection, status?.account?.id, status?.state, activeView === "comments");
   const counts: Record<SideKey, number> = {
+    sources: 0,
     feed: 0,
     explore: 0,
     creator: 0,
@@ -339,6 +353,7 @@ export function ContentWorkspace({
     feed_filtered: feedVideos.length,
     comments: myComments.length,
     library: 0,
+    report: 0,
     chat: countChatMessages(chatMessages, chatConversations),
     summary: model.unique || totalRecords,
     highlights: livingReport
@@ -363,9 +378,43 @@ export function ContentWorkspace({
   const [ringRef, ringDrawn] = useDraw<View>();
 
   const changeView = (next: SideKey) => {
-    const nextView = next === "library" ? lastLibraryView.current : next;
+    const nextView = next === "library" ? lastLibraryView.current : next === "report" ? lastReportView.current : next;
     if (isReportView(nextView) && !reportView) setReportAutoCollapsed(true);
     onChangeView(nextView);
+  };
+
+  // 侧栏最下面一行：当前账号 + 连接状态，点开是全局菜单（读取、连接与采集、切换账号、设置）
+  const account = status?.account ?? null;
+  const syncFailed = chatConnected && status?.state === "error";
+  const accountTitle = (!privacy && account?.nickname?.trim()) || (chatConnected ? "抖音账号" : "未连接");
+  // 桌面版采集器是自己连上的，「已连接」不等于登录了抖音：没登录或登录失效要在这一行说出来，和连接页的账号卡一致
+  const loginExpired = credentialsExpired(chatConnected, status);
+  const loginMissing = loginExpired || desktopLoginNeeded(isDesktopApp(), chatConnected, status);
+  const accountNote = !chatConnected ? "点这里连接采集器" : loginMissing ? (loginExpired ? "登录失效了" : "还没登录抖音") : busy ? "正在读取…" : syncFailed ? "读取出错了" : updatedAt ? `${formatShortDate(updatedAt)} 更新` : "已连接";
+  const accountDot = !chatConnected ? color.textMuted : syncFailed ? color.danger : loginMissing || busy ? color.amber : color.green;
+  const accountMenu = useContextMenu();
+  const accountRef = useRef<View>(null);
+  // 菜单开着时再点这一行：菜单在按下时已经自己关了，松手这一下不能又把它打开
+  const accountMenuClosedAt = useRef(0);
+  useEffect(() => {
+    if (!accountMenu.isOpen) accountMenuClosedAt.current = Date.now();
+  }, [accountMenu.isOpen]);
+  const openAccountMenu = () => {
+    const row = accountRef.current as unknown as HTMLElement | null;
+    if (!row?.getBoundingClientRect) { onOpenSettings(); return; }
+    if (Date.now() - accountMenuClosedAt.current < 400) return;
+    const rect = row.getBoundingClientRect();
+    const icon = (Icon: IconComponent) => <Icon color={color.textSecondary} size={14} strokeWidth={2} />;
+    // 贴着这一行的上沿往上长（下面放不下，菜单自己会翻上去）
+    accountMenu.open({ x: rect.left, y: rect.top - 6 }, [
+      { id: "sync", label: busy ? "正在读取记录…" : "增量读取记录", icon: icon(RefreshCw), disabled: busy && "正在读取，读完再点", onSelect: onSync },
+      { id: "sources", label: "连接与采集", icon: icon(Plug), onSelect: onOpenSettings },
+      ...(onOpenPreferences ? [
+        { id: "account-sep", separator: true as const },
+        { id: "accounts", label: "切换账号", icon: icon(UsersRound), onSelect: () => onOpenPreferences("account") },
+        { id: "preferences", label: "设置", icon: icon(Settings), onSelect: () => onOpenPreferences() },
+      ] : []),
+    ]);
   };
 
   const toggleSidebar = () => {
@@ -376,11 +425,12 @@ export function ContentWorkspace({
     setSidebarCollapsed((collapsed) => !collapsed);
   };
 
-  // 极简：内容库的页签直接放进顶栏，替掉和选中页签重复的标题，少一行横条
+  // 极简：内容库和报告的页签直接放进顶栏，替掉和选中页签重复的标题，少一行横条
   const tabsInTop = appStyle === "minimal" && !mobile;
-  const libraryTabs = isLibraryView(activeView) ? (
+  const hubItems = isLibraryView(activeView) ? libraryItems : reportView ? reportItems : null;
+  const libraryTabs = hubItems ? (
     <View {...ws("w-libtabs")} accessibilityRole="tablist" style={[styles.libraryTabs, mobile && styles.libraryTabsMobile]}>
-      {libraryItems.map((item) => {
+      {hubItems.map((item) => {
         const on = item.id === activeView;
         const Icon = item.icon;
         return (
@@ -393,7 +443,7 @@ export function ContentWorkspace({
             {...fx({ hover: "tint", ws: on ? "c-filter on" : "c-filter" })}
             onPress={() => changeView(item.id)}
             style={({ pressed }) => [styles.libraryTab, on && { backgroundColor: alpha(item.accent, 0.13) }, pressed && styles.buttonPressed, webPointer]}
-            testID={`library-tab-${item.id}`}
+            testID={`${reportView ? "report" : "library"}-tab-${item.id}`}
           >
             <Icon color={on ? item.accent : color.textMuted} size={15} strokeWidth={on ? 2.4 : 2} />
             <Text numberOfLines={1} style={[styles.libraryTabText, on && styles.libraryTabTextOn]}>{item.label}</Text>
@@ -415,73 +465,66 @@ export function ContentWorkspace({
             {Platform.OS === "web" && navTops[sideKey] !== undefined ? (
               <View {...ws("w-glider")} pointerEvents="none" style={[styles.navGlider, ease("top,background-color", 380), { top: navTops[sideKey]! + 14, backgroundColor: currentNav.accent }]} />
             ) : null}
-            {sides.map((item) => (
-              <React.Fragment key={item.id}>
-                {SECTION_STARTS.has(item.id) ? <View {...ws("w-navsep")} style={styles.navSection} /> : null}
-                <NavButton
-                  compact={compactSidebar}
-                  count={counts[item.id]}
-                  item={item}
-                  onLayoutTop={(y) => reportNavTop(item.id, y)}
-                  onPress={() => changeView(item.id)}
-                  selected={item.id === sideKey}
-                />
+            {/* 组名和导航项是扁平的兄弟节点：包一层分组 View 的话，各项 onLayout 报的 y 就变成相对分组的，指示条会错位 */}
+            {groups.map((group, index) => group.items.length ? (
+              <React.Fragment key={group.label}>
+                {/* 展开时是组名，收起时组名淡出、换成一道细线（第一组上面不用线）；高度不变，收放时导航项不跳 */}
+                <View {...ws("w-navgroup")} style={styles.navGroup}>
+                  <Text numberOfLines={1} style={[styles.navGroupLabel, collapseCopy, compactSidebar && styles.sidebarCopyHidden]}>{group.label}</Text>
+                  {index ? <View style={[styles.navGroupRule, collapseCopy, !compactSidebar && styles.sidebarCopyHidden]} /> : null}
+                </View>
+                {group.items.map((item) => (
+                  <NavButton
+                    key={item.id}
+                    compact={compactSidebar}
+                    count={counts[item.id]}
+                    item={item}
+                    onLayoutTop={(y) => reportNavTop(item.id, y)}
+                    onPress={() => changeView(item.id)}
+                    selected={item.id === sideKey}
+                  />
+                ))}
               </React.Fragment>
-            ))}
+            ) : null)}
           </View>
           <BadgeWall compact={compactSidebar} />
           <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} />
           </View>
           <View style={styles.sidebarFooter}>
-            {onOpenPreferences ? (
-              <Pressable
-                accessibilityLabel="打开设置"
-                accessibilityRole="button"
-                {...fx({ hover: "tint", ws: "w-nav w-replay w-prefs" })}
-                onPress={() => onOpenPreferences()}
-                style={({ pressed }) => [styles.navButton, pressed && styles.buttonPressed, webPointer]}
-                testID="workspace-preferences"
-              >
-                <View style={styles.navIconWrap}><Settings color={color.textSecondary} size={20} strokeWidth={2} /></View>
-                <View style={[styles.navMeta, collapseCopy, compactSidebar && styles.sidebarCopyHidden]}>
-                  <Text numberOfLines={1} style={styles.navLabel}>设置</Text>
-                </View>
-              </Pressable>
-            ) : null}
             <Pressable
-              accessibilityLabel={replayLabel}
+              accessibilityLabel={`${accountTitle}，${accountNote}，打开菜单`}
               accessibilityRole="button"
-              {...fx({ hover: "tint", ws: "w-nav w-replay" })}
-              disabled={!report || report.status === "empty"}
-              onPress={onReplayStory}
-              style={({ pressed }) => [
-                styles.navButton,
-                (!report || report.status === "empty") && styles.buttonDisabled,
-                pressed && styles.buttonPressed,
-                webPointer,
-              ]}
+              accessibilityState={{ expanded: accountMenu.isOpen }}
+              aria-haspopup="menu"
+              // 连接与采集这一页归在账号行下面：在那一页时这一行是选中的
+              {...fx({ hover: "tint", ws: activeView === "sources" ? "w-nav w-replay w-account on" : "w-nav w-replay w-account" })}
+              onPress={openAccountMenu}
+              ref={accountRef}
+              style={({ pressed }) => [styles.navButton, activeView === "sources" && styles.navButtonSelected, pressed && styles.buttonPressed, webPointer]}
+              testID="workspace-account"
             >
-              <View style={styles.navIconWrap}><Sparkles color={color.accent} size={20} strokeWidth={2} /></View>
+              <View style={styles.navIconWrap}>
+                {account?.avatar && !privacy
+                  ? <Image source={{ uri: account.avatar }} style={styles.accountAvatar} />
+                  : <View style={[styles.accountAvatar, styles.accountAvatarEmpty]}><UserRound color={color.textSecondary} size={16} strokeWidth={2} /></View>}
+                <View style={[styles.accountDot, { backgroundColor: accountDot }]} />
+              </View>
               <View style={[styles.navMeta, collapseCopy, compactSidebar && styles.sidebarCopyHidden]}>
-                <Text numberOfLines={1} style={styles.navLabel}>{replayLabel}</Text>
+                <View style={styles.accountCopy}>
+                  <Text numberOfLines={1} style={[styles.navLabel, styles.accountName]}>{accountTitle}</Text>
+                  <Text {...ws("w-accountnote")} numberOfLines={1} style={styles.accountNote}>{accountNote}</Text>
+                </View>
+                <ChevronsUpDown color={color.textMuted} size={14} strokeWidth={2} />
               </View>
             </Pressable>
-            <Pressable
-              {...fx({ hover: "raise", ws: "btn w-settings" })}
-              accessibilityLabel="打开连接与采集设置"
-              accessibilityRole="button"
-              onPress={onOpenSettings}
-              style={({ pressed }) => [styles.settingsButton, pressed && styles.buttonPressed, webPointer]}
-            >
-              <View style={styles.settingsIcon}><Plug color={color.textSecondary} size={19} strokeWidth={2} /></View>
-              <Text numberOfLines={1} style={[styles.settingsButtonText, collapseCopy, compactSidebar && styles.sidebarCopyHidden]}>连接与采集</Text>
-            </Pressable>
+            {accountMenu.element}
           </View>
         </View>
       ) : null}
 
       <View style={[styles.main, mobile && styles.mainMobile]}>
-        <View {...ws("w-top")} testID="workspace-topbar" style={[styles.topbar, mobile && styles.topbarMobile]}>
+        {/* 连接与采集自带顶栏（状态、账号、打开报告），外壳这条让位 */}
+        {activeView === "sources" ? null : <View {...ws("w-top")} testID="workspace-topbar" style={[styles.topbar, mobile && styles.topbarMobile]}>
           <View style={styles.topbarHeading}>
             {tabsInTop && libraryTabs ? libraryTabs : <>
             {/* 极简不要装饰性的英文眉题 */}
@@ -503,6 +546,20 @@ export function ContentWorkspace({
                 style={({ pressed }) => [styles.toolbarButton, pressed && styles.buttonPressed, webPointer]}
               >
                 <Sparkles color={color.accent} size={19} />
+              </Pressable>
+            ) : reportView ? (
+              // 年度那份报告的入口跟着「报告」走，不再占侧栏底部一行
+              <Pressable
+                accessibilityLabel={replayLabel}
+                accessibilityRole="button"
+                disabled={!report || report.status === "empty"}
+                {...fx({ hover: "raise", ws: "btn w-replaybtn" })}
+                onPress={onReplayStory}
+                style={({ pressed }) => [styles.replayButton, (!report || report.status === "empty") && styles.buttonDisabled, pressed && styles.buttonPressed, webPointer]}
+                testID="workspace-replay"
+              >
+                <Sparkles color={color.accent} size={16} strokeWidth={2} />
+                <Text numberOfLines={1} style={styles.replayButtonText}>{replayLabel}</Text>
               </Pressable>
             ) : null}
             {!toolView(activeView) ? <Pressable
@@ -537,7 +594,7 @@ export function ContentWorkspace({
               </Pressable>
             ) : null}
           </View>
-        </View>
+        </View>}
 
         {tabsInTop ? null : libraryTabs}
 
@@ -554,7 +611,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "chat" ? (
+        {activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
@@ -632,7 +689,7 @@ export function ContentWorkspace({
 
       {mobile ? (
         <View {...ws("w-bottom g-ink")} accessibilityRole="tablist" style={styles.bottomNav}>
-          {Platform.OS === "web" ? (
+          {Platform.OS === "web" && sides.some((item) => item.id === sideKey) ? (
             <View pointerEvents="none" style={[styles.bottomNavGlider, ease("left,background-color", 350), { left: `${(sides.findIndex((item) => item.id === sideKey) + 0.5) / sides.length * 100}%`, backgroundColor: currentNav.accent }]} />
           ) : null}
           {sides.map((item) => {
@@ -641,7 +698,7 @@ export function ContentWorkspace({
             return (
               <Pressable
                 key={item.id}
-                accessibilityLabel={toolView(item.id) ? item.label : `${item.label}，${counts[item.id]} 条`}
+                accessibilityLabel={showsCount(item.id) ? `${item.label}，${counts[item.id]} 条` : item.label}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
                 onPress={() => changeView(item.id)}
@@ -719,7 +776,7 @@ function NavButton({
     <Pressable
       {...fx({ hover: "tint", ws: selected ? "w-nav on" : "w-nav" })}
       testID={`workspace-nav-${item.id}`}
-      accessibilityLabel={toolView(item.id) ? item.label : `${item.label}，${count} 条`}
+      accessibilityLabel={showsCount(item.id) ? `${item.label}，${count} 条` : item.label}
       accessibilityRole="tab"
       accessibilityState={{ selected }}
       onLayout={onLayoutTop ? (event) => onLayoutTop(event.nativeEvent.layout.y) : undefined}
@@ -736,7 +793,7 @@ function NavButton({
       </View>
       <View style={[styles.navMeta, collapseCopy, compact && styles.sidebarCopyHidden]}>
         <Text {...ws("w-navlabel")} numberOfLines={1} style={[styles.navLabel, selected && styles.navLabelSelected]}>{item.label}</Text>
-        {!toolView(item.id) ? <Text {...ws("mono w-navcount")} style={[styles.navCount, selected && { color: item.accent }]}>{formatCompactNumber(count)}</Text> : null}
+        {showsCount(item.id) ? <Text {...ws("mono w-navcount")} style={[styles.navCount, selected && { color: item.accent }]}>{formatCompactNumber(count)}</Text> : null}
       </View>
       {selected && Platform.OS !== "web" ? <View style={[styles.navIndicator, { backgroundColor: item.accent }]} /> : null}
     </Pressable>
@@ -2304,7 +2361,9 @@ const styles = StyleSheet.create({
   // 顶上 46 用 margin 而不是 padding：滚动时导航从折叠按钮下面滑过，而不是从它背后露出来
   sidebarBody: { flex: 1, marginTop: 46, marginHorizontal: -14, paddingHorizontal: 14 },
   sidebarNav: { gap: 4 },
-  navSection: { height: StyleSheet.hairlineWidth, marginVertical: 2, marginHorizontal: 8, backgroundColor: color.border },
+  navGroup: { height: 24, justifyContent: "flex-end", paddingHorizontal: 15, paddingBottom: 3 },
+  navGroupLabel: { color: color.textMuted, fontSize: 10, fontWeight: "600", letterSpacing: 3 },
+  navGroupRule: { position: "absolute", left: 8, right: 8, top: 12, height: StyleSheet.hairlineWidth, backgroundColor: color.border },
   activeDays: { flexDirection: "row", alignItems: "center", minHeight: 44, marginTop: 26, paddingHorizontal: 8 },
   activeDaysText: { flex: 1, color: color.textMuted, fontSize: 10, marginLeft: 7 },
   navButton: { position: "relative", minHeight: 52, flexDirection: "row", alignItems: "center", paddingHorizontal: 8, borderRadius: radius.medium },
@@ -2318,9 +2377,13 @@ const styles = StyleSheet.create({
   navIndicator: { position: "absolute", left: -14, top: 14, bottom: 14, width: 3, borderTopRightRadius: 2, borderBottomRightRadius: 2 },
   navGlider: { position: "absolute", left: -14, width: 3, height: 24, borderTopRightRadius: 2, borderBottomRightRadius: 2 },
   sidebarFooter: { gap: 8 },
-  settingsButton: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 17, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surface },
-  settingsIcon: { width: 19, height: 19 },
-  settingsButtonText: { flexShrink: 0, color: color.textSecondary, fontSize: 12, fontWeight: "600", letterSpacing: 2 },
+  accountAvatar: { width: 28, height: 28, borderRadius: 14 },
+  // 不垫底色：海报风格选中时整行的字和图标都染成墨色，垫了底色图标就糊成一块
+  accountAvatarEmpty: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.border },
+  accountDot: { position: "absolute", right: 2, bottom: 2, width: 9, height: 9, borderRadius: 5, borderWidth: 2, borderColor: color.sidebar },
+  accountCopy: { flex: 1, minWidth: 0, marginLeft: 7, marginRight: 6 },
+  accountName: { flex: 0, marginLeft: 0 },
+  accountNote: { marginTop: 2, color: color.textMuted, fontSize: 10 },
   main: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: "transparent" },
   mainMobile: { paddingBottom: 68 },
   topbar: { height: 72, flexDirection: "row", alignItems: "center", paddingHorizontal: 28, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border, backgroundColor: "transparent" },
@@ -2336,6 +2399,8 @@ const styles = StyleSheet.create({
   reportUpdateNoticeText: { color: color.green, fontSize: 10, fontWeight: "800" },
   toolbarButton: { width: 46, height: 46, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
   toolbarButtonActive: { borderColor: color.cyan, backgroundColor: color.cyanSoft },
+  replayButton: { height: 46, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, borderWidth: 1, borderColor: color.borderSoft, borderRadius: radius.medium, backgroundColor: color.surface },
+  replayButtonText: { color: color.textSecondary, fontSize: 12, fontWeight: "600", letterSpacing: 2 },
   galleryContent: { paddingHorizontal: 28, paddingTop: 18, paddingBottom: 42 },
   galleryContentMobile: { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 28 },
   galleryContentEmpty: { flexGrow: 1 },

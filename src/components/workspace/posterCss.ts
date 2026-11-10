@@ -120,7 +120,6 @@ const blocks: string[] = [
   rule(`${P} [data-ws~="w-nav"]:not([data-ws~="w-replay"]) [data-ws~="w-navlabel"]::before`, `content:counter(nav,decimal-leading-zero);font:700 11px/1 ${MONO};letter-spacing:.04em;margin-right:8px`),
   rule(sel("w-navcount"), "font-size:11px!important"),
   rule(sel("w-days", " div[dir]"), `font-family:${MONO}!important;text-transform:uppercase;letter-spacing:.04em!important`),
-  rule(sel("w-settings"), "min-height:46px!important;border-width:2px!important"),
   rule(sel("w-toggle"), "border-width:2px!important;background-color:transparent!important"),
   rule(sel("w-top"), `height:auto!important;min-height:94px!important;padding-top:14px!important;padding-bottom:14px!important;border-bottom:3px solid ${INK}!important;background-color:${PAPER}!important`),
   rule(sel("w-title"), `${heavy(36)};margin-top:8px!important`),

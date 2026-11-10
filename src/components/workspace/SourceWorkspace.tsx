@@ -154,6 +154,8 @@ export interface SetupWorkspaceProps {
   onInstallAppUpdate: () => Promise<void>;
   /** 桌面版：首屏直接扫码登录，采集器在后台自己连（没连上时 token 为 null）；网页版是 null，照旧填地址、点连接 */
   desktopLogin: DesktopLogin | null;
+  /** 嵌在工作台外壳里当一页：品牌名换成页名，「设置」「进入工作台」由侧栏管，档位按自己量到的大小算而不是窗口 */
+  embedded?: boolean;
 }
 
 const web = Platform.OS === "web";
@@ -282,9 +284,13 @@ function SketchSetupWorkspace({
   onDownloadAppUpdate,
   onInstallAppUpdate,
   desktopLogin,
+  embedded,
 }: SetupWorkspaceProps) {
   useSetupDecor();
-  const { width, height } = useWindowDimensions();
+  const windowSize = useWindowDimensions();
+  const [rootSize, onRootLayout] = useSize();
+  const width = embedded && rootSize ? rootSize.w : windowSize.width;
+  const height = embedded && rootSize ? rootSize.h : windowSize.height;
   // 一屏放下：矮窗口收紧间距，窄窗口按钮收小；最窄最矮时几段动态说明只留几行；又高又宽时字和图放大
   const short = height < 780;
   const narrow = width < 1100;
@@ -313,16 +319,16 @@ function SketchSetupWorkspace({
   const accountBlocked = accountBlockedReason({ switchingAccount, syncing, busy, downloading, sparkRenewing });
 
   return (
-    <View {...SKETCH_SKIN} testID="setup-workspace" style={styles.root}>
+    <View {...SKETCH_SKIN} onLayout={embedded ? onRootLayout : undefined} testID="setup-workspace" style={styles.root}>
       <View style={[styles.topbar, narrow && styles.topbarNarrow]}>
         <View style={styles.brand}>
           <SketchBox seed="brand-mark" fill={C.card} passes={2} amp={1} style={styles.mark}><NotebookPen color={C.ink} size={17} strokeWidth={1.8} /></SketchBox>
-          <Hand style={[styles.brandName, narrow && styles.brandNameNarrow]}>DouyinDataReview</Hand>
+          <Hand style={[styles.brandName, narrow && styles.brandNameNarrow]}>{embedded ? "连接与采集" : "DouyinDataReview"}</Hand>
         </View>
         <View style={styles.topStatus}><View style={[styles.dot, connected && styles.dotOn]} /><Text numberOfLines={1} style={styles.statusText}>{setup.statusLine}</Text></View>
         <View style={styles.row8}>
-          <SketchButton seed="top-settings" icon={Settings} label="设置" onPress={() => onOpenPreferences()} />
-          <SketchButton seed="top-dashboard" icon={LayoutDashboard} label="进入工作台" onPress={onOpenDashboard} />
+          {embedded ? null : <SketchButton seed="top-settings" icon={Settings} label="设置" onPress={() => onOpenPreferences()} />}
+          {embedded ? null : <SketchButton seed="top-dashboard" icon={LayoutDashboard} label="进入工作台" onPress={onOpenDashboard} />}
           <SketchButton seed="top-report" disabled={!ready || switchingAccount} icon={ArrowRight} iconAfter kind="ink" label="打开报告" onPress={onEnterWorkspace} />
         </View>
         <HRule seed="topbar-rule" style={styles.topRule} />

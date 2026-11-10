@@ -116,7 +116,12 @@ const blocks: string[] = [
   // 12px 的「2026 年有 110 天留下记录」要 143px：文字块借右边的 8px 内边距
   rule(sel("w-days", " > div:last-child"), "width:152px!important"),
   rule(sel("w-days", " [dir]"), `${type(12, 400, MUTE)};margin-left:6px!important`),
-  rule(sel("w-settings", " [dir]"), type(13, 400, TEXT2)),
+  // 组名：小一号的灰字，和导航图标左对齐
+  rule(sel("w-navgroup"), "height:28px!important;padding-left:16px!important;padding-bottom:5px!important"),
+  rule(sel("w-navgroup", " [dir]"), type(12, 400, MUTE)),
+  // 账号行：两行字（名字 + 状态），比导航项高一点
+  rule(sel("w-account"), "min-height:44px!important"),
+  rule(sel("w-account", ' [data-ws~="w-accountnote"]'), type(11, 400, MUTE, 14)),
 
   // 顶栏：标题 + 条数，右边两颗 32px 的方钮
   rule(sel("w-top"), `height:56px!important;min-height:56px!important;${line("bottom")};background-color:${WHITE}!important`),
@@ -138,9 +143,8 @@ const blocks: string[] = [
   rule(sel("btn square"), `width:32px!important;height:32px!important;min-height:32px!important;padding:0!important;border-radius:8px!important`),
   rule(`${sel("btn on")},${sel("btn small on")},${sel("btn square on")}`, `background-color:${GREEN}!important;border-color:${GREEN}!important;${tint(WHITE)}`),
   rule(`${sel("btn on", " [dir]")},${sel("btn small on", " [dir]")}`, `color:${WHITE}!important`),
-  // 侧栏底部的「连接与采集」和上面两项长得一样：没框没底，悬停才有底（放在按钮规则后面，压过 btn 的白底细边）
-  rule(sel("btn w-settings"), "min-height:36px!important;border-color:transparent!important;background-color:transparent!important;border-radius:8px!important"),
-  rule(sel("btn w-settings", ":hover"), `background-color:${SIDE_HOVER}!important`),
+  // 报告页顶栏的「重读内容年志」：和旁边两颗 32px 方钮一样高
+  rule(sel("btn w-replaybtn"), "height:32px!important;padding:0 12px!important;gap:6px!important"),
   // 侧栏收放钮：没有框的幽灵钮，悬停才有底（放在按钮规则后面，压过 btn 的白底发丝线）
   rule(sel("w-toggle"), `left:24px!important;top:12px!important;border-color:transparent!important;background-color:transparent!important;${tint(MUTE)}`),
   rule(sel("w-toggle", ":hover"), `background-color:${RAIL}!important;${tint(INK)}`),

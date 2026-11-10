@@ -1999,6 +1999,84 @@ function AppContent() {
   const loginBlocked = accountBlockedReason({ switchingAccount, syncing: syncingRecords, busy: collectorBusy, downloading: recordDownloading, sparkRenewing });
   const accountName = activeAccountName(collectorToken !== null, collectorStatus, collectorAccounts);
 
+  // web 上「连接与采集」是工作台外壳里的一页，侧栏一直在；native 还是整屏
+  const setupPage = activeView === "sources" ? (
+    <SetupWorkspace
+      archive={archiveInfo}
+      busy={collectorBusy}
+      collectorUrl={collectorUrl}
+      connected={collectorToken !== null}
+      error={collectorError}
+      onChangeCollectorUrl={(value) => {
+        setCollectorUrl(value);
+        setCollectorError(null);
+      }}
+      onChangePairingCode={(value) => {
+        setPairingCode(value);
+        setCollectorError(null);
+      }}
+      onClearCache={clearCurrentRecords}
+      onExportData={exportCurrentData}
+      onConnect={() => {
+        userDisconnectedRef.current = false;
+        return connectCollector({ automaticPairing: true });
+      }}
+      onDisconnect={disconnectCollector}
+      onEnterWorkspace={enterWorkspace}
+      onOpenDashboard={openDashboard}
+      onPickArchive={pickArchive}
+      onRemoveArchive={removeArchive}
+      onMergeArchive={mergeArchive}
+      onStartIncrementalSync={confirmIncrementalSync}
+      onStartChatObservation={() => {
+        chatStartupRef.current.cancel();
+        chatAutomaticRequestRef.current.clear();
+        return collectorToken ? beginChatObservation(collectorUrl, collectorToken) : Promise.resolve();
+      }}
+      onCollectChatHistory={() => collectorToken
+        ? collectChatHistory(collectorUrl, collectorToken)
+        : Promise.resolve()}
+      onStartFullSync={confirmFullSync}
+      onStopSync={() => collectorToken ? endSync(collectorUrl, collectorToken) : Promise.resolve()}
+      onStopChatObservation={() => collectorToken ? endChatObservation(collectorUrl, collectorToken).then(() => undefined) : Promise.resolve()}
+      accounts={collectorAccounts}
+      downloading={recordDownloading}
+      sparkRenewing={sparkRenewing}
+      onActivateAccount={(id) => void changeAccount({ id })}
+      onAddAccount={() => void changeAccount({ add: true })}
+      onRemoveAccount={confirmRemoveAccount}
+      autoSyncEnabled={autoSyncEnabled}
+      onToggleAutoSync={toggleAutoSync}
+      appStyle={appStyle}
+      onOpenPreferences={openPreferences}
+      desktopLogin={isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, blocked: Boolean(loginBlocked), loggingIn,
+        onBusyChange: (busy) => { setSwitchingAccount(busy); setLoggingIn(busy); }, onChange: adoptBrowserLogin } : null}
+      chatBusy={chatControlBusy}
+      chatCollecting={isChatReceiving(collectorStatus)}
+      pairingCode={pairingCode}
+      pickingArchive={pickingArchive}
+      records={workspaceRecords}
+      chatCount={chatCount}
+      snapshotSource={displaySnapshot?.source ?? null}
+      snapshotUpdatedAt={displaySnapshot?.updatedAt ?? null}
+      status={collectorStatus}
+      stoppingSync={stoppingSync}
+      switchingAccount={switchingAccount}
+      appUpdate={appUpdate}
+      onCheckAppUpdate={checkForAppUpdates}
+      onDownloadAppUpdate={downloadAppUpdate}
+      onInstallAppUpdate={installAppUpdate}
+      embedded={storyMode}
+    />
+  ) : null;
+  // 侧栏切页：从「连接与采集」点过去就是进工作台
+  const changeDashboardView = (view: LegacyWorkspaceViewKey) => {
+    if (view === "sources") { openSettings(); return; }
+    setDashboardView(view);
+    setDashboardOpen(true);
+    if (activeView === "sources") setActiveView("summary");
+  };
+
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
       <StatusBar style="light" />
@@ -2007,75 +2085,9 @@ function AppContent() {
         ? <CredentialBanner onLogin={openLogin} onDismiss={() => setLoginNoticeHidden(true)} /> : null}
       {siteNotice && activeView !== "sources"
         ? <SiteNoticeBanner text={siteNotice.text} url={siteNotice.url} onOpen={(url) => void Linking.openURL(url).catch(() => undefined)} onDismiss={() => dismissSiteNotice(siteNotice.id)} /> : null}
-      {activeView === "sources" ? (
-        <SetupWorkspace
-          archive={archiveInfo}
-          busy={collectorBusy}
-          collectorUrl={collectorUrl}
-          connected={collectorToken !== null}
-          error={collectorError}
-          onChangeCollectorUrl={(value) => {
-            setCollectorUrl(value);
-            setCollectorError(null);
-          }}
-          onChangePairingCode={(value) => {
-            setPairingCode(value);
-            setCollectorError(null);
-          }}
-          onClearCache={clearCurrentRecords}
-          onExportData={exportCurrentData}
-          onConnect={() => {
-            userDisconnectedRef.current = false;
-            return connectCollector({ automaticPairing: true });
-          }}
-          onDisconnect={disconnectCollector}
-          onEnterWorkspace={enterWorkspace}
-          onOpenDashboard={openDashboard}
-          onPickArchive={pickArchive}
-          onRemoveArchive={removeArchive}
-          onMergeArchive={mergeArchive}
-          onStartIncrementalSync={confirmIncrementalSync}
-          onStartChatObservation={() => {
-            chatStartupRef.current.cancel();
-            chatAutomaticRequestRef.current.clear();
-            return collectorToken ? beginChatObservation(collectorUrl, collectorToken) : Promise.resolve();
-          }}
-          onCollectChatHistory={() => collectorToken
-            ? collectChatHistory(collectorUrl, collectorToken)
-            : Promise.resolve()}
-          onStartFullSync={confirmFullSync}
-          onStopSync={() => collectorToken ? endSync(collectorUrl, collectorToken) : Promise.resolve()}
-          onStopChatObservation={() => collectorToken ? endChatObservation(collectorUrl, collectorToken).then(() => undefined) : Promise.resolve()}
-          accounts={collectorAccounts}
-          downloading={recordDownloading}
-          sparkRenewing={sparkRenewing}
-          onActivateAccount={(id) => void changeAccount({ id })}
-          onAddAccount={() => void changeAccount({ add: true })}
-          onRemoveAccount={confirmRemoveAccount}
-          autoSyncEnabled={autoSyncEnabled}
-          onToggleAutoSync={toggleAutoSync}
-          appStyle={appStyle}
-          onOpenPreferences={openPreferences}
-          desktopLogin={isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, blocked: Boolean(loginBlocked), loggingIn,
-            onBusyChange: (busy) => { setSwitchingAccount(busy); setLoggingIn(busy); }, onChange: adoptBrowserLogin } : null}
-          chatBusy={chatControlBusy}
-          chatCollecting={isChatReceiving(collectorStatus)}
-          pairingCode={pairingCode}
-          pickingArchive={pickingArchive}
-          records={workspaceRecords}
-          chatCount={chatCount}
-          snapshotSource={displaySnapshot?.source ?? null}
-          snapshotUpdatedAt={displaySnapshot?.updatedAt ?? null}
-          status={collectorStatus}
-          stoppingSync={stoppingSync}
-          switchingAccount={switchingAccount}
-          appUpdate={appUpdate}
-          onCheckAppUpdate={checkForAppUpdates}
-          onDownloadAppUpdate={downloadAppUpdate}
-          onInstallAppUpdate={installAppUpdate}
-        />
-      ) : dashboardOpen || storyMode ? (
+      {activeView === "sources" && !storyMode ? setupPage : dashboardOpen || storyMode ? (
         <LegacyContentWorkspace
+          sources={setupPage}
           foldersRevision={assistantView?.foldersRevision}
           // 年志盖在工作台上面时别让刷视频在底下接着放
           feed={!feedShown ? undefined : storySrc ? null : <FeedWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord}
@@ -2085,7 +2097,7 @@ function AppContent() {
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
             onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} /> : undefined}
           onSendToReelLab={reelLabReady ? (record) => void sendRecordToReelLab(record) : undefined}
-          activeView={dashboardView}
+          activeView={activeView === "sources" ? "sources" : dashboardView}
           appStyle={appStyle}
           storyStyle={storyStyle}
           onOpenPreferences={openPreferences}
@@ -2106,7 +2118,7 @@ function AppContent() {
             if (!collectorToken) { openSettings(); return; }
             void collectChatHistory(collectorUrl, collectorToken);
           }}
-          onChangeView={setDashboardView}
+          onChangeView={changeDashboardView}
           onDownloadRecord={downloadRecord}
           onBatchDownloadActiveChange={setBatchDownloadActive}
           onLoadVideo={loadRecordVideo}
