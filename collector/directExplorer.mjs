@@ -21,7 +21,11 @@ const searchQuery = (channel, keyword, offset, count, searchId) => ({ search_cha
 // ponytail: 一批只搜一轮（和推荐请求同时发，接下来四轮要用的词里队列空了的各搜一页），搜不到就少插几条，下一批再补
 const PICK_AHEAD = 4, PICK_RETRY_MS = 5 * 60_000;
 const pickState = (session, word) => {
-  if (!session.picks.has(word)) session.picks.set(word, { offset: 0, searchId: null, hasMore: true, retryAt: 0, queue: [] });
+  if (!session.picks.has(word)) {
+    // 上次翻到哪、推过哪些接着用，不然搜索第一页每次都一样，每次打开推的都是同一批
+    const saved = session.pickHistory[word];
+    session.picks.set(word, { offset: 0, resumeAt: saved?.offset ?? 0, shown: new Set(saved?.ids), searchId: null, hasMore: true, retryAt: 0, queue: [] });
+  }
   return session.picks.get(word);
 };
 async function searchWord(api, session, word, state, signal) {
@@ -34,17 +38,23 @@ async function searchWord(api, session, word, state, signal) {
     const found = payload.data.flatMap((entry) => entry.aweme_info ? [entry.aweme_info] : entry.aweme_list ?? []).filter(playableAweme);
     const kept = found.filter((aweme) => !hitsRules(session, aweme));
     // 排队时留原始数据：词条改了，插入前还要再查一遍
-    state.queue.push(...kept);
+    state.queue.push(...kept.filter((aweme) => !state.shown?.has(String(aweme.aweme_id))));
     // 整页都命中屏蔽词条也歇一会，和网页一样，别每批都去搜
     if (found.length && !kept.length) state.retryAt = Date.now() + PICK_RETRY_MS;
     const next = Number(payload.cursor);
     state.hasMore = hasMore(payload.has_more) === true && Number.isSafeInteger(next) && next > state.offset;
-    if (state.hasMore) state.offset = next;
+    // 第一页照常搜（拿新的 search_id，实测不带它直接翻页被要求过验证），下一页跳回上次的位置
+    if (state.hasMore) state.offset = Math.max(next, state.resumeAt ?? 0);
     state.searchId = payload.log_pb?.impr_id ?? state.searchId;
   } catch {
     signal?.throwIfAborted();
     state.retryAt = Date.now() + PICK_RETRY_MS;
   }
+}
+// 第一页常常全是推过的，这时再搜一页（已经跳回上次的位置），别让这一批插不上
+async function searchUnseen(api, session, word, state, signal) {
+  await searchWord(api, session, word, state, signal);
+  if (!state.queue.length && state.hasMore && state.retryAt <= Date.now()) await searchWord(api, session, word, state, signal);
 }
 function searchAhead(api, session, signal) {
   const turn = session.pickTurn ?? 0;
@@ -52,7 +62,7 @@ function searchAhead(api, session, signal) {
   const every = session.pickEvery, low = every ? 1 : 10;
   const words = new Set(Array.from({ length: Math.max(PICK_AHEAD, Math.ceil(10 / (every || 1))) }, (_, index) => session.words[(turn + index) % session.words.length]));
   return Promise.all([...words].map((word) => [word, pickState(session, word)])
-    .filter(([, state]) => state.queue.length < low && state.hasMore && state.retryAt <= Date.now()).map(([word, state]) => searchWord(api, session, word, state, signal)));
+    .filter(([, state]) => state.queue.length < low && state.hasMore && state.retryAt <= Date.now()).map(([word, state]) => searchUnseen(api, session, word, state, signal)));
 }
 async function mixWords(session, known, ahead) {
   await ahead;
@@ -65,10 +75,10 @@ async function mixWords(session, known, ahead) {
   const taken = every ? session.items : known;
   const picks = [];
   for (const word of order) {
-    const queue = pickState(session, word).queue;
+    const state = pickState(session, word), queue = state.queue;
     while (queue.length) {
       const aweme = queue.shift(), item = normalizeExploreVideo(aweme);
-      if (item && !hitsRules(session, aweme) && !taken.has(item.id) && !picks.some((pick) => pick.id === item.id)) { picks.push({ ...item, pickedFor: word }); break; }
+      if (item && !hitsRules(session, aweme) && !taken.has(item.id) && !picks.some((pick) => pick.id === item.id)) { picks.push({ ...item, pickedFor: word }); state.shown.add(String(aweme.aweme_id)); break; }
     }
   }
   if (!picks.length) return;
@@ -79,6 +89,15 @@ async function mixWords(session, known, ahead) {
     if (index % every === every - 1 && picks.length) { const pick = picks.shift(); session.items.set(pick.id, pick); }
   });
   for (const pick of picks) session.items.set(pick.id, pick);
+}
+
+// 这批没轮到的词原样留着；搜到底的词不留，下次从头来，只有这时才会重复
+function pickHistoryOf(session) {
+  return Object.fromEntries(session.words.flatMap((word) => {
+    const state = session.picks.get(word), saved = session.pickHistory[word];
+    if (!state) return saved ? [[word, saved]] : [];
+    return state.hasMore ? [[word, { offset: Math.max(state.offset, state.resumeAt), ids: [...state.shown] }]] : [];
+  }));
 }
 
 // Reuse the existing response normalizers and API contracts for HTTP reads and
@@ -104,8 +123,8 @@ export class DirectExplorer extends DouyinExplorer {
     const session = previous ? { ...previous, items: new Map(previous.items), cursors: new Set(previous.cursors) }
       : { ...validated, key: randomUUID(), direct: true, items: new Map(), hasMore: null, received: false, revision: 0, cursor: "0", cursors: new Set() };
     // 词条每批跟着请求来，设置里改了下一批就用新的；各词翻到哪页留着
-    if (session.kind === "feed") Object.assign(session, { words: validated.words, pickEvery: validated.pickEvery, rules: compileRules(input.rules),
-      picks: new Map([...(previous?.picks ?? [])].map(([word, state]) => [word, { ...state, queue: [...state.queue] }])) });
+    if (session.kind === "feed") Object.assign(session, { words: validated.words, pickEvery: validated.pickEvery, rules: compileRules(input.rules), pickHistory: input.pickHistory ?? {},
+      picks: new Map([...(previous?.picks ?? [])].map(([word, state]) => [word, { ...state, queue: [...state.queue], shown: new Set(state.shown) }])) });
     if (session.cursors.has(session.cursor)) throw new ExploreError("pagination_stalled", "分页游标重复，已加载的内容仍保留。");
     const api = await this.getApi({ signal });
     signal?.throwIfAborted();
@@ -154,8 +173,8 @@ export class DirectExplorer extends DouyinExplorer {
       const oldest = this.sessions.values().next().value; this.sessions.delete(oldest.key);
       await oldest.page?.close().catch(() => {});
     }
-    // filtered 由 server 记进处置记录，不发给页面
-    return { ...this.snapshot(session), ...(hits.length ? { filtered: hits.map((hit) => ({ ...hit, t: Date.now(), action: hide || hit.isAd ? "hidden" : "observed" })) } : {}) };
+    // filtered 由 server 记进处置记录、pickHistory 由 server 存盘，都不发给页面
+    return { ...this.snapshot(session), ...(ahead ? { pickHistory: pickHistoryOf(session) } : {}), ...(hits.length ? { filtered: hits.map((hit) => ({ ...hit, t: Date.now(), action: hide || hit.isAd ? "hidden" : "observed" })) } : {}) };
   }
   async readDirectSharees(input, signal) {
     const validated = validateExploreRequest(input);

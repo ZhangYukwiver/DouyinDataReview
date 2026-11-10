@@ -31,6 +31,13 @@ describe("推荐流过滤存储", () => {
     expect(sanitizeFeedFilter({ words: "长".repeat(3000), webPicks: "true" }).words).toHaveLength(2000);
     expect(sanitizeFeedFilter({ webPicks: "true" }).webPicks).toBe(false);
   });
+  it("词条翻到哪、推过哪些逐项校验，每个词最多留最近 300 条", () => {
+    const ids = Array.from({ length: 310 }, (_, index) => String(70000 + index));
+    expect(sanitizeFeedFilter({ pickHistory: { 猫: { offset: 60, ids: [...ids, "坏", 7] }, 狗: { offset: -1 }, 鸟: "坏" } }).pickHistory).toEqual({
+      猫: { offset: 60, ids: ids.slice(-300) }, 狗: { offset: 0, ids: [] }, 鸟: { offset: 0, ids: [] } });
+    expect(sanitizeFeedFilter(null).pickHistory).toEqual({});
+  });
+
   it("没有文件时给示例词条和「只记录」", async () => {
     const value = await new FeedFilterStore(await makeDirectory()).read();
     expect(value.mode).toBe("observe");
