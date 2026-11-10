@@ -75,7 +75,8 @@ if [[ ! -f "$lame_prefix/lib/libmp3lame.a" ]]; then
   (
     cd "$lame_source"
     if [[ "$platform" == "win32" ]]; then
-      CC=x86_64-w64-mingw32-gcc AR=x86_64-w64-mingw32-ar RANLIB=x86_64-w64-mingw32-ranlib ./configure "${lame_configure_args[@]}"
+      # MSYS2 的 MINGW64 只给 gcc 带前缀，ar/ranlib 等 binutils 不带前缀
+      CC=x86_64-w64-mingw32-gcc AR=ar RANLIB=ranlib ./configure "${lame_configure_args[@]}"
     else
       ./configure "${lame_configure_args[@]}"
     fi
@@ -102,7 +103,8 @@ if [[ ! -x "$prefix/bin/ffmpeg" || ! -x "$prefix/bin/ffprobe" ]]; then
   configure_args+=("--extra-cflags=-I$lame_prefix/include" "--extra-ldflags=-L$lame_prefix/lib")
   if [[ "$platform" == "win32" ]]; then
     configure_args+=(--enable-cross-compile --target-os=mingw32 --arch=x86_64
-      --cross-prefix=x86_64-w64-mingw32- --pkg-config=pkg-config --extra-libs=-static)
+      --cc=x86_64-w64-mingw32-gcc --ar=ar --nm=nm --ranlib=ranlib --strip=strip --windres=windres
+      --pkg-config=pkg-config --extra-libs=-static)
   fi
   (cd "$source" && PKG_CONFIG_PATH="$lame_prefix/lib/pkgconfig" ./configure "${configure_args[@]}"
     make -j"${JOBS:-2}" && make install)
