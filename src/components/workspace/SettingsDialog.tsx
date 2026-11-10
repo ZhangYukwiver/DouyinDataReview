@@ -7,7 +7,7 @@ import { canDragDesktopExtension, getDesktopOpenAtLogin, getDesktopQuitOnClose, 
 import { APP_STYLES, loadAppStyleFonts, loadFeedWords, saveFeedWords, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import { readFeedPreferences } from "../../services/feedPreferences";
 import { usageAutoSettings, type UsageAutoSettings } from "../../services/usageSessions";
-import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, mcpCommands, saveAssistantConfig, type AssistantConfig, type McpClient } from "../../services/assistant";
+import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, loadVideoModelConfig, mcpCommands, saveAssistantConfig, saveVideoModelConfig, type AssistantConfig, type McpClient, type VideoModelConfig } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
 import {
   collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites, exportMobileFeedProfile,
@@ -744,6 +744,13 @@ function Assistant({ appStyle, assistantInstalled, collector, onToggleAssistant 
     saveAssistantConfig(next);
     return next;
   });
+  const [video, setVideo] = useState<VideoModelConfig>(() => loadVideoModelConfig());
+  const changeVideo = (patch: Partial<VideoModelConfig>) => setVideo((current) => {
+    const next = { ...current, ...patch };
+    saveVideoModelConfig(next);
+    return next;
+  });
+  const shared = isLocalAiRuntime(config.runtime) ? "" : "，留空用上面的";
   return (
     <>
       <View style={styles.row}>
@@ -753,8 +760,10 @@ function Assistant({ appStyle, assistantInstalled, collector, onToggleAssistant 
         />
         <Button appStyle={appStyle} kind={assistantInstalled ? "danger" : "primary"} label={assistantInstalled ? "移除" : "安装"} onPress={onToggleAssistant} testID="settings-assistant" />
       </View>
-      {assistantInstalled ? <>
+      {/* 模型不跟着「安装」藏起来：视频解析的学习笔记、分镜脚本没装 AI 助手也在用它 */}
+      <>
         <View style={[styles.row, styles.rowStacked]}>
+          <RowCopy detail="AI 助手和视频解析（学习笔记、分镜脚本）都用这个模型。" title="模型" />
           {/* 方舟的默认模型名本机 CLI 不认：切到本机就清空（用 CLI 自己的默认），切回接口再填回默认 */}
           <AiRuntimeField connection={connection} value={config.runtime ?? "api"} onChange={(runtime) => change(isLocalAiRuntime(runtime)
             ? { runtime, model: config.model === DEFAULT_ASSISTANT_CONFIG.model ? "" : config.model }
@@ -772,7 +781,19 @@ function Assistant({ appStyle, assistantInstalled, collector, onToggleAssistant 
             <Text style={styles.detail}>Key 只存在这台电脑上，每次对话随请求带给接口，不会写进应用的数据目录。</Text>
           </>}
         </View>
-      </> : null}
+        <View style={[styles.row, styles.rowStacked]} testID="settings-video-model">
+          <RowCopy
+            detail="可选。上面的模型收不了视频时，在这里另填一个能看视频的接口模型，分镜脚本会优先把整段视频交给它；不填，或者它也收不了，就由上面的模型逐张识别关键帧。"
+            title="分镜脚本的视频模型"
+          />
+          <TextInput accessibilityLabel="视频模型" autoCapitalize="none" onChangeText={(model) => changeVideo({ model })} placeholder="能看视频的模型名（留空就是不另配）" placeholderTextColor={color.textMuted}
+            style={styles.field} testID="settings-video-model-name" value={video.model} />
+          <TextInput accessibilityLabel="视频模型的接口地址" autoCapitalize="none" onChangeText={(baseUrl) => changeVideo({ baseUrl })} placeholder={`接口地址（OpenAI 兼容${shared}）`}
+            placeholderTextColor={color.textMuted} style={styles.field} testID="settings-video-model-url" value={video.baseUrl} />
+          <TextInput accessibilityLabel="视频模型的接口 Key" autoCapitalize="none" onChangeText={(apiKey) => changeVideo({ apiKey })} placeholder={`接口 Key${shared ? "（留空用上面的）" : ""}`} placeholderTextColor={color.textMuted}
+            secureTextEntry style={styles.field} testID="settings-video-model-key" value={video.apiKey} />
+        </View>
+      </>
       {connection ? <McpAccess appStyle={appStyle} connection={connection} /> : null}
     </>
   );

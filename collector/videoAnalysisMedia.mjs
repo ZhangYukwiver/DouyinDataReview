@@ -175,5 +175,15 @@ export async function extractFrames(filePath, outputDirectory, signal, metadata)
     .sort((a, b) => a.timeMs - b.timeMs);
 }
 
+/** 取原片某一刻的一帧存成 JPEG（学习笔记的配图），长边不超过 960。 */
+export async function extractFrameAt(filePath, outputPath, timeMs, signal) {
+  const ffmpeg = await resolveTool("ffmpeg");
+  await runTool(ffmpeg, [
+    "-hide_banner", "-loglevel", "error", "-y", "-ss", (timeMs / 1000).toFixed(3), "-i", ensurePath(filePath, "filePath"),
+    "-map", "0:v:0", "-an", "-frames:v", "1", "-vf", "scale='if(gt(iw,ih),min(960,iw),-2)':'if(gt(iw,ih),-2,min(960,ih))'",
+    "-q:v", "4", "-update", "1", ensurePath(outputPath, "outputPath"),
+  ], { signal });
+}
+
 export const mediaToolNames = Object.freeze({ ffmpeg: binaryName("ffmpeg"), ffprobe: binaryName("ffprobe") });
 

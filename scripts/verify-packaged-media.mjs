@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractAudio, extractFrames, inspectVideo } from "../collector/videoAnalysisMedia.mjs";
+import { extractAudio, extractFrameAt, extractFrames, inspectVideo } from "../collector/videoAnalysisMedia.mjs";
 
 // Run in a child process using the same resource location that Electron provides.
 // The two-second synthetic H.264/AAC fixture changes from black to white at 1s.
@@ -17,6 +17,9 @@ try {
   assert.ok((await stat(audio)).size > 1000);
   const frames = await extractFrames(sample, path.join(temporary, "frames"));
   assert.ok(frames.some(f => f.timeMs === 0) && frames.some(f => f.timeMs === 1000), "Missing start or cut timestamp");
+  const figure = path.join(temporary, "figure.jpg");
+  await extractFrameAt(sample, figure, 1500);
+  assert.ok((await stat(figure)).size > 100, "Missing note figure");
 } finally {
   await rm(temporary, { force: true, recursive: true });
 }

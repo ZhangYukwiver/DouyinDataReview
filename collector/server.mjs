@@ -911,14 +911,16 @@ export async function startCollectorServer({
       if (rejectStaleAccount(response, url)) return;
       try {
         target.assertReadPermission("videos");
-        if (request.method === "GET") sendJson(response, 200, await target.videoAnalysis.view(id));
-        else if (request.method === "DELETE") sendJson(response, 200, await target.videoAnalysis.cancel(id));
+        // /v1/video-analysis/batch 是批量那一队，其余是单条作品
+        const batch = id === "batch";
+        if (request.method === "GET") sendJson(response, 200, batch ? target.videoAnalysis.batchView() : await target.videoAnalysis.view(id));
+        else if (request.method === "DELETE") sendJson(response, 200, batch ? await target.videoAnalysis.cancelBatch() : await target.videoAnalysis.cancel(id));
         else if (request.method === "POST") {
-          const body = await readJsonBody(request, 8 * 1024);
+          const body = await readJsonBody(request, batch ? 256 * 1024 : 8 * 1024);
           if (rejectWhileSwitching(response) || rejectStaleAccount(response, url)) return;
           if (target !== collector) throw Object.assign(new Error("当前账号已切换，请重新打开作品。"), { code: "account_changed", status: 409 });
           target.assertReadPermission("videos");
-          sendJson(response, 202, await target.videoAnalysis.start(id, body));
+          sendJson(response, 202, batch ? target.videoAnalysis.startBatch(body) : await target.videoAnalysis.start(id, body));
         } else sendJson(response, 405, { error: "method_not_allowed" });
       } catch (error) {
         const invalid = error instanceof SyntaxError || error?.message === "body_too_large";

@@ -204,7 +204,7 @@ function qwenQueueError(event) {
   if (/ZeroGPU quota/i.test(detail)) {
     const seconds = /(\d+(?:\.\d+)?)s requested vs\.?\s*(\d+(?:\.\d+)?)s left/i.exec(detail);
     const balance = seconds ? `（本次需要 ${seconds[1]} 秒，剩余 ${seconds[2]} 秒）` : "";
-    return new VideoAnalysisAsrError("qwen_quota", `Qwen3-ASR 公共服务的 GPU 配额不足${balance}。可切换到必剪，或等配额恢复后再试。`);
+    return new VideoAnalysisAsrError("qwen_quota", `Qwen3-ASR 公共服务的 GPU 配额不足${balance}，等配额恢复后可以再用。`);
   }
   return new VideoAnalysisAsrError("qwen_failed", `Qwen3-ASR 转写失败：${event.output?.error || event.message || event.title || "公共服务未提供具体原因，请稍后重试。"}`);
 }

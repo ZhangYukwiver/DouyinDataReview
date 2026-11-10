@@ -78,7 +78,8 @@ import Svg, { Circle } from "react-native-svg";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { MyCommentsView } from "./MyCommentsView";
 import { RecordVideoPlayer, type RecordVideoLoader } from "./RecordVideoPlayer";
-import { VideoAnalysisDialog } from "./VideoAnalysisPanel";
+import { VideoAnalysisBatchDialog, VideoAnalysisDialog } from "./VideoAnalysisPanel";
+import { videoAnalysisBatch } from "../../services/videoAnalysis";
 import { LiveRoomPlayer, type LiveTarget } from "./LiveRoomPlayer";
 import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../services/liveRoom";
 import { analysisVideoIdOf, waitForCollector } from "../../services/videoFeed";
@@ -1190,6 +1191,19 @@ function RecordsGallery({
     onBatchDownloadActiveChange?.(batchRecords !== null);
     return () => onBatchDownloadActiveChange?.(false);
   }, [batchRecords, onBatchDownloadActiveChange]);
+  // 批量解析：勾选的视频交给采集器排队。弹窗只是看进度的，关掉也接着跑，所以进这页时问一次有没有在跑的，好给出「解析进度」
+  const [analysisBatch, setAnalysisBatch] = useState<{ videoId: string; title: string }[] | null>(null);
+  const [analysisBatchRunning, setAnalysisBatchRunning] = useState(false);
+  const batchBaseUrl = commentsConnection?.baseUrl;
+  const batchToken = commentsConnection?.token;
+  useEffect(() => {
+    setAnalysisBatch(null); setAnalysisBatchRunning(false);
+    if (Platform.OS !== "web" || !batchBaseUrl || !batchToken) return;
+    const controller = new AbortController();
+    videoAnalysisBatch({ baseUrl: batchBaseUrl, token: batchToken }, null, controller.signal, accountId)
+      .then((batch) => { if (!controller.signal.aborted) setAnalysisBatchRunning(batch?.status === "running"); }, () => undefined);
+    return () => controller.abort();
+  }, [batchBaseUrl, batchToken, accountId]);
   useEffect(() => { setSelectMode(null); setSelected(new Set()); setFolderDialog(null); }, [label, privacy]);
   useEffect(() => { setActiveFolder(ALL_FOLDERS); }, [label]);
   // 换了搜索词、换了文件夹就重新选，免得之前选的、现在看不见的那些悄悄留在下载列表里
@@ -1326,6 +1340,10 @@ function RecordsGallery({
   // 一万多条逐条解析网址要好几毫秒，没勾的时候（绝大多数时候）别算；换风格、收消息时这页会整页重渲染
   const chosen = useMemo(() => selected.size ? candidates.filter((record) => selected.has(videoDownloadKey(record)!)) : [], [candidates, selected]);
   const chosenRecords = selectMode === "folder" ? shownRecords.filter((record) => selected.has(record.id)) : [];
+  const analyzable = chosen.flatMap((record) => {
+    const videoId = analysisVideoIdOf(record);
+    return videoId ? [{ videoId, title: record.title ?? "" }] : [];
+  });
   // 整理不限条数，常开着连勾几十条：同一条、勾选状态没变就给同一个对象，卡片的 memo 才拦得住，勾一下只重画那一张
   const folderSelections = useRef(new Map<string, RecordSelection>());
   useEffect(() => { folderSelections.current.clear(); }, [selectMode]);
@@ -1410,13 +1428,18 @@ function RecordsGallery({
       <BatchDownloadRangePicker key={`${folderFilter}:${query}`} candidates={candidates} onSelect={setSelected} />
       <View style={styles.batchActions}>
         <Pressable {...ws("btn")} accessibilityRole="button" onPress={() => setSelected(new Set())} style={styles.batchButton}><Text style={styles.batchButtonText}>清空选择</Text></Pressable>
+        <Pressable {...ws("btn")} accessibilityRole="button" accessibilityState={{ disabled: analyzable.length === 0 }} disabled={analyzable.length === 0}
+          onPress={() => { if (!commentsConnection) { onOpenSettings(); return; } setPlayingRecord(null); setAnalysisBatch(analyzable); }}
+          style={[styles.batchButton, analyzable.length === 0 && styles.buttonDisabled]}>
+          <Sparkles size={14} color={color.textSecondary} /><Text style={styles.batchButtonText}>解析所选（{analyzable.length}）</Text>
+        </Pressable>
         <Pressable {...ws("btn-solid")} accessibilityRole="button" accessibilityState={{ disabled: chosen.length === 0 }} disabled={chosen.length === 0}
           onPress={() => { if (!commentsConnection) { onOpenSettings(); return; } setPlayingRecord(null); setBatchRecords(chosen); }}
           style={[styles.batchButton, styles.batchPrimary, chosen.length === 0 && styles.buttonDisabled]}>
           <Download size={14} color={color.buttonText} /><Text style={styles.batchPrimaryText}>下载所选（{chosen.length}）</Text>
         </Pressable>
       </View>
-      <Text style={styles.batchHint}>重复作品只选一次，图文、直播和无有效链接的记录会跳过。每个 ZIP 最多 50 个视频、合计 500 MB。</Text>
+      <Text style={styles.batchHint}>重复作品只选一次，图文、直播和无有效链接的记录会跳过。每个 ZIP 最多 50 个视频、合计 500 MB；解析一次最多 100 条，排队一条一条做。</Text>
     </View> : null}
     <FlatList
       testID="record-grid"
@@ -1451,6 +1474,11 @@ function RecordsGallery({
           {Platform.OS === "web" && !privacy && (selectMode === "download" || hasDownloadable) ? <Pressable {...ws("btn")} accessibilityRole="button"
             onPress={() => { setSelectMode(selectMode === "download" ? null : "download"); setSelected(new Set()); }} style={styles.batchButton}>
             <Download size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{selectMode === "download" ? "退出多选" : "批量下载"}</Text>
+          </Pressable> : null}
+          {/* 和批量下载用同一套勾选；有一批在跑时这个钮改成看进度 */}
+          {Platform.OS === "web" && !privacy && !selectMode && (analysisBatchRunning || hasDownloadable) ? <Pressable {...ws("btn")} accessibilityRole="button"
+            onPress={() => { if (analysisBatchRunning) setAnalysisBatch([]); else { setSelectMode("download"); setSelected(new Set()); } }} style={styles.batchButton}>
+            <Sparkles size={15} color={color.textSecondary} /><Text style={styles.batchButtonText}>{analysisBatchRunning ? "解析进度" : "批量解析"}</Text>
           </Pressable> : null}
           <View {...ws("w-switch")} accessibilityRole="tablist" style={styles.layoutSwitch}>
             <Pressable
@@ -1606,6 +1634,10 @@ function RecordsGallery({
     {liveTarget && Platform.OS === "web" && !privacy ? (
       <LiveRoomPlayer target={liveTarget} connection={commentsConnection ?? null} onClose={() => setLiveTarget(null)} onOpenRecord={onOpenRecord} onOpenSettings={onOpenSettings} />
     ) : null}
+    {analysisBatch && commentsConnection && !privacy ? <VideoAnalysisBatchDialog accountId={accountId} connection={commentsConnection} items={analysisBatch}
+      onClose={() => setAnalysisBatch(null)} onRunning={setAnalysisBatchRunning}
+      // 排上队了就退出多选：勾选已经用完，「解析进度」的入口也要等退出多选才露出来
+      onStarted={() => { setSelectMode(null); setSelected(new Set()); }} /> : null}
     {batchRecords && commentsConnection ? <BatchVideoDownloadDialog records={batchRecords} connection={commentsConnection} privacy={privacy} onClose={(saved) => {
       setBatchRecords(null);
       if (saved.length) setSelected((current) => {

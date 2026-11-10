@@ -86,7 +86,6 @@
 .rv-navigation { position: absolute; right: 12px; bottom: 8px; display: flex; gap: 4px; }
 .rv-analysis { position: absolute; right: 76px; bottom: 58px; z-index: 4; display: flex; flex-direction: column; width: min(410px, calc(100% - 94px)); max-height: min(620px, calc(100% - 88px)); overflow: hidden; border: 1px solid #ffffff18; border-radius: 14px; background: #1b1b20f5; box-shadow: 0 18px 70px #000d; animation: rv-pop .16s ease-out; touch-action: auto; }
 .rv-analysis-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 14px 10px; border-bottom: 1px solid #ffffff10; }
-.rv-backdrop.rv-library-analysis { background: rgba(0,0,0,.55); }
 .rv-library-analysis .rv-analysis { position: relative; inset: auto; width: min(560px, 100%); max-height: 100%; overflow-y: auto; }
 .rv-analysis-header strong, .rv-analysis-header small { display: block; }
 .rv-analysis-header strong { font-size: 15px; }
@@ -125,13 +124,48 @@
 .rv-analysis-entries li p { margin: 0; color: #dedee4; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rv-analysis-markdown { margin: 9px 0 0; color: #dedee4; font: inherit; font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rv-library-analysis .rv-analysis:has(.rv-study-article) { width: min(720px, 100%); }
-.rv-study-article { --ws-text: #e3e3e9; --ws-text-secondary: #d3d3dc; --ws-text-muted: #adadba; --ws-border-soft: #474750; --ws-accent-action: #a8c8ff; color: var(--ws-text); overflow-wrap: anywhere; padding: 6px 4px 18px; }
+.rv-study-article { color: var(--ws-text); overflow-wrap: anywhere; padding: 6px 4px 18px; }
+/* 播放器里叠在画面上的那块固定深色，正文用到的工作台颜色就地换成深色版 */
+.rv-backdrop:not(.rv-library-analysis) .rv-study-article { --ws-text: #e3e3e9; --ws-text-secondary: #d3d3dc; --ws-text-muted: #adadba; --ws-border-soft: #474750; --ws-accent-action: #a8c8ff; }
 .rv-study-article h1 { margin: 10px 0; font-size: 21px; line-height: 1.4; }
 .rv-study-article h2 { margin: 22px 0 9px; font-size: 16px; line-height: 1.5; }
+.rv-study-figure { display: block; max-width: 100%; max-height: 360px; margin: 8px 0 10px; border-radius: 8px; }
 .rv-study-article details { border-block: 1px solid #ffffff18; padding-block: 8px; font-size: 13px; }
 .rv-study-article summary { cursor: pointer; }
 .rv-study-article nav { display: grid; gap: 4px; margin-top: 8px; }
 .rv-study-article nav button { justify-self: start; text-align: left; padding: 3px 0; background: none; color: #a8c8ff; }
+/* 内容库、探索、AI 助手页里弹出来的解析窗口：跟着工作台当前风格走（和设置、下载这些弹窗同一套底色、描边、按钮色），不用播放器的深色 */
+.rv-backdrop.rv-library-analysis { background: var(--ws-scrim); color: var(--ws-text); font-family: var(--ws-font-body); }
+.rv-library-analysis .rv-analysis { border-color: var(--ws-border); border-radius: var(--ws-radius-large); background: var(--ws-surface); box-shadow: none; scrollbar-color: var(--ws-frame) transparent; }
+.rv-library-analysis button:focus-visible, .rv-library-analysis input:focus-visible, .rv-library-analysis select:focus-visible { outline-color: var(--ws-accent-action); }
+.rv-library-analysis :is(.rv-analysis-header, .rv-analysis-options, .rv-analysis-entries li, .rv-study-article details) { border-color: var(--ws-border-soft); }
+.rv-library-analysis :is(.rv-analysis-header small, .rv-analysis-options label > span:first-child, .rv-analysis-disclosure, .rv-analysis-result-head) { color: var(--ws-text-muted); }
+.rv-library-analysis :is(.rv-analysis-options label, .rv-analysis-status, .rv-analysis-entries li p, .rv-analysis .rv-text-button) { color: var(--ws-text-secondary); }
+.rv-library-analysis .rv-analysis-check > span { color: var(--ws-text-secondary) !important; }
+.rv-library-analysis .rv-analysis-entries li strong { color: var(--ws-text); }
+.rv-library-analysis .rv-analysis-header .rv-icon-button:hover { background: var(--ws-surface-muted); }
+.rv-library-analysis .rv-analysis select { height: 30px; padding: 0 8px; border: 1px solid var(--ws-border); border-radius: var(--ws-radius-small); background: var(--ws-surface-muted); color: var(--ws-text); font: inherit; font-size: 12px; }
+.rv-library-analysis .rv-analysis select:focus { border-color: var(--ws-accent-action); }
+.rv-library-analysis .rv-analysis-check input { accent-color: var(--ws-button); }
+.rv-library-analysis .rv-analysis-start { border-radius: var(--ws-radius-small); background: var(--ws-button); color: var(--ws-button-text); }
+.rv-library-analysis .rv-analysis-stop { border-radius: var(--ws-radius-small); background: var(--ws-surface-muted); color: var(--ws-text); }
+.rv-library-analysis .rv-analysis-status .rv-spinner-small { border-color: var(--ws-border); border-top-color: var(--ws-button); }
+.rv-library-analysis .rv-analysis-error, .rv-library-analysis .rv-analysis-error .rv-text-button { color: var(--ws-danger); }
+.rv-library-analysis .rv-analysis-error { background: var(--ws-danger-soft); }
+.rv-library-analysis .rv-analysis-result { scrollbar-color: var(--ws-frame) transparent; }
+.rv-library-analysis .rv-analysis-time { background: var(--ws-surface-muted); color: var(--ws-accent-action) !important; }
+.rv-library-analysis .rv-analysis-time:hover { background: var(--ws-border); }
+.rv-library-analysis .rv-study-article nav button { color: var(--ws-accent-action); }
+/* 批量解析的进度：状态 / 标题和说明 / 查看或重试 */
+.rv-analysis-batch-note { margin-left: 0; }
+.rv-analysis-batch li { grid-template-columns: 44px minmax(0,1fr) auto; align-items: start; }
+.rv-analysis-batch li > span { padding-top: 1px; color: var(--ws-text-muted); font-size: 11px; white-space: nowrap; }
+.rv-analysis-batch li[data-status="completed"] > span { color: var(--ws-signal); }
+.rv-analysis-batch li[data-status="failed"] > span { color: var(--ws-danger); }
+.rv-analysis-batch li[data-status="running"] > span { color: var(--ws-text); font-weight: 600; }
+.rv-analysis-batch li strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-library-analysis .rv-analysis-batch li p { color: var(--ws-text-muted); font-size: 11px; }
+.rv-analysis-batch li .rv-text-button { padding: 0 2px; font-size: 11px; }
 /* 清屏：只留画面、关闭按钮和控制栏 */
 .rv-clean .rv-caption, .rv-clean .rv-actions, .rv-clean .rv-shade, .rv-clean .rv-heading, .rv-clean .rv-position { display: none; }
 .rv-viewer:has(.rv-comments) { padding-right: 350px; }
