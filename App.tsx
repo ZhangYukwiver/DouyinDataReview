@@ -85,7 +85,6 @@ import {
   importPersonalArchive,
 } from "./src/services/importPersonalArchive";
 import {
-  canSendToReelLab,
   checkDesktopUpdates,
   downloadDesktopUpdate,
   getDesktopCollectorConfig,
@@ -94,8 +93,6 @@ import {
   isDesktopApp,
   isDesktopWindowHidden,
   notifyDesktopBackgroundSyncBlocked,
-  REELLAB_DOWNLOAD_URL,
-  sendDesktopToReelLab,
   subscribeDesktopBackgroundSync,
   subscribeDesktopUpdateState,
   trackDesktopWindowVisibility,
@@ -315,8 +312,6 @@ function AppContent() {
   const sparkRenewing = useSyncExternalStore(sparkRenewJob.subscribe, sparkRenewJob.snapshot)?.running === true;
   const [collectorError, setCollectorError] = useState<string | null>(null);
   const [downloadStates, setDownloadStates] = useState<Record<string, RecordDownloadState>>({});
-  // 「送去拆片工坊」的进度，和下载一样按记录 id 记；同时在送的任务也记在 downloadInFlightRef 里（键带 reellab: 前缀）
-  const [sendStates, setSendStates] = useState<Record<string, RecordDownloadState>>({});
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
   const [downloadChoice, setDownloadChoice] = useState<{ record: PersonalVideoRecord; keepExplore: boolean } | null>(null);
   const [batchDownloadActive, setBatchDownloadActive] = useState(false);
@@ -1267,7 +1262,6 @@ function AppContent() {
       setStoppingSync(false);
       setCollectorBusy(false);
       setDownloadStates({});
-      setSendStates({});
       setDownloadJobs({});
       setCollectorError(stopError
         ? `已断开应用，但无法确认采集任务已停止：${stopError}`
@@ -1311,7 +1305,6 @@ function AppContent() {
     removeArchive();
     setFrozenSnapshot(null);
     setDownloadStates({});
-    setSendStates({});
     setDownloadJobs({});
   }
 
@@ -1768,71 +1761,6 @@ function AppContent() {
     }
   }
 
-  // 「送去拆片工坊」：先像下载按钮那样让采集器下好视频（正常清晰度），再由桌面外壳复制进拆片工坊的收件箱、叫醒它。
-  // keepExplore：从探索页发起的，下载时别关掉探索会话。返回 true 表示送到了
-  async function sendRecordToReelLab(record: PersonalVideoRecord, keepExplore = false): Promise<boolean> {
-    const sourceUrl = record.url?.trim();
-    if (!sourceUrl) {
-      showAlert("送不过去", "该记录没有可用的抖音链接。");
-      return false;
-    }
-    const token = collectorToken;
-    const baseUrl = collectorUrl;
-    if (!token) {
-      showAlert("需要连接采集器", "请先在“连接与采集”页面连接本地采集服务，再送去拆片工坊。");
-      return false;
-    }
-    const flight = `reellab:${record.id}`;
-    if (downloadInFlightRef.current.has(flight)) return false;
-    const requestId = downloadRequestRef.current;
-    downloadInFlightRef.current.add(flight);
-    const mark = (state: RecordDownloadState) => setSendStates((current) => ({ ...current, [record.id]: state }));
-    mark("queued");
-    try {
-      let job = await startCollectorVideoDownload(baseUrl, token, sourceUrl, undefined, false, keepExplore);
-      const deadline = Date.now() + DOWNLOAD_JOB_TIMEOUT_MS;
-      while (job.status === "queued" || job.status === "running") {
-        if (downloadRequestRef.current !== requestId) return false;
-        mark(job.status);
-        if (Date.now() >= deadline) throw new LocalCollectorError("timeout", "视频下载超时，请稍后重试。");
-        await delay(DOWNLOAD_JOB_POLL_INTERVAL_MS);
-        job = await getCollectorVideoDownload(baseUrl, token, job.id);
-      }
-      if (downloadRequestRef.current !== requestId) return false;
-      if (job.status !== "complete") {
-        throw new LocalCollectorError(job.errorCode ?? "download_failed", job.error ?? "视频下载失败，请稍后重试。");
-      }
-      const result = await sendDesktopToReelLab({
-        jobId: job.id,
-        title: record.title,
-        author: record.author,
-        url: sourceUrl,
-        // 记录里没有单独的简介：抖音的标题就是简介那段话
-        description: null,
-        durationSeconds: record.durationSeconds ?? null,
-      });
-      if (result.status === "not_installed") {
-        mark("idle");
-        confirmAlert("还没装拆片工坊", "拆片工坊是单独的应用，装好后再点一次视频上的「送去」按钮就行。现在去下载吗？", "去下载", (confirmed) => {
-          if (confirmed) void openRecord(REELLAB_DOWNLOAD_URL);
-        });
-        return false;
-      }
-      if (result.status === "failed") throw new LocalCollectorError("send_failed", result.message);
-      mark("complete");
-      // 已经放进收件箱了，只是没叫醒：按送到算，别让人重送出一份重复的
-      if (result.wakeFailed) showAlert("已送到拆片工坊", "视频已经放好了，但没能自动打开拆片工坊。手动打开它就能看到。");
-      return true;
-    } catch (error) {
-      if (downloadRequestRef.current !== requestId) return false;
-      mark("failed");
-      showAlert("没送到拆片工坊", error instanceof LocalCollectorError ? error.message : "请稍后重试。");
-      return false;
-    } finally {
-      downloadInFlightRef.current.delete(flight);
-    }
-  }
-
   const workspaceRecords = displaySnapshot?.records ?? createEmptyPersonalRecords();
   const sourceLabel = displaySnapshot?.source === "collector"
     ? "本地浏览器采集"
@@ -1993,9 +1921,7 @@ function AppContent() {
     return !value;
   });
   const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus);
-  const recordDownloading = batchDownloadActive || [...Object.values(downloadStates), ...Object.values(sendStates)].some((state) => state === "queued" || state === "running");
-  // 「送去拆片工坊」只有桌面版有：要靠外壳把文件复制进拆片工坊的收件箱
-  const reelLabReady = canSendToReelLab();
+  const recordDownloading = batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running");
   const loginBlocked = accountBlockedReason({ switchingAccount, syncing: syncingRecords, busy: collectorBusy, downloading: recordDownloading, sparkRenewing });
   const accountName = activeAccountName(collectorToken !== null, collectorStatus, collectorAccounts);
 
@@ -2090,13 +2016,13 @@ function AppContent() {
           sources={setupPage}
           foldersRevision={assistantView?.foldersRevision}
           // 年志盖在工作台上面时别让刷视频在底下接着放
-          feed={!feedShown ? undefined : storySrc ? null : <FeedWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord}
+          feed={!feedShown ? undefined : storySrc ? null : <FeedWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} accountId={collectorStatus?.account?.id ?? null} onOpenSettings={openSettings} onOpenRecord={openRecord}
             onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} />}
-          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} onSendToReelLab={reelLabReady ? (record) => sendRecordToReelLab(record, true) : undefined} downloadStates={downloadStates} sendStates={sendStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
+          explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} accountId={collectorStatus?.account?.id ?? null} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
+            videoLibrary={!privacy && !switchingAccount && collectorAccounts?.activeId ? { accountId: collectorAccounts.activeId, records: workspaceRecords } : undefined}
             onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} /> : undefined}
-          onSendToReelLab={reelLabReady ? (record) => void sendRecordToReelLab(record) : undefined}
           activeView={activeView === "sources" ? "sources" : dashboardView}
           appStyle={appStyle}
           storyStyle={storyStyle}
@@ -2132,7 +2058,6 @@ function AppContent() {
           records={workspaceRecords}
           liveRecords={recordsFrozen && displaySnapshot?.source === "collector" ? liveRecords : null}
           downloadStates={downloadStates}
-          sendStates={sendStates}
           report={personalSummary ?? livingReport}
           sourceLabel={sourceLabel}
           status={collectorStatus}

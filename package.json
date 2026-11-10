@@ -24,12 +24,14 @@
     "prebuild:web": "npm run build:icons && npm run sync:story",
     "build:web": "expo export --platform web",
     "desktop": "npm run build:web && electron desktop/main.mjs",
-    "desktop:pack": "npm run build:web && npm run direct:setup && electron-builder --win dir --publish never",
-    "desktop:build": "npm run build:web && npm run direct:setup && electron-builder --win nsis --publish never",
+    "build:media-tools": "bash scripts/build-media-tools.sh",
+    "stage:media-tools": "node scripts/stage-media-tools.mjs",
+    "desktop:pack": "npm run build:web && npm run direct:setup && npm run build:media-tools && npm run stage:media-tools && electron-builder --win dir --publish never",
+    "desktop:build": "npm run build:web && npm run direct:setup && npm run build:media-tools && npm run stage:media-tools && electron-builder --win nsis --publish never",
     "sync:story": "node scripts/sync-story.mjs",
     "sync:geo": "node scripts/sync-geo.mjs",
     "check:geo": "node scripts/sync-geo.mjs --check",
-    "desktop:build:mac": "npm run build:web && npm run direct:setup && electron-builder --mac --publish never",
+    "desktop:build:mac": "npm run build:web && npm run direct:setup && npm run build:media-tools && npm run stage:media-tools && electron-builder --mac --publish never",
     "test:ops": "vitest run scripts/ops/github-traffic.test.mjs"
   },
   "dependencies": {
@@ -115,6 +117,17 @@
         "filter": [
           "LICENSE",
           "lib/runtime/bdms/**"
+        ]
+      },
+      {
+        "from": "build/media-tools",
+        "to": "media-tools",
+        "filter": [
+          "LICENSES.txt",
+          "**/ffmpeg",
+          "**/ffmpeg.exe",
+          "**/ffprobe",
+          "**/ffprobe.exe"
         ]
       }
     ],

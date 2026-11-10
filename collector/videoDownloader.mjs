@@ -340,7 +340,7 @@ function emitEvidence(onEvidence, evidence) {
   try { onEvidence(evidence); } catch { /* Evidence must never interrupt the download flow. */ }
 }
 
-function videoIdFromUrl(value) {
+export function videoIdFromUrl(value) {
   try {
     const url = new URL(value);
     return url.pathname.match(VIDEO_ID_PATTERN)?.[1]

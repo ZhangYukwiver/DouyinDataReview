@@ -42,3 +42,6 @@ npm-debug.log*
 
 # AI 生成的图标草稿与提示词
 /output/
+/build/media-tools/*
+!/build/media-tools/LICENSES.txt
+/build/media-tools-source/

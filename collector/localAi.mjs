@@ -305,7 +305,7 @@ export function claudeArgs({ systemFile, mcpFile, model, settingsFile = "", maxT
   ];
 }
 
-export function codexArgs({ workDir, systemFile, mcpUrl, model, effort, features = null, authStore = "" }) {
+export function codexArgs({ workDir, systemFile, mcpUrl, model, effort, features = null, authStore = "", imagePaths = [], schemaFile }) {
   // JSON 的字符串、数组、布尔、数字写法也是合法的 TOML（Windows 路径里的反斜杠也转义好了）
   const config = (key, value) => ["-c", `${key}=${JSON.stringify(value)}`];
   const off = features ? CODEX_OFF.filter((name) => features.has(name)) : CODEX_OFF;
@@ -330,6 +330,8 @@ export function codexArgs({ workDir, systemFile, mcpUrl, model, effort, features
       ...config("mcp_servers.dy2.tool_timeout_sec", TOOL_TIMEOUT_SECONDS),
     ] : []),
     ...(model ? [`--model=${model}`] : []),
+    ...imagePaths.map(file => `--image=${file}`),
+    ...(schemaFile ? ["--output-schema", schemaFile] : []),
     "-",
   ];
 }
@@ -645,21 +647,23 @@ export function createLocalAi({
    * 带工具跑一轮：mcp = { url, secret }，CLI 通过它调应用的工具。
    * onText(这一段说完的话)、onDelta(这一段到目前为止的字)：Claude 能逐字出，Codex 只能一段一段出。
    */
-  const converse = async (id, { model = "", systemPrompt, prompt, mcp, signal, onText = () => undefined, onDelta = () => undefined }) => {
+  const converse = async (id, { model = "", systemPrompt, prompt, imagePaths = [], outputSchema, mcp, signal, onText = () => undefined, onDelta = () => undefined }) => {
     const { found, spec, model: chosen, authStore, apiKeyHelper } = await setup(id, model, signal);
     return withRunDir(async (dir) => {
       const systemFile = path.join(dir, "system.md");
       await writePrivate(systemFile, systemPrompt);
       if (id === "claude") {
-        const mcpFile = path.join(dir, "mcp.json");
-        await writePrivate(mcpFile, JSON.stringify({ mcpServers: { dy2: { type: "http", url: mcp.url, headers: { Authorization: `Bearer ${mcp.secret}` }, timeout: TOOL_TIMEOUT_SECONDS * 1000 } } }));
+        const mcpFile = mcp ? path.join(dir, "mcp.json") : "";
+        if (mcp) await writePrivate(mcpFile, JSON.stringify({ mcpServers: { dy2: { type: "http", url: mcp.url, headers: { Authorization: `Bearer ${mcp.secret}` }, timeout: TOOL_TIMEOUT_SECONDS * 1000 } } }));
         const input = `${JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: prompt }] }, parent_tool_use_id: null, session_id: "" })}\n`;
         const args = claudeArgs({ systemFile, mcpFile, model: chosen, settingsFile: await helperFile(dir, apiKeyHelper) });
-        return launch(id, { spec, args, env: await envFor(id, spec, {}), input, reader: claudeReader({ onText, onDelta, agent: true }), signal, model: chosen });
+        return launch(id, { spec, args, env: await envFor(id, spec, {}), input, reader: claudeReader({ onText, onDelta, agent: Boolean(mcp) }), signal, model: chosen });
       }
-      const args = codexArgs({ workDir: await prepare(), systemFile, mcpUrl: mcp.url, model: chosen, effort: "medium", features: found.features, authStore });
+      const schemaFile = outputSchema && path.join(dir, "output-schema.json");
+      if (schemaFile) await writePrivate(schemaFile, JSON.stringify(outputSchema));
+      const args = codexArgs({ workDir: await prepare(), systemFile, mcpUrl: mcp?.url, model: chosen, effort: "medium", features: found.features, authStore, imagePaths, schemaFile });
       // MCP 的密钥只放环境变量，不进命令行（同一台电脑的其他账户用 ps 看得到命令行）
-      return launch(id, { spec, args, env: await envFor(id, spec, { DY2_MCP_TOKEN: mcp.secret }), input: noSkillMention(prompt), reader: codexReader({ onText }), signal, model: chosen });
+      return launch(id, { spec, args, env: await envFor(id, spec, mcp ? { DY2_MCP_TOKEN: mcp.secret } : {}), input: noSkillMention(prompt), reader: codexReader({ onText }), signal, model: chosen });
     });
   };
 

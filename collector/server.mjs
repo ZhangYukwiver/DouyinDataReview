@@ -13,6 +13,8 @@ import { fileURLToPath } from "node:url";
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
 import { AssistantError } from "./assistant/chat.mjs";
 import { createAssistant } from "./assistant/index.mjs";
+import { createLocalAi } from "./localAi.mjs";
+import { VideoAnalysis } from "./videoAnalysis.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources, openBrowserPage } from "./browserConnection.mjs";
 import { DesktopClientError, desktopDataDirectory, readDesktopIdentity, readDesktopSession } from "./desktopClient.mjs";
@@ -189,7 +191,7 @@ function sendJson(response, statusCode, payload) {
   response.end(body);
 }
 
-async function sendVideoFile(response, filePath, fileName) {
+async function sendVideoFile(response, filePath, fileName, playbackRequest = null) {
   let file;
   try {
     file = await stat(filePath);
@@ -204,13 +206,27 @@ async function sendVideoFile(response, filePath, fileName) {
   const safeName = String(fileName || "douyin-video.mp4")
     .replace(/[<>:"/\\|?*\u0000-\u001F]/gu, "_")
     .slice(0, 180) || "douyin-video.mp4";
-  response.writeHead(200, {
+  const range = playbackRequest?.headers.range;
+  let start = 0, end = file.size - 1;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/u.exec(range);
+    if (match?.[1]) {
+      start = Number(match[1]);
+      if (match[2]) end = Math.min(end, Number(match[2]));
+    } else if (match?.[2]) start = Math.max(0, file.size - Number(match[2]));
+    if (!match || (!match[1] && !match[2]) || start > end) {
+      response.writeHead(416, { "Content-Range": `bytes */${file.size}` }); response.end(); return;
+    }
+  }
+  response.writeHead(range ? 206 : 200, {
     "Content-Type": ({ ".zip": "application/zip", ".m4a": "audio/mp4" })[path.extname(safeName)] ?? "video/mp4",
-    "Content-Length": file.size,
-    "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(safeName)}`,
+    "Content-Length": end - start + 1,
+    ...(playbackRequest ? { "Accept-Ranges": "bytes" } : { "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(safeName)}` }),
+    ...(range ? { "Content-Range": `bytes ${start}-${end}/${file.size}` } : {}),
     "Cache-Control": "no-store",
   });
-  const stream = createReadStream(filePath);
+  const stream = createReadStream(filePath, range ? { start, end } : {});
+  response.once("close", () => stream.destroy());
   stream.once("error", () => response.destroy());
   stream.pipe(response);
 }
@@ -288,6 +304,7 @@ export async function startCollectorServer({
   let writesEnabled = await readFile(writeSettingsFile, "utf8").then((text) => JSON.parse(text).enabled === true).catch(() => false);
   // 推荐流控制：词条、过滤方式和处置记录所有账号共用；浏览器里由扩展照着做
   const feedFilter = new FeedFilterStore(dataDirectory);
+  const localAi = createLocalAi({ dataDirectory });
   // 每个账号一个采集器，各用自己目录里的登录态和记录；同一时间只开当前这一个
   const openCollector = async (account) => {
     const directory = accounts.directory(account);
@@ -300,6 +317,7 @@ export async function startCollectorServer({
       onAccountIdentity: (identity) => accounts.updateIdentity(account.id, identity).catch(() => undefined),
     });
     await next.initialize();
+    next.videoAnalysis = new VideoAnalysis({ directory, localAi, download: (id, signal) => next.downloadVideoForAnalysis(id, signal) });
     return next;
   };
   let collector = await openCollector(accounts.active());
@@ -367,6 +385,7 @@ export async function startCollectorServer({
   // AI 助手：数据在进程里查，功能调自己的接口（server 在下面建好、监听后才会被用到）
   const assistant = createAssistant({
     dataDirectory,
+    localAi,
     baseUrl: () => `http://127.0.0.1:${server.address().port}`,
     pairing,
     collector: () => collector,
@@ -528,7 +547,8 @@ export async function startCollectorServer({
     const streamMatch = request.method === "GET" ? url.pathname.match(/^\/v1\/downloads\/([0-9a-f-]{20,})\/stream$/iu) : null;
     if (streamMatch) {
       const stream = collector.playbackStream(streamMatch[1], url.searchParams.get("key"), url.searchParams.get("live"));
-      if (stream) await proxyMediaStream(request, response, stream);
+      if (stream?.cachedFile) await sendVideoFile(response, stream.cachedFile, "source.mp4", request);
+      else if (stream) await proxyMediaStream(request, response, stream);
       else sendJson(response, 404, { error: "download_job_not_found" });
       return;
     }
@@ -871,6 +891,40 @@ export async function startCollectorServer({
           message: error?.code ? error.message : "页面读取失败，请检查抖音浏览器后重试。",
         });
       } finally { response.off("close", abort); }
+    } else if (url.pathname === "/v1/video-analysis/notes") {
+      if (rejectWhileSwitching(response) || rejectStaleAccount(response, url)) return;
+      try {
+        collector.assertReadPermission("videos");
+        if (request.method !== "GET") {
+          sendJson(response, 405, { error: "method_not_allowed" });
+          return;
+        }
+        const history = await collector.videoAnalysis.listNotes();
+        if (rejectWhileSwitching(response) || rejectStaleAccount(response, url)) return;
+        sendJson(response, 200, history);
+      } catch (error) {
+        sendJson(response, error.status || 500, { error: error.code || "analysis_error", message: error.status ? error.message : "无法读取视频笔记。" });
+      }
+    } else if (url.pathname.startsWith("/v1/video-analysis/")) {
+      const id = url.pathname.slice("/v1/video-analysis/".length);
+      const target = collector;
+      if (rejectStaleAccount(response, url)) return;
+      try {
+        target.assertReadPermission("videos");
+        if (request.method === "GET") sendJson(response, 200, await target.videoAnalysis.view(id));
+        else if (request.method === "DELETE") sendJson(response, 200, await target.videoAnalysis.cancel(id));
+        else if (request.method === "POST") {
+          const body = await readJsonBody(request, 8 * 1024);
+          if (rejectWhileSwitching(response) || rejectStaleAccount(response, url)) return;
+          if (target !== collector) throw Object.assign(new Error("当前账号已切换，请重新打开作品。"), { code: "account_changed", status: 409 });
+          target.assertReadPermission("videos");
+          sendJson(response, 202, await target.videoAnalysis.start(id, body));
+        } else sendJson(response, 405, { error: "method_not_allowed" });
+      } catch (error) {
+        const invalid = error instanceof SyntaxError || error?.message === "body_too_large";
+        sendJson(response, error.status || (invalid ? 400 : 500), { error: error.code || (invalid ? "invalid_request" : "analysis_error"),
+          message: error.status ? error.message : invalid ? "解析请求格式无效。" : "无法读取视频解析结果。" });
+      }
     } else if (request.method === "POST" && url.pathname === "/v1/downloads") {
       try {
         const body = await readJsonBody(request);
@@ -1274,6 +1328,7 @@ export async function startCollectorServer({
       await accountWork?.catch(() => undefined);
       await browserWork;
       await clearPendingBrowser();
+      await collector.videoAnalysis.stop();
       await assistant.close();
       await explorer.close();
       await collector.close();
@@ -1297,8 +1352,6 @@ export async function startCollectorServer({
     getPairingCode: () => pairing.displayCode(),
     setAppUsageActive: active => usageSessions.setActive("app", active, { reason: "hidden" }),
     setUsageSuspended: suspended => usageSessions.setSuspended(suspended),
-    // 送去拆片工坊：桌面主进程按下载任务取已下好的文件，没下完或不在下载目录里就是 null
-    getDownloadFilePath: (jobId) => collector.getVideoDownloadFilePath(jobId),
     close: shutdown,
   };
 }

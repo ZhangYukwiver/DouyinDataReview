@@ -36,6 +36,7 @@ import {
   downloadDouyinVideo,
   resolveDouyinStream,
   normalizeDouyinVideoUrl,
+  videoIdFromUrl,
   VideoDownloadError,
 } from "./videoDownloader.mjs";
 import { ChatSendError, validateChatSend } from "./chatSender.mjs";
@@ -1068,6 +1069,34 @@ export class DouyinCollector {
     return true;
   }
 
+  /** 复用播放器的下载队列和账号权限；取消解析只影响它自己发起的下载。 */
+  async downloadVideoForAnalysis(videoId, signal) {
+    signal.throwIfAborted();
+    const { id } = this.startVideoDownload(`https://www.douyin.com/video/${videoId}`);
+    const job = this.videoDownloadJobs.get(id);
+    const run = this.videoDownloadQueue;
+    let stop;
+    const cancelled = new Promise((_, reject) => {
+      stop = () => {
+        if (job.status === "queued") this.touchVideoDownloadJob(job, { status: "failed", errorCode: "cancelled" });
+        job.controller?.abort();
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", stop, { once: true });
+    });
+    try {
+      await Promise.race([run, cancelled]);
+      signal.throwIfAborted();
+      const file = this.getVideoDownloadFilePath(id);
+      if (!file) throw Object.assign(new Error(job.error || "没有取得原片。"), { code: job.errorCode || "download_failed" });
+      if (/\.zip$/iu.test(file) || (job.video?.videoId && String(job.video.videoId) !== videoId))
+        throw Object.assign(new Error("取得的文件不是当前作品的视频。"), { code: "not_video" });
+      return file;
+    } finally {
+      signal.removeEventListener("abort", stop);
+    }
+  }
+
   /** The player's <video> cannot send the session header, so each playback job carries its own key. */
   playbackStream(jobId, key, live = null) {
     if (!this.getReadPermissions().videos) return null;
@@ -1078,7 +1107,7 @@ export class DouyinCollector {
     // Playing can outlast the orphan timer; the player's DELETE or retention pruning ends it now.
     clearTimeout(job.releaseTimer);
     this.touchVideoDownloadJob(job);
-    if (live === null) return job.stream.url ? job.stream : null;
+    if (live === null) return job.stream.url || job.stream.cachedFile ? job.stream : null;
     const url = job.stream.images?.[Number(live)]?.live;
     return url ? { url, referer: job.stream.referer } : null;
   }
@@ -1131,6 +1160,15 @@ export class DouyinCollector {
       error: null,
     });
     try {
+      if (job.playback) {
+        const cachedFile = await this.videoAnalysis?.cachedSource(videoIdFromUrl(job.sourceUrl));
+        if (cachedFile) {
+          controller.signal.throwIfAborted();
+          job.stream = { cachedFile };
+          this.touchVideoDownloadJob(job, { status: "complete", completedAt: new Date().toISOString() });
+          return;
+        }
+      }
       if (this.visibleBrowserWorkRunning()) {
         throw new VideoDownloadError("collector_busy", "采集器正在执行其他任务，请稍后再试。", { retryable: true });
       }
@@ -2151,6 +2189,7 @@ export class DouyinCollector {
 
   // 换账号前把这个账号的活全收掉：关直播间和浏览器，再等挂着的读取、监听、下载和存盘落地
   async shutdown() {
+    await this.videoAnalysis?.stop();
     clearTimeout(this.liveRooms.releaseTimer);
     await this.liveRooms.closeAll({ release: false });
     await this.close();

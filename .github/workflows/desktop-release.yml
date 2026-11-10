@@ -46,6 +46,14 @@ jobs:
       - name: Install Windows Electron
         if: runner.os == 'Windows'
         run: node node_modules/electron/install.js
+      - name: Install Windows media build dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'C:\msys64\usr\bin\bash.exe')) {
+            choco install msys2 --yes --no-progress
+          }
+          & 'C:\msys64\usr\bin\bash.exe' -lc 'pacman -Sy --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf make diffutils nasm'
       - name: Check tag version
         if: startsWith(github.ref, 'refs/tags/')
         run: >-
@@ -57,6 +65,27 @@ jobs:
       - run: npm test
       - run: npm run build:web
       - run: npm run direct:setup
+      - name: Build redistributable Windows media tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MEDIA_TARGET_PLATFORM: win32
+          MEDIA_TARGET_ARCH: x64
+          MEDIA_TOOLS_SOURCE_DIR: ${{ runner.temp }}\media-tools
+          MSYSTEM: MINGW64
+        run: |
+          & 'C:\msys64\usr\bin\bash.exe' -lc 'export PATH=/mingw64/bin:$PATH; cd "$(cygpath -u "$GITHUB_WORKSPACE")" && bash scripts/build-media-tools.sh'
+      - name: Build redistributable Apple media tools
+        if: runner.os == 'macOS'
+        env:
+          MEDIA_TARGET_PLATFORM: darwin
+          MEDIA_TARGET_ARCH: arm64
+          MEDIA_TOOLS_SOURCE_DIR: ${{ runner.temp }}/media-tools
+        run: bash scripts/build-media-tools.sh
+      - name: Stage redistributable media tools
+        env:
+          MEDIA_TOOLS_SOURCE_DIR: ${{ runner.temp }}/media-tools
+        run: npm run stage:media-tools
       - name: Install Apple Silicon Electron
         if: runner.os == 'macOS'
         env:

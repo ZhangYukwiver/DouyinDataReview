@@ -8,6 +8,8 @@ import {
 import type { ExploreConnection } from "../../services/explorer";
 import { runtimeProblem } from "./AiRuntimeField";
 import { PlaybackContext } from "./PlaybackContext";
+import { AssistantVideoNotes } from "./AssistantVideoNotes";
+import type { PersonalRecordCollection } from "../../domain/personalRecords";
 import { clampSpot, dockPlacement, loadDockSize, loadDockSpot, MIN_SIZE, saveDockSize, saveDockSpot, type DockSide } from "./assistantDock";
 import { kit, SmallButton } from "./CreatorKit";
 import { Markdown } from "./markdownView";
@@ -20,6 +22,7 @@ import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii
 type Props = {
   connection: ExploreConnection | null;
   view: AssistantView | null;
+  videoLibrary?: { accountId: string; records: PersonalRecordCollection };
   onOpenSettings: () => void;
   onOpenLink: (url: string) => void;
   onSaveDownload: (id: string, fileName: string | null) => Promise<void>;
@@ -38,8 +41,9 @@ const pointer = web ? ({ cursor: "pointer" } as object) : null;
 const grab = web ? ({ cursor: "grab" } as object) : null;
 const message = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
 
-export function AssistantWorkspace({ connection, view, onOpenSettings, onOpenLink, onSaveDownload, onClose }: Props) {
+export function AssistantWorkspace({ connection, view, videoLibrary, onOpenSettings, onOpenLink, onSaveDownload, onClose }: Props) {
   const playback = useContext(PlaybackContext);
+  const [showVideoNotes, setShowVideoNotes] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -85,12 +89,17 @@ export function AssistantWorkspace({ connection, view, onOpenSettings, onOpenLin
   }
 
   const error = localError ?? view?.error ?? null;
+  if (web && !panel && showVideoNotes && videoLibrary) return <AssistantVideoNotes key={videoLibrary.accountId}
+    connection={connection} {...videoLibrary} onClose={() => setShowVideoNotes(false)} />;
   return <View style={styles.root} testID="assistant-workspace">
     <View style={[styles.head, panel && styles.panelHead, panel && grab]} testID={panel ? "assistant-panel-head" : undefined}>
       <View style={{ flex: 1 }}>
         {panel ? <Text style={styles.panelTitle}>AI 助手</Text> : null}
         <Text numberOfLines={1} style={kit.muted}>{ready ? `用的是 ${isLocalAiRuntime(config.runtime) ? (config.runtime === "codex" ? "本机 Codex" : "本机 Claude Code") : config.model}` : "还没配模型"}</Text>
       </View>
+      {web && !panel && videoLibrary && <SmallButton label="视频解析" onPress={() => setShowVideoNotes(true)}>
+        <Sparkles color={color.textSecondary} size={14} />
+      </SmallButton>}
       <SmallButton label="设置" onPress={onOpenSettings} />
       <SmallButton label="新对话" disabled={busy || !shown.length} onPress={() => act(resetAssistant(connection))}>
         <SquarePen color={color.textSecondary} size={13} strokeWidth={1.9} />
