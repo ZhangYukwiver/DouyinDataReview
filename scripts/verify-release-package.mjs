@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { extractFile as extractArchiveFile, listPackage, statFile as statArchiveFile } from "@electron/asar";
 import { DIRECT_SIGNER_FILES, verifyDirectSigner } from "../collector/directHistory.mjs";
 
 const projectDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const execFile = promisify(execFileCallback);
 const privateNames = /^(?:\.local-data(?:-.*)?|browser-profile|profile|profiles|records(?:\.json)?|direct-history-template\.json|direct-session\.json(?:\.[^/]+\.tmp)?|external-browser\.json(?:\.[^/]+\.tmp)?|accounts\.json|cookies?(?:\.sqlite|\.db|\.json)?(?:-journal|-wal|-shm)?|login data(?:-journal|-wal|-shm)?|local state|web data(?:-journal|-wal|-shm)?|\.env(?:\..*)?|\.git|\.ssh)$/i;
 const runtimeDependencyRoots = new Set([
   "ws",
@@ -90,9 +93,12 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
       assert(dependencyRoot === "playwright-core" || runtimeDependencyRoots.has(dependencyRoot), `Unexpected runtime dependency: ${entry}`);
     }
   }
+  assert(!entries.some((entry) => entry.startsWith("node_modules/@ffmpeg-installer/") || entry.startsWith("node_modules/@ffprobe-installer/")),
+    "Media binaries must be shipped as exact extra resources, not duplicated in app.asar");
 
   for (const relative of [
     "collector/directHistory.mjs", "collector/douyinCollector.mjs",
+    "collector/videoAnalysis.mjs", "collector/videoAnalysisMedia.mjs", "collector/videoAnalysisModel.mjs", "collector/videoAnalysisAsr.mjs",
     "collector/directApi.mjs", "collector/directChat.mjs", "collector/directCredentials.mjs",
     "collector/directExplorer.mjs", "collector/directLive.mjs", "collector/directProto.mjs",
     "collector/directWrites.mjs", "collector/nativeSignature.mjs", "collector/sm3.mjs",
@@ -149,7 +155,7 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
     assert(packagedFiles.includes(`extension/${relative}`), `Feed filter extension is missing ${relative}`);
   for (const relative of packagedFiles) {
     assertPublicPackagePath(relative);
-    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("extension/") || relative.startsWith("direct-signer/"), `Unexpected resource: ${relative}`);
+    assert(relative === "app.asar" || relative === "app-update.yml" || relative === "default_app.asar" || relative === "elevate.exe" || relative === "icon.icns" || /^[^/]+\.lproj\/(?:locale\.pak|InfoPlist\.strings)$/.test(relative) || relative.startsWith("app.asar.unpacked/") || relative.startsWith("extension/") || relative.startsWith("direct-signer/") || relative.startsWith("media-tools/"), `Unexpected resource: ${relative}`);
     // 推荐流过滤扩展原样带上（浏览器从拷出去的这份加载），不许多出或改动文件
     if (relative.startsWith("extension/")) {
       assert(!relative.endsWith(".test.mjs"), `Test file in package: ${relative}`);
@@ -166,6 +172,27 @@ export async function verifyReleasePackage(resourcesDirectory, { sourceDirectory
       const archiveRelative = relative.slice("app.asar.unpacked/".length);
       assert.equal(statFile(archive, archiveRelative).unpacked, true, `Untracked unpacked resource: ${relative}`);
     }
+  }
+  const mediaDirectory = path.join(resources, "media-tools");
+  const mediaFiles = await filesUnder(mediaDirectory);
+  const targetDirectories = [...new Set(mediaFiles.filter((relative) => relative.includes("/")).map((relative) => relative.split("/")[0]))];
+  assert.equal(targetDirectories.length, 1, "Media resources must contain one target platform directory");
+  const target = targetDirectories[0];
+  assert.match(target, /^(?:darwin-arm64|win32-x64)$/u, "Unexpected media tool platform");
+  const extension = target.startsWith("win32-") ? ".exe" : "";
+  assert.deepEqual(mediaFiles.sort(), ["LICENSES.txt", `${target}/ffmpeg${extension}`, `${target}/ffprobe${extension}`].sort(), "Unexpected media resource files");
+  assert.deepEqual(await readFile(path.join(mediaDirectory, "LICENSES.txt")), await readFile(path.join(sourceDirectory, "build/media-tools/LICENSES.txt")), "Media license notice differs from source");
+  if (target === `${process.platform}-${process.arch}`) {
+    const ffmpegPath = path.join(mediaDirectory, target, `ffmpeg${extension}`);
+    const ffprobePath = path.join(mediaDirectory, target, `ffprobe${extension}`);
+    await execFile(ffmpegPath, ["-version"]);
+    await execFile(ffprobePath, ["-version"]);
+    const { stdout, stderr } = await execFile(ffmpegPath, ["-L"]);
+    assert.match(stdout, /GNU\s+Lesser\s+General\s+Public\s+License|LGPL/u, "FFmpeg must report an LGPL build");
+    assert(!/enable-(?:gpl|nonfree)|not legally redistributable/iu.test(stdout + stderr), "FFmpeg contains GPL or nonfree components");
+    await execFile(process.execPath, [path.join(sourceDirectory, "scripts/verify-packaged-media.mjs"), resources], {
+      env: { ...process.env, PATH: process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\\Windows", "System32") : "/usr/bin:/bin" },
+    });
   }
   return { version: packedPackage.version, webFiles: distFiles.length };
 }

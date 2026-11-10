@@ -44,6 +44,11 @@ export async function waitForCollector<T>(operation: () => Promise<T>, signal: A
 
 export const videoIdOf = (record: PersonalVideoRecord) => record.videoId || /\/(?:video|note)\/(\d+)/u.exec(record.url ?? "")?.[1];
 
+export function analysisVideoIdOf(record: PersonalVideoRecord) {
+  const id = videoIdOf(record);
+  return record.mediaType !== "image" && record.mediaType !== "live" && id && /^\d{1,24}$/u.test(id) ? id : null;
+}
+
 /** Own only this player's comment tab; never close search/profile sessions. */
 export function createVideoCommentsSession(connection: ExploreConnection, record: PersonalVideoRecord) {
   const id = videoIdOf(record);

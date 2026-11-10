@@ -86,7 +86,7 @@
         "直播观看与弹幕（只看不发）",
         "可选 AI 助手：用对话查本人记录、替你用应用功能，也能通过 MCP 给 Claude Code / Codex 使用",
         "本地持续报告与抖音年度回顾，导出 HTML 和 PNG",
-        "桌面版一键把视频送去独立应用拆片工坊（ReelLab）做 AI 解析与剪辑"
+        "播放器内按需发起 AI 视频解析，查看带原片时间的结果并跳转播放"
       ],
       "offers": {
         "@type": "Offer",
@@ -268,7 +268,7 @@
           "name": "收费吗？数据会传到哪里？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "应用免费、源码采用 MIT 许可。个人记录保存和报告统计在本机完成；在线采集只请求抖音，默认不调用 AI 服务；装了可选的 AI 助手，对话和它查到的数据才会发给你自己在设置里填的模型接口或本机 Codex / Claude Code。AI 视频解析与剪辑已拆成独立应用拆片工坊（ReelLab）：只有你在桌面版点「送去」按钮送到拆片工坊的那条视频（文件和标题、作者、链接、时长）会复制给它，之后的数据流由拆片工坊自己说明。抖音 Cookie 和整份个人记录不会交给它。"
+            "text": "应用免费、源码采用 MIT 许可。个人记录保存和报告统计在本机完成；在线采集和互动需要请求抖音，默认不调用 AI 服务。使用可选的 AI 助手时，对话和它为回答查到的数据会交给你配置的模型接口或本机 Codex / Claude Code。主动使用视频解析时，需要转写的音轨会交给语音识别服务，关键帧和文字会交给你配置的模型接口或本机 Codex / Claude Code。登录凭据和个人备份应由本人保管。"
           }
         },
         {
@@ -394,7 +394,7 @@ a{color:var(--accent)}
   <li>看关注的人的直播和弹幕，「使用记录」记下每天在这台电脑上刷了多久</li>
   <li>可选的 AI 助手：用对话查自己的记录、替你用应用的功能，Claude Code、Codex 也能通过 MCP 调用</li>
   <li>生成年度报告和持续报告，年度回顾可导出独立 HTML 与 PNG 分享图</li>
-  <li>桌面版一键把视频送去独立应用<a href="https://github.com/ZhangYukwiver/ReelLab">拆片工坊（ReelLab）</a>做 AI 解析与剪辑</li>
+  <li>播放器内按需发起 AI 视频解析，查看带原片时间的结果并跳转播放</li>
 </ul>
 <p>具体操作见<a href="guide.html#export">数据导出步骤</a>、<a href="guide.html#annual-report">年度报告指南</a>与<a href="guide.html#privacy">数据去向说明</a>。在线采集不保证取回全部历史，群聊正文不写入备份。</p>
 <h2 id="install">安装与首次登录</h2>
@@ -449,14 +449,14 @@ a{color:var(--accent)}
 <h3 id="ai-assistant">有 AI 助手吗？能接 Claude Code 或 Codex 吗？</h3>
 <p>有，可选、默认不装，在「设置 → AI」安装。它能用对话查本人的观看记录、私信和创作者数据，或替你搜抖音、下载作品、整理文件夹、开始读取；模型用你自己填的 OpenAI 兼容接口，或本机的 Codex / Claude Code。应用开着时还在本机提供 MCP 接口，Claude Code、Codex 可以直接调用同一套功能。发私信、点赞、评论这类别人看得到的操作，每次都要你在应用里点「允许」。</p>
 <h3 id="privacy-and-ai">收费吗？数据会传到哪里？</h3>
-<p>应用免费、源码采用 MIT 许可。个人记录保存和报告统计在本机完成；在线采集只请求抖音，默认不调用 AI 服务；装了可选的 AI 助手，对话和它查到的数据才会发给你自己在设置里填的模型接口或本机 Codex / Claude Code。AI 视频解析与剪辑已拆成独立应用拆片工坊（ReelLab）：只有你在桌面版点「送去」按钮送到拆片工坊的那条视频（文件和标题、作者、链接、时长）会复制给它，之后的数据流由拆片工坊自己说明。抖音 Cookie 和整份个人记录不会交给它。</p>
+<p>应用免费、源码采用 MIT 许可。个人记录保存和报告统计在本机完成；在线采集和互动需要请求抖音，默认不调用 AI 服务。使用可选的 AI 助手时，对话和它为回答查到的数据会交给你配置的模型接口或本机 Codex / Claude Code。主动使用视频解析时，需要转写的音轨会交给语音识别服务，关键帧和文字会交给你配置的模型接口或本机 Codex / Claude Code。登录凭据和个人备份应由本人保管。</p>
 <h3 id="account-risk">会被封号吗？</h3>
 <p>没法保证不会。工具使用本人账号导入的会话，但采集依赖抖音未公开承诺的私有接口，接口变化可能导致功能失效或触发账号风控。请仅用于本人账号和个人数据管理；发送消息、点赞和评论等操作由用户主动触发。</p>
 <h3 id="supported-platforms">支持哪些系统？能在手机或 Intel Mac 上安装吗？</h3>
 <p>已提供的桌面安装包支持 Windows 10 / 11 x64 和 macOS Apple Silicon（M1 及更新）。目前没有原生手机安装包、Intel Mac 安装包或 Linux 安装包。开发者可从源码运行 Web 工作台；手机在可信局域网连接电脑采集器的方式见仓库 README。</p>
 <!-- geo:faq:end -->
 <h2 id="en" lang="en">In English</h2>
-<p lang="en">DouyinDataReview is a free, MIT-licensed desktop app for Windows x64 and macOS Apple Silicon. Export your own Douyin watch history, likes, favorites and saved friend chats as JSON, import an official Douyin JSON / ZIP archive, and generate a local year-in-review (Douyin Wrapped) as HTML or PNG. You can also browse your Douyin home feed inside the app, view your Creator Center stats and reply to comments, block feed videos by keyword, mix videos from topics you choose into the feed, review your own comments and replies, and use an optional AI assistant that Claude Code and Codex can also reach over MCP. Group chat bodies are excluded from backups, and a complete lifetime history is not guaranteed. It targets Douyin in China; international TikTok is not supported. The interface is in Chinese. AI video analysis and editing now live in a separate app, <a href="https://github.com/ZhangYukwiver/ReelLab">ReelLab</a>; the desktop app can send a video there in one click. See the <a href="guide.html#privacy">data flow guide</a>.</p>
+<p lang="en">DouyinDataReview is a free, MIT-licensed desktop app for Windows x64 and macOS Apple Silicon. Export your own Douyin watch history, likes, favorites and saved friend chats as JSON, import an official Douyin JSON / ZIP archive, and generate a local year-in-review (Douyin Wrapped) as HTML or PNG. You can also browse your Douyin home feed inside the app, view your Creator Center stats and reply to comments, block feed videos by keyword, mix videos from topics you choose into the feed, review your own comments and replies, and use an optional AI assistant that Claude Code and Codex can also reach over MCP. Group chat bodies are excluded from backups, and a complete lifetime history is not guaranteed. It targets Douyin in China; international TikTok is not supported. The interface is in Chinese. You can start AI video analysis directly in the player and jump to the source timestamps in its results. See the <a href="guide.html#privacy">data flow guide</a>.</p>
 <h2 id="contact">交流与反馈</h2>
 <div class="qq">
   <img src="qq-group.jpg" alt="QQ 群二维码" loading="lazy">

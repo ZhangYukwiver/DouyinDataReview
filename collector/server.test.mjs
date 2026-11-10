@@ -50,6 +50,27 @@ async function startPaired(prefix, prepare) {
 }
 
 describe("collector accounts", () => {
+  it("seeks the analyzed account's cached original with a playback key when there is no online login", async () => {
+    const { runtime, headers } = await startPaired("analysis-replay-", async root => {
+      const dir = path.join(root, "video-analysis", "12345678");
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, "source.mp4"), "0123456789");
+    });
+    const jobs = runtime.baseUrl + "/v1/downloads";
+    const { job } = await fetch(jobs, { method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://www.douyin.com/video/12345678", playback: true }) }).then(r => r.json());
+    await vi.waitFor(async () => {
+      const view = await fetch(jobs + "/" + job.id, { headers }).then(r => r.json());
+      expect(view.job.status).toBe("complete");
+    });
+    const url = jobs + "/" + job.id + "/stream?key=";
+    expect((await fetch(url + "wrong")).status).toBe(404);
+    const part = await fetch(url + job.streamKey, { headers: { Range: "bytes=3-6" } });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("Content-Range")).toBe("bytes 3-6/10");
+    expect(await part.text()).toBe("3456");
+    expect((await fetch(url + job.streamKey, { headers: { Range: "bytes=100-" } })).status).toBe(416);
+  });
   it("scopes voice transcription to the expected account and forwards only the requested local message", async () => {
     const transcribe = vi.spyOn(DouyinCollector.prototype, "transcribeChatVoice").mockResolvedValue({ id: "123", text: "合成转写" });
     try {
@@ -603,8 +624,6 @@ describe("collector server runtime", () => {
     const release = await fetch(releaseUrl, { method: "DELETE", headers: { Authorization: `Bearer ${payload.token}` } });
     expect(release.status).toBe(200);
     await expect(release.json()).resolves.toEqual({ ok: true });
-    // 送去拆片工坊只拿下好了的文件，没有这个任务就是 null
-    expect(runtime.getDownloadFilePath("12345678-1234-1234-1234-123456789abc")).toBeNull();
 
     // <video> sends no session header: a stream is gated by its per-job key alone.
     const stream = await fetch(`${releaseUrl}/stream?key=guess`);
@@ -695,6 +714,9 @@ describe("推荐流过滤扩展接口", () => {
     expect((await app("/v1/feed-filter")).body.extension.lastSeenAt).toEqual(expect.any(Number));
     expect((await bare("/v1/records")).status).toBe(403);
     expect((await app("/v1/feed-filter")).body.pickEvery).toBe(3);
+    expect((await app("/v1/feed-filter/mobile-export", { method: "POST" })).body)
+      .toMatchObject({ format: "douyin-review-feed/1", pickEvery: 3, candidates: [] });
+    expect((await bare("/v1/feed-filter/mobile-export", { method: "POST" })).status).toBe(403);
     expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 }) })).body)
       .toMatchObject({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 });
     expect(await (await bare("/v1/feed-filter")).json()).toMatchObject({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 });

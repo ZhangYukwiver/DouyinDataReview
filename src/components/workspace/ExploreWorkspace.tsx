@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
-import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Download, Heart, MessageCircle, Play, Search, Send, UserRound, Users, X } from "lucide-react-native";
+import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronRight, Download, Heart, MessageCircle, Play, Search, Sparkles, UserRound, Users, X } from "lucide-react-native";
 import { closeExplore, interactExplore, markExploreSeen, readExplore, type ExploreAction, type ExploreComment, type ExploreConnection, type ExplorePage, type ExploreQuery, type ExploreUser, type ExploreVideo, type WatchedItem } from "../../services/explorer";
 import { loadFeedWords } from "../../services/appStyle";
 import { readFeedPreferences } from "../../services/feedPreferences";
 import { loadCollectorVideo, LocalCollectorError } from "../../services/localCollector";
-import { waitForCollector } from "../../services/videoFeed";
+import { analysisVideoIdOf, waitForCollector } from "../../services/videoFeed";
 import { uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
@@ -14,6 +14,7 @@ import { DarenCard } from "./DarenCard";
 import { HotTopicsCard } from "./HotTopicsCard";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
 import { RecordVideoPlayer } from "./RecordVideoPlayer";
+import { VideoAnalysisDialog } from "./VideoAnalysisPanel";
 import { CommentImagePreview, CommentImageThumbnails } from "./CommentImagePreview";
 import { renderEmojiText } from "./emojiText";
 import { workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -23,17 +24,21 @@ const count = (value?: number | null) => value === undefined || value === null ?
 const date = (value?: string | null) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString("zh-CN") : "";
 type ActionIntent = { action: ExploreAction["action"]; label: string; desired?: boolean; text?: string };
 type Props = {
-  connection: ExploreConnection | null; onOpenSettings: () => void; onOpenRecord: (url: string) => Promise<void>;
+  connection: ExploreConnection | null; accountId?: string | null; onOpenSettings: () => void; onOpenRecord: (url: string) => Promise<void>;
   onDownloadRecord?: (record: ExploreVideo) => Promise<void>; downloadStates?: Record<string, RecordDownloadState>; onBatchDownloadActiveChange?: (active: boolean) => void;
-  /** 送去拆片工坊（只有桌面版给）；返回 true 表示送到了 */
-  onSendToReelLab?: (record: ExploreVideo) => Promise<boolean>; sendStates?: Record<string, RecordDownloadState>;
 };
 // 正在下载以实际状态为准；否则存过 ZIP 的算已下载，哪怕之前单条下载失败过
 const downloadState = (state: RecordDownloadState | undefined, savedZip: boolean): RecordDownloadState => state === "queued" || state === "running" ? state : savedZip ? "complete" : state ?? "idle";
 // 作品翻了几屏后手动勾选，「下载所选」也要一直够得着
 const stickyBar = Platform.OS === "web" ? ({ position: "sticky", top: 8, zIndex: 10 } as object) : null;
 const downloadLabel = (state: RecordDownloadState) => state === "queued" || state === "running" ? "下载中" : state === "complete" ? "已下载" : state === "failed" ? "重试" : "下载";
-const sendLabel = (state: RecordDownloadState) => state === "queued" || state === "running" ? "送去中" : state === "complete" ? "已送达" : state === "failed" ? "重送" : "送去";
+
+// 探索和推荐共用观看记录上报；失败不打断播放。
+function recordExploreWatch(connection: ExploreConnection, item: PersonalVideoRecord | null, previous: WatchedItem | null) {
+  const current = item?.videoId && /^\d+$/u.test(item.authorId ?? "") ? { awemeId: item.videoId, authorId: item.authorId! } : null;
+  if (current || previous)
+    void waitForCollector(() => markExploreSeen(connection, { ...current, ...(previous ? { previous } : {}) }), AbortSignal.timeout(60_000)).catch(() => {});
+}
 
 function Button({ label, onPress, disabled = false, primary = false, children }: { label: string; onPress: () => void; disabled?: boolean; primary?: boolean; children?: React.ReactNode }) {
   return <Pressable {...ws(primary ? "btn-solid" : "btn")} accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={[styles.button, primary && styles.primary, disabled && styles.disabled]}>
@@ -48,15 +53,6 @@ function Metric({ value, label }: { value?: number | null; label: string }) {
   return <View style={styles.metric}><Text {...ws("d-num big")} style={styles.metricValue}>{count(value)}</Text><Text style={styles.muted}>{label}</Text></View>;
 }
 
-function SendChip({ state, title, disabled, onPress }: { state: RecordDownloadState; title: string; disabled: boolean; onPress: () => void }) {
-  const running = state === "queued" || state === "running";
-  const spoken = running ? "正在送去拆片工坊" : state === "complete" ? "已送到拆片工坊，再送一次" : state === "failed" ? "没送到拆片工坊，重送" : "送去拆片工坊";
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${spoken}：${title}`} disabled={disabled || running} onPress={onPress} style={[styles.chip, disabled && !running && styles.disabled]}>
-    {running ? <ActivityIndicator size="small" color={color.cyan} /> : state === "complete" ? <Check size={12} color={color.cyan} /> : <Send size={12} color={color.textSecondary} />}
-    <Text style={styles.chipText}>{sendLabel(state)}</Text>
-  </Pressable>;
-}
-
 function DownloadChip({ state, title, disabled, onPress }: { state: RecordDownloadState; title: string; disabled: boolean; onPress: () => void }) {
   const running = state === "queued" || state === "running";
   return <Pressable accessibilityRole="button" accessibilityLabel={`${downloadLabel(state)}：${title}`} disabled={disabled || running} onPress={onPress} style={[styles.chip, disabled && !running && styles.disabled]}>
@@ -65,7 +61,7 @@ function DownloadChip({ state, title, disabled, onPress }: { state: RecordDownlo
   </Pressable>;
 }
 
-export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onDownloadRecord, downloadStates = {}, onBatchDownloadActiveChange, onSendToReelLab, sendStates = {} }: Props) {
+export function ExploreWorkspace({ connection, accountId = null, onOpenSettings, onOpenRecord, onDownloadRecord, downloadStates = {}, onBatchDownloadActiveChange }: Props) {
   const { width } = useWindowDimensions();
   const narrow = width < 760;
   const [mode, setMode] = useState<"users" | "videos">("users");
@@ -83,7 +79,8 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
   const [intent, setIntent] = useState<ActionIntent | null>(null);
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<string[]>([]);
-  const [playing, setPlaying] = useState<ExploreVideo | null>(null);
+  const [playing, setPlaying] = useState<{ record: ExploreVideo; startMs?: number } | null>(null);
+  const [analysisRecord, setAnalysisRecord] = useState<ExploreVideo | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -97,7 +94,7 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
   useEffect(() => {
     generation.current += 1; requestRef.current?.abort(); locked.current = false;
     setResults(null); setProfile(null); setDetail(null); setComments(null); setLoading(null); setPending([]); setError(null); setNotice(null);
-    setIntent(null); setPlaying(null); setCommentText("");
+    setIntent(null); setPlaying(null); setAnalysisRecord(null); setCommentText("");
     setSelecting(false); setSelected(new Set()); setSaved(new Set()); setBatch(null);
     return () => {
       generation.current += 1; requestRef.current?.abort();
@@ -105,10 +102,10 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
       if (connection) void closeExplore(connection, ids).catch(() => {});
     };
   }, [connection?.baseUrl, connection?.token]);
+  useEffect(() => { setAnalysisRecord(null); }, [accountId]);
   // 探索读取在跑时下载会被采集器拒掉；下载在跑时探索又会被拒，所以两头都要拦
   const exploring = Boolean(loading || sending);
-  // 送去拆片工坊也是先让采集器下一遍视频，下好之前同样不能翻页
-  const downloading = [...Object.values(downloadStates), ...Object.values(sendStates)].some((state) => state === "queued" || state === "running");
+  const downloading = Object.values(downloadStates).some((state) => state === "queued" || state === "running");
   const busy = exploring || downloading;
   const user = profile?.profile ?? null;
   useEffect(() => {
@@ -130,6 +127,7 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
     });
   }
   const video = detail?.video ?? null;
+  const analysisId = analysisRecord && analysisVideoIdOf(analysisRecord);
   const page = detail ?? profile ?? results;
   const pendingKey = (action: string) => `${action === "follow" ? profile?.sessionId : detail?.sessionId}:${action}`;
 
@@ -174,9 +172,6 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
     if (profileMatch?.[1]) void load({ kind: "profile", id: profileMatch[1] }, "profile");
     else if (videoMatch?.[1] || /^\d{15,30}$/u.test(candidate)) void load({ kind: "detail", id: videoMatch?.[1] ?? candidate }, "detail");
     else void load({ kind: mode, query: candidate }, "results");
-  }
-  async function sendToReelLab(item: ExploreVideo) {
-    if (await onSendToReelLab?.(item)) setNotice(`“${item.title}”已送到拆片工坊。`);
   }
   // 点热点榜里的热点：热点是内容话题，直接按内容搜
   function searchHotTopic(topic: string) { setMode("videos"); setQuery(topic); void load({ kind: "videos", query: topic }, "results"); }
@@ -235,7 +230,10 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
           <Pressable style={styles.authorName} accessibilityRole="button" accessibilityLabel={`查看作者：${item.author ?? "抖音用户"}`} disabled={busy || picking || !item.authorProfile} onPress={() => item.authorProfile && openProfile(item.authorProfile)}><Text numberOfLines={1} style={styles.muted}>@{item.author ?? "抖音用户"}</Text></Pressable>
           {!picking ? <View style={styles.row}>
             {onDownloadRecord && item.url ? <DownloadChip state={downloadState(downloadStates[item.id], Boolean(savedKey && saved.has(savedKey)))} title={item.title} disabled={exploring} onPress={() => void onDownloadRecord(item)} /> : null}
-            {onSendToReelLab && item.url && item.mediaType !== "image" ? <SendChip state={sendStates[item.id] ?? "idle"} title={item.title} disabled={exploring} onPress={() => void sendToReelLab(item)} /> : null}
+            {Platform.OS === "web" && connection && analysisVideoIdOf(item) ? <Pressable accessibilityRole="button" accessibilityLabel={`解析视频：${item.title}`} disabled={busy}
+              onPress={() => setAnalysisRecord(item)} style={[styles.chip, busy && styles.disabled]}>
+              <Sparkles size={12} color={color.textSecondary} /><Text style={styles.chipText}>解析</Text>
+            </Pressable> : null}
           </View> : null}
         </View>
         <View style={styles.between}><Text style={styles.muted}>{date(item.publishedAt)}</Text><View style={styles.row}><Heart size={13} color={color.textMuted} /><Text style={styles.muted}>{count(item.stats?.diggCount)}</Text></View></View>
@@ -264,8 +262,7 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
     {loading || sending ? <View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={color.cyan} /><Text style={styles.muted}>{sending ? "正在提交并核验操作…" : "正在读取抖音页面…"}</Text>{loading && !sending ? <Button label="取消读取" onPress={cancelLoad} /> : null}</View> : null}
     {detail || profile ? <View style={styles.breadcrumb}><Button label={detail && profile ? "返回用户作品" : "返回搜索结果"} disabled={busy} onPress={back}><ArrowLeft color={color.text} size={16} /></Button><ChevronRight size={14} color={color.textMuted} /><Text numberOfLines={1} style={[styles.muted, { flex: 1 }]}>{video ? "作品详情" : user?.name}</Text>{onDownloadRecord && video?.url ? <Button label={({ queued: "下载中…", running: "下载中…", complete: "已下载，再下载一次", failed: "下载失败，重试" } as Partial<Record<RecordDownloadState, string>>)[downloadStates[video.id] ?? "idle"] ?? (video.images.length ? "下载全部图片" : "下载视频")}
             disabled={exploring || downloadStates[video.id] === "queued" || downloadStates[video.id] === "running"} onPress={() => void onDownloadRecord(video)}><Download size={15} color={color.text} /></Button> : null}
-          {onSendToReelLab && video?.url && !video.images.length && video.mediaType !== "image" ? <Button label={({ queued: "正在送去…", running: "正在送去…", complete: "已送达，再送一次", failed: "没送到，重试" } as Partial<Record<RecordDownloadState, string>>)[sendStates[video.id] ?? "idle"] ?? "送去拆片工坊"}
-            disabled={exploring || sendStates[video.id] === "queued" || sendStates[video.id] === "running"} onPress={() => void sendToReelLab(video)}><Send size={15} color={color.text} /></Button> : null}
+          {Platform.OS === "web" && connection && video && analysisVideoIdOf(video) ? <Button label="解析视频" disabled={busy} onPress={() => setAnalysisRecord(video)}><Sparkles size={15} color={color.text} /></Button> : null}
 <Button label="刷新" disabled={busy} onPress={() => video ? void load({ kind: "detail", id: video.videoId! }, "detail") : user && void load({ kind: "profile", id: user.id }, "profile")} /></View> : null}
     {downloading && !loading ? <Text accessibilityLiveRegion="polite" style={styles.notice}>正在下载视频，下完之前先不能搜索或翻页。</Text> : null}
 
@@ -294,7 +291,7 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
     {video ? <View style={[styles.detailLayout, width < 1080 && styles.detailStack]}>
       <View style={[styles.mediaColumn, width < 1080 && { width: "100%" }]}>
         {video.images.length ? <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.imageGallery}>{video.images.map((uri, i) => <Image key={uri} accessibilityLabel={`作品图片 ${i + 1}`} source={{ uri }} style={[styles.workImage, { width: narrow ? 260 : 360 }]} resizeMode="contain" />)}</ScrollView>
-          : <Pressable accessibilityRole="button" accessibilityLabel="播放当前作品" disabled={!connection || busy || !detail} onPress={() => detail && setPlaying(video)} style={styles.detailCover}>
+          : <Pressable accessibilityRole="button" accessibilityLabel="播放当前作品" disabled={!connection || busy || !detail} onPress={() => detail && setPlaying({ record: video })} style={styles.detailCover}>
             {video.coverUrl ? <Image source={{ uri: video.coverUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" /> : null}<View style={styles.play}><Play size={28} color="#fff" fill="#fff" /></View><Text style={styles.playLabel}>播放视频</Text>
           </Pressable>}
         <Button label="在抖音打开作品" onPress={() => video.url && void onOpenRecord(video.url)}><ArrowUpRight size={16} color={color.text} /></Button>
@@ -355,15 +352,19 @@ export function ExploreWorkspace({ connection, onOpenSettings, onOpenRecord, onD
       }
     }} /> : null}
     {previewImage && <CommentImagePreview src={previewImage} onClose={() => setPreviewImage(null)} />}
-    {playing && connection ? <RecordVideoPlayer record={playing} records={(profile?.items ?? (results?.kind === "videos" ? results.items : [])) as ExploreVideo[]}
+    {analysisId && analysisRecord && connection && !playing && Platform.OS === "web" ? <VideoAnalysisDialog key={`${accountId}-${analysisId}`}
+      accountId={accountId} connection={connection} videoId={analysisId} title={analysisRecord.title} onClose={() => setAnalysisRecord(null)}
+      onSeek={startMs => setPlaying({ record: analysisRecord, startMs })} /> : null}
+    {playing && connection ? <RecordVideoPlayer record={playing.record} initialTimeMs={playing.startMs} records={(profile?.items ?? (results?.kind === "videos" ? results.items : [])) as ExploreVideo[]}
       onDownload={onDownloadRecord ? (item) => void onDownloadRecord(item as ExploreVideo) : undefined} downloadStates={downloadStates}
-      commentsConnection={connection} onOpenRecord={onOpenRecord}
+      onSeen={(item, previous) => recordExploreWatch(connection, item, previous)}
+      commentsConnection={connection} accountId={accountId} onOpenRecord={onOpenRecord}
       onLoadVideo={(item, signal, onProgress) => loadCollectorVideo(connection.baseUrl, connection.token, item.url!, signal, onProgress)} onClose={() => setPlaying(null)} /> : null}
   </ScrollView>;
 }
 
 /** 工作台「刷视频」：一进来就接着当前账号的首页推荐往下刷，播放器嵌在页面里。直播和广告不放进来，刷到的会像在网页上一样记进抖音观看历史 */
-export function FeedWorkspace({ connection, onOpenSettings, onOpenRecord, onDownloadRecord, downloadStates }: Pick<Props, "connection" | "onOpenSettings" | "onOpenRecord" | "onDownloadRecord" | "downloadStates">) {
+export function FeedWorkspace({ connection, accountId = null, onOpenSettings, onOpenRecord, onDownloadRecord, downloadStates }: Pick<Props, "connection" | "accountId" | "onOpenSettings" | "onOpenRecord" | "onDownloadRecord" | "downloadStates">) {
   const [page, setPage] = useState<ExplorePage | null>(null);
   // 开播的第一条；播放器挂上以后就一直挂着，换了新会话、第一批全是直播广告时交给播放器自己数空批次，别把刷到哪丢了
   const [start, setStart] = useState<ExploreVideo | null>(null);
@@ -416,13 +417,8 @@ export function FeedWorkspace({ connection, onOpenSettings, onOpenRecord, onDown
   if (connection && start) return <View testID="feed-workspace" style={styles.feed}>
     <RecordVideoPlayer record={start} records={items} title="推荐" feedError={error} onReachEnd={() => void load(true)}
       onDownload={onDownloadRecord ? (item) => void onDownloadRecord(item as ExploreVideo) : undefined} downloadStates={downloadStates}
-      onSeen={(item: PersonalVideoRecord | null, previous: WatchedItem | null) => {
-        // 记不上观看历史不打扰
-        const current = item?.videoId && /^\d+$/u.test(item.authorId ?? "") ? { awemeId: item.videoId, authorId: item.authorId! } : null;
-        if (current || previous)
-          void waitForCollector(() => markExploreSeen(connection, { ...current, ...(previous ? { previous } : {}) }), AbortSignal.timeout(60_000)).catch(() => {});
-      }}
-      commentsConnection={connection} onOpenRecord={onOpenRecord}
+      onSeen={(item, previous) => recordExploreWatch(connection, item, previous)}
+      commentsConnection={connection} accountId={accountId} onOpenRecord={onOpenRecord}
       onLoadVideo={(item, signal, onProgress) => loadCollectorVideo(connection.baseUrl, connection.token, item.url!, signal, onProgress)} />
   </View>;
   return <View testID="feed-workspace" {...ws("e-empty")} style={[styles.empty, styles.feedEmpty]}>

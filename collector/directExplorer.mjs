@@ -28,7 +28,7 @@ const pickState = (session, word) => {
   }
   return session.picks.get(word);
 };
-async function searchWord(api, session, word, state, signal) {
+export async function searchWord(api, session, word, state, signal) {
   try {
     const payload = await api.request(ROUTES.videos, { query: searchQuery("aweme_video_web", word, String(state.offset), "10", state.searchId),
       referer: "https://www.douyin.com/search/", signal });

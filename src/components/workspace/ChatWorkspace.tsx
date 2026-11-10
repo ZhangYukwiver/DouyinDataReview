@@ -58,7 +58,6 @@ import { SparkCardPreview } from "./SparkCardPreview";
 import { buildConversationExport, saveConversationExport } from "../../services/conversationExport";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
-const CHAT_MESSAGE_RENDER_LIMIT = 320;
 // 与抖音网页输入框的上限一致
 const CHAT_TEXT_LIMIT = 16_000;
 // 原生 textarea 按内容长高（Chromium 123+）
@@ -684,10 +683,15 @@ function ChatDetailPane({
   const stickToBottomRef = useRef(true);
   const group = row?.kind === "group" && live ? live : null;
   const groupMessages = useGroupMessages(group, row?.id ?? null);
+  // 本地消息最新的放在索引 0，倒置列表从底部打开，往上翻时按需渲染完整历史。
+  const localMessages = useMemo(() => row?.messages.slice().reverse() ?? [], [row?.messages]);
 
-  // 网页端直接按 DOM 尺寸定位：FlatList 自带的 scrollToEnd 靠尚未量到的行高估算，
-  // 会先落在顶部再逐批往下跳。用内容容器的高度而不是 scrollHeight，入场动画的位移不会把它撑高。
   const scrollToBottom = () => {
+    if (!group) {
+      messageListRef.current?.scrollToOffset({ offset: 0, animated: false });
+      return;
+    }
+    // 群聊列表按时间正序排列，用内容容器的实际高度定位，避开未测量行高和入场动画。
     const node = messageListRef.current?.getScrollableNode?.();
     if (typeof node?.scrollHeight !== "number") {
       messageListRef.current?.scrollToEnd({ animated: false });
@@ -696,9 +700,11 @@ function ChatDetailPane({
     node.scrollTop = (node.firstElementChild?.offsetHeight ?? node.scrollHeight) - node.clientHeight;
   };
 
-  // 切换会话时本组件按会话 id 重新挂载：气泡在首次提交里一次渲染完（initialNumToRender），
-  // 绘制前就把列表拉到最新一条，不会先看到最早的消息再往下跳。
-  useLayoutEffect(scrollToBottom, []);
+  const latestLocalId = localMessages[0]?.id;
+  useLayoutEffect(() => {
+    if (latestLocalId && stickToBottomRef.current) scrollToBottom();
+  }, [latestLocalId]);
+
   // 群消息：第一页到了拉到底；往上翻加载的更早消息插在前面时，保持眼前这一屏不动
   const firstGroupPageRef = useRef(true);
   useLayoutEffect(() => {
@@ -732,17 +738,14 @@ function ChatDetailPane({
       setExportError(null);
     } catch (error) { setExportError(error instanceof Error ? error.message : "导出失败，请重试。"); }
   };
-  const visibleMessages = group ? groupMessages.messages : row.messages.length > CHAT_MESSAGE_RENDER_LIMIT
-    ? row.messages.slice(-CHAT_MESSAGE_RENDER_LIMIT)
-    : row.messages;
-  const omitted = group ? 0 : row.messages.length - visibleMessages.length;
+  const visibleMessages = group ? groupMessages.messages : localMessages;
   const loadOlder = () => {
     const node = messageListRef.current?.getScrollableNode?.();
     groupMessages.loadOlder(typeof node?.scrollHeight === "number" ? (node.firstElementChild?.offsetHeight ?? node.scrollHeight) - node.scrollTop : null);
   };
   const handleMessageScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
+    const distanceFromBottom = group ? contentSize.height - contentOffset.y - layoutMeasurement.height : contentOffset.y;
     if (Number.isFinite(distanceFromBottom)) {
       stickToBottomRef.current = distanceFromBottom <= MESSAGE_AUTO_SCROLL_THRESHOLD;
     }
@@ -805,20 +808,26 @@ function ChatDetailPane({
         <FlatList
           contentContainerStyle={styles.messageListContent}
           data={visibleMessages}
+          inverted={!group && visibleMessages.length > 0}
           keyExtractor={(item) => item.id}
           ListEmptyComponent={group ? <Text style={styles.messageLimitNotice}>{groupMessages.error ?? "正在从抖音读取群消息…"}</Text> : <MessageListEmpty privacy={privacy} />}
-          ListHeaderComponent={group ? (visibleMessages.length ? <GroupHistoryHeader error={groupMessages.error} hasMore={groupMessages.hasMore} loading={groupMessages.loading} onLoad={loadOlder} /> : null)
-            : omitted > 0 ? <Text style={styles.messageLimitNotice}>仅显示最近 {CHAT_MESSAGE_RENDER_LIMIT} 条，另有 {omitted} 条更早消息保留在本地快照中。</Text> : <ConversationDateDivider />}
+          ListHeaderComponent={group && visibleMessages.length ? <GroupHistoryHeader error={groupMessages.error} hasMore={groupMessages.hasMore} loading={groupMessages.loading} onLoad={loadOlder} /> : null}
           // 群消息是用户自己一页页翻出来的，全部渲染，免得虚拟列表估高让插入的旧消息跳位
-          initialNumToRender={Math.max(CHAT_MESSAGE_RENDER_LIMIT, visibleMessages.length)}
+          initialNumToRender={group ? Math.max(320, visibleMessages.length) : 24}
           windowSize={group ? 999 : undefined}
           onContentSizeChange={() => {
-            if (stickToBottomRef.current) scrollToBottom();
+            if (group && stickToBottomRef.current) scrollToBottom();
           }}
           onScroll={handleMessageScroll}
           ref={messageListRef}
           // 最后八条依次入场（越靠底越晚），像消息刚刚到达
-          renderItem={({ item, index }) => <ChatMessageBubble i={Math.max(0, index - (visibleMessages.length - 8) + 1)} message={item} onOpenRecord={onOpenRecord} privacy={privacy} avatarUrl={row.avatarUrl} accent={row.accent} selfId={selfId} />}
+          renderItem={({ item, index }) => {
+            const indexFromLatest = group ? visibleMessages.length - 1 - index : index;
+            return <>
+              {!group && index === visibleMessages.length - 1 ? <Text {...ws("mono")} style={styles.dateDivider}>已到最早的本地消息</Text> : null}
+              <ChatMessageBubble i={Math.max(0, 8 - indexFromLatest)} message={item} onOpenRecord={onOpenRecord} privacy={privacy} avatarUrl={row.avatarUrl} accent={row.accent} selfId={selfId} />
+            </>;
+          }}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
           style={styles.messageList}
@@ -1423,10 +1432,6 @@ function formatTimeLeft(now: Date): string {
   const rest = minutes % 60;
   if (!hours) return `${rest} 分钟`;
   return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
-}
-
-function ConversationDateDivider() {
-  return <Text {...ws("mono")} style={styles.dateDivider}>本地聊天快照 · 由采集时间整理</Text>;
 }
 
 function MessageListEmpty({ privacy }: { privacy: boolean }) {

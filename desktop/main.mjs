@@ -11,7 +11,6 @@ import { DesktopUpdateProvider } from "./updateProvider.mjs";
 import { DOWNLOAD_MIRRORS, RELEASE_REPOSITORY } from "../docs/downloadSources.mjs";
 import { syncFeedExtension } from "./feedExtension.mjs";
 import { createInAppBrowserConnector } from "./inAppBrowser.mjs";
-import { REELLAB_INBOX_URL, REELLAB_PROTOCOL, sendToReelLab } from "./reelLab.mjs";
 import { startStaticServer } from "./staticServer.mjs";
 import { isVideoDownload, readVideoDownloadDirectory, saveVideoCopies, uniqueSavePath, writeVideoDownloadDirectory } from "./videoDownloads.mjs";
 import { isSameOriginUrl, isStoryUrl } from "./windowPolicy.mjs";
@@ -360,13 +359,6 @@ async function launch() {
       updateInstallRequested = true;
     },
   });
-  // 「送去拆片工坊」：页面先让采集器下好视频，这里把文件复制进拆片工坊的收件箱再叫醒它（约定见 desktop/reelLab.mjs）
-  ipcMain.handle("desktop:send-to-reellab", (_event, request) => sendToReelLab(request, {
-    isInstalled: () => Boolean(app.getApplicationNameForProtocol(REELLAB_PROTOCOL)),
-    getDownloadFilePath: (jobId) => desktopRuntime?.collector.getDownloadFilePath(jobId) ?? null,
-    inboxDirectory: path.join(app.getPath("appData"), "ReelLab", "inbox"),
-    openInbox: () => shell.openExternal(REELLAB_INBOX_URL),
-  }));
   // 设置页上的扩展图标被拖起来：把扩展文件夹交给系统拖放，用户放进浏览器扩展页就装上了（开发者模式下浏览器认拖进来的文件夹）
   ipcMain.on("desktop:start-extension-drag", (event) => {
     try {

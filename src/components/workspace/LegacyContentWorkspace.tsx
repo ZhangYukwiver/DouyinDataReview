@@ -46,7 +46,6 @@ import {
   Radio,
   RefreshCw,
   Search,
-  Send,
   Plug,
   Settings,
   Settings2,
@@ -79,9 +78,10 @@ import Svg, { Circle } from "react-native-svg";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { MyCommentsView } from "./MyCommentsView";
 import { RecordVideoPlayer, type RecordVideoLoader } from "./RecordVideoPlayer";
+import { VideoAnalysisDialog } from "./VideoAnalysisPanel";
 import { LiveRoomPlayer, type LiveTarget } from "./LiveRoomPlayer";
 import { liveRoomIdFrom, readFollowingLive, type LiveFollowing } from "../../services/liveRoom";
-import { waitForCollector } from "../../services/videoFeed";
+import { analysisVideoIdOf, waitForCollector } from "../../services/videoFeed";
 import { useRecordCover } from "../../services/recordCovers";
 import { BatchVideoDownloadDialog } from "./BatchVideoDownloadDialog";
 import { uniqueDownloadVideos, videoDownloadKey } from "../../services/batchVideoDownload";
@@ -149,14 +149,10 @@ export interface ContentWorkspaceProps {
   onOpenRecord: (url: string) => Promise<void>;
   /** keepExplore：从播放器里下载时别关探索会话，评论面板还在用 */
   onDownloadRecord?: (record: PersonalVideoRecord, keepExplore?: boolean) => Promise<void>;
-  /** 送去拆片工坊：采集器下好视频，再由桌面外壳放进拆片工坊的收件箱；只有桌面版给 */
-  onSendToReelLab?: (record: PersonalVideoRecord) => void;
   onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
   downloadStates?: Record<string, RecordDownloadState>;
-  /** 送去拆片工坊的进度，和下载一样按记录 id 记 */
-  sendStates?: Record<string, RecordDownloadState>;
   onOpenSettings: () => void;
   onReplayStory: () => void;
   onSync: () => void;
@@ -259,13 +255,11 @@ export function ContentWorkspace({
   onChangeView,
   onOpenRecord,
   onDownloadRecord,
-  onSendToReelLab,
   onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
   foldersRevision,
   downloadStates = {},
-  sendStates = {},
   onOpenSettings,
   onReplayStory,
   onSync,
@@ -652,13 +646,12 @@ export function ContentWorkspace({
             onRetryFolders={folders.retry}
             label={currentNav.label}
             downloadStates={downloadStates}
-            sendStates={sendStates}
             mobile={mobile}
             onDownloadRecord={onDownloadRecord}
-            onSendToReelLab={onSendToReelLab}
             onBatchDownloadActiveChange={onBatchDownloadActiveChange}
             onLoadVideo={onLoadVideo}
             commentsConnection={commentsConnection}
+            accountId={status?.account?.id ?? null}
             onOpenRecord={onOpenRecord}
             onOpenSettings={onOpenSettings}
             privacy={privacy}
@@ -1112,13 +1105,12 @@ function RecordsGallery({
   onRetryFolders,
   label,
   downloadStates,
-  sendStates,
   mobile,
   onDownloadRecord,
-  onSendToReelLab,
   onBatchDownloadActiveChange,
   onLoadVideo,
   commentsConnection,
+  accountId,
   onOpenRecord,
   onOpenSettings,
   privacy,
@@ -1143,14 +1135,13 @@ function RecordsGallery({
   onRetryFolders?: () => void;
   label: string;
   downloadStates: Record<string, RecordDownloadState>;
-  sendStates: Record<string, RecordDownloadState>;
   mobile: boolean;
   /** keepExplore：从播放器里下载时别关探索会话，评论面板还在用 */
   onDownloadRecord?: (record: PersonalVideoRecord, keepExplore?: boolean) => Promise<void>;
-  onSendToReelLab?: (record: PersonalVideoRecord) => void;
   onBatchDownloadActiveChange?: (active: boolean) => void;
   onLoadVideo?: RecordVideoLoader;
   commentsConnection?: ExploreConnection | null;
+  accountId?: string | null;
   onOpenRecord: (url: string) => Promise<void>;
   onOpenSettings: () => void;
   privacy: boolean;
@@ -1178,7 +1169,9 @@ function RecordsGallery({
   }
   const enterFrom = batch.current.from;
   const enterOrder = useMemo(() => new Map((incoming ?? NO_RECORDS).slice(enterFrom, ready).map((record, index) => [record.id, index + 1])), [incoming, enterFrom, ready]);
-  const [playingRecord, setPlayingRecord] = useState<PersonalVideoRecord | null>(null);
+  const [playingRecord, setPlayingRecord] = useState<{ record: PersonalVideoRecord; startMs?: number } | null>(null);
+  const [analysisRecord, setAnalysisRecord] = useState<PersonalVideoRecord | null>(null);
+  const analysisId = analysisRecord && analysisVideoIdOf(analysisRecord);
   const [liveTarget, setLiveTarget] = useState<LiveTarget | null>(null);
   const openLive = Platform.OS === "web" && !privacy
     ? (record: PersonalVideoRecord) => record.url && setLiveTarget({ room: record.url, title: record.title, anchor: record.author, cover: record.coverUrl })
@@ -1202,7 +1195,7 @@ function RecordsGallery({
   // 换了搜索词、换了文件夹就重新选，免得之前选的、现在看不见的那些悄悄留在下载列表里
   useEffect(() => { setSelected(new Set()); }, [query, activeFolder]);
   useEffect(() => { setKeptKeys(new Set()); }, [label, activeFolder]);
-  useEffect(() => { setPlayingRecord(null); setLiveTarget(null); setQuery(""); }, [label, privacy]);
+  useEffect(() => { setPlayingRecord(null); setAnalysisRecord(null); setLiveTarget(null); setQuery(""); }, [label, privacy, accountId]);
   const list = Platform.OS === "web" && folders && onChangeFolders ? folders : null;
   // 文件夹读不到了（换账号、采集器出错），整理模式就没法用了，退出来，免得剩个没有出口的工具条
   useEffect(() => { if (!list && selectMode === "folder") setSelectMode(null); }, [list, selectMode]);
@@ -1297,11 +1290,14 @@ function RecordsGallery({
     : undefined, [rowFrame]);
   // 卡片是 memo 的：读取、接收聊天时状态每变一次整页都要重渲染，几百张卡片跟着重画一遍要一两百毫秒。
   // 外面传进来的回调每次都是新函数，这里换成引用不变、调用时取最新那份的版本
-  const latest = useRef({ onDownloadRecord, onSendToReelLab, onOpenRecord, openLive, openFolderMenu });
-  latest.current = { onDownloadRecord, onSendToReelLab, onOpenRecord, openLive, openFolderMenu };
+  const latest = useRef({ onDownloadRecord, onOpenRecord, openLive, openFolderMenu, commentsConnection, onOpenSettings });
+  latest.current = { onDownloadRecord, onOpenRecord, openLive, openFolderMenu, commentsConnection, onOpenSettings };
   const handlers = useMemo(() => ({
     download: (record: PersonalVideoRecord) => latest.current.onDownloadRecord!(record),
-    send: (record: PersonalVideoRecord) => latest.current.onSendToReelLab!(record),
+    analyze: (record: PersonalVideoRecord) => {
+      if (latest.current.commentsConnection) setAnalysisRecord(record);
+      else latest.current.onOpenSettings();
+    },
     open: (url: string) => latest.current.onOpenRecord(url),
     live: (record: PersonalVideoRecord) => { latest.current.openLive?.(record); },
     folder: (record: PersonalVideoRecord, at: MenuPoint) => latest.current.openFolderMenu([record], at),
@@ -1320,7 +1316,7 @@ function RecordsGallery({
   }, [query, searchHit]);
   const playRecord = useCallback((record: PersonalVideoRecord) => {
     if (searching) unlockAchievement("found-it");
-    setPlayingRecord(record);
+    setPlayingRecord({ record });
   }, [searching]);
   // 喜欢和收藏的时间是上次播放的时间，不是点赞收藏的时间，拿来说「最早一条」会误导
   const earliest = useMemo(() => activeType === "watch_history" ? earliestRecordDate(records) : null, [activeType, records]);
@@ -1573,16 +1569,16 @@ function RecordsGallery({
           : keptKeys.has(folderKey(item)) && (list.items[folderKey(item)] ?? UNFILED) !== folderFilter ? filedIn ?? "未分区"
           : undefined;
         const onFolderMenu = list && !privacy ? handlers.folder : undefined;
+        const onAnalyze = Platform.OS === "web" && !privacy && analysisVideoIdOf(item) ? handlers.analyze : undefined;
         return layout === "grid"
           ? <RecordTile
               cellStyle={cellStyle}
               selection={selectionFor(item)}
               downloadState={downloadStates[item.id] ?? "idle"}
-              sendState={sendStates[item.id] ?? "idle"}
               filedIn={filedIn}
               folderName={folderName}
               onDownloadRecord={item.mediaType === "live" || !onDownloadRecord ? undefined : handlers.download}
-              onSendToReelLab={item.mediaType === "live" || !onSendToReelLab ? undefined : handlers.send}
+              onAnalyze={onAnalyze}
               onFolderMenu={onFolderMenu}
               onPlayRecord={item.mediaType === "live" ? openLive && handlers.live : onLoadVideo ? playRecord : undefined}
               onOpenRecord={handlers.open}
@@ -1593,13 +1589,18 @@ function RecordsGallery({
               type={activeType}
               enter={enterOrder.get(item.id)}
             />
-          : <RecordRow enter={enterOrder.get(item.id)} folderName={folderName} onFolderMenu={onFolderMenu} selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} coverConnection={commentsConnection} coverOwner={coverOwner} />;
+          : <RecordRow enter={enterOrder.get(item.id)} folderName={folderName} onFolderMenu={onFolderMenu} onAnalyze={onAnalyze} selection={selectionFor(item)} onOpenRecord={handlers.open} privacy={privacy} record={item} type={activeType} coverConnection={commentsConnection} coverOwner={coverOwner} />;
       }}
       // 上万条记录靠滚轮翻太慢，留一条常驻、能拖的滚动条（样式见 motionCss 的 data-scrollbar）
       {...{ dataSet: { scrollbar: "" } }}
     />
+    {analysisId && analysisRecord && commentsConnection && !playingRecord && !privacy ? (
+      <VideoAnalysisDialog key={`${accountId}-${analysisId}`} accountId={accountId} connection={commentsConnection} videoId={analysisId}
+        title={analysisRecord.title} onClose={() => setAnalysisRecord(null)}
+        onSeek={onLoadVideo ? startMs => setPlayingRecord({ record: analysisRecord, startMs }) : undefined} />
+    ) : null}
     {Platform.OS === "web" && playingRecord && !privacy && onLoadVideo ? (
-      <RecordVideoPlayer record={playingRecord} records={shownRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)}
+      <RecordVideoPlayer record={playingRecord.record} initialTimeMs={playingRecord.startMs} records={shownRecords} onLoadVideo={onLoadVideo} commentsConnection={commentsConnection} accountId={accountId} onOpenRecord={onOpenRecord} onClose={() => setPlayingRecord(null)}
         onDownload={onDownloadRecord ? (record) => void onDownloadRecord(record, true) : undefined} downloadStates={downloadStates} />
     ) : null}
     {liveTarget && Platform.OS === "web" && !privacy ? (
@@ -1711,11 +1712,10 @@ const RecordTile = memo(function RecordTile({
   cellStyle,
   selection,
   downloadState,
-  sendState,
   filedIn,
   folderName,
   onDownloadRecord,
-  onSendToReelLab,
+  onAnalyze,
   onFolderMenu,
   onPlayRecord,
   record,
@@ -1729,13 +1729,12 @@ const RecordTile = memo(function RecordTile({
   cellStyle?: object | null;
   selection?: RecordSelection;
   downloadState: RecordDownloadState;
-  sendState: RecordDownloadState;
   /** 实际放在哪个文件夹，给文件夹按钮的读屏说明用 */
   filedIn?: string;
   /** 封面左上角标出的文件夹名 */
   folderName?: string;
   onDownloadRecord?: (record: PersonalVideoRecord) => Promise<void>;
-  onSendToReelLab?: (record: PersonalVideoRecord) => void;
+  onAnalyze?: (record: PersonalVideoRecord) => void;
   /** 打开「放进文件夹」菜单：悬停时右上角的按钮、右键都走这里 */
   onFolderMenu?: (record: PersonalVideoRecord, at: MenuPoint) => void;
   onPlayRecord?: (record: PersonalVideoRecord) => void;
@@ -1763,9 +1762,7 @@ const RecordTile = memo(function RecordTile({
     : downloadState === "complete"
       ? "已下载"
       : downloadState === "failed" ? "重试" : "下载";
-  const sending = sendState === "queued" || sendState === "running";
   // 卡片上三颗按钮挤一行，字写短（和「跳转」「下载」一样两个字）；读屏说明写全
-  const sendLabel = sending ? "送去中" : sendState === "complete" ? "已送达" : sendState === "failed" ? "重送" : "送去";
   const markFocused = () => setFocused(true);
   const checkFocusBoundary = (event?: unknown) => {
     if (Platform.OS !== "web") {
@@ -1920,20 +1917,18 @@ const RecordTile = memo(function RecordTile({
               {downloading ? <ActivityIndicator color={color.white} size="small" /> : <Download color={color.white} size={14} strokeWidth={2.2} />}
               <Text style={styles.tileActionText}>{downloadLabel}</Text>
             </Pressable>
-            {onSendToReelLab && record.mediaType !== "image" ? <Pressable
+            {onAnalyze ? <Pressable
               testID="record-tile-action"
-              accessibilityLabel={sending ? "正在送去拆片工坊" : sendState === "complete" ? "已送到拆片工坊，再送一次" : sendState === "failed" ? "没送到拆片工坊，重送" : "送去拆片工坊"}
+              accessibilityLabel="解析视频"
               accessibilityRole="button"
-              accessibilityState={{ disabled: sending }}
-              disabled={sending}
               onFocus={markFocused}
               onBlur={checkFocusBoundary}
-              onPress={() => onSendToReelLab(record)}
+              onPress={() => onAnalyze(record)}
               {...ws("btn-sig w-tileaction")}
-              style={({ pressed }) => [styles.tileAction, sending && styles.tileActionDisabled, pressed && styles.tileActionPressed, webPointer]}
+              style={({ pressed }) => [styles.tileAction, pressed && styles.tileActionPressed, webPointer]}
             >
-              {sending ? <ActivityIndicator color={color.white} size="small" /> : <Send color={color.white} size={14} strokeWidth={2.2} />}
-              <Text style={styles.tileActionText}>{sendLabel}</Text>
+              <Sparkles color={color.white} size={14} strokeWidth={2.2} />
+              <Text style={styles.tileActionText}>解析</Text>
             </Pressable> : null}
           </View>
         </View>
@@ -1942,7 +1937,7 @@ const RecordTile = memo(function RecordTile({
   );
 });
 
-const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, selection, folderName, onFolderMenu, enter, coverConnection, coverOwner }: {
+const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord, onAnalyze, selection, folderName, onFolderMenu, enter, coverConnection, coverOwner }: {
   enter?: number;
   record: PersonalVideoRecord;
   coverConnection?: ExploreConnection | null;
@@ -1950,6 +1945,7 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
   type: PersonalRecordType;
   privacy: boolean;
   onOpenRecord: (url: string) => Promise<void>;
+  onAnalyze?: (record: PersonalVideoRecord) => void;
   selection?: RecordSelection;
   folderName?: string;
   onFolderMenu?: (record: PersonalVideoRecord, at: MenuPoint) => void;
@@ -1959,8 +1955,8 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
   const accent = type === "liked_videos" ? color.accent : type === "favorite_videos" ? color.amber : color.cyan;
   const imageAvailable = Boolean(coverUrl);
   return (
+    <View ref={rowRef} style={styles.recordRowWrap}>
     <Pressable
-      ref={rowRef}
       accessibilityLabel={selection ? `${selection.disabled && !selection.checked ? "不可选择" : "选择视频"}：${record.title}` : `${privacy ? "已隐藏内容" : record.title}${record.url ? "，打开抖音视频" : ""}`}
       accessibilityRole={selection ? "checkbox" : record.url ? "link" : undefined}
       accessibilityState={selection ? { checked: selection.checked, disabled: selection.disabled } : undefined}
@@ -1994,6 +1990,11 @@ const RecordRow = memo(function RecordRow({ record, type, privacy, onOpenRecord,
       </View>
       {record.url && !selection ? <ArrowUpRight color={color.textMuted} size={19} /> : null}
     </Pressable>
+    {!selection && onAnalyze ? <Pressable accessibilityRole="button" accessibilityLabel="解析视频" onPress={() => onAnalyze(record)}
+      style={({ pressed }) => [styles.rowAnalyze, pressed && styles.recordRowPressed, webPointer]}>
+      <Sparkles color={color.textSecondary} size={15} /><Text style={styles.rowAuthor}>解析</Text>
+    </Pressable> : null}
+    </View>
   );
 });
 
@@ -2531,7 +2532,9 @@ const styles = StyleSheet.create({
   dialogInput: { height: 40, color: color.text, fontSize: 13, paddingHorizontal: 11, borderWidth: 1, borderColor: color.border, borderRadius: radius.medium, backgroundColor: color.surfaceMuted },
   dialogError: { color: color.danger, fontSize: 12, lineHeight: 18, marginTop: -6 },
   dialogActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8 },
-  recordRow: { minHeight: 112, flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  recordRowWrap: { flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  recordRow: { flex: 1, minWidth: 0, minHeight: 112, flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 10 },
+  rowAnalyze: { minWidth: 48, minHeight: 44, marginLeft: 8, alignItems: "center", justifyContent: "center" },
   recordRowPressed: { backgroundColor: color.surface },
   rowThumb: { width: 72, height: 92, flexShrink: 0, alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: radius.small },
   rowThumbImage: { width: "100%", height: "100%" },

@@ -10,7 +10,7 @@ import { usageAutoSettings, type UsageAutoSettings } from "../../services/usageS
 import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, mcpCommands, saveAssistantConfig, type AssistantConfig, type McpClient } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
 import {
-  collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites,
+  collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites, exportMobileFeedProfile,
   findTwinAccount, formatAccountAddedDay, getBrowserLoginSources,
   type BrowserLoginSource, type CollectorAccounts, type FeedExtensionStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings,
 } from "../../services/localCollector";
@@ -535,6 +535,19 @@ function FeedPage({ appStyle, feedShown, onToggleFeed, collector }: SettingsDial
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : "没保存成功，请重试。"); }
     finally { setBusy(false); }
   };
+  const exportPhone = async () => {
+    if (!baseUrl || !token || busy) return;
+    setBusy(true); setMessage(null);
+    try {
+      const { json, count } = await exportMobileFeedProfile(baseUrl, token);
+      const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+      const link = Object.assign(document.createElement("a"), { href: url, download: "抖音推荐流.json" });
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      setMessage(`已导出已保存的规则和 ${count} 条候选视频，请在手机模块中导入。`);
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : "手机配置导出失败。"); }
+    finally { setBusy(false); }
+  };
   return (
     <>
       <View style={styles.row}>
@@ -558,6 +571,10 @@ function FeedPage({ appStyle, feedShown, onToggleFeed, collector }: SettingsDial
               label={every ? `每 ${every} 条` : "只看词条"} onPress={() => { if (every !== pickEvery) void save(webPicks, every); }} testID={`settings-feed-pick-every-${every}`} />
           ))}
         </View>
+      </View>
+      <View style={styles.row}>
+        <RowCopy detail="把已保存的规则、频率和按推荐词搜索到的视频导入安卓 LSPosed 模块。候选用完或播放地址过期后可再次导出。" title="抖音手机推荐流" />
+        <Button appStyle={appStyle} kind="secondary" label="导出手机配置" disabled={busy || !baseUrl || !token} onPress={() => void exportPhone()} />
       </View>
       <View style={styles.row}>
         <RowCopy detail="装好下面的扩展后，在浏览器的抖音首页和精选推荐中插入相关视频。使用浏览器登录的账号搜索，命中屏蔽词的不插入；搜索失败照常刷推荐。首次升级扩展后请刷新抖音页。" title="网页插入视频" />
