@@ -8,8 +8,8 @@ const video = id => ({ aweme_id: String(id), desc: "相关视频", video: { play
 const response = (...ids) => ({ status_code: 0, data: ids.map(id => ({ aweme_info: video(id) })), cursor: 10, has_more: 0 });
 const feed = (...ids) => ({ status_code: 0, aweme_list: ids.map(video), cursor: "keep", has_more: 1 });
 const ids = value => value.aweme_list.map(item => item.aweme_id);
-function setup(search, blocked = () => false, now = Date.now) {
-  const context = {}; vm.runInNewContext(filterScript, context); vm.runInNewContext(script, context);
+function setup(search, blocked = () => false, now = Date.now, localStorage) {
+  const context = { localStorage }; vm.runInNewContext(filterScript, context); vm.runInNewContext(script, context);
   return context.DYF.createPicks({ search, blocked, now });
 }
 
@@ -31,6 +31,40 @@ describe("网页词条视频候选池", () => {
     expect(ids(repeated)).toEqual(["10007"]);
     await picks.prefetch();
     expect(search).toHaveBeenCalledTimes(2);
+  });
+
+  it("重新打开页面不重复推：推过的跳过，第一页拿到 search_id 后跳回上次的位置；搜到底才从头来", async () => {
+    const data = new Map(), storage = { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, value) };
+    const page = (offset, list, more = 1) => ({ ...response(...list), cursor: offset + 10, has_more: more, log_pb: { impr_id: "fresh" } });
+    const pages = { 0: [90001, 90002], 10: [90003], 60: [90060] };
+    const search = vi.fn(async (word, offset) => page(offset, pages[offset] ?? []));
+    const open = () => { const picks = setup(search, undefined, undefined, storage); picks.configure("露营", true, 1); return picks; };
+
+    const first = open();
+    await first.prefetch();
+    const a = feed(10001, 10002), report = vi.fn();
+    first.mix(a, report);
+    expect(ids(a)).toEqual(["10001", "90001", "10002", "90002"]);
+    expect(JSON.parse(data.get("__dyf_pick_history"))).toEqual({ 露营: { offset: 10, ids: ["90001", "90002"] } });
+
+    // 假装上次已经翻到 60：第一页全推过，紧接着带新 search_id 跳到 60
+    data.set("__dyf_pick_history", JSON.stringify({ 露营: { offset: 60, ids: ["90001", "90002"] } }));
+    search.mockClear();
+    const second = open();
+    await second.prefetch();
+    expect(search.mock.calls.map(call => call.slice(1))).toEqual([[0, null], [60, "fresh"]]);
+    const b = feed(10003);
+    second.mix(b, report);
+    expect(ids(b)).toEqual(["10003", "90060"]);
+    expect(JSON.parse(data.get("__dyf_pick_history")).露营).toEqual({ offset: 70, ids: ["90001", "90002", "90060"] });
+
+    // 搜到底：这次还能看完，存档清掉，下次从第一页重新来
+    pages[70] = [90070];
+    const third = open();
+    search.mockImplementation(async (word, offset) => page(offset, pages[offset] ?? [], offset === 70 ? 0 : 1));
+    await third.prefetch();
+    third.mix(feed(10004), report);
+    expect(JSON.parse(data.get("__dyf_pick_history"))).toEqual({});
   });
 
   it("频率可调：每 1 条插一条，改频率不重搜", async () => {

@@ -844,14 +844,19 @@ export async function startCollectorServer({
         } else {
           // 刷视频插词条的频率和屏蔽词条都在设置里改，这里每批现读
           if (operation === "read" && body?.kind === "feed") {
-            const { pickEvery, rules, mode } = await feedFilter.read();
-            Object.assign(body, { pickEvery, rules, mode });
+            const { pickEvery, rules, mode, pickHistory } = await feedFilter.read();
+            Object.assign(body, { pickEvery, rules, mode, pickHistory });
           }
           const result = await explorer.run(body, operation, controller.signal);
           if (result?.filtered) {
             const { filtered } = result;
             delete result.filtered;
             await feedFilter.addEvents(filtered).catch(() => {}); // 记不上不耽误刷视频
+          }
+          if (result?.pickHistory) {
+            const { pickHistory } = result;
+            delete result.pickHistory;
+            await feedFilter.setPickHistory(pickHistory).catch(() => {}); // 存不上只是下次可能重复
           }
           if (operation === "video") {
             response.once("close", () => void result.dispose());

@@ -92,6 +92,31 @@ describe("code-based exploration", () => {
     expect(third.items.slice(12).map((item) => item.videoId)).toEqual(["300001", "300002", "300003", "7100001", "300004", "8100001"]);
     expect(searched).toEqual([["猫", "0"], ["狗", "0"], ["猫", "10"], ["狗", "10"]]);
   });
+  it("does not repeat word videos across sessions: skips what was shown, resumes after a fresh first page, starts over once exhausted", async () => {
+    const playable = (videoId) => ({ aweme_id: videoId, desc: videoId, author: { uid: "1", nickname: "作者" }, video: { play_addr: { url_list: ["https://v/1.mp4"] }, cover: { url_list: ["https://i/1.jpg"] } } });
+    const calls = [];
+    let endAt = Infinity;
+    const { value } = explorer(async (pathname, { query }) => {
+      if (pathname.endsWith("/tab/feed/")) return { status_code: 0, has_more: 1, aweme_list: ["1", "2", "3"].map((n) => playable(`${query.refresh_index}0000${n}`)) };
+      calls.push([query.offset, query.search_id ?? null]);
+      const offset = Number(query.offset);
+      return { status_code: 0, cursor: offset + 10, has_more: offset + 10 >= endAt ? 0 : 1, log_pb: { impr_id: "fresh" }, data: [{ aweme_info: playable(`70000${offset}`) }] };
+    });
+    const first = await value.read({ kind: "feed", words: ["猫"], pickEvery: 3 });
+    expect(first.pickHistory).toEqual({ 猫: { offset: 10, ids: ["700000"] } });
+    expect(first.items.filter((item) => item.pickedFor).map((item) => item.videoId)).toEqual(["700000"]);
+
+    calls.length = 0;
+    const second = await value.read({ kind: "feed", words: ["猫"], pickEvery: 3, pickHistory: { 猫: { offset: 60, ids: ["700000"] } } });
+    expect(calls).toEqual([["0", null], ["60", "fresh"]]);
+    expect(second.items.filter((item) => item.pickedFor).map((item) => item.videoId)).toEqual(["7000060"]);
+    expect(second.pickHistory).toEqual({ 猫: { offset: 70, ids: ["700000", "7000060"] } });
+
+    endAt = 80;
+    const third = await value.read({ kind: "feed", words: ["猫"], pickEvery: 3, pickHistory: { 猫: { offset: 70, ids: ["700000", "7000060"] } } });
+    expect(third.pickHistory).toEqual({});
+  });
+
   it("mixes the words as often as the setting says", async () => {
     const playable = (videoId) => ({ ...rawVideo(videoId), video: { play_addr: { url_list: ["https://v3-web.douyinvod.com/a.mp4"] } } });
     const { value } = explorer(async (pathname, { query }) => pathname.endsWith("/tab/feed/")

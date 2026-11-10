@@ -1,6 +1,9 @@
 // 网页推荐的词条候选池。只消费已预取的完整作品数据，不等待搜索、不改推荐游标。
 (function (root) {
   "use strict";
+  // 每个词翻到第几条、推过哪些，存在抖音站点的 localStorage；不存的话每次打开页面都从搜索第一页重来，推的都是同一批
+  const HISTORY_KEY = "__dyf_pick_history", HISTORY_IDS = 300;
+  const readHistory = () => { try { return JSON.parse(root.localStorage.getItem(HISTORY_KEY)) ?? {}; } catch { return {}; } };
   root.DYF.createPicks = function ({ search, blocked, now = Date.now }) {
     let words = [], enabled = false, every = 3, generation = 0, turn = 0, gap = 0, working = false;
     let inserted = 0, failures = 0, searches = 0;
@@ -21,9 +24,23 @@
       enabled = on; words = next; generation += 1; turn = gap = 0; states.clear();
     }
     const stateFor = word => {
-      if (!states.has(word)) states.set(word, { offset: 0, searchId: null, more: true, retryAt: 0, queue: [] });
+      if (!states.has(word)) {
+        const saved = readHistory()[word];
+        states.set(word, { offset: 0, resumeAt: Number.isSafeInteger(saved?.offset) && saved.offset > 0 ? saved.offset : 0,
+          shown: new Set(Array.isArray(saved?.ids) ? saved.ids.map(String) : []), searchId: null, more: true, retryAt: 0, queue: [] });
+      }
       return states.get(word);
     };
+    function saveHistory() {
+      const saved = readHistory();
+      // 这次没轮到的词原样留着；搜到底的词不留，下次从头来，只有这时才会重复
+      const history = Object.fromEntries(words.flatMap(word => {
+        const state = states.get(word);
+        if (!state) return saved[word] ? [[word, saved[word]]] : [];
+        return state.more ? [[word, { offset: Math.max(state.offset, state.resumeAt), ids: [...state.shown].slice(-HISTORY_IDS) }]] : [];
+      }));
+      try { root.localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch { /* 存不下只是下次可能重复 */ }
+    }
     async function prefetch() {
       if (!enabled || !words.length || working) return;
       working = true;
@@ -39,23 +56,27 @@
           const state = stateFor(word);
           if (state.queue.length || !state.more || state.retryAt > now()) continue;
           try {
-            searches += 1;
-            const payload = await search(word, state.offset, state.searchId);
-            if (current !== generation) break;
-            if (payload?.status_code !== 0 || !Array.isArray(payload.data)
-              || [payload.search_nil_info?.search_nil_type, payload.search_nil_info?.search_nil_item].includes("verify_check")) throw new Error("search_unavailable");
-            const ids = new Set();
-            state.queue = payload.data.flatMap(entry => entry?.aweme_info ? [entry.aweme_info] : entry?.aweme_list ?? [])
-              .filter(item => {
-                if (!playable(item) || seen.has(String(item.aweme_id)) || ids.has(String(item.aweme_id)) || blocked(item)) return false;
-                ids.add(String(item.aweme_id)); return true;
-              }).slice(0, 10);
-            const cursor = Number(payload.cursor);
-            state.more = [true, 1, "1"].includes(payload.has_more) && Number.isSafeInteger(cursor) && cursor > state.offset;
-            if (state.more) state.offset = cursor;
-            state.searchId = typeof payload.log_pb?.impr_id === "string" ? payload.log_pb.impr_id : state.searchId;
+            // 第一页常常全是推过的，这时再搜一页（已经跳回上次的位置）
+            for (let page = 0; page < 2 && !state.queue.length && state.more && current === generation; page += 1) {
+              searches += 1;
+              const payload = await search(word, state.offset, state.searchId);
+              if (current !== generation) break;
+              if (payload?.status_code !== 0 || !Array.isArray(payload.data)
+                || [payload.search_nil_info?.search_nil_type, payload.search_nil_info?.search_nil_item].includes("verify_check")) throw new Error("search_unavailable");
+              const ids = new Set();
+              state.queue = payload.data.flatMap(entry => entry?.aweme_info ? [entry.aweme_info] : entry?.aweme_list ?? [])
+                .filter(item => {
+                  if (!playable(item) || seen.has(String(item.aweme_id)) || state.shown.has(String(item.aweme_id)) || ids.has(String(item.aweme_id)) || blocked(item)) return false;
+                  ids.add(String(item.aweme_id)); return true;
+                }).slice(0, 10);
+              const cursor = Number(payload.cursor);
+              state.more = [true, 1, "1"].includes(payload.has_more) && Number.isSafeInteger(cursor) && cursor > state.offset;
+              // 第一页照常搜（拿新的 search_id，实测不带它直接翻页被要求过验证），下一页跳回上次的位置
+              if (state.more) state.offset = Math.max(cursor, state.resumeAt);
+              state.searchId = typeof payload.log_pb?.impr_id === "string" ? payload.log_pb.impr_id : state.searchId;
+            }
             // 空页或全部重复/屏蔽也歇一会，避免每刷一屏就请求。
-            if (!state.queue.length) state.retryAt = now() + 300_000;
+            if (current === generation && !state.queue.length) state.retryAt = now() + 300_000;
           } catch {
             if (current === generation) { failures += 1; state.retryAt = now() + 300_000; }
           }
@@ -69,7 +90,7 @@
         while (state.queue.length) {
           const item = state.queue.shift(), id = String(item.aweme_id);
           if (!seen.has(id) && !blocked(item)) {
-            remember(id); shownPicks.add(id);
+            remember(id); shownPicks.add(id); state.shown.add(id);
             if (shownPicks.size > 5000) shownPicks.delete(shownPicks.values().next().value);
             events.push({ id, t: now(), action: "inserted", matched: [word], author: String(item.author?.nickname ?? "").slice(0, 40),
               desc: String(item.desc || item.caption || item.item_title || "").slice(0, 120) });
@@ -111,7 +132,7 @@
         if (pick) { result.push(pick); inserted += 1; changed = true; }
       }
       if (changed) owner.aweme_list = result;
-      if (events.length) report?.(events);
+      if (events.length) { saveHistory(); report?.(events); }
       return changed;
     }
     return { configure, prefetch, mix, rememberPage, status: () => ({ pickWords: words.length, picksEnabled: enabled,
