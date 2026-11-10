@@ -4,9 +4,11 @@ import {
   checkDesktopUpdates,
   downloadDesktopUpdate,
   getDesktopOpenAtLogin,
+  getDesktopQuitOnClose,
   getDesktopUpdateState,
   installDesktopUpdate,
   setDesktopOpenAtLogin,
+  setDesktopQuitOnClose,
   subscribeDesktopUpdateState,
 } from "./desktopRuntime";
 
@@ -60,5 +62,19 @@ describe("open at login bridge", () => {
     withBridge({ getOpenAtLogin: () => { throw new Error("sync throw"); }, setOpenAtLogin: async () => "yes" });
     expect(await getDesktopOpenAtLogin()).toBeNull();
     expect(await setDesktopOpenAtLogin(true)).toBeNull();
+  });
+});
+
+describe("quit on close bridge", () => {
+  it("answers null without the bridge, and reads and writes through it", async () => {
+    expect(await getDesktopQuitOnClose()).toBeNull();
+    withBridge({});
+    expect(await setDesktopQuitOnClose(true)).toBeNull();
+
+    let enabled = false;
+    withBridge({ getQuitOnClose: async () => enabled, setQuitOnClose: async (next: boolean) => (enabled = next) });
+    expect(await getDesktopQuitOnClose()).toBe(false);
+    expect(await setDesktopQuitOnClose(true)).toBe(true);
+    expect(await getDesktopQuitOnClose()).toBe(true);
   });
 });

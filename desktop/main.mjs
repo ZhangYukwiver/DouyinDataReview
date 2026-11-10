@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, session, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -58,6 +58,19 @@ app.setAppUserModelId(APP_ID);
 const videoDownloadSettings = path.join(userDataDirectory, "video-downloads.json");
 const videoDownloadDirectory = () => readVideoDownloadDirectory(videoDownloadSettings, path.join(app.getPath("downloads"), "抖音视频"));
 const savingVideos = new Set();
+
+// 「关闭窗口时退出应用」：和 tray-notice-shown 一样，用一个空文件当开关，有这个文件就是开着
+const quitOnCloseMarker = path.join(userDataDirectory, "quit-on-close");
+const quitOnClose = () => existsSync(quitOnCloseMarker);
+function setQuitOnClose(enabled) {
+  try {
+    if (enabled) writeFileSync(quitOnCloseMarker, "");
+    else rmSync(quitOnCloseMarker, { force: true });
+  } catch {
+    // 没写成就按磁盘上实际的状态回答，页面会把开关拨回去
+  }
+  return quitOnClose();
+}
 
 function openExternalUrl(value) {
   try {
@@ -237,9 +250,10 @@ function createMainWindow(appUrl, { hidden = false } = {}) {
     window.hide();
     syncWindowVisibility(window);
   };
-  // 关窗只是收进托盘，后台读取和聊天接收接着跑；真正退出走托盘菜单或 ⌘Q
+  // 关窗默认只是收进托盘，后台读取和聊天接收接着跑；真正退出走托盘菜单或 ⌘Q。
+  // 设置里开了「关闭窗口时退出应用」就放它关掉：closed → window-all-closed → app.quit()，照常走 before-quit 收尾
   window.on("close", (event) => {
-    if (quitting) return;
+    if (quitting || quitOnClose()) return;
     event.preventDefault();
     // macOS 全屏时直接隐藏会留下一整块黑屏，先退出全屏再收起来
     if (window.isFullScreen()) {
@@ -409,6 +423,8 @@ async function launch() {
     if (typeof enabled !== "boolean") return openAtLogin();
     return setOpenAtLogin(enabled);
   });
+  ipcMain.handle("desktop:get-quit-on-close", () => quitOnClose());
+  ipcMain.handle("desktop:set-quit-on-close", (_event, enabled) => (typeof enabled === "boolean" ? setQuitOnClose(enabled) : quitOnClose()));
   // 后台读取碰到要重新登录、要可见浏览器的情况，不替用户弹浏览器，只提醒一次，等用户打开窗口再处理
   ipcMain.on("desktop:background-sync-blocked", (_event, message) => {
     if (isOnScreen(mainWindow) || backgroundBlockedNotified) return;
