@@ -172,7 +172,9 @@ describe("collector accounts", () => {
       await mkdir(path.join(directory, "x"), { recursive: true });
       await writeFile(path.join(directory, "x", "keep.txt"), "keep");
     });
-    const listing = (await readdir(dataDirectory)).sort();
+    // mcp-token 是启动后才异步写的，可能落在前后两次读目录之间，和账号路由无关
+    const entries = async () => (await readdir(dataDirectory)).filter(name => name !== "mcp-token").sort();
+    const listing = await entries();
     const registry = await readFile(path.join(dataDirectory, "accounts.json"), "utf8");
     for (const [pathname, method] of [
       ["/v1/accounts/..%2Fx", "DELETE"],
@@ -189,7 +191,7 @@ describe("collector accounts", () => {
     for (const pathname of ["/v1/accounts/../x", "/v1/accounts/%2E%2E", "/v1/accounts/%2e%2e/activate"]) {
       expect((await fetch(`${runtime.baseUrl}${pathname}`, { method: "DELETE", headers })).status, pathname).toBe(404);
     }
-    expect((await readdir(dataDirectory)).sort()).toEqual(listing);
+    expect(await entries()).toEqual(listing);
     expect(await readFile(path.join(dataDirectory, "x", "keep.txt"), "utf8")).toBe("keep");
     expect(await readFile(path.join(dataDirectory, "accounts.json"), "utf8")).toBe(registry);
   });
