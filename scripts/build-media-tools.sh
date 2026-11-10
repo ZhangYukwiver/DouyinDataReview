@@ -40,7 +40,7 @@ fi
 
 mkdir -p "$build_directory"
 if [[ ! -f "$archive" ]]; then
-  curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 -o "$archive" "https://ffmpeg.org/releases/ffmpeg-${ffmpeg_version}.tar.xz"
+  curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 20 -o "$archive" "https://ffmpeg.org/releases/ffmpeg-${ffmpeg_version}.tar.xz"
 fi
 if command -v sha256sum >/dev/null 2>&1; then
   actual_sha256="$(sha256sum "$archive" | awk '{print $1}')"
@@ -53,7 +53,7 @@ if [[ ! -f "$source/configure" ]]; then
 fi
 
 if [[ ! -f "$lame_archive" ]]; then
-  curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 20 -o "$lame_archive" "https://downloads.sourceforge.net/project/lame/lame/${lame_version}/lame-${lame_version}.tar.gz"
+  curl --fail --location --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 20 -o "$lame_archive" "https://downloads.sourceforge.net/project/lame/lame/${lame_version}/lame-${lame_version}.tar.gz"
 fi
 if command -v sha256sum >/dev/null 2>&1; then
   actual_sha256="$(sha256sum "$lame_archive" | awk '{print $1}')"
