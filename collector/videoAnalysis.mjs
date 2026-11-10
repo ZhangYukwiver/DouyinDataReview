@@ -3,11 +3,13 @@ import { copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile }
 import path from "node:path";
 import { parseAssistantConfig } from "./assistant/chat.mjs";
 import { transcribeAudio } from "./videoAnalysisAsr.mjs";
-import { extractAudio, extractFrames, inspectVideo } from "./videoAnalysisMedia.mjs";
-import { describeCodexFrames, describeFrame, makeStudyNotes } from "./videoAnalysisModel.mjs";
+import { extractAudio, extractFrameAt, extractFrames, inspectVideo } from "./videoAnalysisMedia.mjs";
+import { describeCodexFrames, describeFrame, describeVideo, makeStudyNotes } from "./videoAnalysisModel.mjs";
 
 const titles = { transcript: "带时间戳的逐字稿", script: "原片分镜脚本", notes: "学习笔记" };
 const engines = { bcut: "必剪", qwen: "Qwen3-ASR" };
+// ponytail: 一批最多 100 条；每条要几分钟，再多也是排到明天，真有人要再放开
+const MAX_BATCH = 100;
 const fail = (code, message, status = 400) => Object.assign(new Error(message), { code, status });
 const hash = value => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
 const clock = ms => {
@@ -40,8 +42,11 @@ function options(body) {
   const modelId = config ? hash([config.runtime || "api", config.baseUrl || "", config.model]) : "";
   const model = config?.model || config?.runtime || "";
   const title = typeof body.title === "string" ? body.title.trim().slice(0, 320) : "";
-  return { kind, engine, withFrames, config, model, modelId, title,
-    key: kind === "transcript" ? `transcript-${engine}` : `${kind}-${engine}-${withFrames ? "frames" : "voice"}-${modelId}${kind === "notes" ? "-article" : ""}` };
+  // 分镜脚本另配的视频模型（可选，只认接口）：整段视频交给它，收不了再退回上面的模型看关键帧
+  const videoConfig = kind === "script" && body.videoConfig ? parseAssistantConfig({ ...body.videoConfig, runtime: undefined }) : null;
+  const videoId = videoConfig ? hash([videoConfig.baseUrl, videoConfig.model]) : "";
+  return { kind, engine, withFrames, config, model, modelId, title, videoConfig, videoId,
+    key: kind === "transcript" ? `transcript-${engine}` : `${kind}-${engine}-${withFrames ? "frames" : "voice"}-${modelId}${videoId && `-${videoId}`}${kind === "notes" ? "-article" : ""}` };
 }
 
 function result(request, entries, article) {
@@ -49,14 +54,14 @@ function result(request, entries, article) {
   const common = { key, kind, engine, withFrames, model, createdAt: new Date().toISOString(), entries };
   if (article) {
     const chapters = [{ title: "视频核心观点", text: article.overview }, ...entries.map((entry, i) =>
-      ({ title: `${i + 1}. ${entry.title}`, text: entry.text })), { title: "AI 总结", text: article.summary }];
+      ({ title: `${i + 1}. ${entry.title}`, text: entry.text, figure: entry.figure })), { title: "AI 总结", text: article.summary }];
     const contents = chapters.map(({ title }) => {
       const slug = title.toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu, "").replace(/ /gu, "-");
       return `- [${title.replace(/[\\[\]]/gu, "\\$&")}](#${slug})`;
     });
     const markdown = [`# ${article.title}`, `> 来源链接：${article.sourceUrl}`, "## 目录", contents.join("\n"),
-      ...chapters.flatMap(({ title, text }) => [`## ${title}`, text])].join("\n\n");
-    return { ...common, article, markdown };
+      ...chapters.flatMap(({ title, text, figure }) => [`## ${title}`, ...(figure ? [`![${title.replace(/[\\[\]]/gu, "\\$&")}](${figure})`] : []), text])].join("\n\n");
+    return { ...common, article, figures: entries.filter(entry => entry.figure).length, markdown };
   }
   const markdown = [`# ${titles[kind]}`, ...entries.map(entry =>
     `[${clock(entry.startMs)}${entry.endMs == null ? "" : `–${clock(entry.endMs)}`}] ${entry.title ? `**${entry.title}**\n\n` : ""}${kind === "script" ? entry.text.replaceAll("\n", "  \n") : entry.text}`)];
@@ -79,13 +84,15 @@ function scriptEntries(frames, segments, durationMs) {
 }
 
 export class VideoAnalysis {
-  constructor({ directory, download, localAi, media = { inspectVideo, extractAudio, extractFrames }, transcribe = transcribeAudio }) {
+  constructor({ directory, download, localAi, media = { inspectVideo, extractAudio, extractFrames, extractFrameAt }, transcribe = transcribeAudio }) {
     this.root = path.join(directory, "video-analysis");
     this.download = download;
     this.localAi = localAi;
     this.media = media;
     this.transcribe = transcribe;
     this.jobs = new Map();
+    // 这次运行里试过、收不了视频的模型：后面的作品直接走关键帧，不再白传一遍
+    this.blind = new Set();
   }
 
   directory(videoId) {
@@ -154,7 +161,7 @@ export class VideoAnalysis {
     const job = { controller, view };
     this.jobs.set(videoId, job);
     const signal = controller.signal;
-    const update = (stage, message) => Object.assign(view, { stage, message });
+    const update = (stage, message, patch) => Object.assign(view, { stage, message }, patch);
     job.done = this.run(videoId, dir, request, signal, update).then(() => {
       Object.assign(view, { status: "completed", stage: "done", message: "解析完成" });
     }, error => {
@@ -174,14 +181,85 @@ export class VideoAnalysis {
   }
 
   async stop() {
+    if (this.batch) this.batch.stopped = true;
     const jobs = [...this.jobs.values()];
     for (const job of jobs) job.controller.abort();
-    await Promise.all(jobs.map(job => job.done));
+    await Promise.all([...jobs.map(job => job.done), this.batch?.done]);
+  }
+
+  /**
+   * 批量解析：排成一队，一条做完再做下一条（公共转写服务和模型接口都经不起一起挤），页面关了也接着跑。
+   * 同一时间只留一批；每条还是走 start()，结果存在各自视频名下，做过的会直接算完成。
+   * body 带 retry 就是把这一批里没成的重新排上：true 是全部，视频编号是单独一条。
+   */
+  startBatch(body) {
+    if (body?.retry !== undefined) {
+      if (!this.batch) throw fail("no_batch", "没有可以重试的批量解析。", 404);
+      for (const item of this.batch.items)
+        if ((item.status === "failed" || item.status === "cancelled") && (body.retry === true || body.retry === item.videoId))
+          Object.assign(item, { status: "waiting", message: "" });
+      if (this.batch.status !== "running") this.batch.done = this.drain(this.batch);
+      return this.batchView();
+    }
+    if (this.batch?.status === "running") throw fail("batch_busy", "上一批还没解析完，可以等它完成或先停止。", 409);
+    const { items: rows, ...request } = body ?? {};
+    const { kind } = options(request);
+    const seen = new Set();
+    const items = (Array.isArray(rows) ? rows : []).flatMap(row => {
+      const videoId = typeof row?.videoId === "string" ? row.videoId : "";
+      if (!/^\d{1,24}$/u.test(videoId) || seen.has(videoId)) return [];
+      seen.add(videoId);
+      return [{ videoId, title: typeof row.title === "string" ? row.title.trim().slice(0, 320) : "", status: "waiting", message: "" }];
+    });
+    if (!items.length || items.length > MAX_BATCH) throw fail("invalid_request", `一次选 1 到 ${MAX_BATCH} 条视频。`);
+    this.batch = { id: randomUUID(), kind, items, request };
+    this.batch.done = this.drain(this.batch);
+    return this.batchView();
+  }
+
+  async drain(batch) {
+    Object.assign(batch, { status: "running", stopped: false });
+    for (let item; !batch.stopped && (item = batch.items.find(row => row.status === "waiting"));) {
+      item.status = "running";
+      try {
+        await this.start(item.videoId, { ...batch.request, title: item.title });
+        const { done, view } = this.jobs.get(item.videoId);
+        await done;
+        Object.assign(item, { status: view.status, message: view.status === "completed" ? view.note ?? "" : view.message });
+      } catch (error) {
+        Object.assign(item, { status: "failed", message: error.message || "解析失败，请重试。" });
+      }
+    }
+    batch.status = "done";
+  }
+
+  async cancelBatch() {
+    const batch = this.batch;
+    if (batch?.status === "running") {
+      batch.stopped = true;
+      for (const item of batch.items) if (item.status === "waiting") item.status = "cancelled";
+      const current = batch.items.find(item => item.status === "running");
+      if (current) await this.cancel(current.videoId);
+      await batch.done;
+    }
+    return this.batchView();
+  }
+
+  batchView() {
+    const batch = this.batch;
+    return { batch: batch ? { id: batch.id, kind: batch.kind, status: batch.status, items: batch.items.map(item => ({ ...item,
+      message: item.status === "running" ? this.jobs.get(item.videoId)?.view.message ?? "" : item.message })) } : null };
   }
 
   async run(videoId, dir, request, signal, update) {
     const output = key => path.join(dir, "results", `${key}.json`);
-    if (await readJson(output(request.key))) return;
+    const saved = await readJson(output(request.key));
+    // 分镜脚本优先让模型看整段视频：另配了视频模型就用它，没配就试上面的模型（本机 Codex / Claude Code 收不了）；
+    // 以前按关键帧拆的不拦着重拆
+    const watch = request.kind === "script" && (request.videoConfig || !request.config.runtime) && !this.blind.has(request.videoId || request.modelId);
+    // 加配图之前写的笔记没有 figures，同样可以重做一次
+    const redo = watch ? saved?.source !== "video" : request.kind === "notes" && saved?.article && saved.figures === undefined;
+    if (saved && !redo) return;
     signal.throwIfAborted();
     const source = path.join(dir, "source.mp4");
     if (!await optional(() => stat(source))) {
@@ -216,7 +294,17 @@ export class VideoAnalysis {
         }
         if (!audioInfo.silent) {
           update("asr", `正在使用${engines[request.engine]}转写音轨`);
-          entries = await this.transcribe({ engine: request.engine, audioPath: audio, signal, onProgress: message => update("asr", message) });
+          try {
+            entries = await this.transcribe({ engine: request.engine, audioPath: audio, signal, onProgress: message => update("asr", message) });
+          } catch (error) {
+            // Qwen3-ASR 是首选，但它是公共服务，额度用完或连不上时改用必剪：
+            // 整件事按必剪重跑（原片、音轨都已在本机），结果记在必剪名下，面板按 resultKey 跟过去
+            if (request.engine !== "qwen" || signal.aborted) throw error;
+            const fallback = { ...request, engine: "bcut", key: request.key.replace("-qwen", "-bcut") };
+            update("asr", "Qwen3-ASR 这次没转写成功，改用必剪", { engine: "bcut", resultKey: fallback.key,
+              note: `Qwen3-ASR 这次没转写成功，改用了必剪。原因：${error.message || "未知错误"}` });
+            return this.run(videoId, dir, fallback, signal, update);
+          }
           entries = entries.filter(row => row.text?.trim() && Number.isFinite(row.startMs) && Number.isFinite(row.endMs) && row.startMs < media.durationMs)
             .map(row => ({ startMs: Math.max(0, Math.round(row.startMs)), endMs: Math.min(media.durationMs, Math.max(0, Math.round(Math.max(row.startMs, row.endMs)))), text: row.text.trim() }))
             .sort((a, b) => a.startMs - b.startMs);
@@ -226,8 +314,10 @@ export class VideoAnalysis {
       await save(output(transcript.key), transcript, signal);
     }
     if (request.kind === "transcript") return;
-    let frames = [];
-    if (request.withFrames) frames = await this.describe(dir, source, media, request, signal, update);
+    const shots = watch ? await this.watch(source, media, request, signal, update) : null;
+    if (watch && !shots && saved) return;
+    let frames = shots ?? [];
+    if (!shots && request.withFrames) frames = await this.describe(dir, source, media, request, signal, update);
     let entries, article;
     if (request.kind === "script") entries = scriptEntries(frames, transcript.entries, media.durationMs);
     else {
@@ -238,10 +328,48 @@ export class VideoAnalysis {
       if (!evidence.length) throw fail("no_speech", "没有识别到口播，请勾选「结合画面」生成笔记。");
       const doc = await makeStudyNotes({ config: request.config, localAi: this.localAi, evidence, title: request.title, signal,
         onProgress: message => update("notes", message) });
-      entries = doc.entries;
+      entries = [];
+      for (const { figure, ...entry } of doc.entries) {
+        if (figure) {
+          update("figures", "正在截取配图");
+          entry.figure = await this.figure(dir, source, entry, media.durationMs, signal);
+        }
+        entries.push(entry);
+      }
       article = { title: doc.title, overview: doc.overview, summary: doc.summary, sourceUrl: `https://www.douyin.com/video/${videoId}` };
     }
-    await save(output(request.key), result(request, entries, article), signal);
+    await save(output(request.key), { ...result(request, entries, article), ...(shots && { source: "video", model: (request.videoConfig ?? request.config).model }) }, signal);
+  }
+
+  /**
+   * 截这一章引用的那段原片中间的一帧当配图；截不到就不配，笔记照出。
+   * ponytail: 图以 data URI 存在结果里，导出的 Markdown 自带图片，也不用另开带鉴权的图片接口；
+   * 一篇配图很多时结果会到几 MB，嫌大再改成存文件 + 接口。
+   */
+  async figure(dir, source, { startMs, endMs }, durationMs, signal) {
+    const file = path.join(dir, `.figure-${randomUUID()}.jpg`);
+    try {
+      // 片尾最后半秒可能已经没有画面帧
+      await this.media.extractFrameAt(source, file, Math.max(0, Math.min(Math.round((startMs + endMs) / 2), durationMs - 500)), signal);
+      return `data:image/jpeg;base64,${(await readFile(file)).toString("base64")}`;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return undefined;
+    } finally { await rm(file, { force: true }).catch(() => {}); }
+  }
+
+  /** 整段视频交给模型拆镜头；收不了（原片太大、接口拒收、答非所问）返回 null，改用关键帧。 */
+  async watch(source, media, request, signal, update) {
+    // ponytail: 接口请求体一般限 64MB，原片超过 45MB 直接走关键帧；自带的 ffmpeg 没编视频的编码器，要压小再发得先加上
+    if ((await stat(source)).size > 45 * 1024 * 1024) return null;
+    const config = request.videoConfig ?? request.config;
+    update("video", `正在把整段视频交给 ${config.model} 拆镜头`);
+    try { return await describeVideo({ config, videoPath: source, durationMs: media.durationMs, signal }); }
+    catch (error) {
+      if (error.code === "video_unsupported") this.blind.add(request.videoId || request.modelId);
+      else if (error.code !== "invalid_model_output") throw error;
+      return null;
+    }
   }
 
   async describe(dir, source, media, request, signal, update) {

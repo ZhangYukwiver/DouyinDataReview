@@ -97,6 +97,35 @@ export function saveAssistantConfig(config: AssistantConfig, storage: Pick<Stora
   try { storage?.setItem(CONFIG_KEY, JSON.stringify(config)); } catch { /* 存不了就只在这次用 */ }
 }
 
+/**
+ * 分镜脚本另配的视频模型（可选）：上面那个模型收不了视频时，另指一个能看整段视频的接口模型。
+ * 地址和 Key 留空就沿用上面接口的；存在这台电脑的 localStorage，和对话模型一样随请求带给采集器。
+ */
+export type VideoModelConfig = Pick<AssistantConfig, "baseUrl" | "apiKey" | "model">;
+const VIDEO_MODEL_KEY = "dy2.videoModelConfig";
+const NO_VIDEO_MODEL: VideoModelConfig = { baseUrl: "", apiKey: "", model: "" };
+
+export function loadVideoModelConfig(storage: Pick<Storage, "getItem"> | undefined = globalThis.localStorage): VideoModelConfig {
+  try {
+    const saved = JSON.parse(storage?.getItem(VIDEO_MODEL_KEY) ?? "null") as Partial<VideoModelConfig> | null;
+    const text = (value: unknown) => (typeof value === "string" ? value : "");
+    return saved && typeof saved === "object" ? { baseUrl: text(saved.baseUrl), apiKey: text(saved.apiKey), model: text(saved.model) } : NO_VIDEO_MODEL;
+  } catch {
+    return NO_VIDEO_MODEL;
+  }
+}
+
+export function saveVideoModelConfig(config: VideoModelConfig, storage: Pick<Storage, "setItem"> | undefined = globalThis.localStorage): void {
+  try { storage?.setItem(VIDEO_MODEL_KEY, JSON.stringify(config)); } catch { /* 存不了就只在这次用 */ }
+}
+
+/** 发给采集器的视频模型：没填模型名，或者凑不齐地址和 Key（留空又没有接口可沿用），就是没配。 */
+export function resolveVideoModel(video: VideoModelConfig, main: AssistantConfig): VideoModelConfig | undefined {
+  const inherit = (own: string, shared: string) => own.trim() || (isLocalAiRuntime(main.runtime) ? "" : shared.trim());
+  const resolved = { baseUrl: inherit(video.baseUrl, main.baseUrl), apiKey: inherit(video.apiKey, main.apiKey), model: video.model.trim() };
+  return resolved.baseUrl && resolved.apiKey && resolved.model ? resolved : undefined;
+}
+
 /** 配好了才能发：接口要地址、Key、模型都在；本机 CLI 模型可以留空。 */
 export const assistantConfigReady = (config: AssistantConfig): boolean => isLocalAiRuntime(config.runtime) || Boolean(config.baseUrl.trim() && config.apiKey.trim() && config.model.trim());
 
