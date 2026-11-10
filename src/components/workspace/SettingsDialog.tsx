@@ -3,7 +3,7 @@ import { ActivityIndicator, Image, Linking, Modal, Platform, Pressable, ScrollVi
 import Svg, { Circle } from "react-native-svg";
 import { Check, Copy, Download, FolderOpen, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
 
-import { canDragDesktopExtension, getDesktopOpenAtLogin, getDesktopVideoDownloadDirectory, openDesktopVideoDownloadDirectory, setDesktopOpenAtLogin, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
+import { canDragDesktopExtension, getDesktopOpenAtLogin, getDesktopQuitOnClose, getDesktopVideoDownloadDirectory, openDesktopVideoDownloadDirectory, setDesktopOpenAtLogin, setDesktopQuitOnClose, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, loadAppStyleFonts, loadFeedWords, saveFeedWords, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
 import { readFeedPreferences } from "../../services/feedPreferences";
 import { usageAutoSettings, type UsageAutoSettings } from "../../services/usageSessions";
@@ -106,6 +106,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const [tab, setTab] = useState<SettingsSection>(section ?? "appearance");
   // 「开机后在后台运行」：null = 不是桌面版、旧版外壳或系统不支持，这一行不显示。挂载时就先问一次，打开「读取」页时这一行已经在了
   const [openAtLogin, setOpenAtLogin] = useState<boolean | null>(null);
+  // 「关闭窗口时退出应用」：同上，null 就不显示
+  const [quitOnClose, setQuitOnClose] = useState<boolean | null>(null);
 
   // 每次打开都回到指定的那一页（没指定就是外观），不接着上次关掉时那页
   useEffect(() => {
@@ -115,6 +117,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
   useEffect(() => {
     let live = true;
     void getDesktopOpenAtLogin().then((value) => { if (live) setOpenAtLogin(value); });
+    void getDesktopQuitOnClose().then((value) => { if (live) setQuitOnClose(value); });
     return () => { live = false; };
   }, [visible]);
 
@@ -130,6 +133,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
     const next = !openAtLogin;
     setOpenAtLogin(next);
     void setDesktopOpenAtLogin(next).then((actual) => setOpenAtLogin(actual ?? !next));
+  };
+  const toggleQuitOnClose = () => {
+    if (quitOnClose === null) return;
+    const next = !quitOnClose;
+    setQuitOnClose(next);
+    void setDesktopQuitOnClose(next).then((actual) => setQuitOnClose(actual ?? !next));
   };
 
   return (
@@ -181,7 +190,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
           {/* key 跟着页走：换页时滚动位置回到顶 */}
           <ScrollView contentContainerStyle={styles.body} key={tab} style={styles.scroll} testID={`settings-section-${tab}`}>
             {tab === "appearance" ? <Appearance {...props} contentWidth={contentWidth} />
-              : tab === "reading" ? <Reading {...props} openAtLogin={openAtLogin} onToggleOpenAtLogin={toggleOpenAtLogin} />
+              : tab === "reading" ? <Reading {...props} openAtLogin={openAtLogin} onToggleOpenAtLogin={toggleOpenAtLogin} quitOnClose={quitOnClose} onToggleQuitOnClose={toggleQuitOnClose} />
                 : tab === "privacy" ? <Privacy {...props} />
                   : tab === "account" ? <Account {...props} />
                     : tab === "data" ? <Data {...props} />
@@ -266,7 +275,7 @@ function Appearance({ appStyle, contentWidth, onChangeAppStyle, onChangeStorySty
   );
 }
 
-function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openAtLogin, browserConnection, collector, appStyle }: SettingsDialogProps & { openAtLogin: boolean | null; onToggleOpenAtLogin: () => void }) {
+function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openAtLogin, onToggleQuitOnClose, quitOnClose, browserConnection, collector, appStyle }: SettingsDialogProps & { openAtLogin: boolean | null; onToggleOpenAtLogin: () => void; quitOnClose: boolean | null; onToggleQuitOnClose: () => void }) {
   const videosAllowed = browserConnection?.status?.readPermissions?.videos !== false;
   return (
     <>
@@ -284,6 +293,15 @@ function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openA
             title="开机后在后台运行"
           />
           <Toggle label="开机后在后台运行" onPress={onToggleOpenAtLogin} testID="settings-open-at-login" value={openAtLogin} />
+        </View>
+      ) : null}
+      {quitOnClose !== null ? (
+        <View style={styles.row}>
+          <RowCopy
+            detail="关着时，点关闭只是把窗口收进菜单栏或托盘，应用留在后台。开着时点关闭就完全退出，后台补读和聊天接收也跟着停。"
+            title="关闭窗口时退出应用"
+          />
+          <Toggle label="关闭窗口时退出应用" onPress={onToggleQuitOnClose} testID="settings-quit-on-close" value={quitOnClose} />
         </View>
       ) : null}
       <AutoUsageSettings collector={collector} appStyle={appStyle} />

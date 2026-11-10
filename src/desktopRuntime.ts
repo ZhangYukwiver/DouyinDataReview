@@ -44,6 +44,8 @@ interface DesktopRuntimeBridge {
   // 比上面晚加的：旧版外壳没有这几个，用前先看在不在
   getOpenAtLogin?(): Promise<unknown>;
   setOpenAtLogin?(enabled: boolean): Promise<unknown>;
+  getQuitOnClose?(): Promise<unknown>;
+  setQuitOnClose?(enabled: boolean): Promise<unknown>;
   startExtensionDrag?(): void;
   getVideoDownloadDirectory?(): Promise<unknown>;
   chooseVideoDownloadDirectory?(): Promise<unknown>;
@@ -206,6 +208,30 @@ export async function setDesktopOpenAtLogin(enabled: boolean): Promise<boolean |
   if (typeof runtime?.setOpenAtLogin !== "function") return null;
   try {
     const value = await runtime.setOpenAtLogin(enabled);
+    return typeof value === "boolean" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 「关闭窗口时退出应用」现在开没开；浏览器里或旧版外壳是 null（设置面板就不显示这一行） */
+export async function getDesktopQuitOnClose(): Promise<boolean | null> {
+  const runtime = getDesktopRuntime();
+  if (typeof runtime?.getQuitOnClose !== "function") return null;
+  try {
+    const value = await runtime.getQuitOnClose();
+    return typeof value === "boolean" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 打开或关掉「关闭窗口时退出应用」，答的是改完以后实际存下的状态；没改成或没有这个接口时是 null */
+export async function setDesktopQuitOnClose(enabled: boolean): Promise<boolean | null> {
+  const runtime = getDesktopRuntime();
+  if (typeof runtime?.setQuitOnClose !== "function") return null;
+  try {
+    const value = await runtime.setQuitOnClose(enabled);
     return typeof value === "boolean" ? value : null;
   } catch {
     return null;
