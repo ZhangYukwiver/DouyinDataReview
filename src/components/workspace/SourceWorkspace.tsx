@@ -52,12 +52,13 @@ import {
   X,
 } from "lucide-react-native";
 
-import type { PersonalRecordCollection } from "../../domain/personalRecords";
+import type { PersonalRecordCollection, PersonalRecordType } from "../../domain/personalRecords";
 import type { DesktopUpdateState } from "../../desktopRuntime";
 import { collectorAccountName, findTwinAccount, formatAccountAddedDay, type CollectorAccount, type CollectorAccounts, type CollectorStatus } from "../../services/localCollector";
 import type { AppStyle } from "../../services/appStyle";
 import type { SettingsSection } from "./SettingsDialog";
 import { MinimalSetupWorkspace } from "./MinimalSetupWorkspace";
+import { ReadTypePicker } from "./ReadTypePicker";
 import { FirstScreenLogin, type DesktopLogin, type LoginStartAction, type LoginStartProps } from "./BrowserConnectionPanel";
 import {
   accountBlockedReason,
@@ -144,6 +145,9 @@ export interface SetupWorkspaceProps {
   onOpenDashboard: () => void;
   autoSyncEnabled: boolean;
   onToggleAutoSync: () => void;
+  /** 增量 / 完整读取读哪几类 */
+  readTypes: readonly PersonalRecordType[];
+  onToggleReadType: (type: PersonalRecordType) => void;
   /** 极简风格下整页换成 MinimalSetupWorkspace，其余风格是这套手绘纸面 */
   appStyle: AppStyle;
   /** 打开设置面板（风格、自动补读、账号、数据、更新都在里面）；section 是先滚到哪一节 */
@@ -268,6 +272,8 @@ function SketchSetupWorkspace({
   onStopChatObservation,
   onStopSync,
   onToggleAutoSync,
+  readTypes,
+  onToggleReadType,
   chatCollecting,
   chatBusy,
   pairingCode,
@@ -385,6 +391,7 @@ function SketchSetupWorkspace({
               </View>
               <FitSlot style={styles.slotChart}>{(size) => <RecordSketches digest={digest} roomy={roomy} size={size} />}</FitSlot>
               <ChatProgress progress={chatProgress} />
+              <ReadTypePicker types={readTypes} onToggle={onToggleReadType} disabled={busy || !setup.videosAllowed} textStyle={styles.meta} activeStyle={styles.strong} />
               <View style={styles.actions}>
                 {actions.map((action) => (
                   <ActionButton key={action.key} seed={`act-${action.key}`} compact={narrow} disabled={action.disabled} icon={READ_ICONS[action.icon]} label={action.label} onPress={() => runReadCommand(action.command, handlers)} busy={action.busy} />

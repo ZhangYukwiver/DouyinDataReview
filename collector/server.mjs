@@ -1229,7 +1229,9 @@ export async function startCollectorServer({
         else sendJson(response, 500, { error: "folders_save_failed", message: "文件夹没存上，请稍后再试。" });
       }
     } else if (request.method === "POST" && url.pathname === "/v1/sync") {
-      const started = collector.startSync();
+      // 请求体 { types: [...] } 只读其中几类；读不出请求体就照旧三类都读
+      const body = await readJsonBody(request).catch(() => null);
+      const started = collector.startSync({ types: body?.types });
       sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });
     } else if (request.method === "POST" && url.pathname === "/v1/sync/stop") {
       const stopped = collector.stopSync();
@@ -1239,7 +1241,8 @@ export async function startCollectorServer({
         sendJson(response, 403, { error: "loopback_only" });
         return;
       }
-      const started = collector.startDirectRecords();
+      const body = await readJsonBody(request).catch(() => null);
+      const started = collector.startDirectRecords({ types: body?.types });
       sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });
     } else if (request.method === "POST" && url.pathname === "/v1/chat/observe") {
       const started = collector.startChatObservation();

@@ -43,6 +43,7 @@ import {
 
 import type { CollectorStatus } from "../../services/localCollector";
 import type { SetupWorkspaceProps } from "./SourceWorkspace";
+import { ReadTypePicker } from "./ReadTypePicker";
 import { FirstScreenLogin, type LoginStartProps } from "./BrowserConnectionPanel";
 import { ease, fx, useCountUp } from "./motion";
 import {
@@ -125,6 +126,8 @@ export function MinimalSetupWorkspace({
   onStopChatObservation,
   onStopSync,
   onToggleAutoSync,
+  readTypes,
+  onToggleReadType,
   pairingCode,
   pickingArchive,
   records,
@@ -277,6 +280,7 @@ export function MinimalSetupWorkspace({
               {/* 怎么读 */}
               <View onLayout={onRightLayout} style={[styles.panel, styles.right, pad]}>
                 <ChatProgress progress={setup.chatProgress} />
+                <ReadTypePicker types={readTypes} onToggle={onToggleReadType} disabled={busy || !setup.videosAllowed} textStyle={styles.meta} activeStyle={styles.readTypeOn} />
                 <ReadButtons actions={actions} oneRow={oneRow} onRun={run} />
                 <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在设置 → 账号中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
                 <View style={[styles.rule, short && styles.ruleShort]} />
@@ -981,6 +985,7 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: "row", gap: 8 },
   action: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, paddingHorizontal: 8 },
   hint: { marginTop: 8, color: color.textMuted, fontSize: 12, lineHeight: 18 },
+  readTypeOn: { color: color.text, fontWeight: "600" },
   auto: { flexDirection: "row", alignItems: "center", gap: 12 },
   autoPressed: { opacity: 0.7 },
   autoState: { color: color.textMuted, fontSize: 12, lineHeight: 18 },

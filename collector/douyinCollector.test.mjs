@@ -912,6 +912,52 @@ describe("DouyinCollector direct records", () => {
     expect(collector.snapshot.records.watch_history.map((record) => [record.videoId, record.watchCompleted])).toEqual([["saved-watch", undefined]]);
   });
 
+  it("reads only the chosen kinds: no watch history, live, completion, folders or comments when only likes are picked", async () => {
+    const store = mockStore("2026-08-13T00:00:00.000Z");
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => []), newPage: vi.fn() };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
+    collector.snapshot = emptySnapshot();
+    collector.ensureDirectApi = vi.fn(async () => context);
+    collector.readDirectHistory = vi.fn();
+    collector.readCompletedWatchTimes = vi.fn(async () => null);
+    collector.onDouyinFolders = vi.fn(async () => undefined);
+    collector.myComments = { update: vi.fn() };
+    collector.collectDirectList = vi.fn(async (_context, type, onPage) => {
+      await onPage({ status_code: 0, aweme_list: [{ aweme_id: `${type}-new` }], has_more: 0 }, 1);
+      return 1;
+    });
+    const messages = [];
+    const updateStatus = collector.updateStatus.bind(collector);
+    collector.updateStatus = (patch) => { if (patch.message) messages.push(patch.message); return updateStatus(patch); };
+
+    // 不认识的类型丢掉，剩下的照读
+    expect(collector.startDirectRecords({ types: ["liked_videos", "bogus"] })).toBe(true);
+    expect(collector.status.message).toBe("正在读取新增点赞记录");
+    await collector.syncPromise;
+
+    expect(collector.collectDirectList.mock.calls.map(([, type]) => type)).toEqual(["liked_videos"]);
+    expect(collector.readDirectHistory).not.toHaveBeenCalled();
+    expect(collector.readCompletedWatchTimes).not.toHaveBeenCalled();
+    expect(messages).not.toContain("正在读取收藏夹分组");
+    expect(messages).not.toContain("正在读取看过的直播");
+    expect(collector.myComments.update).not.toHaveBeenCalled();
+    expect(collector.status).toMatchObject({ state: "complete", message: "已读取并合并全部可见记录（点赞 1）" });
+    expect(collector.snapshot.warnings[0]).toBe("无界面读取完成：新增点赞 1；读取点赞 1 页。");
+    // 没读的那两类「读完过」标记不动
+    expect(collector.snapshot.directSync).toEqual({ watch_history: false, liked_videos: true, favorite_videos: false });
+
+    // 什么都没给（或给的全不认识）就三类都读
+    collector.collectDirectList.mockClear();
+    messages.length = 0;
+    collector.readDirectHistory = vi.fn(async () => ({ status_code: 0, aweme_list: [], has_more: 0 }));
+    expect(collector.startSync({ types: "watch_history" })).toBe(true);
+    expect(collector.status.message).toBe("正在读取全部观看、点赞和收藏记录");
+    await collector.syncPromise;
+    expect(collector.collectDirectList.mock.calls.map(([, type]) => type)).toEqual(["liked_videos", "favorite_videos"]);
+    expect(messages).toEqual(expect.arrayContaining(["正在读取收藏夹分组", "正在读取看过的直播", "正在读取看完标记", "正在读取评论回复"]));
+    expect(collector.myComments.update).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps reading favorites when the liked list comes back unusable, but stops on session problems", async () => {
     const setup = (likedError) => {
       const store = mockStore("2026-08-13T00:00:00.000Z");

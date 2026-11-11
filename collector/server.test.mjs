@@ -225,8 +225,11 @@ describe("collector accounts", () => {
     let finishRun;
     const runSync = vi.spyOn(DouyinCollector.prototype, "runDirectRecords").mockImplementation(() => new Promise((resolve) => { finishRun = resolve; }));
     try {
-      const { call } = await startPaired("accounts-busy-");
-      expect((await call("/v1/sync", "POST")).status).toBe(202);
+      const { call, runtime, headers } = await startPaired("accounts-busy-");
+      // 请求体里的 types 交给采集器：只读喜欢
+      const started = await fetch(`${runtime.baseUrl}/v1/sync`, { method: "POST", headers, body: JSON.stringify({ types: ["liked_videos"] }) });
+      expect(started.status).toBe(202);
+      expect(runSync).toHaveBeenCalledWith(expect.any(Number), { full: true, types: ["liked_videos"] });
       const refused = await call("/v1/accounts", "POST");
       expect(refused.status).toBe(409);
       expect(refused.body).toMatchObject({ error: "collector_busy", message: expect.stringContaining("读取") });

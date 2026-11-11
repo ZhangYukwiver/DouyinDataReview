@@ -10,6 +10,8 @@ import { DIRECT_SIGNER_COMMIT, DirectHistoryError } from "./directHistory.mjs";
 import { directSessionFingerprint } from "./directCredentials.mjs";
 import { directSessionFixture } from "./fixtures/directClient.mjs";
 
+// 登录后自动读取不看读取范围，三类都读
+const ALL_TYPES = ["watch_history", "liked_videos", "favorite_videos"];
 const cleanups = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 async function fixture({ isLoggedIn = () => true, prepare } = {}) {
@@ -142,7 +144,7 @@ describe("browser login HTTP handshake", () => {
     const confirmed = await call("/v1/browser/confirm?account=default", "POST", { id: inspected.body.candidate.id });
     expect(confirmed.status).toBe(200); expect(confirmed.body.status.browserSource).toEqual({ mode: "cdp", browser: "chrome", connected: false, credentials: "ready" });
     expect(connections[0].disconnect).toHaveBeenCalledOnce();
-    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false });
+    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false, types: ALL_TYPES });
     expect(confirmed.body.accounts[0].uid).toBe("123456");
     expect(JSON.parse(await readFile(path.join(dataDirectory, "external-browser.json"), "utf8"))).toEqual({ browser: "chrome", readPermissions: { videos: true, chat: true } });
     expect((await call("/v1/browser/disconnect?account=default", "POST")).body.status.browserSource.connected).toBe(false);
@@ -166,7 +168,7 @@ describe("browser login HTTP handshake", () => {
     expect(confirmed).toMatchObject({ status: 200, body: { status: {
       state: "collecting", syncFull: false, syncMode: "direct_records", browserOpen: false,
     } } });
-    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false });
+    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false, types: ALL_TYPES });
     expect((await call("/v1/sync", "POST")).body.started).toBe(false);
     expect((await call("/v1/experimental/records-direct", "POST")).body.started).toBe(false);
     expect((await call("/v1/status")).body.syncFull).toBe(false);
@@ -184,7 +186,7 @@ describe("browser login HTTP handshake", () => {
       state: "error", code: "request_failed", message: "合成读取失败",
       browserSource: { credentials: "ready", connected: false },
     }));
-    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false });
+    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false, types: ALL_TYPES });
   });
   it("keeps the browser open until a later login, then returns the account for confirmation", async () => {
     let loggedIn = false;
@@ -281,7 +283,7 @@ describe("browser login HTTP handshake", () => {
     const retry = await call("/v1/browser/connect", "POST", { browser: "chrome" });
     const confirmed = await call("/v1/browser/confirm", "POST", { id: retry.body.candidate.id });
     expect(confirmed).toMatchObject({ status: 200, body: { status: { browserSource: { credentials: "ready", connected: false } } } });
-    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false });
+    expect(readRecords).toHaveBeenCalledExactlyOnceWith(expect.any(Number), { full: false, types: ALL_TYPES });
   });
   it("rejects an account changing between preview and confirmation, without writing a session", async () => {
     const { call, identity, dataDirectory, connections, readRecords } = await fixture();
@@ -323,7 +325,7 @@ describe("browser login HTTP handshake", () => {
     const adopted = await call("/v1/browser/confirm", "POST", { id: candidate.id, adopt: true });
     expect(adopted.body).toMatchObject({ activeId: "default", accounts: [{ id: "default", uid: "123456" }] });
     expect((await call("/v1/records")).body.records.liked_videos).toHaveLength(1);
-    expect(readRecords.mock.calls.map(([, options]) => options)).toEqual([{ full: false }]);
+    expect(readRecords.mock.calls.map(([, options]) => options)).toEqual([{ full: false, types: ALL_TYPES }]);
     // 记录可能来自备份：喜欢和收藏以后只往上加，读取中断、之后的补读也不会按平台列表整份替换
     expect(JSON.parse(await readFile(path.join(dataDirectory, "records.json"), "utf8")).directSync).toEqual({ watch_history: false, liked_videos: true, favorite_videos: true });
     const again = (await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate;

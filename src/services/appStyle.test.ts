@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { APP_STYLES, applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveStoryStyle, STORY_STYLES } from "./appStyle";
+import { APP_STYLES, applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadReadTypes, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveReadTypes, saveStoryStyle, STORY_STYLES } from "./appStyle";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const data = new Map(Object.entries(initial));
@@ -54,6 +54,17 @@ describe("app style", () => {
     saveAutoSync(true, storage);
     expect(loadAutoSync(storage)).toBe(true);
     expect(loadAutoSync(undefined)).toBe(true);
+  });
+
+  it("remembers which kinds to read, all three by default", () => {
+    const all = ["watch_history", "liked_videos", "favorite_videos"];
+    const storage = memoryStorage();
+    expect(loadReadTypes(storage)).toEqual(all);
+    saveReadTypes(["liked_videos"], storage);
+    expect(loadReadTypes(storage)).toEqual(["liked_videos"]);
+    // 存的全不认识、或者读存储出错，都退回三类都读
+    expect(loadReadTypes(memoryStorage({ "content-insights.read-types": "bogus," }))).toEqual(all);
+    expect(loadReadTypes({ getItem: () => { throw new Error("blocked"); }, setItem: () => undefined })).toEqual(all);
   });
 
   it("survives a storage that throws", () => {

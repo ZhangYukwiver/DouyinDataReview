@@ -9,8 +9,10 @@ export type DataExportSelection = Record<PersonalRecordType | "chat", boolean>;
 export async function buildDataExportWithVoice(snapshot: CollectorSnapshot, selection: DataExportSelection, options: {
   connection: ChatSendConnection | null; accountId: string | null; signal: AbortSignal;
   onProgress?: (progress: { completed: number; total: number }) => void;
+  /** 只导这个时间之后的观看历史和聊天 */
+  since?: string | null;
 }) {
-  const data = buildDataExport(snapshot, selection);
+  const data = buildDataExport(snapshot, selection, { since: options.since });
   return transcribeExportVoices(data, async messageIds => {
     if (!options.connection || !options.accountId)
       throw new LocalCollectorError("voice_resource_missing", "请连接原账号后重新导出语音文字。");
