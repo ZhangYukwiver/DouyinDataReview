@@ -281,7 +281,7 @@ export const TOOLS = [
   },
   {
     kind: "local",
-    def: fn("organize_folders", "整理本机内容库的文件夹：新建、改名、删除文件夹，把作品放进某个文件夹或移出。只改本机，不影响抖音。", {
+    def: fn("organize_folders", "整理内容库的文件夹：新建、改名、删除文件夹，把作品放进某个文件夹或移出。收藏栏（favorite_videos）的文件夹就是抖音收藏夹，会同步改到抖音上（先弹卡片确认，名字最多 15 字）；其他栏只改本机。", {
       list: { type: "string", enum: LIST_NAMES },
       create: { type: "array", items: { type: "string" }, description: "要新建的文件夹名" },
       rename: { type: "array", items: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"] } },
@@ -349,6 +349,7 @@ export const TOOLS = [
         return fail("missing_folder_action", "没有指定要执行的文件夹操作。");
       }
       if (list.folders.length > MAX_FOLDERS || Object.keys(list.items).length > MAX_ITEMS) return fail("folder_limit", "超过这一栏可保存的文件夹或作品数量，本次没有保存。");
+      if (args.list === "favorite_videos") await ctx.confirm({ action: "整理抖音收藏夹", target: "收藏", text: done.join("；") });
       const saved = await ctx.api("POST", foldersPath, doc);
       if (!saved.ok) return fail(saved.body?.error ?? "folders_save_failed", saved.body?.message ?? "文件夹没存上。");
       return { ok: true, done };

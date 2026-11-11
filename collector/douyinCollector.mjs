@@ -43,6 +43,7 @@ import { ChatSendError, validateChatSend } from "./chatSender.mjs";
 import { MyCommentStore, collectMyComments } from "./myComments.mjs";
 import { CreatorCenter } from "./creatorCenter.mjs";
 import { LiveRooms } from "./liveRoom.mjs";
+import { readDouyinFolders } from "./douyinFolders.mjs";
 import { DirectApiClient, loadDirectSession, saveDirectSession, sameDirectSession, needsDirectSessionRefresh } from "./directApi.mjs";
 import { readDirectCredentialMaterial, initializeDirectCredentialMaterial, completeDirectCredentialExport, requireDirectCredentials } from "./directCredentials.mjs";
 import { DirectChatClient } from "./directChat.mjs";
@@ -2094,6 +2095,13 @@ export class DouyinCollector {
           continue;
         }
         await persistCompletedType(type, phaseIndex === phases.length - 1);
+      }
+      // 收藏夹分组也是附加信息：读不全就不动本地文件夹，下次再对
+      if (this.onDouyinFolders) {
+        this.updateStatus({ phase: "favorite_videos", message: "正在读取收藏夹分组" });
+        const folders = await readDouyinFolders(context).catch(() => null);
+        this.assertSyncActive(runId);
+        if (folders) await this.onDouyinFolders(folders).catch(() => {});
       }
       // 直播记录只是观看历史的附加分栏：改版、读不到都不影响上面已经存好的视频记录
       this.updateStatus({ phase: "watch_history", message: "正在读取看过的直播" });

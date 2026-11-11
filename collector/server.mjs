@@ -27,6 +27,7 @@ import { CreatorCenterError } from "./creatorCenter.mjs";
 import { LiveRoomError } from "./liveRoom.mjs";
 import { CollectorStore } from "./store.mjs";
 import { RecordFolderStore } from "./recordFolders.mjs";
+import { mergeDouyinFolders, pushDouyinFolders } from "./douyinFolders.mjs";
 import { FEED_FILTER_MODES, FEED_FILTER_ORIGINS, FeedFilterStore } from "./feedFilter.mjs";
 import { mobileFeedProfile } from "./mobileFeedProfile.mjs";
 import { fetchMediaStream } from "./videoDownloader.mjs";
@@ -317,6 +318,16 @@ export async function startCollectorServer({
       onAccountIdentity: (identity) => accounts.updateIdentity(account.id, identity).catch(() => undefined),
     });
     await next.initialize();
+    // 读取时读到的抖音收藏夹并进收藏栏的文件夹；没变就不写，免得打断正在整理的页面
+    next.onDouyinFolders = async (remote) => {
+      let changed = false;
+      const saved = await foldersOf(next).update(({ lists }) => {
+        const merged = mergeDouyinFolders(lists.favorite_videos, remote);
+        changed = JSON.stringify(merged) !== JSON.stringify(lists.favorite_videos);
+        return changed ? { ...lists, favorite_videos: merged } : lists;
+      });
+      if (changed) assistant.foldersChanged(saved.revision);
+    };
     next.videoAnalysis = new VideoAnalysis({ directory, localAi, download: (id, signal) => next.downloadVideoForAnalysis(id, signal) });
     return next;
   };
@@ -1206,11 +1217,15 @@ export async function startCollectorServer({
       }
       try {
         // 不回传整份文档：上万条归档时两头各多一次序列化，界面也用不上
-        const { revision } = await foldersOf(target).write(body);
+        // 收藏栏里动到抖音收藏夹的，先改到抖音上再存
+        const { revision } = await foldersOf(target).write(body, async (lists, current) => ({ ...lists,
+          favorite_videos: await pushDouyinFolders(current.favorite_videos, lists.favorite_videos, {
+            checked: body.revision !== undefined, enabled: () => writesEnabled, getApi: () => target.ensureDirectApi({ security: true }) }) }));
         assistant.foldersChanged(revision);
         sendJson(response, 200, { ok: true, revision });
       } catch (error) {
-        if (error?.code === "folders_changed") sendJson(response, 409, { error: error.code, message: error.message });
+        const status = { folders_changed: 409, writes_disabled: 403, invalid_request: 400, login_required: 502, douyin_folders_failed: 502 }[error?.code];
+        if (status) sendJson(response, status, { error: error.code, message: error.message });
         else sendJson(response, 500, { error: "folders_save_failed", message: "文件夹没存上，请稍后再试。" });
       }
     } else if (request.method === "POST" && url.pathname === "/v1/sync") {

@@ -27,7 +27,8 @@ function sanitizeList(value) {
     const length = Array.from(name).length;
     if (length < 1 || length > MAX_NAME_CHARACTERS) continue;
     ids.add(id);
-    folders.push({ id, name });
+    // 收藏栏的文件夹可以对上一个抖音收藏夹；这个字段只有采集器自己写（见 douyinFolders.mjs）
+    folders.push(/^\d{1,30}$/u.test(folder.douyinId ?? "") ? { id, name, douyinId: folder.douyinId } : { id, name });
   }
   const items = [];
   for (const [key, folderId] of isPlainObject(list.items) ? Object.entries(list.items) : []) {
@@ -90,15 +91,26 @@ export class RecordFolderStore {
     return this.cached ?? this.enqueue(() => this.ensureLoaded());
   }
 
-  write(value) {
+  // transform(新的, 旧的) 在队列里跑，可以先去抖音改完再落盘；它抛错就什么都不存
+  write(value, transform = (lists) => lists) {
     const { lists } = sanitizeRecordFolders(value);
-    return this.enqueue(async () => {
-      // 没读过就先读一次：坏文件得先留了底，不能直接被这次写盖掉
-      const current = await this.ensureLoaded();
+    return this.update(async (current) => {
       // AI 和页面都整份写回。旧客户端可以照旧保存，新客户端只能改自己读过的版本。
       if (value?.revision !== undefined && current.revision !== value.revision) {
         throw Object.assign(new Error("文件夹已有新改动，请重新读取后再整理。"), { code: "folders_changed" });
       }
+      return transform(lists, current.lists);
+    });
+  }
+
+  update(change) {
+    return this.enqueue(async () => {
+      // 没读过就先读一次：坏文件得先留了底，不能直接被这次写盖掉
+      const current = await this.ensureLoaded();
+      const changed = await change(current);
+      // 原样返回旧的就是没改，不写盘也不换版本号
+      if (changed === current.lists) return current;
+      const { lists } = sanitizeRecordFolders({ lists: changed });
       const next = { lists, revision: randomUUID() };
       const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
       const file = await open(temporaryPath, "w", 0o600);

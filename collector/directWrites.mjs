@@ -9,7 +9,33 @@ export const DIRECT_WRITE_PATHS = {
   history: "/aweme/v1/web/history/write/",
   // 离开长视频时存续播点（下次在抖音里打开接着放）
   progress: "/aweme/v1/web/play/progress/",
+  // 收藏夹：新建/改名/删除，和把作品放进/移出收藏夹
+  folder: "/aweme/v1/web/collects/maintain/", folderVideos: "/aweme/v1/web/collects/video/move/",
 };
+
+const FOLDER_NAME_MAX = 15;
+const validFolderName = (name) => typeof name === "string" && name.trim() === name && Array.from(name).length >= 1
+  && Array.from(name).length <= FOLDER_NAME_MAX && !/[\r\n]/u.test(name);
+
+// 网页把这两个接口的参数都放查询串、请求体为空；数组是重复键（item_ids=1&item_ids=2）
+function folderQuery(action, input) {
+  if (action === "folder") {
+    const op = { create: "1", rename: "0", delete: "2" }[input.op];
+    if (!op || (input.op !== "create" && !/^\d{1,30}$/u.test(input.id || "")) || (input.op !== "delete" && !validFolderName(input.name))
+      || (input.op !== "delete" && typeof input.public !== "boolean"))
+      throw new DirectHistoryError("invalid_request", `收藏夹名要 1–${FOLDER_NAME_MAX} 个字。`);
+    // 照网页：这个接口单独带 23.0.0 的版本号
+    return [["version_code", "230000"], ["version_name", "23.0.0"], ["action", op], ...(input.op === "create" ? [] : [["collects_id", input.id]]),
+      ...(input.op === "delete" ? [] : [["collects_name", input.name], ["secret", input.public ? "0" : "1"]])];
+  }
+  const ids = Array.isArray(input.ids) ? input.ids : [];
+  const target = input.to ?? input.from;
+  if (!ids.length || ids.length > 100 || !ids.every((id) => /^\d{5,30}$/u.test(id)) || Boolean(input.to) === Boolean(input.from)
+    || !/^\d{1,30}$/u.test(target?.id || ""))
+    throw new DirectHistoryError("invalid_request", "收藏夹或作品标识无效。");
+  return [...ids.map((id) => ["item_ids", id]), ["item_type", "2"],
+    ...(input.to ? [["to_collects_id", target.id], ["update_collects_sort", "true"]] : [["from_collects_id", target.id], ["collects_name", target.name || ""]])];
+}
 
 export function parseDirectJson(response) {
   if (!response.text?.trim() || response.text.trim() === "blocked")
@@ -34,8 +60,9 @@ export async function directWrite(api, action, input, { onDispatch = () => {} } 
   if (!pathname) throw new DirectHistoryError("invalid_request", "操作类型无效。");
   const security = requireDirectCredentials(api.session);
   const awemeId = String(input.awemeId || "");
-  if (action !== "follow" && !/^\d{5,30}$/u.test(awemeId)) throw new DirectHistoryError("invalid_request", "作品标识无效。");
-  let body;
+  const query = ["folder", "folderVideos"].includes(action) ? folderQuery(action, input) : [];
+  if (!query.length && action !== "follow" && !/^\d{5,30}$/u.test(awemeId)) throw new DirectHistoryError("invalid_request", "作品标识无效。");
+  let body = {};
   if (["like", "collect", "follow"].includes(action) && typeof input.desired !== "boolean") throw new DirectHistoryError("invalid_request", "请选择目标状态。");
   if (action === "like") body = { aweme_id: awemeId, item_type: "0", type: input.desired ? "1" : "0" };
   if (action === "collect") body = { action: input.desired ? "1" : "0", aweme_id: awemeId, aweme_type: "0" };
@@ -81,6 +108,7 @@ export async function directWrite(api, action, input, { onDispatch = () => {} } 
   for (const [name, value] of Object.entries({ device_platform: "webapp", aid: "6383", channel: "channel_pc_web", ...api.session.values,
     uifid: api.cookie("UIFID"), verifyFp: api.cookie("s_v_web_id"), fp: api.cookie("s_v_web_id"), msToken: security.msToken || api.cookie("msToken") }))
     if (value) url.searchParams.set(name, String(value));
+  for (const [name, value] of query) url.searchParams[name === "item_ids" ? "append" : "set"](name, value);
   const encoded = new URLSearchParams(body).toString();
   const signed = await signDirectRequest(api, url, { method: "POST", body: action === "like" ? "" : encoded,
     append: { uid: createHash("md5").update(api.session.uid).digest("hex") } });
