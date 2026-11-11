@@ -1,3 +1,4 @@
+import { PERSONAL_RECORD_TYPES, type PersonalRecordType } from "../domain/personalRecords";
 export type AppStyle = "minimal" | "archive" | "trace" | "poster";
 /** 有自己报告页（/story 下的故事页）的风格；极简只换采集器和工作台，报告借用其中一套。 */
 export type StoryStyle = Exclude<AppStyle, "minimal">;
@@ -80,6 +81,25 @@ export function loadAutoSync(storage: StyleStorage | undefined = globalThis.loca
 
 export function saveAutoSync(enabled: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
   save(AUTO_SYNC_KEY, enabled ? "on" : "off", storage);
+}
+
+// 读取哪几类（只读观看历史、只读喜欢…）：手动和自动读取都照这个读，记住用户的选择；一类都没存上就三类都读
+const READ_TYPES_KEY = "content-insights.read-types";
+
+export function loadReadTypes(storage: StyleStorage | undefined = globalThis.localStorage): PersonalRecordType[] {
+  const all = PERSONAL_RECORD_TYPES.map((type) => type.id);
+  let saved: string[] = [];
+  try {
+    saved = storage?.getItem(READ_TYPES_KEY)?.split(",") ?? [];
+  } catch {
+    // 读不了存储就三类都读
+  }
+  const picked = all.filter((type) => saved.includes(type));
+  return picked.length ? picked : all;
+}
+
+export function saveReadTypes(types: readonly PersonalRecordType[], storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(READ_TYPES_KEY, types.join(","), storage);
 }
 
 // 「AI 助手」是可选功能：默认不装，设置里装上才在侧栏出现

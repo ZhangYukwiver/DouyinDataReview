@@ -44,6 +44,25 @@ describe("selected data export", () => {
     expect(data.chatMessages).toEqual([]);
     expect(parseExportedSnapshot(data)?.records[part]).toHaveLength(1);
   });
+  it("keeps only watch history and chat from the chosen time on, but likes and favorites in full", () => {
+    const dated: CollectorSnapshot = { ...snapshot, records: { ...snapshot.records, watch_history: [
+      { ...snapshot.records.watch_history[0]!, id: "new", occurredAt: "2026-10-10T00:00:00.000Z" },
+      { ...snapshot.records.watch_history[0]!, id: "old", occurredAt: "2026-09-01T00:00:00Z" },
+      { ...snapshot.records.watch_history[0]!, id: "undated", occurredAt: null },
+    ] }, chatMessages: [
+      { ...snapshot.chatMessages[0]!, id: "late", sentAt: "2026-10-14T09:00:00+08:00" },
+      { ...snapshot.chatMessages[0]!, id: "early", sentAt: "2026-10-09T23:59:59Z" },
+    ] };
+    const all = { watch_history: true, liked_videos: true, favorite_videos: true, chat: true };
+    const data = buildDataExport(dated, all, { since: "2026-10-10T00:00:00Z" });
+    expect(data.records.watch_history.map(record => record.id)).toEqual(["new"]);
+    expect(data.chatMessages.map(message => message.id)).toEqual(["late"]);
+    expect(data.records.liked_videos).toHaveLength(1);
+    expect(data.records.favorite_videos).toHaveLength(1);
+    expect(data.since).toBe("2026-10-10T00:00:00Z");
+    expect(parseExportedSnapshot(data)?.records.watch_history).toHaveLength(1);
+    expect(buildDataExport(dated, all).records.watch_history).toHaveLength(3);
+  });
 });
 
 describe("voice export", () => {

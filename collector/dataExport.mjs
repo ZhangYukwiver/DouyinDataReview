@@ -2,19 +2,28 @@
 /** @typedef {import("../src/domain/chatRecords").ChatMessage} ChatMessage */
 /** @typedef {import("../src/domain/personalRecords").PersonalRecordType | "chat"} ExportPart */
 
-/** @param {CollectorSnapshot} snapshot @param {Partial<Record<ExportPart, boolean>>} selection */
-export function buildDataExport(snapshot, selection, exportedAt = new Date().toISOString()) {
+/**
+ * since：只要这个时间之后的观看历史和聊天消息（ISO 时间）。喜欢、收藏抖音几乎不给时间，照样整份导出
+ * @param {CollectorSnapshot} snapshot @param {Partial<Record<ExportPart, boolean>>} selection
+ * @param {{ exportedAt?: string, since?: string | null }} [options]
+ */
+export function buildDataExport(snapshot, selection, { exportedAt = new Date().toISOString(), since = null } = {}) {
   const parts = /** @type {ExportPart[]} */ (Object.keys(selection)).filter(part => selection[part]);
   if (!parts.length) throw new Error("请至少选择一部分数据。");
+  const sinceMs = since ? Date.parse(since) : NaN;
+  // 按时间比，不按字符串比：带不带毫秒、时区写法不同的时间串排不对
+  /** @param {string | null | undefined} at */
+  const inRange = at => Number.isNaN(sinceMs) || (at ? Date.parse(at) >= sinceMs : false);
   return {
     schemaVersion: /** @type {const} */ (2), exportedAt, source: "collector", parts, updatedAt: snapshot.updatedAt,
+    ...(since ? { since } : {}),
     records: {
-      watch_history: selection.watch_history ? snapshot.records.watch_history : [],
+      watch_history: selection.watch_history ? snapshot.records.watch_history.filter(record => inRange(record.occurredAt)) : [],
       liked_videos: selection.liked_videos ? snapshot.records.liked_videos : [],
       favorite_videos: selection.favorite_videos ? snapshot.records.favorite_videos : [],
     },
     chatConversations: selection.chat ? snapshot.chatConversations : [],
-    chatMessages: selection.chat ? snapshot.chatMessages.map(portableMessage) : [],
+    chatMessages: selection.chat ? snapshot.chatMessages.filter(message => inRange(message.sentAt)).map(portableMessage) : [],
     warnings: /** @type {string[]} */ ([]),
   };
 }

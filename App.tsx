@@ -33,6 +33,7 @@ import {
 import {
   countPersonalRecords,
   createEmptyPersonalRecords,
+  PERSONAL_RECORD_TYPES,
   type PersonalArchiveData,
   type PersonalRecordCollection,
   type PersonalRecordType,
@@ -101,7 +102,7 @@ import {
 import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadReadTypes, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveReadTypes, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { getAssistant, type AssistantVideo, type AssistantView } from "./src/services/assistant";
 import { loadDismissedNotices, loadSiteNotices, saveDismissedNotices, type SiteNotices } from "./src/services/siteNotice";
 import { RELEASE_NOTES } from "./src/components/workspace/releaseNotes";
@@ -111,6 +112,7 @@ import { buildStoryData, clearStoryData, writeStoryData } from "./src/services/s
 import { buildReportModel } from "./src/components/workspace/ReportWorkspace";
 import { ExploreWorkspace, FeedWorkspace } from "./src/components/workspace/ExploreWorkspace";
 import { DataExportDialog } from "./src/components/workspace/DataExportDialog";
+import { READ_TYPE_NAMES } from "./src/components/workspace/ReadTypePicker";
 import { SingleDownloadDialog, type DownloadOptions } from "./src/components/workspace/DownloadOptionsPicker";
 import { zipVideoFiles } from "./src/services/batchVideoDownload";
 import { countAchievement, noteAchievementWorks, syncDataAchievements, unlockAchievement } from "./src/components/workspace/achievements";
@@ -302,6 +304,8 @@ function AppContent() {
   const [collectorBusy, setCollectorBusy] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => (Platform.OS === "web" ? loadAutoSync() : true));
+  // 读哪几类：增量、完整和自动补读都照这个读
+  const [readTypes, setReadTypes] = useState(() => loadReadTypes());
   const [stoppingSync, setStoppingSync] = useState(false);
   const [switchingAccount, setSwitchingAccount] = useState(false);
   // 首屏正在扫码登录或导入凭据（桌面版）：同样挡住读取和换号，但界面上不写成「正在切换账号」
@@ -857,8 +861,8 @@ function AppContent() {
     setCollectorError(null);
     try {
       const status = incremental
-        ? await startDirectRecordsSync(baseUrl, token)
-        : await startCollectorSync(baseUrl, token);
+        ? await startDirectRecordsSync(baseUrl, token, readTypes)
+        : await startCollectorSync(baseUrl, token, readTypes);
       if (pollRequest.current !== requestId) return;
       setCollectorStatus(status);
       void pollCollector(baseUrl, token, requestId);
@@ -1195,6 +1199,8 @@ function AppContent() {
     return status;
   }
 
+  const readTypeNames = readTypes.map((type) => READ_TYPE_NAMES[type]).join("、").replace(/、([^、]*)$/u, "和$1");
+
   function confirmFullSync() {
     if (!collectorToken || collectorBusy || syncConfirmationOpenRef.current) return;
     if (!canReadCollector(collectorStatus, "videos")) { openLogin(); return; }
@@ -1202,7 +1208,7 @@ function AppContent() {
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "开始读取全部可见记录",
-      "使用已导入的凭据，通过接口分页读取观看历史、喜欢和收藏，全程无需打开浏览器。",
+      `使用已导入的凭据，通过接口分页读取${readTypeNames}，全程无需打开浏览器。`,
       "开始",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
@@ -1220,7 +1226,7 @@ function AppContent() {
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "增量读取",
-      "尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。使用已导入的凭据读取，凭据失效时请到设置 → 账号中重新连接浏览器并导入。",
+      `这次读${readTypeNames}。尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。使用已导入的凭据读取，凭据失效时请到设置 → 账号中重新连接浏览器并导入。`,
       "读取新记录",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
@@ -1636,7 +1642,7 @@ function AppContent() {
     setExportSnapshot(null);
   }
 
-  async function exportSelectedData(selection: DataExportSelection) {
+  async function exportSelectedData(selection: DataExportSelection, since: string | null = null) {
     if (!exportSnapshot || exportControllerRef.current) return;
     const controller = new AbortController();
     exportControllerRef.current = controller;
@@ -1644,7 +1650,7 @@ function AppContent() {
       const data = await buildDataExportWithVoice(exportSnapshot, selection, {
         connection: collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null,
         accountId: exportAccountRef.current, signal: controller.signal,
-        onProgress: setExportProgress,
+        onProgress: setExportProgress, since,
       });
       controller.signal.throwIfAborted();
       triggerBrowserDownload(new Blob([JSON.stringify(data)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
@@ -1920,6 +1926,13 @@ function AppContent() {
     saveAutoSync(!value);
     return !value;
   });
+  // 至少留一类：最后一个勾不掉
+  const toggleReadType = (type: PersonalRecordType) => setReadTypes((current) => {
+    const next = PERSONAL_RECORD_TYPES.map((item) => item.id).filter((item) => (item === type) !== current.includes(item));
+    if (!next.length) return current;
+    saveReadTypes(next);
+    return next;
+  });
   const syncingRecords = isCollectorSyncing(collectorToken !== null, collectorStatus);
   const recordDownloading = batchDownloadActive || Object.values(downloadStates).some((state) => state === "queued" || state === "running");
   const loginBlocked = accountBlockedReason({ switchingAccount, syncing: syncingRecords, busy: collectorBusy, downloading: recordDownloading, sparkRenewing });
@@ -1973,6 +1986,8 @@ function AppContent() {
       onRemoveAccount={confirmRemoveAccount}
       autoSyncEnabled={autoSyncEnabled}
       onToggleAutoSync={toggleAutoSync}
+      readTypes={readTypes}
+      onToggleReadType={toggleReadType}
       appStyle={appStyle}
       onOpenPreferences={openPreferences}
       desktopLogin={isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, blocked: Boolean(loginBlocked), loggingIn,
