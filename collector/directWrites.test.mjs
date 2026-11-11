@@ -46,6 +46,23 @@ describe("HTTP interactions", ()=>{
     expect(Object.fromEntries(new URLSearchParams(options.data))).toEqual({author_id:"3723384264069184",aweme_id:id});
     expect(options.headers["bd-ticket-guard-client-data"]).toBeTruthy(); await api.close();
   });
+  it("sends folder changes as query parameters with an empty body, like the web page",async()=>{
+    const {api,fetch,signer}=directApiFixture(url=>url.pathname==="/service/2/abtest_config/" ? {headers:{"x-ware-csrf-token":"1,csrf"}} : {payload:{status_code:0}});
+    await directWrite(api,"folderVideos",{ids:[id,"7654321098765432101"],to:{id:"71"}});
+    let [url, options] = fetch.mock.calls.at(-1); let query=new URL(url).searchParams;
+    expect(new URL(url).pathname).toBe("/aweme/v1/web/collects/video/move/");
+    expect(query.getAll("item_ids")).toEqual([id,"7654321098765432101"]);
+    expect([query.get("to_collects_id"),query.get("item_type"),query.has("from_collects_id")]).toEqual(["71","2",false]);
+    expect(options.data).toBe(""); expect(signer.mock.calls.at(-1)[1].body).toBe("");
+    await directWrite(api,"folder",{op:"rename",id:"71",name:"教程",public:false});
+    [url] = fetch.mock.calls.at(-1); query=new URL(url).searchParams;
+    expect([query.get("action"),query.get("collects_id"),query.get("collects_name"),query.get("secret"),query.get("version_code")]).toEqual(["0","71","教程","1","230000"]);
+    expect(query.getAll("version_code")).toHaveLength(1);
+    const calls=fetch.mock.calls.length;
+    await expect(directWrite(api,"folder",{op:"create",name:"一二三四五六七八九十一二三四五六",public:false})).rejects.toMatchObject({code:"invalid_request"});
+    await expect(directWrite(api,"folderVideos",{ids:[id],to:{id:"71"},from:{id:"72"}})).rejects.toMatchObject({code:"invalid_request"});
+    expect(fetch.mock.calls.length).toBe(calls); await api.close();
+  });
   it("rejects missing credentials or invalid targets without any network request",async()=>{
     const {api,fetch}=directApiFixture(()=>({}));
     await expect(directWrite(api,"follow",{uid:"123",secUid:api.session.secUid,desired:true})).rejects.toMatchObject({code:"invalid_request"});

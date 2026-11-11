@@ -90,6 +90,7 @@ import { BatchDownloadRangePicker } from "./BatchDownloadRangePicker";
 import { earliestRecordDate, searchRecords } from "../../services/recordSearch";
 import {
   ALL_FOLDERS,
+  DOUYIN_FOLDER_NAME_MAX,
   FOLDERS_MAX,
   UNFILED,
   addFolder,
@@ -1028,6 +1029,7 @@ function FolderBar({
 function FolderDialog({
   state,
   list,
+  douyin,
   onCancel,
   onCreate,
   onRename,
@@ -1035,6 +1037,8 @@ function FolderDialog({
 }: {
   state: FolderDialogState;
   list: RecordFolderList;
+  /** 收藏栏：文件夹同步成抖音收藏夹 */
+  douyin: boolean;
   onCancel: () => void;
   onCreate: (name: string, move?: PersonalVideoRecord[]) => void;
   onRename: (folder: RecordFolder, name: string) => void;
@@ -1042,7 +1046,8 @@ function FolderDialog({
 }) {
   const [name, setName] = useState(state.mode === "rename" ? state.folder.name : "");
   const [tried, setTried] = useState(false);
-  const problem = state.mode === "delete" ? null : folderNameProblem(list, name, state.mode === "rename" ? state.folder.id : undefined);
+  const problem = state.mode === "delete" ? null
+    : folderNameProblem(list, name, state.mode === "rename" ? state.folder.id : undefined, douyin ? DOUYIN_FOLDER_NAME_MAX : undefined);
   // 空着的时候先不催，点了「新建」或者打了字再说哪里不行
   const shownProblem = problem && (tried || name.trim()) ? problem : null;
   const submit = () => {
@@ -1064,7 +1069,10 @@ function FolderDialog({
         <View {...ws("w-dialog")} accessibilityViewIsModal style={styles.dialog} testID="folder-dialog">
           <Text accessibilityRole="header" style={styles.dialogTitle}>{title}</Text>
           {state.mode === "delete" ? (
-            <Text style={styles.dialogText}>{state.count ? `里面的 ${state.count} 条会回到未分区，视频记录本身不会删掉。` : "这个文件夹还是空的，删掉不影响任何记录。"}</Text>
+            <Text style={styles.dialogText}>
+              {state.folder.douyinId ? "抖音上的这个收藏夹也会一起删掉。" : ""}
+              {state.count ? `里面的 ${state.count} 条会回到未分区，${state.folder.douyinId ? "仍在收藏里。" : "视频记录本身不会删掉。"}` : "这个文件夹还是空的，删掉不影响任何记录。"}
+            </Text>
           ) : (
             <TextInput
               {...ws("c-input")}
@@ -1079,6 +1087,7 @@ function FolderDialog({
               value={name}
             />
           )}
+          {douyin && state.mode === "create" ? <Text style={styles.dialogText}>打开了「允许在抖音上操作」时，会在抖音上建一个同名的私密收藏夹，之后在这里放进、移出也会同步过去。</Text> : null}
           {shownProblem ? <Text accessibilityRole="alert" style={styles.dialogError}>{shownProblem}</Text> : null}
           <View style={styles.dialogActions}>
             <Pressable {...ws("btn")} accessibilityRole="button" onPress={onCancel} style={({ pressed }) => [styles.batchButton, pressed && styles.buttonPressed, webPointer]}>
@@ -1648,6 +1657,7 @@ function RecordsGallery({
     }} /> : null}
     {folderDialog && list ? (
       <FolderDialog
+        douyin={activeType === "favorite_videos" && !live}
         list={list}
         onCancel={() => setFolderDialog(null)}
         onCreate={createFolder}

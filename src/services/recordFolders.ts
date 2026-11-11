@@ -6,7 +6,8 @@ import { LocalCollectorError, collectorFetch } from "./localCollector";
 // 按视频归档（videoId，没有才用记录 id）：观看历史里同一个视频看了几次一起走；清除缓存后重新读回来，还在原来的文件夹里。
 // 一个视频在一个栏目里只放一个文件夹，没放的算「未分区」。
 
-export interface RecordFolder { id: string; name: string }
+/** douyinId：收藏栏里对上的抖音收藏夹，由采集器读取时写入；在收藏栏里整理会同步到抖音 */
+export interface RecordFolder { id: string; name: string; douyinId?: string }
 export interface RecordFolderList {
   folders: RecordFolder[];
   /** 视频键 → 文件夹 id */
@@ -19,6 +20,8 @@ export const ALL_FOLDERS = ":all";
 export const UNFILED = ":none";
 
 export const FOLDER_NAME_MAX = 20;
+// 收藏栏的文件夹会建成抖音收藏夹，抖音只给 15 个字
+export const DOUYIN_FOLDER_NAME_MAX = 15;
 // 和采集器的上限一致
 export const FOLDERS_MAX = 200;
 
@@ -74,10 +77,10 @@ export function countByFolder(records: PersonalVideoRecord[], list: RecordFolder
 }
 
 /** 名字不行就返回原因，行就返回 null；改名时传自己的 id，和原名一样不算重名 */
-export function folderNameProblem(list: RecordFolderList, name: string, renaming?: string): string | null {
+export function folderNameProblem(list: RecordFolderList, name: string, renaming?: string, max = FOLDER_NAME_MAX): string | null {
   const trimmed = name.trim();
   if (!trimmed) return "给文件夹起个名字。";
-  if (Array.from(trimmed).length > FOLDER_NAME_MAX) return `名字最多 ${FOLDER_NAME_MAX} 个字。`;
+  if (Array.from(trimmed).length > max) return `名字最多 ${max} 个字。`;
   const lower = trimmed.toLowerCase();
   if (list.folders.some((folder) => folder.id !== renaming && folder.name.toLowerCase() === lower)) return "已经有同名的文件夹了。";
   if (!renaming && list.folders.length >= FOLDERS_MAX) return `最多建 ${FOLDERS_MAX} 个文件夹。`;

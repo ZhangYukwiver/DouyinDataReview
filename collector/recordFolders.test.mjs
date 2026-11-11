@@ -145,6 +145,15 @@ describe("RecordFolderStore", () => {
     expect(await readdir(directory)).toEqual(["folders.json"]);
   });
 
+  it("keeps the Douyin folder link and skips the write when an update changes nothing", async () => {
+    const directory = await makeDirectory();
+    const store = new RecordFolderStore(directory);
+    const saved = await store.write({ lists: { favorite_videos: { folders: [{ id: "dy-71", name: "教程", douyinId: "71" }, { id: "b", name: "坏", douyinId: "x" }], items: {} } } });
+    expect(saved.lists.favorite_videos.folders).toEqual([{ id: "dy-71", name: "教程", douyinId: "71" }, { id: "b", name: "坏" }]);
+    const same = await store.update(({ lists }) => lists);
+    expect(same.revision).toBe(saved.revision);
+  });
+
   it("throws when the file cannot be written", async () => {
     const directory = await makeDirectory();
     const store = new RecordFolderStore(path.join(directory, "missing"));
