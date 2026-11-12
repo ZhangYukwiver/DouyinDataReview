@@ -55,6 +55,7 @@ import {
   Trash2,
   TvMinimalPlay,
   ChevronsUpDown,
+  ChevronDown,
   UserRound,
   UsersRound,
 } from "lucide-react-native";
@@ -952,10 +953,12 @@ function FolderBar({
   counts,
   total,
   active,
+  lead,
   privacy,
   error,
   nameOf,
   onSelect,
+  onMore,
   onCreate,
   onRename,
   onDelete,
@@ -965,24 +968,35 @@ function FolderBar({
   counts: Map<string, number>;
   total: number;
   active: string;
+  /** 从「所有文件夹」里挑的那个排到最前面，免得落在藏起来的第二行 */
+  lead: string | null;
   privacy: boolean;
   error: string | null | undefined;
   nameOf: (folder: RecordFolder) => string;
   onSelect: (filter: string) => void;
+  onMore: (at: MenuPoint) => void;
   onCreate: () => void;
   onRename: (folder: RecordFolder) => void;
   onDelete: (folder: RecordFolder) => void;
   onChipMenu: (folder: RecordFolder, at: MenuPoint) => void;
 }) {
   const current = list.folders.find((folder) => folder.id === active) ?? null;
+  const first = list.folders.find((folder) => folder.id === lead);
+  const ordered = first ? [first, ...list.folders.filter((folder) => folder !== first)] : list.folders;
+  // 芯片只占一行，排不下的折到第二行、被裁掉，从「所有文件夹」里挑。里层不限高，量它高过一行就是有折下去的
+  const [overflow, setOverflow] = useState(false);
+  // 文件夹多了「新建」收进「所有文件夹」菜单里，给芯片腾地方。按个数定、不按量出来的折没折行：
+  // 按折行定的话收起「新建」腾出地方→不折行了→「新建」又出来→又折行，来回闪
+  const many = list.folders.length >= 10;
   return (
     <View style={styles.folderBar} testID="record-folders">
       <View {...ws("c-filters")} style={styles.folderRow}>
         {/* 只有芯片算页签，「新建」「重命名」「删除」是按钮，放在页签组外面 */}
-        <View accessibilityRole="tablist" style={styles.folderTabs}>
+        <View style={styles.folderTabsClip}>
+        <View accessibilityRole="tablist" onLayout={(event) => setOverflow(event.nativeEvent.layout.height > 40)} style={styles.folderTabs}>
           <FolderChip count={total} label="全部" on={active === ALL_FOLDERS} onPress={() => onSelect(ALL_FOLDERS)} />
           {list.folders.length ? <FolderChip count={counts.get(UNFILED) ?? 0} label="未分区" on={active === UNFILED} onPress={() => onSelect(UNFILED)} /> : null}
-          {list.folders.map((folder) => (
+          {ordered.map((folder) => (
             <FolderChip
               count={counts.get(folder.id) ?? 0}
               key={folder.id}
@@ -993,7 +1007,21 @@ function FolderBar({
             />
           ))}
         </View>
-        {!privacy ? (
+        </View>
+        {overflow || many ? (
+          <Pressable
+            {...ws("btn small")}
+            accessibilityLabel={`所有文件夹，共 ${list.folders.length} 个`}
+            accessibilityRole="button"
+            onPress={(event) => onMore(pointBelow(event))}
+            style={({ pressed }) => [styles.folderAction, pressed && styles.buttonPressed, webPointer]}
+          >
+            <Text style={styles.folderActionText}>所有文件夹</Text>
+            <Text {...ws("mono")} style={styles.folderChipCount}>{list.folders.length}</Text>
+            <ChevronDown color={color.textSecondary} size={13} />
+          </Pressable>
+        ) : null}
+        {!privacy && !many ? (
           <Pressable
             {...ws("btn small")}
             accessibilityLabel="新建文件夹"
@@ -1192,6 +1220,7 @@ function RecordsGallery({
   const [batchRecords, setBatchRecords] = useState<PersonalVideoRecord[] | null>(null);
   const [query, setQuery] = useState("");
   const [activeFolder, setActiveFolder] = useState(ALL_FOLDERS);
+  const [leadFolder, setLeadFolder] = useState<string | null>(null);
   // 在文件夹（或未分区）里移走的视频，换筛选之前先留在原处
   const [keptKeys, setKeptKeys] = useState<ReadonlySet<string>>(new Set());
   const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
@@ -1270,7 +1299,26 @@ function RecordsGallery({
       disabled: list.folders.length >= FOLDERS_MAX ? `最多建 ${FOLDERS_MAX} 个文件夹` : null,
       onSelect: () => setFolderDialog({ mode: "create", move: targets }),
     });
-    menu.open(at, entries);
+    menu.open(at, entries, list.folders.length > 12 ? { search: "搜文件夹" } : undefined);
+  };
+  const openAllFolders = (at: MenuPoint) => {
+    if (!list) return;
+    menu.open(at, list.folders.map((folder) => ({
+      id: folder.id,
+      label: nameOf(folder),
+      hint: (folderCounts?.get(folder.id) ?? 0).toLocaleString("zh-CN"),
+      icon: folder.id === folderFilter ? <Check color={color.cyan} size={14} /> : <Folder color={color.textSecondary} size={14} />,
+      onSelect: () => { setLeadFolder(folder.id); setActiveFolder(folder.id); },
+    } as MenuEntry)).concat(privacy ? [] : [
+      { id: "separator", separator: true },
+      {
+        id: "create",
+        label: "新建文件夹…",
+        icon: <FolderPlus color={color.textSecondary} size={14} />,
+        disabled: list.folders.length >= FOLDERS_MAX ? `最多建 ${FOLDERS_MAX} 个文件夹` : null,
+        onSelect: () => setFolderDialog({ mode: "create" }),
+      },
+    ]), { search: "搜文件夹" });
   };
   const openChipMenu = (folder: RecordFolder, at: MenuPoint) => menu.open(at, [
     { id: "rename", label: "重命名", icon: <Pencil color={color.textSecondary} size={14} />, onSelect: () => setFolderDialog({ mode: "rename", folder }) },
@@ -1400,6 +1448,8 @@ function RecordsGallery({
   const folderBar = list && folderCounts && records.length > 0 ? (
     <FolderBar
       active={folderFilter}
+      lead={leadFolder}
+      onMore={openAllFolders}
       counts={folderCounts}
       error={folderError}
       list={list}
@@ -2555,7 +2605,9 @@ const styles = StyleSheet.create({
   libraryTabTextOn: { color: color.text },
   libraryTabCount: { color: color.textMuted, fontSize: 11, fontVariant: ["tabular-nums"] },
   folderRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
-  folderTabs: { flexShrink: 1, minWidth: 0, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  // 只露一行（芯片 30 高），排不下的折到第二行被裁掉；四周留 3px 给焦点框和悬停底色
+  folderTabsClip: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 120, height: 36, margin: -3, padding: 3, overflow: "hidden" },
+  folderTabs: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
   folderRetry: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10 },
   folderRetryText: { color: color.danger, fontSize: 12, lineHeight: 18 },
   folderChip: { height: 30, maxWidth: 220, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, borderRadius: radius.small },
