@@ -5,6 +5,8 @@ import {
   Linking,
   Platform,
   StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import { StatusBar } from "expo-status-bar";
@@ -291,6 +293,9 @@ function AppContent() {
   const [collectorSnapshot, setCollectorSnapshot] = useState<CollectorSnapshot | null>(null);
   const [exportSnapshot, setExportSnapshot] = useState<CollectorSnapshot | null>(null);
   const [exportProgress, setExportProgress] = useState<{ completed: number; total: number } | null>(null);
+  // 导出成功的轻提示：不用 alert，桌面版这时正弹着系统保存框，两个模态会叠在一起
+  const [exportToast, setExportToast] = useState<string | null>(null);
+  useEffect(() => { if (!exportToast) return; const timer = setTimeout(() => setExportToast(null), 3_500); return () => clearTimeout(timer); }, [exportToast]);
   const exportControllerRef = useRef<AbortController | null>(null);
   const exportAccountRef = useRef<string | null>(null);
   const currentExportAccountRef = useRef<string | null>(null);
@@ -1660,10 +1665,12 @@ function AppContent() {
         onProgress: setExportProgress, since, folders: exportFoldersRef.current,
       });
       controller.signal.throwIfAborted();
-      triggerBrowserDownload(new Blob([JSON.stringify(data)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
+      const fileName = `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`;
+      triggerBrowserDownload(new Blob([JSON.stringify(data)], { type: "application/json" }), fileName);
       countAchievement("export");
       setExportSnapshot(null);
       if (data.warnings.length) showAlert("已导出，部分语音未转写", data.warnings.join("\n"));
+      else setExportToast(`已导出 ${fileName}`);
     } catch (error) { if (!controller.signal.aborted) showAlert("无法导出数据", collectorErrorMessage(error)); }
     finally {
       if (exportControllerRef.current === controller) {
@@ -2164,6 +2171,9 @@ function AppContent() {
           connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
           onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} />}
       {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={closeDataExport} onExport={exportSelectedData} progress={exportProgress} /> : null}
+      {exportToast ? <View pointerEvents="none" style={styles.toastLayer}>
+        <Text accessibilityLiveRegion="polite" role="status" style={styles.toast}>{exportToast}</Text>
+      </View> : null}
       {downloadChoice ? <SingleDownloadDialog title={privacy ? undefined : downloadChoice.record.title} onClose={() => setDownloadChoice(null)}
         onDownload={options => {
           setDownloadChoice(null);
@@ -2186,4 +2196,6 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: workspaceColors.canvas },
+  toastLayer: { position: "absolute", left: 16, right: 16, bottom: 32, alignItems: "center" },
+  toast: { maxWidth: 420, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.8)", color: "#fff", fontSize: 13, textAlign: "center" },
 });
