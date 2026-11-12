@@ -20,6 +20,8 @@ const fmt = (value: number) => value.toLocaleString("zh-CN");
 const mix = (token: string, percent: number) => `color-mix(in srgb, ${token} ${percent}%, transparent)`;
 
 const PIONEER = "pioneer";
+// 侧栏展开时的宽度（LegacyContentWorkspace 的 styles.sidebar）
+const SIDEBAR_OPEN = 224;
 
 const css = `
 /* 每枚徽章占一格方块，从导航下面左上角起往右、往下排（展开时一行四格）。
@@ -95,6 +97,29 @@ export function BadgeWall({ compact }: { compact: boolean }) {
   const shelf = got.filter((item) => !got.some((other) => other.family === item.family && other.tier > item.tier));
   const byFamily = new Map(shelf.map((item) => [item.family, item]));
   const order = dragOrder ?? arrangeBadges([PIONEER, ...shelf.map((item) => item.family)], state.order);
+  // 窗口矮、徽章多时摆不下：只摆前几枚，最后一格还是「N/38」（点开有全部），不然会压到下面的「N 天留下记录」
+  const slotRef = useRef<HTMLDivElement | null>(null);
+  const [fit, setFit] = useState(Infinity);
+  const shown = order.length < fit ? order : order.slice(0, Math.max(1, fit - 1));
+
+  useLayoutEffect(() => {
+    const slot = slotRef.current;
+    const list = listRef.current;
+    if (!slot || !list || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const style = getComputedStyle(list);
+      const gap = parseFloat(style.rowGap) || 0;
+      // 列数按侧栏展开后的宽度算：收放时宽度一路在变，按当下宽度算的话格子会在半路冒出来、又被拿掉
+      const side = slot.closest<HTMLElement>('[data-ws~="w-side"]');
+      const width = slot.clientWidth + (side ? SIDEBAR_OPEN - side.offsetWidth : 0) - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const cols = Math.max(1, Math.floor((width + gap) / (44 + gap)));
+      const rows = Math.floor((slot.clientHeight - parseFloat(style.paddingTop) + gap) / (44 + gap));
+      setFit(cols * rows);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(slot);
+    return () => observer.disconnect();
+  }, []);
 
   useLayoutEffect(() => {
     const from = before.current;
@@ -143,10 +168,10 @@ export function BadgeWall({ compact }: { compact: boolean }) {
   };
 
   return (
-    <div className="pb-slot" data-compact={compact || undefined}>
+    <div className="pb-slot" data-compact={compact || undefined} ref={slotRef}>
       <style>{css}</style>
       <div className="pb-tiles" onDragEnd={onDragEnd} onDragOver={onDragOver} onDragStart={onDragStart} onDrop={(event) => event.preventDefault()} ref={listRef}>
-        {order.map((key) => {
+        {shown.map((key) => {
           const item = byFamily.get(key);
           return (
             <div className="pb-tile" data-dragging={dragOrder && dragged.current === key ? "" : undefined} data-key={key} draggable={!compact} key={key}>
