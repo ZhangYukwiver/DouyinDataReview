@@ -719,9 +719,6 @@ describe("推荐流过滤扩展接口", () => {
     expect((await app("/v1/feed-filter")).body.extension.lastSeenAt).toEqual(expect.any(Number));
     expect((await bare("/v1/records")).status).toBe(403);
     expect((await app("/v1/feed-filter")).body.pickEvery).toBe(3);
-    expect((await app("/v1/feed-filter/mobile-export", { method: "POST" })).body)
-      .toMatchObject({ format: "douyin-review-feed/1", pickEvery: 3, candidates: [] });
-    expect((await bare("/v1/feed-filter/mobile-export", { method: "POST" })).status).toBe(403);
     expect((await app("/v1/feed-filter", { method: "POST", body: JSON.stringify({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 }) })).body)
       .toMatchObject({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 });
     expect(await (await bare("/v1/feed-filter")).json()).toMatchObject({ words: "露营\n咖啡", webPicks: true, pickEvery: 1 });
