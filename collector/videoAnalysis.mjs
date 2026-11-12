@@ -4,7 +4,7 @@ import path from "node:path";
 import { parseAssistantConfig } from "./assistant/chat.mjs";
 import { transcribeAudio } from "./videoAnalysisAsr.mjs";
 import { extractAudio, extractFrameAt, extractFrames, inspectVideo } from "./videoAnalysisMedia.mjs";
-import { describeCodexFrames, describeFrame, describeVideo, makeStudyNotes } from "./videoAnalysisModel.mjs";
+import { describeCodexFrames, describeFrames, describeVideo, makeStudyNotes } from "./videoAnalysisModel.mjs";
 
 const titles = { transcript: "带时间戳的逐字稿", script: "原片分镜脚本", notes: "学习笔记" };
 const engines = { bcut: "必剪", qwen: "Qwen3-ASR" };
@@ -93,6 +93,8 @@ export class VideoAnalysis {
     this.jobs = new Map();
     // 这次运行里试过、收不了视频的模型：后面的作品直接走关键帧，不再白传一遍
     this.blind = new Set();
+    // 一次收不了多张关键帧（拒收或数不对）的模型：本次运行改回一张一问
+    this.oneImage = new Set();
   }
 
   directory(videoId) {
@@ -388,10 +390,9 @@ export class VideoAnalysis {
     }
     const descriptions = [];
     const codex = request.config.runtime === "codex";
-    const batchSize = codex ? 6 : 1;
-    for (let start = 0; start < frames.length; start += batchSize) {
+    for (let start = 0; start < frames.length;) {
       signal.throwIfAborted();
-      const batch = frames.slice(start, start + batchSize);
+      const batch = frames.slice(start, start + (this.oneImage.has(request.modelId) ? 1 : 6));
       update("vision", `正在识别画面 ${start + 1}${batch.length > 1 ? `–${start + batch.length}` : ""}/${frames.length}`);
       const entries = await Promise.all(batch.map(async frame => {
         const cached = path.join(dir, "descriptions", request.modelId, `${frame.timeMs}.json`);
@@ -399,15 +400,26 @@ export class VideoAnalysis {
       }));
       const missing = entries.filter(entry => !entry.description);
       if (missing.length) {
-        const fresh = codex
-          ? await describeCodexFrames({ config: request.config, localAi: this.localAi, frames: missing, signal })
-          : [await describeFrame({ config: request.config, frame: missing[0], signal })];
+        let fresh;
+        try {
+          fresh = codex
+            ? await describeCodexFrames({ config: request.config, localAi: this.localAi, frames: missing, signal })
+            : await describeFrames({ config: request.config, frames: missing, signal });
+        } catch (error) {
+          // 接口拒收多张（Key、限流、网络以外的拒绝）或回答数不对：这批从头一张一张问
+          const split = error.code === "invalid_model_output" ||
+            error.code === "provider_error" && !error.transient && ![401, 403, 404, 429].includes(error.httpStatus);
+          if (codex || missing.length === 1 || !split) throw error;
+          this.oneImage.add(request.modelId);
+          continue;
+        }
         for (const [i, entry] of missing.entries()) {
           entry.description = fresh[i];
           await save(entry.cached, entry.description, signal);
         }
       }
       for (const entry of entries) descriptions.push({ ...entry.description, timeMs: entry.timeMs });
+      start += batch.length;
     }
     return descriptions;
   }
