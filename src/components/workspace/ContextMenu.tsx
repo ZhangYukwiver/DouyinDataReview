@@ -16,6 +16,8 @@ export interface MenuItem {
   danger?: boolean;
   /** 不能用的原因：有就置灰、悬停写原因，位置照旧留着 */
   disabled?: string | false | null;
+  /** 右边灰字，比如文件夹里有几条 */
+  hint?: string;
   onSelect: () => void;
 }
 export interface MenuSeparator { id: string; separator: true }
@@ -36,6 +38,12 @@ export function menuPosition(at: { x: number; y: number }, size: { width: number
   };
 }
 
+/** 菜单顶上的搜索框：按名字筛，搜着的时候不要分隔线 */
+export function filterMenu(items: readonly MenuEntry[], query: string): MenuEntry[] {
+  const q = query.trim().toLowerCase();
+  return q ? items.filter((entry) => isItem(entry) && entry.label.toLowerCase().includes(q)) : [...items];
+}
+
 /** 方向键落在第几项：from < 0 是还没用过键盘，↓ 落第一项、↑ 落最后一项；到头了绕回去。 */
 export function menuStep(from: number, delta: number, count: number): number {
   if (count <= 0) return -1;
@@ -43,8 +51,11 @@ export function menuStep(from: number, delta: number, count: number): number {
   return (from + delta + count) % count;
 }
 
-export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: readonly MenuEntry[]; onClose: () => void }) {
+export function ContextMenu({ x, y, items: all, search, onClose }: { x: number; y: number; items: readonly MenuEntry[]; search?: string; onClose: () => void }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const input = useRef<HTMLInputElement | null>(null);
+  const [query, setQuery] = useState("");
+  const items = useMemo(() => filterMenu(all, query), [all, query]);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   // 键盘停在可用项里的第几个；-1 是还没用过键盘，这时不高亮任何一项
   const [active, setActive] = useState(-1);
@@ -62,11 +73,12 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
     if (!node) return;
     const { width, height } = node.getBoundingClientRect();
     setPos(menuPosition({ x, y }, { width, height }, { width: window.innerWidth, height: window.innerHeight }));
-  }, [x, y, items]);
+    // 只在打开时定一次：边搜边缩短时菜单不跟着跳
+  }, [x, y, all]);
   // 焦点拉进来，方向键管菜单不管下面的页面。要等量好位置、不再 visibility:hidden 才拿得到焦点，藏着的时候 focus() 什么也不做
   const shown = pos !== null;
   useLayoutEffect(() => {
-    if (shown) ref.current?.focus({ preventScroll: true });
+    if (shown) (input.current ?? ref.current)?.focus({ preventScroll: true });
   }, [shown]);
 
   useEffect(() => {
@@ -105,11 +117,13 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (!usable.length) return;
     const go = (index: number) => { event.preventDefault(); setActive(index); };
+    // 在搜索框里打字时空格、Home、End 归输入框
+    const typing = event.target === input.current;
     if (event.key === "ArrowDown") go(menuStep(active, 1, usable.length));
     else if (event.key === "ArrowUp") go(menuStep(active, -1, usable.length));
-    else if (event.key === "Home") go(0);
-    else if (event.key === "End") go(usable.length - 1);
-    else if (event.key === "Enter" || event.key === " ") {
+    else if (event.key === "Home" && !typing) go(0);
+    else if (event.key === "End" && !typing) go(usable.length - 1);
+    else if (event.key === "Enter" || (event.key === " " && !typing)) {
       const item = usable[active];
       if (item) { event.preventDefault(); run(item); }
     }
@@ -126,7 +140,9 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
     onKeyDown={onKeyDown}
     onContextMenu={(event) => event.preventDefault()}
     style={{
-      position: "fixed", left: pos?.left ?? x, top: pos?.top ?? y, zIndex: 10_060, minWidth: 196, maxHeight: `calc(100vh - ${2 * MENU_EDGE}px)`,
+      position: "fixed", left: pos?.left ?? x, top: pos?.top ?? y, zIndex: 10_060, minWidth: 196,
+      // 带搜索的是长列表（上百个文件夹）：限个高度，从按钮下面展开，不铺满整个窗口把按钮盖住
+      maxHeight: search !== undefined ? `min(420px, calc(100vh - ${2 * MENU_EDGE}px))` : `calc(100vh - ${2 * MENU_EDGE}px)`,
       overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "4px 0", outline: "none",
       // 量出大小之前藏着：第一帧画在没调过的位置上会看到它闪出屏幕
       visibility: pos ? "visible" : "hidden",
@@ -134,6 +150,19 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
       background: `linear-gradient(${color.surface}, ${color.surface}) ${color.black}`, border: `1px solid ${color.border}`, borderRadius: radius.medium, fontFamily: font.body,
     }}
   >
+    {search !== undefined ? <div style={{ position: "sticky", top: -4, zIndex: 1, padding: "4px 8px 6px", marginTop: -4, background: `linear-gradient(${color.surface}, ${color.surface}) ${color.black}` }}><input
+      ref={input}
+      value={query}
+      placeholder={search}
+      aria-label={search}
+      // 打了字就让第一项亮着，回车直接选它
+      onChange={(event) => { setQuery(event.target.value); setActive(event.target.value.trim() ? 0 : -1); }}
+      style={{
+        display: "block", width: "100%", boxSizing: "border-box", padding: "6px 9px", outline: "none",
+        border: `1px solid ${color.border}`, borderRadius: radius.small, backgroundColor: "transparent", color: color.text, fontFamily: font.body, fontSize: 12.5,
+      }}
+    /></div> : null}
+    {search !== undefined && !usable.length && query.trim() ? <div style={{ padding: "6px 12px 8px", color: color.textMuted, fontSize: 12.5 }}>没有对得上的</div> : null}
     {items.map((entry) => {
       if (!isItem(entry)) return <div key={entry.id} role="separator" style={{ height: 1, margin: "4px 0", backgroundColor: color.borderSoft }} />;
       const index = usable.indexOf(entry);
@@ -158,6 +187,7 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
       >
         {entry.icon ? <span aria-hidden style={{ display: "flex", width: 14, flexShrink: 0, justifyContent: "center" }}>{entry.icon}</span> : null}
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.label}</span>
+        {entry.hint ? <span style={{ flexShrink: 0, color: color.textMuted, fontSize: 11, fontVariantNumeric: "tabular-nums" }}>{entry.hint}</span> : null}
       </button>;
     })}
   </div>, document.body);
@@ -167,10 +197,10 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
  * 右键菜单的状态：onContextMenu 里 preventDefault 后调 open(事件坐标, 菜单项)，把 element 渲染在组件里任意位置（会挂到 body）。
  * 菜单开着时 Esc 只关菜单。
  */
-export function useContextMenu(): { open: (at: { x: number; y: number }, items: readonly MenuEntry[]) => void; close: () => void; isOpen: boolean; element: React.ReactNode } {
-  const [menu, setMenu] = useState<{ x: number; y: number; items: readonly MenuEntry[] } | null>(null);
+export function useContextMenu(): { open: (at: { x: number; y: number }, items: readonly MenuEntry[], options?: { search?: string }) => void; close: () => void; isOpen: boolean; element: React.ReactNode } {
+  const [menu, setMenu] = useState<{ x: number; y: number; items: readonly MenuEntry[]; search?: string } | null>(null);
   const close = useCallback(() => setMenu(null), []);
-  const open = useCallback((at: { x: number; y: number }, items: readonly MenuEntry[]) => setMenu({ x: at.x, y: at.y, items }), []);
-  const element = menu ? <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={close} /> : null;
+  const open = useCallback((at: { x: number; y: number }, items: readonly MenuEntry[], options?: { search?: string }) => setMenu({ x: at.x, y: at.y, items, search: options?.search }), []);
+  const element = menu ? <ContextMenu x={menu.x} y={menu.y} items={menu.items} search={menu.search} onClose={close} /> : null;
   return { open, close, isOpen: Boolean(menu), element };
 }

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
 
-import { MENU_EDGE, menuPosition, menuStep } from "./ContextMenu";
+import { MENU_EDGE, filterMenu, menuPosition, menuStep } from "./ContextMenu";
 
 describe("右键菜单放在哪", () => {
   const viewport = { width: 1000, height: 800 };
@@ -29,5 +29,18 @@ describe("菜单里的方向键", () => {
     expect(menuStep(3, 1, 4)).toBe(0);
     expect(menuStep(0, -1, 4)).toBe(3);
     expect(menuStep(-1, 1, 0)).toBe(-1);
+  });
+});
+
+describe("菜单搜索", () => {
+  it("按名字筛、不分大小写，搜着的时候去掉分隔线；没输入就原样", () => {
+    const items = [
+      { id: "a", label: "文件夹 57", onSelect: () => {} },
+      { id: "sep", separator: true as const },
+      { id: "b", label: "Vlog 教程", onSelect: () => {} },
+    ];
+    expect(filterMenu(items, " 57 ").map((entry) => entry.id)).toEqual(["a"]);
+    expect(filterMenu(items, "vlog").map((entry) => entry.id)).toEqual(["b"]);
+    expect(filterMenu(items, "  ")).toEqual(items);
   });
 });
