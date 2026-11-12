@@ -34,6 +34,23 @@ describe("selected data export", () => {
     expect(parseExportedSnapshot(data)?.chatMessages[0]?.text).toBe("private message");
     expect(data.chatConversations).toEqual(snapshot.chatConversations);
   });
+  it("tags filed records with their folder name and lists every folder of the exported parts", () => {
+    const folders = {
+      watch_history: { folders: [{ id: "w", name: "看过的教程" }], items: { "watch-1": "w" } },
+      liked_videos: { folders: [{ id: "l", name: "不导出" }], items: { "like-1": "l" } },
+      // 按 videoId 归档；指向已删文件夹的旧归档不算；空文件夹也列出来
+      favorite_videos: { folders: [{ id: "a", name: "菜谱" }, { id: "b", name: "空的" }], items: { "7600000000000000001": "a", "favorite-1": "gone" } },
+    };
+    const favorites = [{ ...snapshot.records.favorite_videos[0]!, id: "favorite_videos:1", videoId: "7600000000000000001" }, snapshot.records.favorite_videos[0]!];
+    const data = buildDataExport({ ...snapshot, records: { ...snapshot.records, favorite_videos: favorites } },
+      { ...none, watch_history: true, favorite_videos: true }, { folders });
+    expect(data.records.watch_history[0]).toMatchObject({ id: "watch-1", folder: "看过的教程" });
+    expect(data.records.favorite_videos.map(record => "folder" in record ? record.folder : null)).toEqual(["菜谱", null]);
+    expect(data.folders).toEqual({ watch_history: ["看过的教程"], favorite_videos: ["菜谱", "空的"] });
+    // 导出文件照样能导回来；没给文件夹时不多出 folders 字段
+    expect(parseExportedSnapshot(data)?.records.favorite_videos).toHaveLength(2);
+    expect(buildDataExport(snapshot, { ...none, liked_videos: true })).not.toHaveProperty("folders");
+  });
   it("rejects an empty selection", () => {
     expect(() => buildDataExport(snapshot, none)).toThrow("至少选择");
   });

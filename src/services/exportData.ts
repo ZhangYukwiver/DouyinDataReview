@@ -2,6 +2,7 @@ import { buildDataExport, transcribeExportVoices } from "../../collector/dataExp
 import type { PersonalRecordType } from "../domain/personalRecords";
 import type { ChatSendConnection } from "./chatSend";
 import { collectorFetch, LocalCollectorError, type CollectorSnapshot } from "./localCollector";
+import type { RecordFolders } from "./recordFolders";
 
 export { buildDataExport };
 export type DataExportSelection = Record<PersonalRecordType | "chat", boolean>;
@@ -11,8 +12,10 @@ export async function buildDataExportWithVoice(snapshot: CollectorSnapshot, sele
   onProgress?: (progress: { completed: number; total: number }) => void;
   /** 只导这个时间之后的观看历史和聊天 */
   since?: string | null;
+  /** 记录带上所在文件夹 */
+  folders?: RecordFolders | null;
 }) {
-  const data = buildDataExport(snapshot, selection, { since: options.since });
+  const data = buildDataExport(snapshot, selection, { since: options.since, folders: options.folders });
   return transcribeExportVoices(data, async messageIds => {
     if (!options.connection || !options.accountId)
       throw new LocalCollectorError("voice_resource_missing", "请连接原账号后重新导出语音文字。");
