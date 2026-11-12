@@ -1665,7 +1665,8 @@ function AppContent() {
         onProgress: setExportProgress, since, folders: exportFoldersRef.current,
       });
       controller.signal.throwIfAborted();
-      const fileName = `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`;
+      // 带到秒：同一天导出多次不重名（文件名里不能有冒号）
+      const fileName = `抖音数据_${new Date().toLocaleString("sv-SE").replace(" ", "_").replace(/:/g, "-")}.json`;
       triggerBrowserDownload(new Blob([JSON.stringify(data)], { type: "application/json" }), fileName);
       countAchievement("export");
       setExportSnapshot(null);
