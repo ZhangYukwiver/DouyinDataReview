@@ -38,6 +38,8 @@ async function run(service, request) {
   return service.view("123");
 }
 const answer = text => Response.json({ choices: [{ message: { content: JSON.stringify(text) } }] });
+const frameTimes = init => JSON.parse(init.body).messages[1].content.flatMap(item => /原片位置 (\d+)/.exec(item.text ?? "")?.[1] ?? []).map(Number);
+const frameAnswer = (init, scene, screenText = "") => answer({ frames: frameTimes(init).map(timeMs => ({ timeMs, scene, screenText })) });
 
 const articleAnswer = source => ({ title: "如何验证想法", overview: "用实验找出问题。", summary: "根据证据做取舍。",
   chapters: [{ source, title: "先做实验", text: "### 验证方法\n\n先用真实样本检查假设，再决定是否继续。" }] });
@@ -94,10 +96,13 @@ it("keeps transcript and completed frames after an image request fails, and reus
       videoCalls++;
       return Response.json({ error: { message: "video_url is not a valid content type" } }, { status: 400 });
     }
-    expect(messages[1].content.filter(item => item.type === "image_url")).toHaveLength(1);
     imageCalls++;
-    if (imageCalls === 2) return Response.json({ error: { message: "Model does not support images" } }, { status: 400 });
-    return answer({ scene: "图示", screenText: "下一步" });
+    const times = frameTimes(init);
+    expect(messages[1].content.filter(item => item.type === "image_url")).toHaveLength(times.length);
+    if (times.length > 1) return Response.json({ error: { message: "too many images in one request" } }, { status: 400 });
+    if (imageCalls === 3) return Response.json({ error: { message: "Model does not support images" } }, { status: 400 });
+    if (imageCalls === 4) expect(times).toEqual([3500]);
+    return frameAnswer(init, "图示", "下一步");
   });
   vi.stubGlobal("fetch", model);
   const failed = await run(service, input("script"));
@@ -108,7 +113,7 @@ it("keeps transcript and completed frames after an image request fails, and reus
   const script = results.find(r => r.kind === "script");
   expect(script.entries[1]).toMatchObject({ startMs: 3500, endMs: 6000 });
   expect(script.entries[1].text).toContain("第二张图");
-  expect(imageCalls).toBe(3);
+  expect(imageCalls).toBe(4);
   const legacyKey = script.key.replace("script-", "notes-");
   const legacy = { ...script, kind: "notes", key: legacyKey, markdown: "旧版笔记" };
   const resultsDir = path.join(deps.directory, "video-analysis/123/results");
@@ -128,7 +133,7 @@ it("keeps transcript and completed frames after an image request fails, and reus
   await run(resumed, input("notes", { withFrames: true }));
   await run(resumed, input("script"));
   expect(videoCalls).toBe(2);
-  expect(model).toHaveBeenCalledTimes(6);
+  expect(model).toHaveBeenCalledTimes(7);
   for (const work of [deps.download, deps.media.extractFrames, deps.media.extractAudio, deps.transcribe])
     expect(work).toHaveBeenCalledTimes(1);
   expect(await readFile(path.join(deps.directory, "video-analysis/123/results", script.key + ".json"), "utf8")).not.toContain(config.apiKey);
@@ -139,7 +144,7 @@ it("splits shots from the whole video when the model accepts it, replacing an ea
   let sees = false;
   const model = vi.fn(async (_, init) => {
     const { content } = JSON.parse(init.body).messages[1];
-    if (content[1].type !== "video_url") return answer({ scene: "关键帧", screenText: "" });
+    if (content[1].type !== "video_url") return frameAnswer(init, "关键帧");
     return answer({ shots: sees ? [{ start: 3.5, scene: "第二镜", screenText: "" }, { start: 0, scene: "开场", screenText: "标题" }] : [] });
   });
   vi.stubGlobal("fetch", model);
@@ -155,7 +160,7 @@ it("splits shots from the whole video when the model accepts it, replacing an ea
   expect(script.entries[0].text).toContain("屏幕文字：标题");
   expect(script.entries[1].text).toContain("画面：第二镜\n原声台词：第二张图");
   expect(deps.media.extractFrames).toHaveBeenCalledTimes(1);
-  expect(model).toHaveBeenCalledTimes(4);
+  expect(model).toHaveBeenCalledTimes(3);
 });
 
 it("sends the whole video to the separately configured video model and keeps the main model for the keyframe fallback", async () => {
@@ -166,7 +171,7 @@ it("sends the whole video to the separately configured video model and keeps the
     const body = JSON.parse(init.body);
     const video = body.messages[1].content.some(item => item.type === "video_url");
     calls.push([video ? "video" : "image", new URL(url).port, body.model, init.headers.Authorization]);
-    if (!video) return answer({ scene: "关键帧", screenText: "" });
+    if (!video) return frameAnswer(init, "关键帧");
     return body.model === "video-model" ? answer({ shots: [{ start: 0, scene: "开场", screenText: "" }] })
       : Response.json({ error: { message: "video input is not supported" } }, { status: 400 });
   });
@@ -180,7 +185,7 @@ it("sends the whole video to the separately configured video model and keeps the
   expect(fallback.source).toBeUndefined();
   expect(fallback.model).toBe("test-model");
   expect(calls).toEqual([["video", "54322", "blind-model", "Bearer video-test-only"],
-    ["image", "54321", "test-model", "Bearer example-test-only"], ["image", "54321", "test-model", "Bearer example-test-only"]]);
+    ["image", "54321", "test-model", "Bearer example-test-only"]]);
   expect(deps.media.extractFrames).toHaveBeenCalledTimes(1);
 });
 
@@ -209,7 +214,7 @@ it("illustrates only the chapters the model marks, and lets a note saved before 
 
 it("keeps silent frames useful without calling ASR and preserves the empty timed transcript", async () => {
   const { service, deps } = await setup(false);
-  vi.stubGlobal("fetch", () => answer({ scene: "录屏", screenText: "保存" }));
+  vi.stubGlobal("fetch", (_, init) => frameAnswer(init, "录屏", "保存"));
   const transcript = await run(service, { kind: "transcript", engine: "qwen" });
   expect(transcript.results[0].entries).toEqual([]);
   expect(deps.media.extractFrames).not.toHaveBeenCalled();
