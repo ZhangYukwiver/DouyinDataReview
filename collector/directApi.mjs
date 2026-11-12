@@ -46,7 +46,10 @@ function validateSession(value, expectedUid) {
     || typeof value.userAgent !== "string" || !/^Mozilla\/5\.0 /u.test(value.userAgent)
     || /[\r\n]|HeadlessChrome/u.test(value.userAgent) || value.userAgent.length > 500
     || !cookies.some((cookie) => LOGIN_NAMES.has(cookie.name))) {
-    throw new DirectHistoryError("direct_session_missing", "直接请求登录会话尚未建立或已过期，请先登录抖音。");
+    // 登录 Cookie 都在但全过期了单独说：用户报错时好分清「太久没用」和「凭据文件不全」
+    const expired = !cookies.some((cookie) => LOGIN_NAMES.has(cookie.name)) && (Array.isArray(value?.cookies) ? value.cookies : [])
+      .some((cookie) => LOGIN_NAMES.has(cookie?.name) && cookie.expires !== -1 && cookie.expires != null && cookie.expires * 1000 <= Date.now());
+    throw new DirectHistoryError("direct_session_missing", expired ? "抖音登录 Cookie 已过期，请重新登录抖音。" : "直接请求登录会话尚未建立或已过期，请先登录抖音。");
   }
   if (expectedUid && value.uid !== expectedUid) {
     throw new DirectHistoryError("account_mismatch", "登录会话与当前账号不一致，请重新登录当前账号。");
