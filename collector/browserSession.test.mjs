@@ -168,6 +168,18 @@ describe("imported credentials without a running browser", () => {
     await expect(collector.ensureDirectApi()).rejects.toMatchObject({ code: "request_failed" });
     expect(collector.getStatus().browserSource.credentials).toBe("ready"); expect(browser).not.toHaveBeenCalled();
   });
+  it("says why the import needs reconnecting, keeps that reason while stuck, and names expired login cookies", async () => {
+    const { collector, dataDirectory } = await fixture();
+    const reason = message => ({ code: "browser_reconnect_required", message: expect.stringContaining(`（${message}）`) });
+    expect(collector.externalSessionError(new DirectHistoryError("login_required", "抖音登录已失效，请重新登录后再试。"))).toMatchObject(reason("抖音登录已失效"));
+    await expect(collector.ensureDirectApi()).rejects.toMatchObject(reason("抖音登录已失效"));
+    const file = path.join(dataDirectory, "direct-session.json");
+    const raw = JSON.parse(await readFile(file, "utf8"));
+    raw.cookies = raw.cookies.map(cookie => ["sessionid", "sessionid_ss", "sid_tt", "sid_guard"].includes(cookie.name) ? { ...cookie, expires: 1 } : cookie);
+    await writeFile(file, JSON.stringify(raw));
+    await collector.initialize();
+    await expect(collector.ensureDirectApi()).rejects.toMatchObject(reason("抖音登录 Cookie 已过期"));
+  });
   it("reimports an expired account, clears the reconnect requirement, and detaches the new transport", async () => {
     const { collector, dataDirectory, browser } = await fixture();
     const template = await readFile(path.join(dataDirectory, "direct-history-template.json"));

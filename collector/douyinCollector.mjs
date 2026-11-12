@@ -529,7 +529,7 @@ export class DouyinCollector {
       // A browser's short token can expire while the imported login remains
       // usable. Verify the actual HTTP identity before asking for a new import.
       this.externalSessionState = "ready";
-    } catch { /* Missing, incomplete or expired credentials need an explicit CDP import. */ }
+    } catch (error) { this.reconnectCause = error; /* Missing, incomplete or expired credentials need an explicit CDP import. */ }
     this.updateStatus({
       counts: recordCounts(this.snapshot.records, this.snapshot.chatMessages, this.snapshot.chatConversations),
       updatedAt: this.snapshot.updatedAt,
@@ -581,11 +581,20 @@ export class DouyinCollector {
     if ((fromRequest && error.code !== "account_mismatch")
       || ["session_rejected", "verification_required", "write_credentials_missing"].includes(error.code)) return error;
     this.externalSessionState = "reconnect_required";
-    const problem = new DirectHistoryError("browser_reconnect_required", "导入的登录凭据已失效或不完整，请在设置 → 账号中重新扫码登录或连接浏览器，完成登录或验证后再次导入。");
-    // 调用方要分清是登录失效还是安全验证
-    problem.cause = error;
+    this.reconnectCause = error;
+    const problem = this.reconnectError(error);
     // Each caller owns its task state; only publish the shared credential flag here.
     this.updateStatus({});
+    return problem;
+  }
+
+  // 提示里带上原因的第一句，光看用户截图就能分清是被踢下线、账号不符还是凭据文件不全
+  reconnectError(cause) {
+    const reason = String(cause?.message ?? "").split(/[，。]/u)[0];
+    const problem = new DirectHistoryError("browser_reconnect_required",
+      `导入的登录凭据已失效或不完整${reason ? `（${reason}）` : ""}，请在设置 → 账号中重新扫码登录或连接浏览器，完成登录或验证后再次导入。`);
+    // 调用方要分清是登录失效还是安全验证
+    problem.cause = cause;
     return problem;
   }
 
@@ -760,8 +769,9 @@ export class DouyinCollector {
   async ensureDirectApi({ history = false, security = false, signal } = {}) {
     if (history) this.assertReadPermission("videos");
     signal?.throwIfAborted();
+    // 卡在「需要重连」时沿用当初的原因，别让后面每次重试都变成笼统的一句
     if (this.externalSessionState === "reconnect_required" && !this.externalConnection?.connected)
-      throw this.externalSessionError(new DirectHistoryError("direct_session_missing", "请重新导入登录凭据。"));
+      throw this.reconnectError(this.reconnectCause);
     if (this.accountMismatch) throw accountMismatchError();
     if (this.directApiPromise) {
       const api = await this.directApiPromise;
