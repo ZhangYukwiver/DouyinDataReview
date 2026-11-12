@@ -1,8 +1,8 @@
 <div align="center">
   <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest"><img src="build/icon.png" alt="DouyinDataReview" width="160" /></a>
-  <h1>DouyinDataReview | 抖音数据导出与年度报告工作台</h1>
+  <h1>DouyinDataReview | 抖音数据导出、推荐流控制与视频解析工作台</h1>
   <p><strong>把你的抖音数据，留在自己的电脑上</strong></p>
-  <p>导出观看历史与聊天记录，在电脑上刷抖音推荐，管理喜欢和收藏、批量下载视频，生成自己的抖音年度回顾。<br>
+  <p>导出观看历史与聊天记录，按关键词控制抖音推荐流，把视频解析成学习笔记；还能在电脑上刷抖音推荐，管理喜欢和收藏、批量下载视频，生成自己的抖音年度回顾。<br>
   免费开源 · Windows / macOS / Linux · 本地保存 · MIT 许可</p>
   <p>问题反馈与交流请联系 QQ 940537208，或加入 QQ 群 DDDouyin（群号 1124211302），见<a href="#交流与反馈">交流与反馈</a>。</p>
   <p>
@@ -17,14 +17,14 @@
 </div>
 
 <table>
-  <tr><td><img src="docs/screenshots/setup-trace.jpg" alt="连接与采集" width="400"/></td><td><img src="docs/screenshots/creator-overview-trace.jpg" alt="创作者中心 · 数据总览" width="400"/></td></tr>
+  <tr><td><img src="docs/screenshots/feed-filter-trace.jpg" alt="推荐流控制 · 词条与处置记录" width="400"/></td><td><img src="docs/screenshots/video-notes-trace.jpg" alt="视频解析 · 带配图的学习笔记" width="400"/></td></tr>
 </table>
 
-<p align="center"><sub>连接与采集、创作者中心。截图都是合成示例数据。</sub></p>
+<p align="center"><sub>推荐流控制、把视频解析成学习笔记。笔记由作者自己的讲解片解析而来，词条和处置记录是示例数据。</sub></p>
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/">国内下载（加速线路）</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/#demo">在线看示例报告</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
 
-**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它用你本人登录的抖音会话读取观看历史、喜欢、收藏和好友聊天记录，保存在本机，并生成持续报告和抖音年度报告（Douyin Wrapped）。工作台还能在电脑上刷抖音推荐、按关键词屏蔽视频、下载视频、实时聊天、看创作者中心和直播，另有可选的 AI 助手。
+**DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它用你本人登录的抖音会话读取观看历史、喜欢、收藏和好友聊天记录，保存在本机；能按关键词控制抖音推荐流，把视频解析成逐字稿、学习笔记和分镜脚本。工作台还能在电脑上刷抖音推荐、下载视频、实时聊天、看创作者中心和直播，生成持续报告和抖音年度报告（Douyin Wrapped），另有可选的 AI 助手。
 
 只支持抖音（中国版），不支持国际版 TikTok；提供 Windows x64、macOS Apple Silicon 和 Linux x64 安装包。本项目是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。完整步骤见[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)，给检索工具读的项目事实在 [llms.txt](llms.txt)。
 
@@ -34,14 +34,15 @@
 ## 主要功能
 
 - **采集与导出**：观看历史、喜欢、收藏和聊天记录存在本机，导出 JSON，也能导入抖音官方档案
+- **推荐流控制**：按关键词屏蔽不想看的视频，把想看的词条混进推荐，软件和网页都能用
+- **视频解析与学习笔记**：把视频转成带时间戳的逐字稿、带配图的学习笔记或分镜脚本，能批量解析
 - **刷视频与内容库**：在电脑上刷抖音推荐，浏览、搜索、批量下载自己的记录
 - **聊天与续火花**：实时收发消息，一键续火花
 - **创作者中心、探索与直播**：看自己的作品和粉丝数据（能导出表格）、热点榜、关注的人的直播
-- **推荐流控制**：按关键词屏蔽不想看的视频，把想看的词条混进推荐，软件和网页都能用
 - **AI 助手（可选）**：用对话查数据、替你操作，Claude Code、Codex 可通过 MCP 接入
 - **年度报告**：三种风格，可导出 HTML 和分享图
 
-点赞、评论这些和抖音里一样，默认关着，在「设置 → 隐私」打开。视频解析可在播放器里直接发起。
+点赞、评论这些和抖音里一样，默认关着，在「设置 → 隐私」打开。
 
 ## 年度回顾
 
@@ -63,7 +64,8 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 <table>
   <tr><td><img src="docs/screenshots/setup-trace.jpg" alt="连接与采集" width="400"/></td><td><img src="docs/screenshots/dashboard-trace.jpg" alt="持续报告" width="400"/></td></tr>
   <tr><td><img src="docs/screenshots/records-trace.jpg" alt="内容库" width="400"/></td><td><img src="docs/screenshots/chat-trace.jpg" alt="聊天" width="400"/></td></tr>
-  <tr><td><img src="docs/screenshots/creator-works-trace.jpg" alt="创作者中心 · 作品数据与粉丝数据" width="400"/></td><td><img src="docs/screenshots/creator-fans-trace.jpg" alt="创作者中心 · 粉丝画像" width="400"/></td></tr>
+  <tr><td><img src="docs/screenshots/creator-overview-trace.jpg" alt="创作者中心 · 数据总览" width="400"/></td><td><img src="docs/screenshots/creator-works-trace.jpg" alt="创作者中心 · 作品数据与粉丝数据" width="400"/></td></tr>
+  <tr><td><img src="docs/screenshots/creator-fans-trace.jpg" alt="创作者中心 · 粉丝画像" width="400"/></td><td></td></tr>
 </table>
 
 </details>
@@ -81,9 +83,17 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 ## 常见问题
 
-### 有没有像 Spotify Wrapped 那样的抖音年度报告？
+### 能按关键词屏蔽抖音推荐里不想看的视频吗？
 
-有，用本机记录随时生成，能存成分享图；不装软件也能先[在线看示例报告](https://zhangyukwiver.github.io/DouyinDataReview/#demo)。
+能，在「设置 → 推荐流」写好词条，软件里刷视频直接生效，Chrome、Edge 网页装一次扩展。还能把想看的词条混进推荐，或者只看词条。
+
+### 能把抖音视频转成文字稿或学习笔记吗？
+
+能，在播放器或内容库里点「解析视频」，选逐字稿、学习笔记或分镜脚本；笔记和分镜要先在「设置 → AI」填好模型。
+
+### 能在电脑上刷抖音推荐吗？
+
+能，进工作台默认就是「刷视频」，还能把想看的词条混进推荐。
 
 ### 怎么导出抖音观看历史和聊天记录？
 
@@ -93,17 +103,13 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
 
 能，内容库里点「批量下载」，多选后打包成 ZIP。
 
-### 能在电脑上刷抖音推荐吗？
+### 有没有像 Spotify Wrapped 那样的抖音年度报告？
 
-能，进工作台默认就是「刷视频」，还能把想看的词条混进推荐。
-
-### 能按关键词屏蔽抖音推荐里不想看的视频吗？
-
-能，在「设置 → 推荐流」写好词条，软件里刷视频直接生效，Chrome、Edge 网页装一次扩展。还能把想看的词条混进推荐，或者只看词条。
+有，用本机记录随时生成，能存成分享图；不装软件也能先[在线看示例报告](https://zhangyukwiver.github.io/DouyinDataReview/#demo)。
 
 ### 收费吗？数据会传到哪里？
 
-免费开源。记录和报告都在本机，采集只请求抖音；可选的 AI 助手只把对话和它查到的数据发给你自己配置的模型。
+免费开源。记录和报告都在本机，采集只请求抖音；视频解析会把音轨交给语音识别服务、把文字和画面交给你配置的模型，可选的 AI 助手只把对话和它查到的数据发给你自己配置的模型。
 
 ### 会被封号吗？
 
@@ -152,13 +158,15 @@ npm run web
 
 ## English
 
-**DouyinDataReview is a free, open-source desktop app for exporting and analyzing your own Douyin data on Windows x64, macOS Apple Silicon and Linux x64.** It targets Douyin in China; international TikTok is not supported. It saves watch history, likes, favorites and friend chats locally as JSON, generates rolling reports and a year-in-review ("Douyin Wrapped"), and lets you browse your Douyin feed, block feed videos by keyword, download videos, chat, check Creator Center stats and watch live streams. This is an independent, unofficial project; the interface is in Chinese and the source is MIT-licensed. Download it from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest) and see the [export and privacy guide](https://zhangyukwiver.github.io/DouyinDataReview/guide.html).
+**DouyinDataReview is a free, open-source desktop app for exporting and analyzing your own Douyin data on Windows x64, macOS Apple Silicon and Linux x64.** It targets Douyin in China; international TikTok is not supported. It saves watch history, likes, favorites and friend chats locally as JSON, filters your Douyin feed by keyword, and turns videos into transcripts, study notes or shot lists. It also lets you browse your Douyin feed, download videos, chat, check Creator Center stats, watch live streams, and generates rolling reports and a year-in-review ("Douyin Wrapped"). This is an independent, unofficial project; the interface is in Chinese and the source is MIT-licensed. Download it from [Releases](https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest) and see the [export and privacy guide](https://zhangyukwiver.github.io/DouyinDataReview/guide.html).
 
 - **How does it work?** Scan the Douyin login QR code on the first screen, or import credentials from Chrome / Edge / Comet or the Douyin desktop client. A local Node.js collector then reads your records with signed, paginated HTTP requests, and reports are computed on your computer.
-- **Is there a Douyin Wrapped?** Yes, built from your own records whenever you want; [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) without installing anything.
+- **Can I block videos in my Douyin feed?** Yes. Add keywords in Settings → 推荐流 (Feed); they apply in the app right away, and in Chrome / Edge after installing the extension once.
+- **Can it turn a video into notes?** Yes. Click 解析视频 (Analyze video) in the player or library and pick a transcript, study notes or a shot list; notes and shot lists need a model set in Settings → AI.
 - **How do I export my watch history?** After reading finishes, click 导出数据 (Export data) in Settings → Data and pick what to save as JSON.
 - **Can it read the official Douyin data download?** Yes. Import the JSON or ZIP from 个人信息下载 (personal data download) to build a report without signing in.
-- **Is it free and private?** Yes. Records and reports stay on your computer and collection only talks to Douyin. The optional AI assistant sends your messages and the data it looks up only to the model API you configure.
+- **Is there a Douyin Wrapped?** Yes, built from your own records whenever you want; [preview a demo report](https://zhangyukwiver.github.io/DouyinDataReview/#demo) without installing anything.
+- **Is it free and private?** Yes. Records and reports stay on your computer and collection only talks to Douyin. Video analysis sends audio to a speech-recognition service and text or frames to the model you configure; the optional AI assistant sends your messages and the data it looks up only to that model.
 - **Limits:** it can only read what Douyin's private APIs currently return for your account, so a complete history and future compatibility are not guaranteed.
 
 ## 交流与反馈
