@@ -1,5 +1,0 @@
-<resources>
-    <string name="description">在抖音首页推荐中使用 DouyinDataReview 的屏蔽词和词条视频。</string>
-    <string name="assistant_name">推荐流自动划走</string>
-    <string name="assistant_description">读取抖音推荐页上可见的文案、作者和话题，依据导入的规则在本机匹配并向上划到下一条视频。</string>
-</resources>
