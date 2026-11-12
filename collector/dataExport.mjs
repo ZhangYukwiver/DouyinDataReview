@@ -2,25 +2,42 @@
 /** @typedef {import("../src/domain/chatRecords").ChatMessage} ChatMessage */
 /** @typedef {import("../src/domain/personalRecords").PersonalRecordType | "chat"} ExportPart */
 
+/** @typedef {{ folders: Array<{ id: string, name: string }>, items: Record<string, string> }} FolderList */
+
 /**
  * since：只要这个时间之后的观看历史和聊天消息（ISO 时间）。喜欢、收藏抖音几乎不给时间，照样整份导出
+ * folders：三栏的文件夹（folders.json 的 lists）。放进文件夹的记录带上 folder（文件夹名），顶层 folders 按栏列出全部文件夹名（空的也在）
  * @param {CollectorSnapshot} snapshot @param {Partial<Record<ExportPart, boolean>>} selection
- * @param {{ exportedAt?: string, since?: string | null }} [options]
+ * @param {{ exportedAt?: string, since?: string | null, folders?: Partial<Record<import("../src/domain/personalRecords").PersonalRecordType, FolderList>> | null }} [options]
  */
-export function buildDataExport(snapshot, selection, { exportedAt = new Date().toISOString(), since = null } = {}) {
+export function buildDataExport(snapshot, selection, { exportedAt = new Date().toISOString(), since = null, folders = null } = {}) {
   const parts = /** @type {ExportPart[]} */ (Object.keys(selection)).filter(part => selection[part]);
   if (!parts.length) throw new Error("请至少选择一部分数据。");
   const sinceMs = since ? Date.parse(since) : NaN;
   // 按时间比，不按字符串比：带不带毫秒、时区写法不同的时间串排不对
   /** @param {string | null | undefined} at */
   const inRange = at => Number.isNaN(sinceMs) || (at ? Date.parse(at) >= sinceMs : false);
+  /** @template {{ id: string, videoId?: string | null }} R @param {R[]} records @param {FolderList | undefined} list */
+  const filed = (records, list) => {
+    const names = new Map((list?.folders ?? []).map(folder => [folder.id, folder.name]));
+    if (!names.size || !list) return records;
+    // 和界面一样按视频归档：有 videoId 用它，没有才用记录 id
+    return records.map(record => {
+      const name = names.get(list.items[record.videoId || record.id]);
+      return name ? { ...record, folder: name } : record;
+    });
+  };
+  const folderNames = Object.fromEntries(/** @type {const} */ (["watch_history", "liked_videos", "favorite_videos"])
+    .filter(type => selection[type] && folders?.[type]?.folders.length)
+    .map(type => [type, folders?.[type]?.folders.map(folder => folder.name) ?? []]));
   return {
     schemaVersion: /** @type {const} */ (2), exportedAt, source: "collector", parts, updatedAt: snapshot.updatedAt,
     ...(since ? { since } : {}),
+    ...(Object.keys(folderNames).length ? { folders: folderNames } : {}),
     records: {
-      watch_history: selection.watch_history ? snapshot.records.watch_history.filter(record => inRange(record.occurredAt)) : [],
-      liked_videos: selection.liked_videos ? snapshot.records.liked_videos : [],
-      favorite_videos: selection.favorite_videos ? snapshot.records.favorite_videos : [],
+      watch_history: selection.watch_history ? filed(snapshot.records.watch_history.filter(record => inRange(record.occurredAt)), folders?.watch_history) : [],
+      liked_videos: selection.liked_videos ? filed(snapshot.records.liked_videos, folders?.liked_videos) : [],
+      favorite_videos: selection.favorite_videos ? filed(snapshot.records.favorite_videos, folders?.favorite_videos) : [],
     },
     chatConversations: selection.chat ? snapshot.chatConversations : [],
     chatMessages: selection.chat ? snapshot.chatMessages.filter(message => inRange(message.sentAt)).map(portableMessage) : [],

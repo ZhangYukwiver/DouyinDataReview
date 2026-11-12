@@ -117,6 +117,7 @@ import { SingleDownloadDialog, type DownloadOptions } from "./src/components/wor
 import { zipVideoFiles } from "./src/services/batchVideoDownload";
 import { countAchievement, noteAchievementWorks, syncDataAchievements, unlockAchievement } from "./src/components/workspace/achievements";
 import { buildDataExportWithVoice, type DataExportSelection } from "./src/services/exportData";
+import { readRecordFolders, type RecordFolders } from "./src/services/recordFolders";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 // @ts-expect-error react-native-web 没给内部模块出类型
 import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
@@ -293,6 +294,7 @@ function AppContent() {
   const exportControllerRef = useRef<AbortController | null>(null);
   const exportAccountRef = useRef<string | null>(null);
   const currentExportAccountRef = useRef<string | null>(null);
+  const exportFoldersRef = useRef<RecordFolders | null>(null);
   currentExportAccountRef.current = collectorStatus?.account?.id ?? null;
   useEffect(() => {
     exportControllerRef.current?.abort();
@@ -1625,9 +1627,14 @@ function AppContent() {
     if (!collectorToken) return;
     const accountId = currentExportAccountRef.current;
     try {
-      const snapshot = await getCollectorRecords(collectorUrl, collectorToken);
+      // 文件夹读不到（采集器太旧、文件坏了）照样导出记录，只是不带文件夹
+      const [snapshot, folders] = await Promise.all([
+        getCollectorRecords(collectorUrl, collectorToken),
+        readRecordFolders({ baseUrl: collectorUrl, token: collectorToken }, accountId ?? undefined).catch(() => null),
+      ]);
       if (accountId !== currentExportAccountRef.current) return;
       exportAccountRef.current = accountId;
+      exportFoldersRef.current = folders?.lists ?? null;
       setPreferences(null);
       setExportSnapshot(snapshot);
     } catch (error) {
@@ -1650,7 +1657,7 @@ function AppContent() {
       const data = await buildDataExportWithVoice(exportSnapshot, selection, {
         connection: collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null,
         accountId: exportAccountRef.current, signal: controller.signal,
-        onProgress: setExportProgress, since,
+        onProgress: setExportProgress, since, folders: exportFoldersRef.current,
       });
       controller.signal.throwIfAborted();
       triggerBrowserDownload(new Blob([JSON.stringify(data)], { type: "application/json" }), `抖音数据_${new Date().toLocaleDateString("sv-SE")}.json`);
