@@ -4,6 +4,7 @@ import Svg, { Circle, Defs, Line, LinearGradient, Path, RadialGradient, Rect, St
 import {
   Activity,
   Bookmark,
+  CalendarClock,
   CalendarDays,
   CalendarRange,
   ChartPie,
@@ -32,7 +33,7 @@ import {
 import type { ChatConversationSummary, ChatMessage } from "../../domain/chatRecords";
 import type { PersonalRecordCollection } from "../../domain/personalRecords";
 import { safeChatAvatarUrl } from "./ChatWorkspace";
-import { buildDashboardExtras } from "./reportExtras";
+import { buildDashboardExtras, type WeekPerson } from "./reportExtras";
 import { attentionLabel, pctLabel, smoothPath, type ReportModel } from "./ReportWorkspace";
 import { fx, polylineLength, useCountUp, useDraw } from "./motion";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
@@ -69,7 +70,7 @@ type Icon = typeof Heart;
  */
 const COLUMNS: Array<{ span: number; keys: string[] }> = [
   { span: 3, keys: ["profile", "topics", "length", "insights"] },
-  { span: 4, keys: ["heat", "months", "calendar", "matrix"] },
+  { span: 4, keys: ["week", "heat", "months", "calendar", "matrix"] },
   { span: 3, keys: ["attention", "contacts", "creators", "evidence", "log"] },
   { span: 2, keys: ["hours", "emojis", "kept", "chat", "format"] },
 ];
@@ -85,7 +86,52 @@ export function ReportDashboard({ chatConversations = [], chatMessages = [], mob
   const recent = [...new Map(model.recent.map((item) => [`${item.title}:${item.time}`, item])).values()].slice(0, 3);
   const mode = mobile ? "stack" : width < 1120 ? "narrow" : "wide";
 
+  const week = extras.week;
   const panels: Record<string, React.ReactNode> = {
+    week: (
+      <Panel icon={CalendarClock} id="week" meta={`${week.days.filter((day) => day.watch + day.chat + day.kept).length}/7 天`} title="近七天" tone={BLUE}>
+        <WeekBars days={week.days} />
+        <View style={styles.legendInline}>
+          {(["watch", "chat", "kept"] as const).map((kind) => (
+            <View key={kind} style={styles.legendRow}>
+              <View style={[styles.swatch, { backgroundColor: KIND_TONE[kind] }]} />
+              <Text style={styles.legendName}>{{ watch: "观看", chat: "聊天", kept: "留存" }[kind]}</Text>
+              <Text style={styles.num}>{fmt(sum(week.days.map((day) => day[kind])))}</Text>
+            </View>
+          ))}
+        </View>
+        <View style={styles.weekPeople}>
+          <People alias="好友" empty="这周没聊天" people={week.contacts} privacy={privacy} title="常聊" tone={GREEN} />
+          <People alias="博主" empty="这周没看视频" people={week.creators} privacy={privacy} title="常看" tone={AMBER} />
+        </View>
+        <Text style={styles.subhead}>博主更新</Text>
+        {week.updates.length ? week.updates.map((update, index) => {
+          const name = privacy ? `博主 ${index + 1}` : update.name;
+          const first = update.videos[0]!;
+          const canOpen = Boolean(first.url && !privacy);
+          return (
+            <View key={`${update.name}:${index}`} style={styles.line}>
+              <Avatar index={index} name={name} privacy={privacy} size={22} tone={PALETTE[index % 4]!} uri={update.avatarUrl} />
+              <Text numberOfLines={1} style={styles.weekName}>{name}</Text>
+              <Pressable accessibilityRole={canOpen ? "link" : undefined} disabled={!canOpen} onPress={() => first.url && void onOpenRecord(first.url)} style={styles.grow}>
+                <Text numberOfLines={1} style={[styles.text, canOpen && styles.link]}>{privacy ? `新视频 ${update.videos.length} 条` : first.title}</Text>
+              </Pressable>
+              {update.videos.slice(0, 3).map((video, slot) => (
+                <Pressable
+                  accessibilityLabel={privacy ? `视频 ${slot + 1}` : video.title}
+                  disabled={!video.url || privacy}
+                  key={`${video.publishedAt}:${slot}`}
+                  onPress={() => video.url && void onOpenRecord(video.url)}
+                >
+                  <Cover index={index + slot} privacy={privacy} style={styles.thumb} uri={video.coverUrl} />
+                </Pressable>
+              ))}
+              <Text style={styles.num}>{`${update.videos.length} 条`}</Text>
+            </View>
+          );
+        }) : <Empty text="这周没刷到博主的新视频" />}
+      </Panel>
+    ),
     profile: (
       <Panel glow={0.26} icon={Fingerprint} id="profile" title="画像" tone={BLUE}>
         <Text numberOfLines={1} style={styles.profile}>{model.profile}</Text>
@@ -988,13 +1034,65 @@ function Avatar({ index, name, privacy, ring = false, size, tone, uri }: { index
   );
 }
 
-/** 视频封面小图；隐私模式下只留一块主题色。 */
-function Cover({ index, privacy, uri }: { index: number; privacy: boolean; uri: string }) {
+/** 视频封面小图；隐私模式或没有封面时只留一块主题色。 */
+function Cover({ index, privacy, style, uri }: { index: number; privacy: boolean; style?: object; uri: string | null }) {
   const [failed, setFailed] = React.useState(false);
   const tone = PALETTE[index % 4]!;
   return (
-    <View style={[styles.cover34, { backgroundColor: alpha(tone, 0.18) }]}>
-      {privacy || failed ? null : <Image onError={() => setFailed(true)} resizeMode="cover" source={{ uri }} style={styles.coverImage} />}
+    <View style={[styles.cover34, style, { backgroundColor: alpha(tone, 0.18) }]}>
+      {privacy || failed || !uri ? null : <Image onError={() => setFailed(true)} resizeMode="cover" source={{ uri }} style={styles.coverImage} />}
+    </View>
+  );
+}
+
+/** 这周的几个人：小标题 + 一排头像，名字和次数写在头像下面，最多的那位套主色圈。 */
+function People({ alias, empty, people, privacy, title, tone }: { alias: string; empty: string; people: WeekPerson[]; privacy: boolean; title: string; tone: string }) {
+  return (
+    <View style={styles.peopleGroup}>
+      <Text style={styles.subhead}>{title}</Text>
+      {people.length ? (
+        <View style={styles.peopleRow}>
+          {people.map((person, index) => {
+            const name = privacy || !person.name ? `${alias} ${index + 1}` : person.name;
+            return (
+              <View key={person.id} {...fx({ motion: "pop", i: index + 1 })} style={styles.person}>
+                <View style={[styles.personRing, index === 0 && { borderColor: tone }]}>
+                  <Avatar index={index} name={name} privacy={privacy} size={30} tone={tone} uri={person.avatarUrl} />
+                </View>
+                <Text numberOfLines={1} style={styles.personName}>{name}</Text>
+                <Text style={[styles.personCount, index === 0 && { color: tone }]}>{fmt(person.count)}</Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : <Empty text={empty} />}
+    </View>
+  );
+}
+
+/** 近七天每天一根堆叠柱（观看 / 聊天 / 留存三段），柱顶写当天合计，今天高亮。 */
+function WeekBars({ days }: { days: Array<{ label: string; watch: number; chat: number; kept: number }> }) {
+  const [ref, t] = useDraw<View>(1000);
+  const max = Math.max(1, ...days.map((day) => day.watch + day.chat + day.kept));
+  return (
+    <View ref={ref} style={styles.weekBars}>
+      {days.map((day, index) => {
+        const total = day.watch + day.chat + day.kept;
+        const r = total / max * t;
+        const today = index === days.length - 1;
+        return (
+          <View key={day.label} style={styles.weekDay}>
+            <Text style={[styles.axisText, today && { color: BLUE }]}>{total ? fmt(total) : ""}</Text>
+            <View style={styles.weekTrack}>
+              <View style={{ flexGrow: 1 - r }} />
+              <View style={[styles.weekStack, { flexGrow: r, minHeight: total ? 2 : 0 }]}>
+                {(["kept", "chat", "watch"] as const).map((kind) => (day[kind] ? <View key={kind} style={{ flexGrow: day[kind], backgroundColor: KIND_TONE[kind] }} /> : null))}
+              </View>
+            </View>
+            <Text style={[styles.axisText, today && { color: BLUE, fontWeight: "700" }]}>{day.label}</Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -1171,6 +1269,20 @@ const styles = StyleSheet.create({
   coverSlot: { flex: 1, minWidth: 0 },
   cover34: { flex: 1, minWidth: 0, aspectRatio: 0.75, maxHeight: 64, overflow: "hidden", borderRadius: 8 },
   coverImage: { width: "100%", height: "100%" },
+  thumb: { flexGrow: 0, flexShrink: 0, flexBasis: 21, width: 21, height: 28, borderRadius: 5 },
+  weekBars: { flexGrow: 1, minHeight: 92, flexDirection: "row", gap: 8 },
+  weekPeople: { flexDirection: "row", gap: 12, marginTop: 2 },
+  weekName: { width: 64, color: color.text, fontSize: 11, fontWeight: "600" },
+  subhead: { color: color.textMuted, fontSize: 10, fontWeight: "600", letterSpacing: 0.4 },
+  peopleGroup: { flex: 1, minWidth: 0, gap: 5 },
+  peopleRow: { flexDirection: "row", gap: 4 },
+  person: { flex: 1, minWidth: 0, maxWidth: 56, alignItems: "center", gap: 1 },
+  personRing: { padding: 1.5, borderWidth: 1.5, borderColor: "transparent", borderRadius: 99 },
+  personName: { maxWidth: "100%", color: color.textSecondary, fontSize: 9.5 },
+  personCount: { color: color.text, fontSize: 10, fontWeight: "700", ...tabular },
+  weekDay: { flex: 1, minWidth: 0, alignItems: "center", gap: 3 },
+  weekTrack: { flexGrow: 1, width: "100%", maxWidth: 30 },
+  weekStack: { overflow: "hidden", borderRadius: 4, backgroundColor: color.surfaceMuted },
   cloud: { flexGrow: 1, flexDirection: "row", flexWrap: "wrap", alignContent: "center", alignItems: "flex-end", justifyContent: "center", columnGap: 8, rowGap: 6 },
   emojiItem: { alignItems: "center", gap: 1, padding: 3, borderRadius: 10 },
   emojiTop: { backgroundColor: alpha(AMBER, 0.12) },

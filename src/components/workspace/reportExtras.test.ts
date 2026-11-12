@@ -43,4 +43,33 @@ describe("持续报告的头像、表情和封面", () => {
     expect(extras.creatorAvatars).toEqual({ 甲: "a1" });
     expect(extras.keptCovers).toEqual(["both", "only-liked"]);
   });
+
+  it("近七天：按本地日分桶，七天前和群聊不算；常聊、常看按这周的次数排；博主更新按发布时间归拢", () => {
+    const now = new Date(2026, 10, 11, 12).getTime();
+    const chat = (sentAt: string, conversationId: string, conversationType?: "group") => ({ sentAt, conversationId, conversationType } as ChatMessage);
+    const extras = buildDashboardExtras(
+      {
+        watch_history: [
+          video("1", { videoId: "v1", occurredAt: "2026-11-05T00:30:00", author: "甲", publishedAt: "2026-11-09T10:00:00" }),
+          video("2", { videoId: "v1", occurredAt: "2026-11-11T09:00:00", author: "甲", publishedAt: "2026-11-09T10:00:00" }),
+          video("3", { videoId: "v2", occurredAt: "2026-11-10T09:00:00", author: "乙", authorAvatarUrl: "a乙", publishedAt: "2026-11-10T08:00:00" }),
+          video("4", { videoId: "v3", occurredAt: "2026-11-04T23:59:00", author: "乙", publishedAt: "2026-10-01T08:00:00" }),
+          video("5", { videoId: "v4", occurredAt: null, author: "乙" }),
+        ],
+        liked_videos: [video("l1", { videoId: "v5", occurredAt: "2026-11-11T08:00:00", author: "甲", publishedAt: "2026-11-11T07:00:00" })],
+        favorite_videos: [],
+      },
+      [
+        chat("2026-11-10T20:00:00", "a"), chat("2026-11-09T20:00:00", "b"), chat("2026-11-10T22:00:00", "b"),
+        chat("2026-11-10T21:00:00", "g", "group"), chat("2026-11-01T20:00:00", "a"),
+      ],
+      [conversation("a", "friend", 5), { ...conversation("b", "friend", 5), name: "小雨", avatarUrl: "a小雨" } as ChatConversationSummary],
+      now,
+    );
+    expect(extras.week.days.map((day) => day.label)).toEqual(["11/5", "11/6", "11/7", "11/8", "11/9", "11/10", "今天"]);
+    expect(extras.week.days.map((day) => [day.watch, day.chat, day.kept])).toEqual([[1, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 1, 0], [1, 2, 0], [1, 0, 1]]);
+    expect(extras.week.contacts.map((person) => [person.name, person.avatarUrl, person.count])).toEqual([["小雨", "a小雨", 2], ["a", null, 1]]);
+    expect(extras.week.creators.map((person) => [person.name, person.count])).toEqual([["甲", 2], ["乙", 1]]);
+    expect(extras.week.updates.map((update) => [update.name, update.videos.map((item) => item.title)])).toEqual([["甲", ["视频l1", "视频2"]], ["乙", ["视频3"]]]);
+  });
 });
