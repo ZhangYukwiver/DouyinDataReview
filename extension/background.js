@@ -154,7 +154,7 @@ async function panelRequest(message) {
   if (message.type === "panel:history") {
     const value = await call("/v1/feed-filter/events", {}, true);
     const { pending = [] } = await chrome.storage.local.get("pending");
-    const events = [...(value?.events ?? []), ...pending].filter(event => event && /^\d{5,30}$/u.test(event.id)
+    const events = [...(value?.events ?? []), ...pending].filter(event => event && !event.site && /^\d{5,30}$/u.test(event.id)
       && ["inserted", "hidden", "disliked", "dislike_failed"].includes(event.action))
       .map(({ id, t, desc, author, matched, action }) => ({ id, t, desc, author, matched, action }));
     return { events, warning: value?.error ?? (!value ? "应用离线，仅显示待同步记录。" : "") };

@@ -507,7 +507,7 @@ function extensionText(extension: FeedExtensionStatus, canDrag: boolean): string
   if (extension.lastSeenAt !== null) {
     const minutes = Math.floor((Date.now() - extension.lastSeenAt) / 60_000);
     const since = minutes < 1 ? "刚刚" : minutes < 60 ? `${minutes} 分钟前` : minutes < 1440 ? `${Math.floor(minutes / 60)} 小时前` : `${Math.floor(minutes / 1440)} 天前`;
-    return `扩展已装好，${since}和应用对过一次（浏览器开着时每分钟一次）。应用带了新版扩展时，它会自己升级。`;
+    return `扩展已装好，${since}和应用对过一次（浏览器开着时每分钟一次）。应用带了新版扩展时，它会自己升级。${canDrag ? "要装到另一个浏览器，打开它的扩展页，把下面的图标拖进去。" : ""}`;
   }
   return canDrag
     ? "装一次就一直有效：先点右边打开浏览器的扩展页，第一次要打开扩展页右上角的「开发者模式」，再把下面的图标拖进扩展页。"
@@ -578,7 +578,7 @@ function FeedPage({ appStyle, feedShown, onToggleFeed, collector }: SettingsDial
         </View>
       </View>
       <View style={styles.row}>
-        <RowCopy detail="装好下面的扩展后，在浏览器的抖音首页和精选推荐中插入相关视频。使用浏览器登录的账号搜索，命中屏蔽词的不插入；搜索失败照常刷推荐。首次升级扩展后请刷新抖音页。" title="网页插入视频" />
+        <RowCopy detail="装好下面的扩展后，在浏览器的抖音首页和精选推荐、B 站首页推荐中插入相关视频。使用浏览器登录的账号搜索，命中屏蔽词的不插入；搜索失败照常刷推荐。首次升级扩展后请刷新抖音或 B 站页面。" title="网页插入视频" />
         <Button appStyle={appStyle} kind={webPicks ? "secondary" : "primary"} label={webPicks ? "关闭" : "开启"}
           disabled={busy || !baseUrl || !token} onPress={() => void save(!webPicks)} testID="settings-web-feed-picks" />
       </View>
@@ -646,7 +646,7 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
   return (
     <>
       <View style={[styles.row, styles.rowIntro]}>
-        <Text style={styles.detail}>软件里的「刷视频」会排除广告，并按这里的词条和过滤方式处理，不用装扩展。想在 Chrome、Edge 里刷抖音网页时也过滤，就装一次浏览器扩展。选「隐藏」可过滤带广告标识的视频，不用填写广告关键词；命中词条的视频也会过滤。应用没开时扩展按上次设置照常过滤，记录等应用开着时补传。网页上已经显示的首屏和作品详情只能记录命中，后续加载的推荐列表才会过滤。升级扩展后请刷新抖音页。</Text>
+        <Text style={styles.detail}>软件里的「刷视频」会排除广告，并按这里的词条和过滤方式处理，不用装扩展。想在 Chrome、Edge 里刷抖音网页时也过滤，就装一次浏览器扩展；装好后 B 站首页推荐也按同样的词条和过滤方式处理。选「隐藏」可过滤带广告标识的视频，不用填写广告关键词；命中词条的视频也会过滤。应用没开时扩展按上次设置照常过滤，记录等应用开着时补传。抖音网页上已经显示的首屏和作品详情只能记录命中，后续加载的推荐列表才会过滤；B 站首页首屏会直接藏掉命中的卡片。升级扩展后请刷新抖音或 B 站页面。</Text>
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
       </View>
       <View style={[styles.row, styles.rowStacked]}>
@@ -669,14 +669,15 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
             ))}
           </View>
         ) : null}
-        {canDrag && !installed ? (
+        {/* 装过一个浏览器后照样能拖：「已装好」只说明有浏览器对过，换个浏览器还要再装 */}
+        {canDrag ? (
           // 拖动交给桌面外壳：它把扩展文件夹交给系统拖放，放进开了开发者模式的扩展页就装上了
           <div draggable onDragStart={(event) => { event.preventDefault(); startDesktopExtensionDrag(); }} data-testid="settings-feed-drag"
             style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", cursor: "grab", userSelect: "none",
               border: `1px dashed ${color.border}`, borderRadius: radius.small as string, background: color.surfaceMuted }}>
             <Puzzle color={color.accent} size={22} strokeWidth={1.8} />
             <Text style={styles.rowTitle}>推荐流过滤扩展</Text>
-            <Text style={styles.detail}>按住拖进浏览器的扩展页</Text>
+            <Text style={styles.detail}>{installed ? "按住拖进另一个浏览器的扩展页" : "按住拖进浏览器的扩展页"}</Text>
           </div>
         ) : null}
       </View>
@@ -707,7 +708,7 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
         {events.slice(-100).reverse().map((event, index) => (
           <View key={`${event.t}-${event.id}-${index}`} style={styles.feedEvent}>
             <Text numberOfLines={1} style={styles.detail}>
-              <Text style={styles.value}>{eventTime(event.t)}</Text>{`  ${FEED_ACTIONS[event.action]}  `}
+              <Text style={styles.value}>{eventTime(event.t)}</Text>{`  ${event.site === "bilibili" ? "B 站 · " : ""}${FEED_ACTIONS[event.action]}  `}
               <Text style={styles.rowTitle}>{event.desc || (event.id ? "（没有文案）" : "")}</Text>{event.author ? `  @${event.author}` : ""}
             </Text>
             {event.matched.length ? <Text numberOfLines={1} style={styles.detail}>{event.action === "inserted" ? "搜索词" : "命中"}：{event.matched.join("、")}</Text> : null}
