@@ -26,7 +26,9 @@ function sanitizeEvent(value) {
   const id = typeof value.id === "string" && /^\d{5,30}$/u.test(value.id) ? value.id : "";
   if (!id && value.action !== "unreadable") return null;
   const t = Number.isFinite(value.t) && value.t > 0 ? Math.round(value.t) : Date.now();
-  return { t, id, desc: text(value.desc, 120), author: text(value.author, 40), matched: sanitizeMatched(value.matched), action: value.action };
+  // B 站首页的处置记录带 site，id 是 aid；不带的都是抖音
+  return { t, id, desc: text(value.desc, 120), author: text(value.author, 40), matched: sanitizeMatched(value.matched), action: value.action,
+    ...(value.site === "bilibili" ? { site: "bilibili" } : {}) };
 }
 
 const sanitizeMatched = (value) => (Array.isArray(value) ? value : []).filter((item) => typeof item === "string").slice(0, 5).map((item) => item.slice(0, 60));

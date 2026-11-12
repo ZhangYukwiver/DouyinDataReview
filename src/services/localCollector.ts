@@ -1302,6 +1302,7 @@ export interface FeedFilterEvent {
   author: string;
   matched: string[];
   action: "inserted" | "observed" | "hidden" | "disliked" | "dislike_failed" | "unreadable";
+  site?: "bilibili";
 }
 const FEED_FILTER_MODES: readonly string[] = ["off", "observe", "hide", "dislike"];
 const FEED_FILTER_ACTIONS: readonly string[] = ["inserted", "observed", "hidden", "disliked", "dislike_failed", "unreadable"];
@@ -1387,7 +1388,8 @@ export async function collectorFeedFilterEvents(baseUrl: string, token: string, 
   if (!isObject(value) || !Array.isArray(value.events)) throw new LocalCollectorError("invalid_response", "采集服务没返回处置记录。");
   return value.events.flatMap((item): FeedFilterEvent[] => isObject(item) && FEED_FILTER_ACTIONS.includes(String(item.action)) && typeof item.t === "number"
     ? [{ t: item.t, id: String(item.id ?? ""), desc: String(item.desc ?? ""), author: String(item.author ?? ""),
-      matched: Array.isArray(item.matched) ? item.matched.map(String) : [], action: item.action as FeedFilterEvent["action"] }]
+      matched: Array.isArray(item.matched) ? item.matched.map(String) : [], action: item.action as FeedFilterEvent["action"],
+      ...(item.site === "bilibili" ? { site: "bilibili" as const } : {}) }]
     : []);
 }
 

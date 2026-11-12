@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "DouyinDataReview 推荐流过滤",
-  "version": "1.7.1",
-  "description": "在抖音网页悬浮窗编辑推荐词和屏蔽词、查看插入和屏蔽记录，或用 DouyinDataReview 下载当前视频。",
+  "version": "1.8.2",
+  "description": "在抖音网页悬浮窗编辑推荐词和屏蔽词、查看插入和屏蔽记录，或用 DouyinDataReview 下载当前视频；B 站首页推荐按同一套屏蔽词过滤、插入想看的词条视频。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArMqwZC1ScyL5woQWMCDou8hFyUMKTvJPdbOAWx4un6jIfudS8W7QqUSHzYcHZBrG9M13UnK13lFpvKHtqPz6jK+kuJAT6R0wZ3f2oMy9Tkc77oGBNzFyGMFr+SBh+jxA5iECMWVcvlRdHRSP7LfN6hfd4vwemrKZ8rQ87EfJCinjzZPDj0ciMVYluZ3EgFI2tcNp+LvNXhPhBR33FACkaCCZzMKhO/zT/a5EoUXxz6GWaUShI5wQp7YH4aUrIa5iU4xgLRgwCpquWzDO9FomnWU++VWxratvUJ3sn6p8b1xnF4ptN3ppf0fr7KL24escxdJLkpOmtqWlx7FCNo9EqwIDAQAB",
   "icons": { "128": "icon-128.png" },
   "permissions": ["storage", "alarms", "scripting"],
@@ -18,6 +18,17 @@
     {
       "matches": ["https://www.douyin.com/*"],
       "js": ["panel.js", "bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.bilibili.com/*"],
+      "js": ["filter.js", "picks.js", "bili.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.bilibili.com/*"],
+      "js": ["bridge.js"],
       "run_at": "document_start"
     }
   ]
