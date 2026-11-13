@@ -1102,7 +1102,9 @@ export class DouyinCollector {
       signal.throwIfAborted();
       const file = this.getVideoDownloadFilePath(id);
       if (!file) throw Object.assign(new Error(job.error || "没有取得原片。"), { code: job.errorCode || "download_failed" });
-      if (/\.zip$/iu.test(file) || (job.video?.videoId && String(job.video.videoId) !== videoId))
+      // 图文作品下载下来是一包图片
+      if (/\.zip$/iu.test(file)) throw Object.assign(new Error("这是图文作品，没有视频可以解析。"), { code: "not_video" });
+      if (job.video?.videoId && String(job.video.videoId) !== videoId)
         throw Object.assign(new Error("取得的文件不是当前作品的视频。"), { code: "not_video" });
       return file;
     } finally {
