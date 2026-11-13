@@ -248,6 +248,23 @@ describe("media candidate selection", () => {
     expect(isAllowedMediaUrl("https://p3.douyinvod.com:8443/aweme/v1/play/1")).toBe(false);
     expect(isAllowedMediaUrl("https://v3-dy-o.zjcdn.com/video/1.mp4")).toBe(true);
     expect(isAllowedMediaUrl("https://zjcdn.com.example.com/video/1.mp4")).toBe(false);
+    expect(isAllowedMediaUrl("https://video-web-cn.douyin.com/a.mp4")).toBe(true);
+    expect(isAllowedMediaUrl("https://www.douyin.com/aweme/v1/play/?video_id=x")).toBe(false);
+    expect(isAllowedMediaUrl("https://creator.douyin.com/a.mp4")).toBe(false);
+  });
+
+  it("picks the video-web-cn.douyin.com address when the detail has no CDN address", () => {
+    const candidates = collectDouyinMediaCandidates({
+      aweme_detail: {
+        aweme_id: "7693381400807935267",
+        video: {
+          play_addr: { url_list: ["https://video-web-cn.douyin.com/v1/a.mp4", "https://www.douyin.com/aweme/v1/play/?video_id=x"] },
+          bit_rate: [{ bit_rate: 1_000_000, play_addr: { url_list: ["https://video-web-cn.douyin.com/v1/b.mp4"] } }],
+        },
+      },
+    });
+    expect(candidates.map((candidate) => candidate.url)).toEqual(["https://video-web-cn.douyin.com/v1/a.mp4", "https://video-web-cn.douyin.com/v1/b.mp4"]);
+    expect(selectDouyinMediaCandidate(candidates)?.url).toMatch(/^https:\/\/video-web-cn\.douyin\.com\//u);
   });
 
   it("resolves the current CDN through HTTP without opening a page and rejects another video's detail", async () => {

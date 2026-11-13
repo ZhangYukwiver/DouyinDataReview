@@ -28,6 +28,8 @@ const MEDIA_HOSTS = [
   "ibytedtos.com",
   "byteimg.com",
   "snssdk.com",
+  // 部分作品只给这个地址（不带登录 Cookie 回 403）；只放这一个子域，不放开整个 douyin.com
+  "video-web-cn.douyin.com",
 ];
 
 // 图文的图片和配乐在另外两个 CDN 上，只用于图文，不参与视频地址挑选
