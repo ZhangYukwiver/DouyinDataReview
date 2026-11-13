@@ -1,4 +1,4 @@
-// 假的 Codex / Claude Code（测试用，不进安装包）：node fake-cli.mjs <codex|claude> <真 CLI 的参数…>
+// 假的本机 AI（测试用，不进安装包）：node fake-cli.mjs <codex|claude|workbuddy> <真 CLI 的参数…>
 // 按环境变量 FAKE_PLAN 指向的 JSON 剧本吐真 CLI 的事件、真的去连 MCP 端点调工具；每次运行往 FAKE_RECORD 追加一行记录。
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
@@ -9,7 +9,11 @@ const print = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
 const value = (flag) => args.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1) ?? args[args.indexOf(flag) + 1];
 
 if (args.includes("--version")) {
-  console.log(role === "codex" ? `codex-cli ${plan.version ?? "0.161.0"}` : `${plan.version ?? "2.1.280"} (Claude Code)`);
+  console.log(role === "codex" ? `codex-cli ${plan.version ?? "0.161.0"}` : `${plan.version ?? (role === "workbuddy" ? "2.161.0" : "2.1.280")} (${role === "workbuddy" ? "WorkBuddy" : "Claude Code"})`);
+  process.exit(0);
+}
+if (role === "workbuddy" && args.includes("--help")) {
+  console.log(plan.help ?? "--input-format --output-format --include-partial-messages --tools --setting-sources --strict-mcp-config --permission-mode --system-prompt-file --no-session-persistence --max-turns");
   process.exit(0);
 }
 if (role === "codex" && args[0] === "login") {
@@ -44,7 +48,7 @@ if (role === "codex") {
 
 const record = {
   role, args, stdin, cwd: process.cwd(), envKeys: Object.keys(process.env).sort(),
-  env: Object.fromEntries(["NO_PROXY", "HTTPS_PROXY", "CLAUDE_CODE_DISABLE_ATTACHMENTS", "DY2_MCP_TOKEN", "CLAUDECODE", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"].map((key) => [key, process.env[key] ?? null])),
+  env: Object.fromEntries(["NO_PROXY", "HTTPS_PROXY", "CLAUDE_CODE_DISABLE_ATTACHMENTS", "DY2_MCP_TOKEN", "CLAUDECODE", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS", "CODEBUDDY_DISABLE_AUTO_MEMORY"].map((key) => [key, process.env[key] ?? null])),
   images: args.filter((arg) => arg.startsWith("--image=")).map((arg) => existsSync(arg.slice(8))),
   helper,
   system: (() => {
@@ -74,19 +78,19 @@ let finished = false;
 const finish = (code = 0) => {
   if (finished) return;
   finished = true;
-  if (role === "claude") print({ type: "result", subtype: "success", is_error: false, result: "", session_id: "s" });
+  if (role !== "codex") print({ type: "result", subtype: "success", is_error: false, result: "", session_id: "s" });
   else print({ type: "turn.completed", usage: {} });
   save();
-  process.exit(code);
+  process.exitCode = code;
 };
 process.on("SIGINT", () => {
   save();
   // 真 Claude 收到 SIGINT 会吐一条 error_during_execution 的 result 再退；Codex 不吐结束事件
-  if (role === "claude") print({ type: "result", subtype: "error_during_execution", is_error: true, result: "" });
-  process.exit(role === "claude" ? 0 : 1);
+  if (role !== "codex") print({ type: "result", subtype: "error_during_execution", is_error: true, result: "" });
+  process.exit(role === "codex" ? 1 : 0);
 });
 
-if (role === "claude") print({ type: "system", subtype: "init", mcp_servers: mcp ? [{ name: "dy2", status: plan.mcpStatus ?? "connected" }] : [] });
+if (role !== "codex") print({ type: "system", subtype: "init", mcp_servers: mcp ? [{ name: "dy2", status: plan.mcpStatus ?? "connected" }] : [] });
 else print({ type: "thread.started", thread_id: "t" });
 if (mcp && !plan.skipTools) {
   await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: role } });
@@ -94,8 +98,10 @@ if (mcp && !plan.skipTools) {
 }
 
 for (const step of plan.steps ?? []) {
-  if (step.say) {
-    if (role === "claude") {
+  if (step.events) {
+    for (const event of step.events) print(event);
+  } else if (step.say) {
+    if (role !== "codex") {
       for (const piece of [step.say.slice(0, 2), step.say.slice(2)]) print({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: piece } } });
       print({ type: "assistant", message: { id: "m", content: [{ type: "text", text: step.say }] } });
     } else {
@@ -109,19 +115,24 @@ for (const step of plan.steps ?? []) {
     const replies = await Promise.all(step.calls.map((name) => rpc("tools/call", { name, arguments: {} })));
     record.results.push(...replies.map((reply) => reply.result ?? reply.error));
   } else if (step.fail) {
-    if (role === "claude") {
+    if (role !== "codex") {
       print({ type: "assistant", error: step.fail.error, message: { id: "e", model: "<synthetic>", content: [{ type: "text", text: step.fail.text }] } });
       print({ type: "result", subtype: "success", is_error: true, api_error_status: step.fail.status ?? null, result: step.fail.text });
     } else {
       print({ type: "turn.failed", error: { message: step.fail.text } });
     }
     save();
-    process.exit(1);
+    finished = true;
+    process.exitCode = 1;
+    break;
   } else if (step.stderr) {
     process.stderr.write(`${step.stderr}\n`);
   } else if (step.exit !== undefined) {
     save();
-    process.exit(step.exit);
+    // Windows Node 在 fetch/stdio 还在收尾时强退会触发 UV_HANDLE_CLOSING 断言，盖掉要测的 stderr。
+    finished = true;
+    process.exitCode = step.exit;
+    break;
   } else if (step.hang) {
     // 带一个孙进程，测停止时是不是整棵进程树都杀掉了
     const grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });

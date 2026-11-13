@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Modal } from "react-native";
 import { Clipboard, Download, Square, X } from "lucide-react-native";
-import { loadAssistantConfig, loadVideoModelConfig, resolveVideoModel, type AssistantConfig, type VideoModelConfig } from "../../services/assistant";
+import { isLocalAiRuntime, loadAssistantConfig, loadVideoModelConfig, resolveVideoModel, type AssistantConfig, type VideoModelConfig } from "../../services/assistant";
+import { RUNTIME_LABELS } from "./AiRuntimeField";
 import { Markdown } from "./markdownView";
 import type { ExploreConnection } from "../../services/explorer";
 import {
@@ -13,15 +14,15 @@ import {
 const kinds = { script: "原片分镜脚本", notes: "学习笔记", transcript: "带时间戳的逐字稿" };
 // 排在前面的是首选：Qwen3-ASR 用不了时采集器自己改用必剪
 const engines = { qwen: "Qwen3-ASR", bcut: "必剪" };
-const modelName = (config: AssistantConfig) => config.model || (config.runtime === "claude" ? "Claude Code" : config.runtime === "codex" ? "Codex" : "尚未设置");
+const modelName = (config: AssistantConfig) => config.model || (isLocalAiRuntime(config.runtime) ? RUNTIME_LABELS[config.runtime] : "尚未设置");
 /** 每种输出各自用到什么，单条和批量说的是同一句 */
 const needs = (kind: VideoAnalysisKind, withFrames: boolean, model: string, videoModel?: string) =>
   kind === "script" ? `优先把整段视频交给 ${videoModel ?? model} 拆镜头；它收不了视频时，改${videoModel ? `由 ${model} ` : "为"}逐张识别关键帧。台词取自语音转文字。`
     : kind === "notes" ? `语音转文字后，${withFrames ? "连同关键帧一起" : ""}交给 ${model} 整理；讲到要看画面的地方会配上原片截图。` : "只用语音转文字，不需要 AI 模型。";
-/** 发给采集器的一次解析：逐字稿不带模型，本机 Codex / Claude Code 只带运行时和模型名，分镜另带视频模型 */
+/** 发给采集器的一次解析：逐字稿不带模型，本机 AI 只带运行时和模型名，分镜另带视频模型 */
 const analysisRequest = (kind: VideoAnalysisKind, engine: VideoAnalysisEngine, includeFrames: boolean, config: AssistantConfig, videoModel?: VideoModelConfig): StartVideoAnalysisInput => ({
   kind, engine, withFrames: kind === "script" || (kind === "notes" && includeFrames),
-  config: kind === "transcript" ? undefined : config.runtime === "claude" || config.runtime === "codex" ? { runtime: config.runtime, model: config.model } : config,
+  config: kind === "transcript" ? undefined : isLocalAiRuntime(config.runtime) ? { runtime: config.runtime, model: config.model } : config,
   videoConfig: kind === "script" ? videoModel : undefined,
 });
 const timestamp = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}.${Math.floor(ms / 100) % 10}`;

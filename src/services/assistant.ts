@@ -4,7 +4,7 @@ import { collectorFetch, LocalCollectorError } from "./localCollector";
 // AI 助手：对话和确认卡片都在采集器上（collector/assistant/）。
 // 模型配置存在这台电脑的 localStorage，接口 Key 每次随请求带过去，采集器不落盘。
 
-export type AiRuntime = "api" | "codex" | "claude";
+export type AiRuntime = "api" | "codex" | "claude" | "workbuddy";
 export type LocalAiRuntime = Exclude<AiRuntime, "api">;
 
 export interface AssistantConfig {
@@ -64,8 +64,8 @@ export interface AssistantView {
 export interface AiRuntimeStatus {
   id: LocalAiRuntime;
   label: string;
-  /** ready 能用；missing 没找到；broken 启动不了；logged_out 没登录；expired 登录过期；unsupported 版本对不上 */
-  state: "ready" | "missing" | "broken" | "logged_out" | "expired" | "unsupported";
+  /** ready 能用；missing 没找到；not_running 未打开；broken 启动不了；logged_out 没登录；expired 登录过期；unsupported 版本对不上 */
+  state: "ready" | "missing" | "not_running" | "broken" | "logged_out" | "expired" | "unsupported";
   version: string | null;
   /** 给用户看的整句话 */
   message: string;
@@ -75,7 +75,7 @@ const CONFIG_KEY = "dy2.assistantConfig";
 // 方舟默认模型；用户也可以填任何 OpenAI 兼容的中转
 export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = { runtime: "api", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", apiKey: "", model: "doubao-seed-2-1-lite-260915" };
 
-export const isLocalAiRuntime = (runtime: AiRuntime | undefined): runtime is LocalAiRuntime => runtime === "codex" || runtime === "claude";
+export const isLocalAiRuntime = (runtime: AiRuntime | undefined): runtime is LocalAiRuntime => runtime === "codex" || runtime === "claude" || runtime === "workbuddy";
 
 export function loadAssistantConfig(storage: Pick<Storage, "getItem"> | undefined = globalThis.localStorage): AssistantConfig {
   try {
@@ -83,7 +83,7 @@ export function loadAssistantConfig(storage: Pick<Storage, "getItem"> | undefine
     if (!saved || typeof saved !== "object") return DEFAULT_ASSISTANT_CONFIG;
     const text = (value: unknown, fallback: string) => (typeof value === "string" ? value : fallback);
     return {
-      runtime: saved.runtime === "codex" || saved.runtime === "claude" ? saved.runtime : "api",
+      runtime: isLocalAiRuntime(saved.runtime) ? saved.runtime : "api",
       baseUrl: text(saved.baseUrl, DEFAULT_ASSISTANT_CONFIG.baseUrl),
       apiKey: text(saved.apiKey, ""),
       model: text(saved.model, DEFAULT_ASSISTANT_CONFIG.model),

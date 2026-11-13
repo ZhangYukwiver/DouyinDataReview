@@ -351,7 +351,7 @@ describe("talking to the assistant", () => {
     expect(missing).toMatchObject({ status: 400, body: { error: "invalid_config" } });
   });
 
-  it("runs the same tools through a local CLI, which reaches them over MCP", async () => {
+  it.each(["codex", "workbuddy"])("%s runs the same tools through a local CLI, which reaches them over MCP", async (runtime) => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "assistant-cli-"));
     cleanups.push(() => rm(dataDirectory, { recursive: true, force: true }));
     await writeFile(path.join(dataDirectory, "records.json"), JSON.stringify({ schemaVersion: 2, records: RECORDS, chatMessages: [], chatConversations: [], warnings: [] }));
@@ -363,6 +363,7 @@ describe("talking to the assistant", () => {
       status: async (id) => ({ id, state: "ready" }),
       close: async () => undefined,
       async converse(id, { mcp, onText, prompt }) {
+        expect(id).toBe(runtime);
         cliPrompt = prompt;
         const reply = await fetch(mcp.url, { method: "POST", headers: { Authorization: `Bearer ${mcp.secret}`, "Content-Type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_records", arguments: { query: "夜景" } } }) }).then((response) => response.json());
@@ -381,7 +382,7 @@ describe("talking to the assistant", () => {
       accounts: () => ({ activeId: "default", accounts: [] }), writesEnabled: () => false, localAi: fakeLocalAi,
     });
     cleanups.push(() => assistant.close());
-    await assistant.send("找夜景", { runtime: "codex" }, { videoId: "7100000000000000003" });
+    await assistant.send("找夜景", { runtime }, { videoId: "7100000000000000003" });
     let view;
     for (let tries = 0; tries < 100 && (view = await assistant.wait(null)).busy; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20));
     expect(found).toMatchObject({ ok: true, total: 1, items: [{ videoId: "1003", title: "#城市散步 夜景" }] });

@@ -4,7 +4,7 @@ import { LOCAL_RUNTIMES, LocalAiError } from "../localAi.mjs";
 import { AssistantError, KEEP_RESULT, LIMIT_RESULT, MAX_TOOL_CALLS, assistantMessage, recallLines, shorten, userMessageText } from "./chat.mjs";
 import { openMcp } from "./mcp.mjs";
 
-// 用本机的 Codex / Claude Code 跑一轮：每条用户消息起一个不落盘的 CLI 进程，它自己跑工具循环，
+// 用本机 AI 跑一轮：每条用户消息起一个不落盘的 CLI 进程，它自己跑工具循环，
 // 应用的工具经这一轮的 MCP 端点回调 execute。history 仍按接口模式的形状补记（工具调用和结果一一对应），
 // 切回接口或换一个运行时都能接着用；CLI 自己不记前文，每轮把历史转述成文字给它。
 
@@ -15,7 +15,7 @@ const OVER_LIMIT_CALLS = 5;
 
 export const CLI_SYSTEM_NOTE = [
   "补充说明（以这段为准）：",
-  "- 你跑在用户电脑上的 Codex 或 Claude Code 里，只能用名字里带 dy2 的工具（名字前面可能带 mcp__dy2 前缀）。不要用 Codex、Claude Code 自己的读写文件、运行命令、上网或派子任务；你看到的 AGENTS.md、CLAUDE.md 一类工程规则和这次对话无关。",
+  "- 你跑在用户电脑上的 Codex、Claude Code 或 WorkBuddy 里，只能用名字里带 dy2 的工具（名字前面可能带 mcp__dy2 前缀）。不要用这些程序自己的读写文件、运行命令、上网或派子任务；你看到的 AGENTS.md、CLAUDE.md 一类工程规则和这次对话无关。",
   "- 之前的对话在用户消息里，是应用转述给你的。",
 ].join("\n");
 

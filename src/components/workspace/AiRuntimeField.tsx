@@ -5,16 +5,17 @@ import type { ExploreConnection } from "../../services/explorer";
 import { kit, Segmented, SmallButton } from "./CreatorKit";
 import { workspaceColors as color, workspaceFonts as font } from "./workspaceTheme";
 
-// AI 助手的设置：选接口还是本机的 Codex / Claude Code，选了本机的就显示这台电脑上装没装、登没登录。
+// AI 助手的设置：选接口还是本机 AI，选了本机的就显示检测结果。
 
 // 选项上只写「Claude」：海报风格的分段按钮更宽，放不下「Claude Code」，说明文字里写全称
 const OPTIONS: Array<{ label: string; value: AiRuntime }> = [
   { label: "接口", value: "api" },
   { label: "Codex", value: "codex" },
   { label: "Claude", value: "claude" },
+  { label: "WorkBuddy", value: "workbuddy" },
 ];
 
-export const RUNTIME_LABELS: Record<AiRuntime, string> = { api: "接口", codex: "Codex", claude: "Claude Code" };
+export const RUNTIME_LABELS: Record<AiRuntime, string> = { api: "接口", codex: "Codex", claude: "Claude Code", workbuddy: "WorkBuddy" };
 
 // 检测结果整个页面共用（按采集器地址分）：设置面板、对话页、切走再回来都不重查，点「重新检测」才查
 type Checked = { runtimes: AiRuntimeStatus[] | null; loading: boolean; error: string | null };
@@ -92,6 +93,7 @@ export function AiRuntimeField({ connection, value, onChange }: { connection: Ex
       {/* 检测时按钮不卸载也不禁用（禁用的按钮会把键盘焦点甩回页面开头）；检测中再按会接上同一次检测 */}
       {connection ? <SmallButton label={state?.loading ? "检测中…" : "重新检测"} onPress={refresh} /> : null}
     </View> : null}
+    {value === "workbuddy" ? <Text style={kit.muted}>可用于 AI 对话和口播学习笔记；当前接入不支持直接识别关键帧。</Text> : null}
   </View>;
 }
 
