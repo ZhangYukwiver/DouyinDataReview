@@ -16,7 +16,7 @@ const DEEP = "#070A12";
 const SERIF = "Fraunces, 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif";
 const SANS = "Inter, 'PingFang SC', 'Helvetica Neue', sans-serif";
 const MONO = "'SFMono-Regular', ui-monospace, 'Roboto Mono', monospace";
-const PAINTING = "/story/story-images/entry-night.jpg";
+const PAINTING = `${process.env.EXPO_BASE_URL ?? ""}/story/story-images/entry-night.jpg`;
 
 /** 选中带某个角色的元素；"a b" 表示同一元素同时带 a 和 b。多个用逗号分开。 */
 function sel(roles: string, suffix = ""): string {

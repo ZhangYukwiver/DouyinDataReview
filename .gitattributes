@@ -1,0 +1,2 @@
+# 在线体验版的打包产物（npm run build:demo），不算进语言统计，PR 里默认折叠
+docs/app/** linguist-generated

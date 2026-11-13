@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TRACE · 内容年志 — 入口卡</title>
+  <script>
+    if (new URLSearchParams(location.search).get("motion") === "full") document.documentElement.classList.add("motion-full");
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..400;1,9..144,300..400&family=Inter:wght@400..600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --cream: #f6f1e4; --graphite: #2c2c2c; --charcoal: #444141; --mist: #dee2de; --blue: #41a1cf; --twilight: #282834;
+      --serif: "Fraunces", "Songti SC", "STSong", "Noto Serif SC", Georgia, serif;
+      --sans: "Inter", "PingFang SC", "Helvetica Neue", sans-serif;
+      --mono: "SFMono-Regular", ui-monospace, "Roboto Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; overflow: hidden; background: #1f1f29; color: var(--cream); font-family: var(--sans); letter-spacing: -.01em; }
+    button { font: inherit; letter-spacing: inherit; }
+    button:focus-visible, a:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+
+    /* ink night — a different world from the story's golden dawn */
+    #sky { position: fixed; inset: -6% 0; z-index: 0; overflow: hidden; pointer-events: none; transform-origin: 50% 50%; background-image: url("story-images/entry-night.jpg"); background-size: cover; background-position: center 46%; background-repeat: no-repeat; background-color: #0c1220; }
+    /* 竖屏只看得到画的中间一条：换成裁好的竖版，同样清晰、体积不到一半 */
+    @media (max-aspect-ratio: 3/4) { #sky { background-image: url("story-images/entry-night-m.jpg"); } }
+    #sky.fallback { background:
+      radial-gradient(120% 70% at 70% 4%, #1d2940 0%, rgba(29,41,64,0) 60%),
+      radial-gradient(80% 45% at 30% 84%, rgba(58,76,110,.5) 0%, rgba(58,76,110,0) 62%),
+      radial-gradient(46% 36% at 50% 50%, rgba(238,164,78,.13) 0%, rgba(238,164,78,0) 72%),
+      linear-gradient(180deg, #0c1220 0%, #152033 52%, #090d15 100%); }
+    #skyfx { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity 1.2s ease; }
+    #skyfx.ready { opacity: 1; }
+    .blob { position: absolute; border-radius: 50%; filter: blur(32px); animation: drift 26s ease-in-out infinite alternate; }
+    .blob.slow { animation-duration: 38s; }
+    @keyframes drift { to { transform: translateX(2.2%) translateY(-1.2%) scale(1.03); } }
+    #sky::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(12,10,14,.14), transparent 32%, transparent 62%, rgba(24,14,10,.5)); }
+
+    /* frosted pill nav */
+    .nav { position: fixed; z-index: 40; top: 18px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 40px); height: 56px; display: flex; align-items: center; gap: 30px; padding: 0 12px 0 20px; border: 1px solid rgba(40,40,52,.35); border-radius: 50px; background: rgba(255,255,255,.07); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: rgba(0,0,0,.15) 0 2px 6px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--cream); text-decoration: none; }
+    .brand svg { width: 20px; height: 20px; display: block; }
+    .brand-name { font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+    .brand-name small { display: block; margin-top: 1px; font: 400 9px var(--mono); letter-spacing: .22em; opacity: .72; }
+    .nav-center { display: flex; align-items: center; gap: 14px; font: 400 10px var(--mono); letter-spacing: .14em; opacity: .8; }
+    .nav-center i { width: 36px; height: 1px; background: currentColor; opacity: .4; }
+    .nav-btn { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; border-radius: 50px; border: 1px solid var(--blue); color: var(--blue); background: transparent; cursor: pointer; font-size: 13px; font-weight: 500; }
+    @media (hover:hover){.nav-btn:hover{ background: rgba(65,161,207,.09); }}
+    .nav-btn .cir { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; }
+    /* framed inside the app (StoryFrame): a way back to the workspace */
+    [hidden] { display: none !important; }
+    .nav-btn.ghost { border-color: rgba(246,241,228,.35); color: var(--cream); }
+    @media (hover:hover){.nav-btn.ghost:hover{ background: rgba(246,241,228,.09); }}
+
+    /* scene */
+    main { position: relative; z-index: 5; height: 100%; display: grid; place-items: center; perspective: 1200px; }
+    .gate-card { position: relative; width: min(320px, 74vw); aspect-ratio: 5 / 7; display: grid; grid-template-rows: auto 1fr auto; padding: 24px; border: 1px solid rgba(254,255,252,.55); border-radius: 24px; color: var(--cream); background: linear-gradient(168deg, rgba(238,164,78,.18) 0%, rgba(210,154,78,.10) 42%, rgba(47,84,128,.13) 78%, rgba(254,255,252,.03) 100%); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); cursor: pointer; overflow: hidden; transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) scale(var(--s, 1)); transition: transform .18s ease-out; will-change: transform; }
+    .gate-card::before { content: ""; position: absolute; inset: -1px; border-radius: 24px; box-shadow: inset 0 0 40px rgba(254,255,252,.08); pointer-events: none; }
+    .gate-glow { position: absolute; inset: 0; border-radius: 24px; box-shadow: 0 0 120px rgba(238,164,78,.32), 0 0 0 1px rgba(254,255,252,.22); pointer-events: none; }
+    /* 呼吸只动透明度：直接动 150px 的 box-shadow 每帧都要重画整圈模糊，手机上整页掉到 45fps */
+    .gate-glow::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: 0 0 150px rgba(238,164,78,.44), 0 0 0 1px rgba(254,255,252,.3); opacity: 0; animation: breathe 5s ease-in-out infinite alternate; }
+    @keyframes breathe { to { opacity: 1; } }
+    body.go .gate-glow::after { animation: none; opacity: 0; }
+    .gate-card > span { position: relative; z-index: 2; transition: opacity .35s ease; }
+    .gc-top { display: flex; justify-content: space-between; font: 400 9px var(--mono); letter-spacing: .22em; opacity: .85; }
+    .gc-mid { display: grid; place-content: center; text-align: center; gap: 8px; }
+    .gc-mid strong { font: 300 34px/1.2 var(--serif); letter-spacing: .02em; }
+    .gc-mid .en { font: 400 9px var(--mono); letter-spacing: .3em; opacity: .75; }
+    .gc-rows { display: grid; gap: 6px; margin-top: 18px; }
+    .gc-rows span { display: flex; justify-content: space-between; font: 400 10px var(--mono); opacity: .82; }
+    .gc-bottom { display: flex; align-items: center; justify-content: space-between; font: 400 9px var(--mono); letter-spacing: .2em; opacity: .9; }
+    .gc-bottom i { display: inline-block; animation: cue 2.2s ease-in-out infinite; }
+    @keyframes cue { 50% { transform: translateY(6px); opacity: .4; } }
+    /* 极端版卡面：竖排标题 + 一个主角数字，右上角出血的巨型刻度环、右下角出血的描边年份、镭射边、镭射箔、颗粒 */
+    @property --xa { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+    .gate-card::before { outline: 1px solid rgba(254,255,252,.14); outline-offset: -11px; }
+    .gate-card::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; pointer-events: none; background: linear-gradient(115deg, transparent 38%, rgba(255,250,236,.16) 50%, transparent 62%) 0 0 / 300% 100%; animation: sheen 9s ease-in-out infinite; }
+    @keyframes sheen { 0%, 15% { background-position: 100% 0; } 55%, 100% { background-position: 0 0; } }
+    .gc-x { position: absolute; pointer-events: none; }
+    .gc-ring { left: 86%; top: 12%; width: 128%; aspect-ratio: 1; translate: -50% -50%; border-radius: 50%; animation: spin 140s linear infinite;
+      background: radial-gradient(circle at 50% 9px, #eea44e 0 5px, transparent 6px), repeating-conic-gradient(rgba(246,241,228,.8) 0 .6deg, transparent .6deg 90deg), repeating-conic-gradient(rgba(246,241,228,.5) 0 .45deg, transparent .45deg 15deg), repeating-conic-gradient(rgba(246,241,228,.3) 0 .3deg, transparent .3deg 3deg);
+      -webkit-mask: radial-gradient(closest-side, transparent 0 62.6%, #000 62.8% 63.2%, transparent 63.4% 85.8%, #000 86% 88%, transparent 88.2% 91.8%, #000 92% 100%, transparent 100%);
+      mask: radial-gradient(closest-side, transparent 0 62.6%, #000 62.8% 63.2%, transparent 63.4% 85.8%, #000 86% 88%, transparent 88.2% 91.8%, #000 92% 100%, transparent 100%); }
+    @keyframes spin { to { rotate: 1turn; } }
+    .gc-year { right: -16px; bottom: -44px; font: italic 200 168px/1 var(--serif); letter-spacing: -.04em; color: transparent; -webkit-text-stroke: 1px rgba(246,241,228,.26); }
+    .gc-year::before { content: attr(data-year); }
+    .gc-holo { inset: 0; border-radius: inherit; mix-blend-mode: color-dodge; opacity: .3; background: linear-gradient(120deg, transparent 22%, #ff8a7a 33%, #ffd58a 41%, #8ff0ff 49%, #b79bff 57%, transparent 68%) 0 0 / 260% 260%; animation: holo 11s ease-in-out infinite alternate; }
+    @keyframes holo { to { background-position: 100% 100%; } }
+    .gc-grain { inset: 0; opacity: .2; mix-blend-mode: overlay; background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+    .gc-rim { inset: 0; border-radius: inherit; padding: 1.5px; background: conic-gradient(from var(--xa), #eea44e, #ff8a7a, #b79bff, #8ff0ff, #fbe3bb, #eea44e); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: rim 8s linear infinite; }
+    @keyframes rim { to { --xa: 1turn; } }
+    .gc-top { flex-wrap: wrap; row-gap: 7px; text-shadow: 0 0 8px rgba(7,10,18,.9); }
+    .gc-top::after { content: "PERSONAL SIGNALS · LOCAL ONLY"; flex-basis: 100%; text-align: left; font-size: 7px; letter-spacing: .26em; opacity: .55; }
+    .gc-mid { grid-template-columns: auto auto 1fr; align-items: end; justify-content: stretch; place-content: end stretch; column-gap: 12px; gap: 0 12px; text-align: left; padding-bottom: 18px; }
+    .gc-mid strong { grid-row: 1; writing-mode: vertical-rl; font-size: 50px; line-height: 1; letter-spacing: .1em; text-shadow: 0 0 .4em rgba(238,164,78,.55); }
+    .gc-mid .en { grid-row: 1; align-self: end; writing-mode: vertical-rl; font-size: 8px; letter-spacing: .4em; color: #eea44e; opacity: 1; }
+    .gc-rows { grid-row: 1; gap: 7px; margin: 0; min-width: 0; }
+    .gc-rows > span { align-items: baseline; gap: 8px; }
+    .gc-rows > span > span { flex: 1; align-items: baseline; gap: 6px; letter-spacing: .14em; font-size: 8px; }
+    .gc-rows > span > span::after { content: ""; flex: 1; border-bottom: 1px dotted rgba(246,241,228,.35); }
+    .gc-rows b { font: 300 15px var(--serif); font-variant-numeric: lining-nums tabular-nums; }
+    .gc-rows > span:first-child { display: grid; gap: 2px; margin-bottom: 8px; opacity: 1; }
+    .gc-rows > span:first-child > span { color: #eea44e; }
+    .gc-rows > span:first-child > span::after { display: none; }
+    .gc-rows > span:first-child b { font: 200 60px/1 var(--serif); letter-spacing: -.03em; color: #fbe3bb; text-shadow: 0 0 18px rgba(238,164,78,.75); }
+    .gc-rows::after { content: ""; height: 14px; margin-top: 10px; background: repeating-linear-gradient(90deg, rgba(246,241,228,.55) 0 2px, transparent 2px 5px, rgba(246,241,228,.55) 5px 6px, transparent 6px 9px, rgba(246,241,228,.55) 9px 12px, transparent 12px 14px, rgba(246,241,228,.55) 14px 15px, transparent 15px 19px, rgba(246,241,228,.55) 19px 20px, transparent 20px 23px); }
+    .gc-bottom { margin: 0 -2px; padding-top: 14px; border-top: 1px dashed rgba(254,255,252,.28); }
+    /* the whitening: inset light grows from the card's edges toward its centre */
+    .whitener { position: absolute; inset: 0; z-index: 1; border-radius: inherit; background: rgba(255,255,255,0); box-shadow: inset 0 0 0 0 rgba(255,255,255,0); pointer-events: none; }
+
+    .gate-headline { position: absolute; left: 8%; bottom: 9vh; max-width: 460px; transition: opacity .45s ease; }
+    .gate-headline .eyebrow { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; font: 400 10px var(--mono); letter-spacing: .3em; opacity: .85; }
+    .gate-headline .eyebrow i { width: 40px; height: 1px; background: var(--cream); opacity: .5; }
+    .gate-headline h1 { margin: 0; font: 300 clamp(30px, 3.4vw, 44px)/1.22 var(--serif); letter-spacing: -.015em; }
+    .gate-headline h1 em { font-style: italic; }
+    .gate-headline p { margin: 14px 0 0; font-size: 13px; line-height: 1.8; opacity: .8; }
+    .gate-fine { position: absolute; right: 8%; bottom: 9vh; margin: 0; max-width: 260px; text-align: right; font: 400 9px/1.9 var(--mono); letter-spacing: .08em; opacity: .66; transition: opacity .45s ease; }
+    #veil { position: fixed; inset: 0; z-index: 90; background: #fff; opacity: 0; pointer-events: none; }
+
+    /* ---- go: through the card ---- */
+    body.go .gate-card { transition: transform 1.4s cubic-bezier(.7,0,.2,1); border-color: #fff; }
+    body.go .gate-card > span { opacity: 0; }
+    body.go .whitener { background: #fff; box-shadow: inset 0 0 70px 190px #fff; transition: box-shadow 1.05s cubic-bezier(.55,0,.3,1) .05s, background .45s ease .8s; }
+    body.go .gate-glow { box-shadow: 0 0 120px rgba(255,255,255,.75), 0 0 0 1px #fff; transition: box-shadow .8s ease; }
+    body.go #sky { transform: scale(1.14); transition: transform 1.45s cubic-bezier(.6,0,.3,1); }
+    body.go .gate-headline, body.go .gate-fine, body.go .nav { opacity: 0; transition: opacity .45s ease; }
+    body.go #veil { opacity: 1; transition: opacity .32s ease 1.12s; }
+
+    @media (max-width: 880px) {
+      /* 手机上不做毛玻璃：底下的着色器每帧都在变，模糊要跟着每帧重算 */
+      .nav { top: 12px; height: 50px; gap: 12px; padding: 0 8px 0 16px; backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(16,20,32,.72); }
+      .nav-btn { white-space: nowrap; }
+      /* 手指拖到哪，探照灯和卡片就跟到哪（这一页本来就不滚动） */
+      main { touch-action: none; }
+      .nav-center { display: none; }
+      /* 竖屏：卡片占导航和标题之间剩下的那一格，屏幕矮了卡片跟着缩，不再压住标题 */
+      main { display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; row-gap: 18px; padding: 76px 7% 6svh; }
+      .gate-card { grid-row: 1; width: auto; height: min(100%, 448px, 103.6vw); }
+      .gate-headline { grid-row: 2; position: relative; left: auto; bottom: auto; justify-self: stretch; max-width: none; }
+      .gate-fine { display: none; }
+    }
+    @media (max-width: 880px) and (max-height: 720px) {
+      .gate-headline .eyebrow { display: none; }
+      .gate-headline h1 { font-size: 26px; }
+      .gate-headline p { margin-top: 10px; font-size: 12px; line-height: 1.7; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html:not(.motion-full) { scroll-behavior: auto !important; }
+      html:not(.motion-full) *, html:not(.motion-full) *::before, html:not(.motion-full) *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="sky" aria-hidden="true">
+    <canvas id="skyfx"></canvas>
+  </div>
+
+  <header class="nav">
+    <a href="story-entry.html" class="brand" aria-label="入口">
+      <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="9" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M1.5 15.5 H18.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M4 12.8 Q10 10.4 16 12.8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+      <span class="brand-name">内容年志<small>TRACE · ANNUAL</small></span>
+    </a>
+    <div class="nav-center"><span>演示快照</span><i></i><span>仅本地解释 · 不上传</span></div>
+    <button id="toWorkspace" class="nav-btn ghost" hidden onclick="toWorkspace()">工作台</button>
+    <button class="nav-btn" onclick="enter()">进入年志 <span class="cir">→</span></button>
+  </header>
+
+  <main>
+    <div class="gate-headline">
+      <p class="eyebrow"><i></i>TRACE · PERSONAL SIGNALS</p>
+      <h1>穿过这张卡，<br>进入<em>你的一年</em>。</h1>
+      <p>卡片的另一边是你的一年：一册用本地记录装订成的内容年志。翻着看，风景会跟着换色，数字始终有出处。</p>
+    </div>
+    <button class="gate-card" id="gateCard" aria-label="点按进入年志">
+      <i class="gate-glow" aria-hidden="true"></i>
+      <i class="gc-x gc-ring" aria-hidden="true"></i>
+      <i class="gc-x gc-year" data-year="2025" aria-hidden="true"></i>
+      <i class="gc-x gc-holo" aria-hidden="true"></i>
+      <i class="gc-x gc-grain" aria-hidden="true"></i>
+      <i class="gc-x gc-rim" aria-hidden="true"></i>
+      <i class="whitener" aria-hidden="true"></i>
+      <span class="gc-top"><span>TRACE</span><span>2025</span></span>
+      <span class="gc-mid">
+        <strong>内容年志</strong>
+        <span class="en">ANNUAL VOLUME</span>
+        <span class="gc-rows">
+          <span><span>WATCH</span><b>1,180</b></span>
+          <span><span>LIKED</span><b>214</b></span>
+          <span><span>FAVORITE</span><b>63</b></span>
+          <span><span>CHAT</span><b>1,040</b></span>
+        </span>
+      </span>
+      <span class="gc-bottom"><span>TAP TO ENTER</span><i>↓</i></span>
+    </button>
+    <p class="gate-fine">仅本地解释 · 不上传<br>ONE-TIME READ · NO CLOUD<br>演示快照 DEMO SNAPSHOT</p>
+  </main>
+  <div id="veil" aria-hidden="true"></div>
+
+  <!-- 贴图的 data URI 只为 file:// 打开时画布不被污染；http 下直接读 jpg，省下 1.2MB -->
+  <script>if (location.protocol === "file:") document.write('<script src="story-images/entry-textures.js"><\/script>');</script>
+  <script>
+    const motionFull = document.documentElement.classList.contains("motion-full");
+    const reduced = !motionFull && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const NEXT = `story-draft_副本.html?from=card${motionFull ? "&motion=full" : ""}`;
+
+    // the app opens this page with ?watch=&liked=&favorite=&chat=&year= (chat left out when there is none → —);
+    // without them the demo numbers stay, matching the story page's built-in demo data
+    const query = new URLSearchParams(location.search);
+    if (query.has("watch")) document.querySelectorAll(".gc-rows b").forEach((cell, i) => { const v = query.get(["watch", "liked", "favorite", "chat"][i]); cell.textContent = v !== null && v !== "" && Number.isFinite(+v) ? (+v).toLocaleString("zh-CN") : "—"; });
+    if (/^\d{4}$/.test(query.get("year") || "")) { document.querySelector(".gc-top span:last-child").textContent = query.get("year"); document.querySelector(".gc-year").dataset.year = query.get("year"); }
+    if (query.has("watch")) { document.querySelector(".nav-center span").textContent = "本地快照"; document.querySelector(".gate-fine").lastChild.textContent = "本地快照 LOCAL SNAPSHOT"; }
+
+    // clouds are painted into entry-night.jpg
+
+
+    /* ---------- searchlight: the night is the page; the light finds the other five hours ----------
+       adapted from React Bits "Halftone Reveal" (ogl shader): loupe + halftone dots + rim bend/chroma.
+       here the print layer is the sharp night painting and the loupe reveals entry-mix.jpg —
+       one smooth, deterministic blend of the five hour paintings (no random cells). */
+    (() => {
+      const canvas = document.getElementById("skyfx");
+      const gl = canvas.getContext("webgl2", { antialias: false, alpha: false, powerPreference: "high-performance" });
+      if (!gl || reduced) return;
+      const VERT = `#version 300 es
+      in vec2 position; out vec2 vUv;
+      void main(){ vUv = position * 0.5 + 0.5; gl_Position = vec4(position, 0.0, 1.0); }`;
+      const FRAG = `#version 300 es
+      precision highp float;
+      uniform sampler2D tNight; uniform sampler2D tMix;
+      uniform vec2 iResolution; uniform vec2 uImageSize; uniform vec2 uMouse;
+      uniform float uActivity; uniform float uRadius; uniform float uEdge; uniform float uDensity;
+      in vec2 vUv; out vec4 fragColor;
+      vec2 uAspect(){ return vec2(iResolution.x / max(iResolution.y, 1.0), 1.0); }
+      vec2 coverUv(vec2 uv){ float ia = uImageSize.x / max(uImageSize.y, 1.0); float pa = iResolution.x / max(iResolution.y, 1.0); vec2 s = pa > ia ? vec2(1.0, ia / pa) : vec2(pa / ia, 1.0); return clamp((uv - 0.5) * s + 0.5, 0.0, 1.0); }
+      mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
+      float coverage(vec2 st, float dens, float ang, float ink){ vec2 rp = rot(ang) * st * dens; vec2 f = fract(rp) - 0.5; float d = length(f); float r = sqrt(clamp(ink, 0.0, 1.0)) * 0.74; float w = length(fwidth(rp)) * 0.6 + 1e-4; return smoothstep(r + w, r - w, d); }
+      void main(){
+        vec2 aspect = uAspect(); vec2 st = vUv * aspect;
+        vec3 night = texture(tNight, coverUv(vUv)).rgb;
+        vec2 duv = (vUv - uMouse) * aspect; float dist = length(duv);
+        float radius = max(uRadius, 1e-4) * mix(0.45, 1.0, uActivity);
+        float px = 1.4 / max(iResolution.y, 1.0);
+        float band = max(px, radius * (1.0 - clamp(uEdge, 0.0, 1.0)) * 0.45);
+        float loupe = (1.0 - smoothstep(radius - band, radius + band, dist)) * uActivity;
+        float t = clamp(dist / radius, 0.0, 1.0); float bend = t * t * t * t;
+        vec2 dir = dist > 1e-5 ? duv / dist : vec2(0.0);
+        vec2 off = dir * bend * radius * 0.18 / aspect; vec2 ca = dir * bend * 0.004 / aspect;
+        vec3 hour = vec3(texture(tMix, coverUv(vUv - off - ca)).r, texture(tMix, coverUv(vUv - off)).g, texture(tMix, coverUv(vUv - off + ca)).b);
+        float cov = coverage(st, uDensity, radians(45.0), loupe);
+        float core = smoothstep(0.55, 0.95, loupe);
+        float reveal = max(cov * step(0.002, loupe), core);
+        fragColor = vec4(mix(night, hour * (1.0 + 0.10 * core), reveal), 1.0);
+      }`;
+      const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.warn(gl.getShaderInfoLog(s)); return null; } return s; };
+      const vs = sh(gl.VERTEX_SHADER, VERT), fs = sh(gl.FRAGMENT_SHADER, FRAG);
+      if (!vs || !fs) return;
+      const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn(gl.getProgramInfoLog(prog)); return; }
+      gl.useProgram(prog);
+      const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, "position"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      const U = (n) => gl.getUniformLocation(prog, n);
+
+      const REVEAL_ALL = /[?&]reveal=1/.test(location.search); // debug: show the whole hour patchwork under the night
+      gl.uniform1f(U("uRadius"), REVEAL_ALL ? 40.0 : 0.1575); gl.uniform1f(U("uEdge"), 0.66); gl.uniform1f(U("uDensity"), 96.0); // radius knob (0.42 → 0.105 → ×1.5 = 0.1575, in viewport-height units)
+      const PHONE = matchMedia("(max-width: 880px)").matches; // 手机上整屏着色器按 1.5 倍像素画：半调点看不出差别，GPU 少画四成
+      const PORTRAIT = !window.SKY_TEX && matchMedia("(max-aspect-ratio: 3/4)").matches; // 竖屏用裁好的竖版（-m），见 #sky 的同名媒体查询
+      gl.uniform2f(U("uImageSize"), PORTRAIT ? 1080 : 2560, 1440);
+
+      const files = ["entry-night", "entry-mix"]; // the mix is one deterministic blend of the five hours (see jimeng/story-images/PLAN.md)
+      const names = ["tNight", "tMix"];
+      let loaded = 0;
+      files.forEach((f, i) => {
+        const img = new Image();
+        img.src = (window.SKY_TEX && SKY_TEX[f]) || `story-images/${f}${PORTRAIT ? "-m" : ""}.jpg`; // data URI keeps file:// pages untainted
+        // decode() 在后台线程解码；onload 里直接上传的话，两张 2560×1440 要在主线程同步解一百多毫秒，正赶上入场淡入
+        // 必须先设 src 再 decode()：反过来 Chrome 直接报 EncodingError，光斑永远不亮
+        img.decode().then(() => {
+          try {
+            const tex = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // image rows are top-down, GL v axis is bottom-up
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.uniform1i(U(names[i]), i);
+            if (++loaded === files.length) { canvas.classList.add("ready"); loop(performance.now()); }
+          } catch (e) { console.warn("skyfx: texture blocked (open the page over http, not file://)", e); }
+        }, () => {});
+      });
+
+      const m = { x: 0.5, y: 0.5, sx: 0.5, sy: 0.55, target: 0, active: 0, idleAt: performance.now() };
+      const onMove = (e) => { const r = canvas.getBoundingClientRect(); m.x = (e.clientX - r.left) / r.width; m.y = 1 - (e.clientY - r.top) / r.height; m.target = 1; m.idleAt = performance.now(); };
+      addEventListener("pointermove", onMove, { passive: true });
+      addEventListener("pointerdown", onMove, { passive: true });
+      document.addEventListener("pointerleave", () => { m.target = 0; });
+      const resize = () => { const dpr = Math.min(devicePixelRatio || 1, PHONE ? 1.5 : 2); const r = canvas.getBoundingClientRect(); canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr); gl.viewport(0, 0, canvas.width, canvas.height); gl.uniform2f(U("iResolution"), canvas.width, canvas.height); };
+      addEventListener("resize", resize); resize();
+      let prev = performance.now(), started = false;
+      function loop(now) {
+        if (!started) { started = true; prev = now; }
+        requestAnimationFrame(loop);
+        const dt = Math.min(0.05, Math.max(0.001, (now - prev) / 1000)); prev = now;
+        // no pointer for a while (touch devices): the light wanders on its own
+        if (REVEAL_ALL) { m.target = 1; m.active = 1; m.x = 0.5; m.y = 0.5; m.sx = 0.5; m.sy = 0.5; }
+        else if (now - m.idleAt > 3500) { const k = now * 0.00012; m.x = 0.5 + 0.34 * Math.sin(k * 1.3); m.y = 0.55 + 0.22 * Math.sin(k * 0.9 + 1.7); m.target = 0.8; }
+        const a = 1 - Math.exp(-dt / 0.11); m.sx += (m.x - m.sx) * a; m.sy += (m.y - m.sy) * a; // follow: 0.37s → 0.11s, sticks to the cursor
+        const ba = 1 - Math.exp(-dt / 0.16); m.active += (m.target - m.active) * ba;
+        gl.uniform2f(U("uMouse"), m.sx, m.sy); gl.uniform1f(U("uActivity"), m.active); gl.uniform1f(U("uTime"), now / 1000);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+    })();
+
+    // tilt
+    const card = document.getElementById("gateCard");
+    if (!reduced) {
+      addEventListener("pointermove", (e) => {
+        if (document.body.classList.contains("go") || e.pointerType === "touch" && !e.buttons) return;
+        const r = card.getBoundingClientRect();
+        card.style.setProperty("--ry", `${(((e.clientX - r.left - r.width / 2) / r.width) * 10).toFixed(2)}deg`);
+        card.style.setProperty("--rx", `${((-(e.clientY - r.top - r.height / 2) / r.height) * 8).toFixed(2)}deg`);
+      }, { passive: true });
+      // 手机松手后卡片回正；鼠标离开窗口也一样
+      const level = () => { if (!document.body.classList.contains("go")) { card.style.setProperty("--rx", "0deg"); card.style.setProperty("--ry", "0deg"); } };
+      addEventListener("pointerup", (e) => { if (e.pointerType === "touch") level(); });
+      addEventListener("pointercancel", level);
+    }
+
+    // through the card: whiten inward, scale until the card is the page, then hand off
+    function enter() {
+      if (document.body.classList.contains("go")) return;
+      const go = () => { location.href = encodeURI(NEXT); };
+      if (reduced) return go();
+      const r = card.getBoundingClientRect();
+      const s = Math.max(innerWidth / r.width, innerHeight / r.height) * 1.3;
+      card.style.setProperty("--rx", "0deg");
+      card.style.setProperty("--ry", "0deg");
+      card.style.setProperty("--s", s.toFixed(2));
+      document.body.classList.add("go");
+      setTimeout(go, 1520);
+    }
+    card.addEventListener("click", enter);
+    addEventListener("keydown", (e) => { if (e.key === "Enter" && document.activeElement !== card) enter(); });
+
+    // framed inside the app (StoryFrame): Escape / 工作台 hand back to the living report
+    const framed = window.parent !== window;
+    function toWorkspace() {
+      if (framed) parent.postMessage({ type: "trace:open-dashboard" }, location.origin);
+      else location.href = "/";
+    }
+    if (framed) {
+      document.getElementById("toWorkspace").hidden = false;
+      addEventListener("keydown", (e) => { if (e.key === "Escape") toWorkspace(); });
+    }
+  </script>
+</body>
+</html>
