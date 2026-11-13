@@ -289,6 +289,8 @@ function parseDouyinUrl(value: unknown): string | null {
 function parseImageUrl(value: unknown): string | null {
   const text = cleanRecordString(value, MAX_RECORD_URL);
   if (!text) return null;
+  // 在线体验版的封面和头像是演示数据现画的 SVG（src/demo），只在那个构建里放行
+  if (process.env.EXPO_PUBLIC_DEMO === "1" && text.startsWith("data:image/svg+xml,")) return text;
   try {
     const candidate = new URL(text);
     const host = candidate.hostname.toLocaleLowerCase();
