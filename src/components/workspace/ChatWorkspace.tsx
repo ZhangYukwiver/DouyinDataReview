@@ -1788,6 +1788,8 @@ const CHAT_AVATAR_HOST_SUFFIXES = [
 export function safeChatAvatarUrl(value: string | null | undefined): string | null {
   const text = cleanText(value);
   if (!text) return null;
+  // 在线体验版的头像是演示数据现画的 SVG（src/demo），只在那个构建里放行
+  if (process.env.EXPO_PUBLIC_DEMO === "1" && text.startsWith("data:image/svg+xml,")) return text;
   try {
     const url = new URL(text);
     const host = url.hostname.toLowerCase();
