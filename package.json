@@ -23,6 +23,7 @@
     "check:story-frames": "node scripts/story-visual-regression.mjs",
     "prebuild:web": "npm run build:icons && npm run sync:story",
     "build:web": "expo export --platform web",
+    "build:demo": "EXPO_PUBLIC_DEMO=1 EXPO_PUBLIC_COLLECTOR_BASE_URL=http://demo.local expo export --platform web --output-dir docs/app --clear",
     "desktop": "npm run build:web && electron desktop/main.mjs",
     "build:media-tools": "bash scripts/build-media-tools.sh",
     "stage:media-tools": "node scripts/stage-media-tools.mjs",

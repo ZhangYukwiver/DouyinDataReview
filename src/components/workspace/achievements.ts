@@ -53,7 +53,7 @@ export const ACHIEVEMENTS: Achievement[] = [
     condition: condition.replace("{n}", thresholds[index]!.toLocaleString("en-US")), line,
   }))),
   ...SPECIALS.map(([id, name, condition, line]) => ({ id, family: id, name, category: "初次成就", group: "special" as const, tier: 0, threshold: 1, condition, line })),
-].map((item) => ({ ...item, medal: `/achievements/medals/${item.id}.svg`, card: `/achievements/cards/${item.id}.svg` }));
+].map((item) => ({ ...item, medal: `${process.env.EXPO_BASE_URL ?? ""}/achievements/medals/${item.id}.svg`, card: `${process.env.EXPO_BASE_URL ?? ""}/achievements/cards/${item.id}.svg` }));
 
 const TOP = Object.fromEntries(FAMILIES.map(([family, , , , thresholds]) => [family, thresholds[2]]));
 

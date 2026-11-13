@@ -10,6 +10,10 @@ import {
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import { StatusBar } from "expo-status-bar";
+import { installDemoCollector } from "./src/demo/demoCollector";
+
+// 在线体验版（npm run build:demo）：用合成数据冒充本机采集器
+if (process.env.EXPO_PUBLIC_DEMO === "1" && Platform.OS === "web") installDemoCollector();
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
   ContentWorkspace,
@@ -642,6 +646,8 @@ function AppContent() {
   // 桌面版一打开就在后台连上自带的采集器：首屏要靠它出扫码登录的二维码，不用再点「连接采集器」
   useEffect(() => {
     if (isDesktopApp()) void connectCollector({ automaticPairing: true, revealSources: false });
+    // 在线体验版直接连上演示数据、进工作台
+    else if (process.env.EXPO_PUBLIC_DEMO === "1") void connectCollector({ automaticPairing: true, revealSources: false }).then(openDashboard);
   }, []);
   useEffect(() => subscribeDesktopBackgroundSync((manual) => autoSyncTriggerRef.current({ manual, timer: !manual })), []);
   // 从托盘叫回窗口不自动读；开机后台启动时窗口一直不出来，要先连上采集器读一次

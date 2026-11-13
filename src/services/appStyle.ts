@@ -192,15 +192,15 @@ export function buildStoryEntryUrl(
   const params = new URLSearchParams({ watch: String(counts.watch), liked: String(counts.liked), favorite: String(counts.favorite), year: String(year) });
   if (counts.chat !== null) params.set("chat", String(counts.chat));
   if (options.motion === "full") params.set("motion", "full");
-  return `/story/story-entry.html?${params.toString()}`;
+  return `${process.env.EXPO_BASE_URL ?? ""}/story/story-entry.html?${params.toString()}`;
 }
 
 // 海报风格没有入口卡：故事页自己就是封面，数字全从 localStorage 的快照里读。
 export function buildPosterStoryUrl(options: StoryEntryOptions = {}): string {
-  return `/story/story-poster.html${options.motion === "full" ? "?motion=full" : ""}`;
+  return `${process.env.EXPO_BASE_URL ?? ""}/story/story-poster.html${options.motion === "full" ? "?motion=full" : ""}`;
 }
 
 // 档案馆（web）同样是 /story 下的静态页，一页一屏、点击翻页；native 仍走应用内的分页报告。
 export function buildArchiveStoryUrl(options: StoryEntryOptions = {}): string {
-  return `/story/story-archive.html${options.motion === "full" ? "?motion=full" : ""}`;
+  return `${process.env.EXPO_BASE_URL ?? ""}/story/story-archive.html${options.motion === "full" ? "?motion=full" : ""}`;
 }
