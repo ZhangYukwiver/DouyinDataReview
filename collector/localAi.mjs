@@ -6,8 +6,10 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { systemProxy } from "./systemProxy.mjs";
+import { findWorkbuddyCli, WORKBUDDY_REQUIRED_FLAGS, workbuddyEnv } from "./workbuddy.mjs";
+import { converseWorkbuddy, probeWorkbuddy, WorkbuddyError } from "./workbuddyIpc.mjs";
 
-// 本机的 Codex CLI / Claude Code 当 AI 用：走用户自己登录的订阅，不用填接口和 Key。
+// 本机的 Codex CLI / Claude Code / WorkBuddy 当 AI 用：走用户自己登录的账号，不用填接口和 Key。
 // 每次调用起一个不落盘的 CLI 进程，自带的命令行、读写文件、网页、插件全关掉，也不加载用户的 CLAUDE.md、hooks、插件、MCP 和 config.toml；
 // 环境和用户在终端里用 CLI 时一样（登录 shell 里的变量，加上 Claude Code settings.json 里的 env），走中转的配置照样能用。
 // AI 助手的工具由调用方开一个本机 MCP 端点交给它（collector/assistant/mcp.mjs）。
@@ -16,6 +18,7 @@ export const LOCAL_RUNTIMES = {
   // 0.161 起才能把 MCP 工具直接摊给模型（direct_only_tool_namespaces），更早的版本工具藏在 JS 沙箱里
   codex: { label: "Codex", minVersion: "0.161.0" },
   claude: { label: "Claude Code", minVersion: "2.1.0" },
+  workbuddy: { label: "WorkBuddy", minVersion: "0.0.0" },
 };
 
 export const isLocalRuntime = (value) => typeof value === "string" && Object.hasOwn(LOCAL_RUNTIMES, value);
@@ -59,8 +62,8 @@ const CODEX_AUTH_STORES = new Set(["file", "keyring", "auto", "ephemeral"]);
 // 跑在 Claude Code / Codex 会话里开发时继承下来的宿主变量：带过去会让被调起的 CLI 以为自己嵌在别人里面。
 // 只在读不到登录 shell、退回本进程环境时才去掉（Windows 一直是这样）；登录 shell 里的都是用户自己设的，原样留着。
 // 用户自己会设的几个同前缀变量（订阅令牌、走 Bedrock/Vertex、公司代理的根证书）回退时也留着
-const HOST_VARS = /^(CLAUDECODE|CLAUDE_CODE_.*|CLAUDE_AGENT_SDK_.*|CODEX_.*|ELECTRON_RUN_AS_NODE|NODE_OPTIONS|MCP_.*)$/u;
-const USER_VARS = /^(CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)|CLAUDE_CODE_SKIP_\w+_AUTH|CLAUDE_CODE_CLIENT_\w+|CLAUDE_CODE_GIT_BASH_PATH|CODEX_HOME|CODEX_CA_CERTIFICATE)$/u;
+const HOST_VARS = /^(CLAUDECODE|CLAUDE_CODE_.*|CLAUDE_AGENT_SDK_.*|CODEX_.*|CODEBUDDY_.*|WORKBUDDY_.*|ACC_PRODUCT_CONFIG.*|CLIENT_INFO_.*|ELECTRON_RUN_AS_NODE|NODE_OPTIONS|MCP_.*)$/u;
+const USER_VARS = /^(CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)|CLAUDE_CODE_SKIP_\w+_AUTH|CLAUDE_CODE_CLIENT_\w+|CLAUDE_CODE_GIT_BASH_PATH|CODEX_HOME|CODEX_CA_CERTIFICATE|CODEBUDDY_API_KEY|CODEBUDDY_CODE_GIT_BASH_PATH|WORKBUDDY_CONFIG_DIR)$/u;
 
 const NATIVE_TRIPLES = {
   "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin",
@@ -215,7 +218,8 @@ const NPM_TARGETS = {
 };
 
 /** 找 CLI：PATH 里和常见安装位置挨个看。Windows 永远不起 .cmd（Node 起 .cmd 要过 cmd.exe，参数一转义就乱）。 */
-export async function findCli(id, { platform = process.platform, arch = process.arch, env = process.env, home = os.homedir() } = {}) {
+export async function findCli(id, { platform = process.platform, arch = process.arch, env = process.env, home = os.homedir(), run = runFile } = {}) {
+  if (id === "workbuddy") return findWorkbuddyCli({ platform, env, home, run });
   for (const dir of await searchDirs({ platform, env, home })) {
     if (platform !== "win32") {
       const file = path.join(dir, id);
@@ -274,6 +278,7 @@ export function cliEnv(id, base, { proxy = null, extra = {} } = {}) {
       CLAUDE_CODE_MAX_RETRIES: "2",
     });
   }
+  if (id === "workbuddy") Object.assign(env, workbuddyEnv());
   return { ...env, ...extra };
 }
 
@@ -337,8 +342,9 @@ export function codexArgs({ workDir, systemFile, mcpUrl, model, effort, features
 }
 
 /** 一行一个事件的解析：Claude 看 is_error 和 api_error_status，别看 subtype（接口出错时 subtype 照样是 success）。 */
-function claudeReader({ onText, onDelta, agent }) {
+function claudeReader({ onText, onDelta, agent, workbuddy = false }) {
   let current = "";
+  let lastText = "";
   const state = { done: false, failure: null, apiError: null };
   return {
     state,
@@ -359,7 +365,14 @@ function claudeReader({ onText, onDelta, agent }) {
         }
         for (const block of event.message?.content ?? []) {
           if (block?.type === "text" && block.text) {
+            // WorkBuddy 的未登录消息没有 synthetic/error 标记，而且会以退出码 0 收尾。
+            if (workbuddy && /^(?:Authentication required\b|API key verification|Please use \/login)/iu.test(block.text.trim())) {
+              state.failure = { kind: "api", status: 401, text: block.text };
+              current = "";
+              continue;
+            }
             current = "";
+            lastText = block.text;
             onText(block.text);
           }
         }
@@ -367,6 +380,7 @@ function claudeReader({ onText, onDelta, agent }) {
         state.done = true;
         if (event.subtype === "error_max_turns") state.limit = true;
         else if (event.is_error) state.failure = { kind: "api", status: event.api_error_status ?? null, error: state.apiError, text: String(event.result ?? (event.errors ?? []).join(" ")) };
+        else if (workbuddy && !state.failure && typeof event.result === "string" && event.result && event.result !== lastText) onText(event.result);
       }
     },
   };
@@ -406,7 +420,8 @@ export function cliFailure(id, { failure, code = null, stderr = "", model = "" }
   if (failure?.kind === "mcp" || /required MCP servers? failed/iu.test(stderr)) {
     return new LocalAiError("local_tools_unavailable", `${label} 没连上应用的工具，这一轮什么都没做。再试一次，还不行就重启应用。`);
   }
-  if (status === 401 || /authentication_failed|unauthori[sz]ed|not logged in|log ?in again|sign in again|refresh token|expired/iu.test(text)) {
+  if (status === 401 || /authentication_failed|authentication required|API key verification|unauthori[sz]ed|not logged in|log ?in again|sign in again|refresh token|expired/iu.test(text)) {
+    if (id === "workbuddy") return new LocalAiError("local_login", "WorkBuddy 的登录暂时不可用。请打开 WorkBuddy 确认已登录；如果已经登录，退出并重新打开 WorkBuddy 后再试。");
     return new LocalAiError("local_login", `${label} 没登录或者登录过期了。先在终端里运行 ${login} 登录一次，再试。`);
   }
   if (status === 429 || /rate_limit|usage limit|quota|too many requests/iu.test(text)) {
@@ -497,7 +512,7 @@ export function createLocalAi({
   const envFor = async (id, spec, extra) => {
     const base = await baseEnv(false);
     const settings = id === "claude" ? (await claudeUserSettings(base, home)).env : {};
-    return cliEnv(id, { ...base, ...settings }, { proxy: await proxy(), extra: { ...spec.env, ...extra } });
+    return cliEnv(id, { ...base, ...settings }, { proxy: id === "workbuddy" ? null : await proxy(), extra: { ...spec.env, ...extra } });
   };
 
   const check = (spec, args, env) => run(spec.command, [...spec.prefix, ...args], { env, cwd: home });
@@ -506,7 +521,7 @@ export function createLocalAi({
     const { label, minVersion } = LOCAL_RUNTIMES[id];
     const spec = await resolve(id, fresh);
     const base = { id, label, version: null, path: spec?.path ?? null };
-    if (!spec) return { ...base, state: "missing", message: `这台电脑上没找到 ${label}。装好并在终端里登录一次后，点「重新检测」。` };
+    if (!spec) return { ...base, state: "missing", message: id === "workbuddy" ? "这台电脑上没找到 WorkBuddy。请安装 WorkBuddy 桌面版并登录，再点「重新检测」。" : `这台电脑上没找到 ${label}。装好并在终端里登录一次后，点「重新检测」。` };
     const env = await envFor(id, spec, {});
     const versionRun = await check(spec, ["--version"], env);
     const version = versionNumber(versionRun.stdout);
@@ -515,6 +530,22 @@ export function createLocalAi({
       return { ...base, state: "broken", message: `找到了 ${label}，但它启动不了${reason ? `（${reason}）` : ""}。重新装一遍再试。` };
     }
     const shown = version.join(".");
+    if (id === "workbuddy") {
+      if (spec.workbuddy) {
+        try {
+          await probeWorkbuddy(spec.workbuddy);
+          return { ...base, version: shown, state: "ready", message: "已经找到并连上 WorkBuddy 桌面端，可以直接使用。" };
+        } catch (error) {
+          const states = { local_not_running: "not_running", local_login: "logged_out", local_unsupported: "unsupported" };
+          return { ...base, version: shown, state: states[error.code] || "broken", message: error instanceof WorkbuddyError ? error.message : "WorkBuddy 暂时没连上，请打开 WorkBuddy 后再试。" };
+        }
+      }
+      const help = await check(spec, ["--help"], env);
+      if (help.code !== 0 || !WORKBUDDY_REQUIRED_FLAGS.every((flag) => help.stdout.includes(flag)))
+        return { ...base, version: shown, state: "unsupported", message: "这台电脑上的 WorkBuddy 暂不支持应用调用。请更新 WorkBuddy 后再点「重新检测」。" };
+      // WorkBuddy 没有无请求的登录状态命令；安装检测不能声称已验证账号。
+      return { ...base, version: shown, state: "ready", message: "已经找到 WorkBuddy。请确认已在 WorkBuddy 登录；发送消息时会检查登录是否有效。" };
+    }
     if (older(version, versionNumber(minVersion))) {
       return { ...base, version: shown, state: "unsupported", message: `这台电脑上的 ${label} 是 ${shown}，太旧了，先更新到 ${minVersion} 以上。` };
     }
@@ -649,15 +680,25 @@ export function createLocalAi({
    */
   const converse = async (id, { model = "", systemPrompt, prompt, imagePaths = [], outputSchema, mcp, signal, onText = () => undefined, onDelta = () => undefined }) => {
     const { found, spec, model: chosen, authStore, apiKeyHelper } = await setup(id, model, signal);
+    if (id === "workbuddy" && spec.workbuddy) {
+      try {
+        return await converseWorkbuddy({ ...spec.workbuddy, model: chosen, systemPrompt, prompt, mcp,
+          signal: AbortSignal.any([signal, closed.signal].filter(Boolean)), onText, onDelta });
+      } catch (error) {
+        if (error instanceof WorkbuddyError) throw new LocalAiError(error.code, error.message, error.status);
+        if (error.code === "provider_error") throw cliFailure(id, { failure: { kind: "api", status: error.httpStatus, text: error.message }, model: chosen });
+        throw error;
+      }
+    }
     return withRunDir(async (dir) => {
       const systemFile = path.join(dir, "system.md");
       await writePrivate(systemFile, systemPrompt);
-      if (id === "claude") {
+      if (id === "claude" || id === "workbuddy") {
         const mcpFile = mcp ? path.join(dir, "mcp.json") : "";
         if (mcp) await writePrivate(mcpFile, JSON.stringify({ mcpServers: { dy2: { type: "http", url: mcp.url, headers: { Authorization: `Bearer ${mcp.secret}` }, timeout: TOOL_TIMEOUT_SECONDS * 1000 } } }));
         const input = `${JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: prompt }] }, parent_tool_use_id: null, session_id: "" })}\n`;
         const args = claudeArgs({ systemFile, mcpFile, model: chosen, settingsFile: await helperFile(dir, apiKeyHelper) });
-        return launch(id, { spec, args, env: await envFor(id, spec, {}), input, reader: claudeReader({ onText, onDelta, agent: Boolean(mcp) }), signal, model: chosen });
+        return launch(id, { spec, args, env: await envFor(id, spec, {}), input, reader: claudeReader({ onText, onDelta, agent: Boolean(mcp), workbuddy: id === "workbuddy" }), signal, model: chosen });
       }
       const schemaFile = outputSchema && path.join(dir, "output-schema.json");
       if (schemaFile) await writePrivate(schemaFile, JSON.stringify(outputSchema));

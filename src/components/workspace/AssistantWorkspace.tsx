@@ -6,7 +6,7 @@ import {
   type AssistantAction, type AssistantConfirm, type AssistantView,
 } from "../../services/assistant";
 import type { ExploreConnection } from "../../services/explorer";
-import { runtimeProblem } from "./AiRuntimeField";
+import { RUNTIME_LABELS, runtimeProblem } from "./AiRuntimeField";
 import { PlaybackContext } from "./PlaybackContext";
 import { AssistantVideoNotes } from "./AssistantVideoNotes";
 import type { PersonalRecordCollection } from "../../domain/personalRecords";
@@ -95,7 +95,7 @@ export function AssistantWorkspace({ connection, view, videoLibrary, onOpenSetti
     <View style={[styles.head, panel && styles.panelHead, panel && grab]} testID={panel ? "assistant-panel-head" : undefined}>
       <View style={{ flex: 1 }}>
         {panel ? <Text style={styles.panelTitle}>AI 助手</Text> : null}
-        <Text numberOfLines={1} style={kit.muted}>{ready ? `用的是 ${isLocalAiRuntime(config.runtime) ? (config.runtime === "codex" ? "本机 Codex" : "本机 Claude Code") : config.model}` : "还没配模型"}</Text>
+        <Text numberOfLines={1} style={kit.muted}>{ready ? `用的是 ${isLocalAiRuntime(config.runtime) ? `本机 ${RUNTIME_LABELS[config.runtime]}` : config.model}` : "还没配模型"}</Text>
       </View>
       {web && !panel && videoLibrary && <SmallButton label="视频解析" onPress={() => setShowVideoNotes(true)}>
         <Sparkles color={color.textSecondary} size={14} />

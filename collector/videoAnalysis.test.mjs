@@ -44,6 +44,33 @@ const frameAnswer = (init, scene, screenText = "") => answer({ frames: frameTime
 const articleAnswer = source => ({ title: "如何验证想法", overview: "用实验找出问题。", summary: "根据证据做取舍。",
   chapters: [{ source, title: "先做实验", text: "### 验证方法\n\n先用真实样本检查假设，再决定是否继续。" }] });
 
+it("uses WorkBuddy for voice-based study notes without an API key", async () => {
+  const { service } = await setup();
+  const converse = vi.fn(async (runtime, { onText }) => {
+    expect(runtime).toBe("workbuddy");
+    onText("正在整理素材。");
+    onText(JSON.stringify(articleAnswer(0)));
+  });
+  service.localAi = { converse };
+  const fetch = vi.fn(() => { throw new Error("must use the local runtime"); });
+  vi.stubGlobal("fetch", fetch);
+  const { job, results } = await run(service, input("notes", { config: { runtime: "workbuddy", model: "" }, withFrames: false }));
+  expect(job.status).toBe("completed");
+  expect(results.find(row => row.kind === "notes").article.title).toBe("如何验证想法");
+  expect(converse).toHaveBeenCalledOnce();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("explains WorkBuddy's text-only limitation for keyframes without making an API request", async () => {
+  const { service, deps } = await setup();
+  const fetch = vi.fn(() => { throw new Error("must not use an API"); });
+  vi.stubGlobal("fetch", fetch);
+  const { job } = await run(service, input("script", { config: { runtime: "workbuddy", model: "" } }));
+  expect(job).toMatchObject({ status: "failed", errorCode: "vision_unsupported", message: expect.stringContaining("WorkBuddy") });
+  expect(deps.media.extractFrames).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 it("writes one article across long-video batches and corrects an invalid chapter citation", async () => {
   const evidence = [
     { startMs: 0, endMs: 500, text: "甲".repeat(32000) },

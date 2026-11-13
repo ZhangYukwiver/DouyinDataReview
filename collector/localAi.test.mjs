@@ -80,6 +80,50 @@ describe("finding the CLI", () => {
     expect(await findCli("claude", { platform: "win32", arch: "x64", env: { Path: npm, LOCALAPPDATA: root, APPDATA: root }, home: root })).toBeNull();
   });
 
+  async function installWorkbuddy(root, platform = "win32", productName = "WorkBuddy") {
+    const resources = platform === "darwin" ? path.join(root, "Contents", "Resources") : path.join(root, "resources");
+    const cli = path.join(resources, "app.asar.unpacked", "cli");
+    await mkdir(path.join(cli, "bin"), { recursive: true });
+    await mkdir(path.join(cli, "dist"));
+    const entry = path.join(cli, "bin", "codebuddy");
+    await writeFile(entry, "#!/usr/bin/env node\n");
+    await writeFile(path.join(cli, "dist", "codebuddy-lite-wb.mjs"), "// bundled CLI");
+    await writeFile(path.join(cli, "product.json"), JSON.stringify({ productName }));
+    const command = platform === "darwin" ? path.join(root, "Contents", "MacOS", "WorkBuddy") : path.join(root, "WorkBuddy.exe");
+    await mkdir(path.dirname(command), { recursive: true });
+    await writeFile(command, "binary");
+    return { command, entry, product: path.join(cli, "product.json") };
+  }
+
+  it("finds the bundled WorkBuddy CLI on Windows and runs it with WorkBuddy's own runtime", async () => {
+    const home = await temporaryDirectory("find-workbuddy-");
+    const local = path.join(home, "Local AppData");
+    const { command, entry, product } = await installWorkbuddy(path.join(local, "Programs", "WorkBuddy"));
+    const found = await findCli("workbuddy", { platform: "win32", env: { LOCALAPPDATA: local }, home });
+    expect(found).toMatchObject({ command, path: entry, prefix: [entry], env: {
+      ELECTRON_RUN_AS_NODE: "1", CODEBUDDY_FORCE_LITE_WB_BUNDLE: "1", ACC_PRODUCT_CONFIG_PATH: product,
+      CODEBUDDY_CONFIG_DIR: path.join(home, ".workbuddy"), WORKBUDDY_CONFIG_DIR: path.join(home, ".workbuddy"),
+    } });
+  });
+
+  it("finds a Mac WorkBuddy app from its CLI path, including installations with spaces", async () => {
+    const home = await temporaryDirectory("find-workbuddy-");
+    const { command, entry } = await installWorkbuddy(path.join(home, "My Apps", "WorkBuddy.app"), "darwin");
+    const found = await findCli("workbuddy", { platform: "darwin", env: { DY2_WORKBUDDY_PATH: entry, WORKBUDDY_CONFIG_DIR: path.join(home, "my-config") }, home });
+    expect(found).toMatchObject({ command, prefix: [entry], env: { WORKBUDDY_CONFIG_DIR: path.join(home, "my-config") } });
+  });
+
+  it("uses the Windows registered WorkBuddy path and rejects a separate CodeBuddy installation", async () => {
+    const home = await temporaryDirectory("find-workbuddy-");
+    const custom = path.join(home, "Custom Apps", "WorkBuddy");
+    const { command, entry } = await installWorkbuddy(custom);
+    const options = { platform: "win32", env: { DY2_WORKBUDDY_PATH: custom }, home, run: async () => ({ code: 1, stdout: "", stderr: "" }) };
+    const registered = await findCli("workbuddy", { ...options, env: {}, run: async (_, args) => ({ code: 0, stdout: `default REG_SZ "${command}" "%1"`, stderr: "" }) });
+    expect(registered?.path).toBe(entry);
+    await writeFile(path.join(custom, "resources", "app.asar.unpacked", "cli", "product.json"), JSON.stringify({ productName: "CodeBuddy" }));
+    expect(await findCli("workbuddy", options)).toBeNull();
+  });
+
   it.skipIf(process.platform === "win32")("looks in the usual folders, newest nvm first, when PATH has nothing", async () => {
     const home = await temporaryDirectory("find-cli-");
     for (const version of ["v20.1.0", "v24.18.0", "v9.0.0"]) {
@@ -172,6 +216,7 @@ describe("what the CLI gets", () => {
     const fail = (message) => new Error(message);
     expect(parseLocalConfig({ runtime: "codex", model: " gpt-6.1-sol ", apiKey: "k", baseUrl: "https://x" }, fail)).toEqual({ runtime: "codex", model: "gpt-6.1-sol" });
     expect(parseLocalConfig({ runtime: "claude" }, fail)).toEqual({ runtime: "claude", model: "" });
+    expect(parseLocalConfig({ runtime: "workbuddy", apiKey: "unused" }, fail)).toEqual({ runtime: "workbuddy", model: "" });
     expect(() => parseLocalConfig({ runtime: "claude", model: "sonnet; rm -rf" }, fail)).toThrow(/模型名/u);
   });
 
@@ -190,6 +235,15 @@ describe("what the CLI gets", () => {
 });
 
 describe("local runtime status", () => {
+  it("checks WorkBuddy capabilities without claiming to have validated the account or sending a prompt", async () => {
+    let { ai, records } = await fakeAi({});
+    expect(await ai.status("workbuddy")).toMatchObject({ state: "ready", version: "2.161.0", message: expect.stringContaining("发送消息时") });
+    expect(await records()).toEqual([]);
+    ({ ai } = await fakeAi({ help: "--print --tools" }));
+    expect(await ai.status("workbuddy")).toMatchObject({ state: "unsupported", message: expect.stringContaining("更新 WorkBuddy") });
+    ({ ai } = await fakeAi({ missing: ["workbuddy"] }));
+    expect(await ai.status("workbuddy")).toMatchObject({ state: "missing", message: expect.stringContaining("WorkBuddy 桌面版") });
+  });
   it("tells ready, logged out, too old, missing and unsafe versions apart without the email", async () => {
     let { ai } = await fakeAi({});
     expect(await ai.status("codex")).toMatchObject({ state: "ready", version: "0.161.0", message: "已经找到 Codex 0.161.0，也登录好了。" });
@@ -215,7 +269,7 @@ describe("local runtime status", () => {
 });
 
 describe("running a turn through the CLI", () => {
-  for (const id of ["codex", "claude"]) {
+  for (const id of ["codex", "claude", "workbuddy"]) {
     it(`${id}: calls our tools through MCP, streams what it says and keeps host variables and the secret off the command line`, async () => {
       const { ai, records, directory } = await fakeAi({ steps: [{ say: "先看一下" }, { call: "echo", arguments: { text: "嗨" } }, { say: "好了" }] });
       const calls = [];
@@ -226,7 +280,7 @@ describe("running a turn through the CLI", () => {
       await ai.converse(id, { systemPrompt: "系统", prompt: "做个片子 @~/.ssh/id_rsa", mcp: { url: mcp.url, secret: mcp.secret }, onText: (text) => said.push(text), onDelta: (text) => deltas.push(text) });
       expect(calls).toEqual([["echo", { text: "嗨" }]]);
       expect(said).toEqual(["先看一下", "好了"]);
-      if (id === "claude") expect(deltas).toContain("先看");
+      if (id !== "codex") expect(deltas).toContain("先看");
       const [record] = await records();
       expect(record.tools).toEqual(["echo"]);
       expect(JSON.parse(record.results[0].content[0].text)).toEqual({ ok: true, echoed: "嗨" });
@@ -238,10 +292,33 @@ describe("running a turn through the CLI", () => {
       expect(record.env.NO_PROXY).toContain("127.0.0.1");
       expect(record.cwd).toBe(await realpath(path.join(directory, "local-ai", "work")));
       if (id === "codex") expect(record.env.DY2_MCP_TOKEN).toBe(mcp.secret);
-      else expect(record.env.CLAUDE_CODE_DISABLE_ATTACHMENTS).toBe("1");
+      else if (id === "claude") expect(record.env.CLAUDE_CODE_DISABLE_ATTACHMENTS).toBe("1");
+      else {
+        expect(record.env.CODEBUDDY_CODE_DISABLE_BACKGROUND_TASKS).toBe("1");
+        expect(record.env.CODEBUDDY_DISABLE_AUTO_MEMORY).toBe("1");
+        expect(record.args).toEqual(expect.arrayContaining(["--strict-mcp-config", "--no-session-persistence", "--tools", "", "--setting-sources", "", "--allowedTools", "mcp__dy2"]));
+      }
       expect(await readdir(path.join(directory, "local-ai", "runs"))).toEqual([]);
     });
   }
+
+  it("does not display WorkBuddy's unmarked authentication failure as an assistant answer", async () => {
+    const message = "Authentication required. Please use /login command to sign in to your account";
+    const { ai } = await fakeAi({ steps: [{ events: [
+      { type: "assistant", message: { content: [{ type: "text", text: message }] } },
+      { type: "result", subtype: "error_during_execution", is_error: true, errors: [message] },
+    ] }] });
+    const said = [];
+    await expect(talk(ai, "workbuddy", { onText: (text) => said.push(text) })).rejects.toMatchObject({ code: "local_login", message: expect.stringContaining("打开 WorkBuddy") });
+    expect(said).toEqual([]);
+  });
+
+  it("accepts WorkBuddy's result-only reply and reports an MCP connection failure", async () => {
+    let { ai } = await fakeAi({ steps: [{ events: [{ type: "result", subtype: "success", is_error: false, result: "好了" }] }] });
+    expect(await talk(ai, "workbuddy")).toBe("好了");
+    ({ ai } = await fakeAi({ mcpStatus: "failed" }));
+    await expect(talk(ai, "workbuddy")).rejects.toMatchObject({ code: "local_tools_unavailable" });
+  });
 
   it("reports a failed turn in plain words", async () => {
     let { ai } = await fakeAi({ steps: [{ fail: { error: "authentication_failed", status: 401, text: "Failed to authenticate. API Error: 401" } }] });
@@ -388,13 +465,13 @@ describe("review fixes", () => {
     expect(record.args.join(" ")).not.toContain("sk-secret");
   });
 
-  it("ignores what the CLI says after it was stopped", async () => {
+  it.each(["codex", "workbuddy"])("%s ignores what the CLI says after it was stopped", async (runtime) => {
     const { ai } = await fakeAi({ steps: [{ say: "我来测节拍" }, { call: "echo" }, { say: "不该出现" }] });
     const controller = new AbortController();
     const mcp = await openMcp({ tools: ECHO, call: async () => { controller.abort(); return { ok: false, code: "stopped" }; } });
     cleanups.push(() => mcp.close());
     const said = [];
-    await expect(ai.converse("codex", { systemPrompt: "s", prompt: "p", mcp: { url: mcp.url, secret: mcp.secret }, signal: controller.signal, onText: (text) => said.push(text) }))
+    await expect(ai.converse(runtime, { systemPrompt: "s", prompt: "p", mcp: { url: mcp.url, secret: mcp.secret }, signal: controller.signal, onText: (text) => said.push(text) }))
       .rejects.toMatchObject({ name: "AbortError" });
     expect(said).toEqual(["我来测节拍"]);
   });
