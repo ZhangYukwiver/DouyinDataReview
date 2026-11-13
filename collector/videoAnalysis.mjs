@@ -51,8 +51,9 @@ function options(body) {
 }
 
 function result(request, entries, article) {
-  const { key, kind, engine, withFrames, model } = request;
-  const common = { key, kind, engine, withFrames, model, createdAt: new Date().toISOString(), entries };
+  const { key, kind, engine, withFrames, model, title } = request;
+  // 视频标题一起存下，知识库里列出和引用时用
+  const common = { key, kind, engine, withFrames, model, ...(title && { title }), createdAt: new Date().toISOString(), entries };
   if (article) {
     const chapters = [{ title: "视频核心观点", text: article.overview }, ...entries.map((entry, i) =>
       ({ title: `${i + 1}. ${entry.title}`, text: entry.text, figure: entry.figure })), { title: "AI 总结", text: article.summary }];
@@ -282,7 +283,7 @@ export class VideoAnalysis {
       media = await this.media.inspectVideo(source, signal);
       await save(metadataFile, media, signal);
     }
-    const transcriptRequest = options({ kind: "transcript", engine: request.engine });
+    const transcriptRequest = options({ kind: "transcript", engine: request.engine, title: request.title });
     let transcript = await readJson(output(transcriptRequest.key));
     if (!transcript) {
       let entries = [];

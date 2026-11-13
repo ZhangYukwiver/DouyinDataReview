@@ -89,10 +89,17 @@ describe("story pages", () => {
     expect(story.headers.get("cache-control")).toBe("no-cache");
 
     const app = await fetch(`${runtime.url}/assets/app.js`);
-    expect(app.headers.get("content-security-policy")).toContain("script-src 'self';");
+    // 知识库在 Worker 里跑 WebAssembly 算语义向量：只放行 wasm 编译，不放行 eval
+    expect(app.headers.get("content-security-policy")).toContain("script-src 'self' 'wasm-unsafe-eval';");
+    expect(app.headers.get("content-security-policy")).not.toContain("'unsafe-eval'");
     expect(app.headers.get("content-security-policy")).not.toContain("unsafe-inline';");
     // 整体风格选“内容年志”时应用本身也要取同一组 Google 字体
     expect(app.headers.get("content-security-policy")).toContain("font-src 'self' data: https://fonts.gstatic.com");
     expect(app.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(app.headers.get("cache-control")).toContain("immutable");
+
+    await mkdir(path.join(directory, "knowledge"));
+    await writeFile(path.join(directory, "knowledge", "embedding-worker.js"), "postMessage(1)");
+    expect((await fetch(`${runtime.url}/knowledge/embedding-worker.js`)).headers.get("cache-control")).toBe("no-cache");
   });
 });

@@ -11,16 +11,19 @@ const CONTENT_TYPES = new Map([
   [".js", "text/javascript; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
   [".map", "application/json; charset=utf-8"],
+  [".mjs", "text/javascript; charset=utf-8"],
   [".png", "image/png"],
   [".svg", "image/svg+xml"],
+  [".wasm", "application/wasm"],
   [".webp", "image/webp"],
 ]);
 
 // The story pages under /story are self-contained prototype HTML: inline scripts, inline styles and Google Fonts.
 const STORY_CSP = "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'self'; img-src 'self' data: https:; media-src 'self'; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com";
 
+// 'wasm-unsafe-eval' 只放行 WebAssembly 编译（知识库在 Worker 里算语义向量），不放行 eval
 const SECURITY_HEADERS = {
-  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://douyincdn.com https://*.douyincdn.com https://zhangyukwiver.github.io; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; frame-src 'self'; img-src 'self' data: https:; media-src 'self' https: blob: http://127.0.0.1:* http://localhost:*; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://douyincdn.com https://*.douyincdn.com https://zhangyukwiver.github.io; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; frame-src 'self'; img-src 'self' data: https:; media-src 'self' https: blob: http://127.0.0.1:* http://localhost:*; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -82,7 +85,8 @@ export async function startStaticServer({ rootDirectory, host = "127.0.0.1", por
       const body = await readFile(assetPath);
       const contentType = CONTENT_TYPES.get(path.extname(assetPath).toLowerCase()) ?? "application/octet-stream";
       const story = pathname.startsWith("/story/");
-      const cacheControl = story || path.basename(assetPath) === "index.html"
+      // 知识库的 Worker 和运行库文件名不带内容哈希，升级后要换新，不能按一年不变缓存
+      const cacheControl = story || pathname.startsWith("/knowledge/") || path.basename(assetPath) === "index.html"
         ? "no-cache"
         : "public, max-age=31536000, immutable";
       send(response, 200, { "Cache-Control": cacheControl, "Content-Type": contentType, ...(story && { "Content-Security-Policy": STORY_CSP }) }, body, headOnly);

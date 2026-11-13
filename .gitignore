@@ -5,6 +5,8 @@ node_modules/
 /modules/*/android/build/
 dist/
 web-build/
+# 知识库语义检索的运行库，构建前由 scripts/stage-knowledge-runtime.mjs 取
+/public/knowledge/vendor/
 release/
 release-*/
 .local-data/

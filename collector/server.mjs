@@ -11,10 +11,11 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
-import { AssistantError } from "./assistant/chat.mjs";
+import { AssistantError, parseAssistantConfig } from "./assistant/chat.mjs";
 import { createAssistant } from "./assistant/index.mjs";
 import { createLocalAi } from "./localAi.mjs";
 import { VideoAnalysis } from "./videoAnalysis.mjs";
+import { EmbeddingModel, KnowledgeBase } from "./knowledgeBase.mjs";
 import { DouyinCollector } from "./douyinCollector.mjs";
 import { BrowserConnectionError, browserDirectories, connectExternalBrowser, listBrowserSources, openBrowserPage } from "./browserConnection.mjs";
 import { DesktopClientError, desktopDataDirectory, readDesktopIdentity, readDesktopSession } from "./desktopClient.mjs";
@@ -305,6 +306,8 @@ export async function startCollectorServer({
   // 推荐流控制：词条、过滤方式和处置记录所有账号共用；浏览器里由扩展照着做
   const feedFilter = new FeedFilterStore(dataDirectory);
   const localAi = createLocalAi({ dataDirectory });
+  // 知识库的本机语义模型所有账号共用，第一次用时下载
+  const embeddingModel = new EmbeddingModel({ directory: dataDirectory });
   // 每个账号一个采集器，各用自己目录里的登录态和记录；同一时间只开当前这一个
   const openCollector = async (account) => {
     const directory = accounts.directory(account);
@@ -328,6 +331,7 @@ export async function startCollectorServer({
       if (changed) assistant.foldersChanged(saved.revision);
     };
     next.videoAnalysis = new VideoAnalysis({ directory, localAi, download: (id, signal) => next.downloadVideoForAnalysis(id, signal) });
+    next.knowledge = new KnowledgeBase({ analysisRoot: next.videoAnalysis.root, directory, localAi });
     return next;
   };
   let collector = await openCollector(accounts.active());
@@ -590,7 +594,7 @@ export async function startCollectorServer({
     // 等扫码登录时（这时 switching 也是 true）工作台要一直取二维码，也可能要把登录窗口亮出来
     const loginWait = ["/v1/browser/login-qrcode", "/v1/browser/login-window", "/v1/browser/verification"].includes(url.pathname);
     // 操作开关存在根目录、所有账号共用，换号时也能读改
-    const accountFree = url.pathname === "/v1/settings/writes" || url.pathname.startsWith("/v1/feed-filter") || url.pathname.startsWith("/v1/assistant") || url.pathname.startsWith("/v1/usage/");
+    const accountFree = url.pathname === "/v1/settings/writes" || url.pathname.startsWith("/v1/feed-filter") || url.pathname.startsWith("/v1/assistant") || url.pathname.startsWith("/v1/usage/") || url.pathname.startsWith("/v1/knowledge/model");
     if (!readable && !loginWait && !accountFree && rejectWhileSwitching(response)) return;
 
     const readPermission = readPermissionForRequest(request.method, url.pathname);
@@ -937,6 +941,49 @@ export async function startCollectorServer({
         sendJson(response, error.status || (invalid ? 400 : 500), { error: error.code || (invalid ? "invalid_request" : "analysis_error"),
           message: error.status ? error.message : invalid ? "解析请求格式无效。" : "无法读取视频解析结果。" });
       }
+    } else if (url.pathname === "/v1/knowledge/model" || url.pathname.startsWith("/v1/knowledge/model/")) {
+      try {
+        if (url.pathname === "/v1/knowledge/model") {
+          if (request.method === "GET") sendJson(response, 200, await embeddingModel.view());
+          else if (request.method === "POST") sendJson(response, 202, await embeddingModel.prepare());
+          else sendJson(response, 405, { error: "method_not_allowed" });
+        } else if (request.method !== "GET") sendJson(response, 405, { error: "method_not_allowed" });
+        else {
+          let name = "";
+          try { name = decodeURIComponent(url.pathname.slice("/v1/knowledge/model/".length)); } catch { /* 坏的 % 编码按没有这个文件 */ }
+          const file = embeddingModel.file(name);
+          if (!await embeddingModel.ready()) throw new AssistantError("model_not_ready", "语义模型还没下载好。", 409);
+          response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": (await stat(file)).size });
+          await pipeline(createReadStream(file), response);
+        }
+      } catch (error) {
+        if (response.headersSent) response.destroy();
+        else sendJson(response, error.status || 500, { error: error.code || "knowledge_error", message: error.status ? error.message : "语义模型读取失败。" });
+      }
+    } else if (url.pathname === "/v1/knowledge" || url.pathname.startsWith("/v1/knowledge/")) {
+      if (rejectStaleAccount(response, url)) return;
+      const target = collector;
+      const abort = new AbortController();
+      const stop = () => { if (!response.writableEnded) abort.abort(); };
+      response.on("close", stop);
+      try {
+        target.assertReadPermission("videos");
+        const route = `${request.method} ${url.pathname}`;
+        const signature = url.searchParams.get("signature") ?? "";
+        const body = request.method === "POST" ? await readJsonBody(request, route.endsWith("/vectors") ? 512 * 1024 : 64 * 1024) : null;
+        if (route === "GET /v1/knowledge") sendJson(response, 200, await target.knowledge.view(signature));
+        else if (route === "GET /v1/knowledge/pending") sendJson(response, 200, await target.knowledge.pending(signature));
+        else if (route === "POST /v1/knowledge/vectors") sendJson(response, 200, await target.knowledge.saveVectors(body?.signature, body?.items));
+        else if (route === "POST /v1/knowledge/search") sendJson(response, 200, await target.knowledge.search(body ?? {}));
+        else if (route === "POST /v1/knowledge/ask") {
+          const config = parseAssistantConfig(body?.config);
+          sendJson(response, 200, await target.knowledge.ask({ ...body, config, signal: abort.signal }));
+        } else sendJson(response, 404, { error: "not_found" });
+      } catch (error) {
+        const invalid = error instanceof SyntaxError || error?.message === "body_too_large";
+        if (!abort.signal.aborted) sendJson(response, error.status || (invalid ? 400 : 500), { error: error.code || (invalid ? "invalid_request" : "knowledge_error"),
+          message: error.status ? error.message : invalid ? "知识库请求格式无效。" : "知识库暂时不可用，请重试。" });
+      } finally { response.off("close", stop); }
     } else if (request.method === "POST" && url.pathname === "/v1/downloads") {
       try {
         const body = await readJsonBody(request);

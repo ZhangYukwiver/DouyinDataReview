@@ -125,6 +125,7 @@ import { countAchievement, noteAchievementWorks, syncDataAchievements, unlockAch
 import { buildDataExportWithVoice, type DataExportSelection } from "./src/services/exportData";
 import { readRecordFolders, type RecordFolders } from "./src/services/recordFolders";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
+import { KnowledgeWorkspace } from "./src/components/workspace/KnowledgeWorkspace";
 // @ts-expect-error react-native-web 没给内部模块出类型
 import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
 
@@ -2056,6 +2057,8 @@ function AppContent() {
             onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} />}
           explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} accountId={collectorStatus?.account?.id ?? null} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
+          knowledge={<KnowledgeWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} accountId={collectorStatus?.account?.id ?? null}
+            records={workspaceRecords} onOpenSettings={openSettings} onOpenAiSettings={() => openPreferences("ai")} />}
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
             videoLibrary={!privacy && !switchingAccount && collectorAccounts?.activeId ? { accountId: collectorAccounts.activeId, records: workspaceRecords } : undefined}
             onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} /> : undefined}
