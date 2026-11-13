@@ -92,7 +92,8 @@ describe("finding the CLI", () => {
     const command = platform === "darwin" ? path.join(root, "Contents", "MacOS", "WorkBuddy") : path.join(root, "WorkBuddy.exe");
     await mkdir(path.dirname(command), { recursive: true });
     await writeFile(command, "binary");
-    return { command, entry, product: path.join(cli, "product.json") };
+    // macOS 的临时目录可经 /var 指向 /private/var；发现器会解析真实安装路径。
+    return { command: await realpath(command), entry: await realpath(entry), product: await realpath(path.join(cli, "product.json")) };
   }
 
   it("finds the bundled WorkBuddy CLI on Windows and runs it with WorkBuddy's own runtime", async () => {
