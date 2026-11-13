@@ -17,21 +17,21 @@ function parseModelJson(value) {
   catch { throw new AssistantError("invalid_model_output", "模型没有返回可读取的结果，请重试或更换模型。", 502); }
 }
 
-async function ask({ config, localAi, system, content, signal, imagePaths, outputSchema }) {
-  let text;
+/** 问一次模型拿回文字：接口模型或本机 Codex / Claude Code / WorkBuddy（知识库提问也用它） */
+export async function askText({ config, localAi, system, content, signal, imagePaths, outputSchema }) {
   if (isLocalRuntime(config.runtime)) {
     const parts = [];
     await localAi.converse(config.runtime, { model: config.model, systemPrompt: system, prompt: content, signal, imagePaths, outputSchema,
       onText: (part) => parts.push(part) });
-    text = config.runtime === "claude" ? parts.join("\n") : parts.at(-1) ?? "";
-  } else {
-    const response = await requestCompletion({ config, signal, messages: [
-      { role: "system", content: system }, { role: "user", content },
-    ] });
-    text = response.text;
+    return config.runtime === "claude" ? parts.join("\n") : parts.at(-1) ?? "";
   }
-  return parseModelJson(text);
+  const response = await requestCompletion({ config, signal, messages: [
+    { role: "system", content: system }, { role: "user", content },
+  ] });
+  return response.text;
 }
+
+const ask = async options => parseModelJson(await askText(options));
 
 const unsupported = () => new AssistantError("vision_unsupported", "当前模型无法接收图片。可改做口播笔记，或在 AI 设置中选择支持图片的模型。", 400);
 const validDescription = item => typeof item?.scene === "string" && item.scene.trim() && typeof item.screenText === "string";
