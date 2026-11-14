@@ -23,6 +23,8 @@ export interface ExplorePage {
   sessionId: string; kind: ExploreKind; items: Array<ExploreUser | ExploreVideo | ExploreComment | ExploreSharee>;
   profile: ExploreUser | null; video: ExploreVideo | null; hasMore: boolean | null; limited: boolean;
   commentId?: string;
+  /** 再往后抖音给的已经和搜索词无关，停在这里 */
+  offTopic?: boolean;
 }
 export interface ExploreAction {
   sessionId: string; requestId: string; action: "like" | "collect" | "follow" | "comment" | "share"; desired?: boolean; text?: string;

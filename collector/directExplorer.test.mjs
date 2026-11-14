@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DirectExplorer } from "./directExplorer.mjs";
+import { DirectExplorer, offTopic } from "./directExplorer.mjs";
 import { DouyinExplorer } from "./explorer.mjs";
 import { directApiFixture } from "./fixtures/directClient.mjs";
 
 const id = "7654321098765432100";
 const userId = `MS4w${"x".repeat(24)}`;
-const rawVideo = (videoId = id) => ({ aweme_id: videoId, desc: "作品", user_digged: 1, collect_status: 0 });
+const rawVideo = (videoId = id) => ({ aweme_id: videoId, desc: "猫狗作品", user_digged: 1, collect_status: 0 });
 function explorer(handler) {
   const getContext = vi.fn(() => { throw new Error("browser must not launch"); });
   const api = { request: vi.fn(handler) };
@@ -23,6 +23,20 @@ describe("code-based exploration", () => {
     expect(second.items).toHaveLength(2); expect(second.hasMore).toBe(false);
     expect(api.request.mock.calls[1][1].query).toMatchObject({ offset: "20", search_id: "123", search_channel: "aweme_user_web" });
     expect(getContext).not.toHaveBeenCalled(); await value.clear();
+  });
+  it("keeps the first search id and stops once a whole page has nothing to do with the query", async () => {
+    const page = { 0: ["露营vlog", "冬季露营", "帐篷"], 20: ["我的露营装备", "三角洲", "MC"], 40: ["我的世界", "三角洲行动", "抖音拉黑"] };
+    const { value, api } = explorer(async (_path, { query }) => ({ status_code: 0, cursor: Number(query.offset) + 20, has_more: 1, log_pb: { impr_id: `id${query.offset}` },
+      data: page[query.offset].map((desc, index) => ({ aweme_info: { ...rawVideo(`${query.offset}0000${index}`), desc } })) }));
+    const first = await value.read({ kind: "videos", query: "露营" });
+    const second = await value.read({ kind: "videos", query: "露营", sessionId: first.sessionId });
+    const third = await value.read({ kind: "videos", query: "露营", sessionId: first.sessionId });
+    expect(api.request.mock.calls.map(([, { query }]) => query.search_id ?? null)).toEqual([null, "id0", "id0"]);
+    expect(second.items).toHaveLength(6); expect(second.offTopic).toBeUndefined();
+    expect(third).toMatchObject({ hasMore: false, offTopic: true }); expect(third.items).toHaveLength(6);
+    expect(offTopic("露营装备", [{ desc: "装备清单" }, { desc: "a" }, { desc: "b" }])).toBe(false);
+    expect(offTopic("iPhone17评测", [{ desc: "iphone 17 上手" }, { desc: "a" }, { desc: "b" }])).toBe(false);
+    expect(offTopic("露营装备", [{ desc: "我的世界" }, { desc: "三角洲" }, { desc: "孕晚期" }])).toBe(true);
   });
   it("keeps a successfully loaded page and cursor when a later response is malformed", async () => {
     const { value } = explorer(async (_path, { query }) => ({ status_code: 0, data: [{ aweme_info: rawVideo() }],
