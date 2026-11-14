@@ -16,6 +16,20 @@ const cursorOf = (payload, kind, cursor) => kind === "feed" ? String(Number(curs
 const searchQuery = (channel, keyword, offset, count, searchId) => ({ search_channel: channel, keyword, search_source: "switch_tab", query_correct_type: "1",
   is_filter_search: "0", from_group_id: "", disable_rs: "0", offset, count, need_filter_settings: "0", list_type: "single", ...(searchId ? { search_id: searchId } : {}) });
 
+// 抖音翻到后面会整页塞推荐里的视频（网页上一样：「露营」第 36 条起全是我的世界、三角洲），接口不做任何标记，只能按内容认。
+// ponytail: 按字面认，连着三个以上的汉字拆成两两一组，整页没一条沾边才算跑偏；靠字幕/语义匹配的整页结果会被误停，真遇到再加字段
+const termsOf = (query) => (query.toLowerCase().match(/\p{Script=Han}+|[^\p{Script=Han}\s\p{P}\p{S}]+/gu) ?? [])
+  .flatMap((run) => /\p{Script=Han}{3}/u.test(run) ? Array.from({ length: run.length - 1 }, (_, index) => run.slice(index, index + 2)) : [run]);
+export function offTopic(query, raws) {
+  const terms = termsOf(query);
+  return raws.length >= 3 && terms.length > 0 && !raws.some((raw) => {
+    const text = [raw?.desc, raw?.nickname, raw?.unique_id, raw?.signature, raw?.author?.nickname, raw?.music?.title].join(" ").toLowerCase().replace(/\s+/gu, "");
+    return terms.some((term) => text.includes(term));
+  });
+}
+const searchRaws = (kind, payload) => (kind === "users" ? payload?.user_list?.map((entry) => entry.user_info ?? entry)
+  : payload?.data?.flatMap((entry) => entry.aweme_info ? [entry.aweme_info] : entry.aweme_list ?? [])) ?? [];
+
 // 想看的词条混进推荐：每 pickEvery 条推荐（设置里选，默认 3）后面插一条词条搜出来的视频，词条轮着来、各翻各的页；
 // pickEvery 为 0 是只看词条：整批推荐换成词条视频，一条都没搜到才照常给推荐。
 // ponytail: 一批只搜一轮（和推荐请求同时发，接下来四轮要用的词里队列空了的各搜一页），搜不到就少插几条，下一批再补
@@ -35,7 +49,9 @@ export async function searchWord(api, session, word, state, signal) {
     // 要验证或报错就先歇几分钟，别每批都去撞
     if (payload?.status_code !== 0 || !Array.isArray(payload.data)
       || [payload.search_nil_info?.search_nil_type, payload.search_nil_info?.search_nil_item].includes("verify_check")) { state.retryAt = Date.now() + PICK_RETRY_MS; return; }
-    const found = payload.data.flatMap((entry) => entry.aweme_info ? [entry.aweme_info] : entry.aweme_list ?? []).filter(playableAweme);
+    // 翻到抖音开始塞推荐了就当这个词搜到底，别把不相干的标成「来自词条」插进去
+    if (state.offset && offTopic(word, searchRaws("videos", payload))) { state.hasMore = false; return; }
+    const found = searchRaws("videos", payload).filter(playableAweme);
     const kept = found.filter((aweme) => !hitsRules(session, aweme));
     // 排队时留原始数据：词条改了，插入前还要再查一遍
     state.queue.push(...kept.filter((aweme) => !state.shown?.has(String(aweme.aweme_id))));
@@ -45,7 +61,7 @@ export async function searchWord(api, session, word, state, signal) {
     state.hasMore = hasMore(payload.has_more) === true && Number.isSafeInteger(next) && next > state.offset;
     // 第一页照常搜（拿新的 search_id，实测不带它直接翻页被要求过验证），下一页跳回上次的位置
     if (state.hasMore) state.offset = Math.max(next, state.resumeAt ?? 0);
-    state.searchId = payload.log_pb?.impr_id ?? state.searchId;
+    state.searchId ??= payload.log_pb?.impr_id;
   } catch {
     signal?.throwIfAborted();
     state.retryAt = Date.now() + PICK_RETRY_MS;
@@ -156,6 +172,11 @@ export class DirectExplorer extends DouyinExplorer {
     const hide = input.mode === "hide" || input.mode === "dislike";
     const hits = session.kind === "feed" && (hide || input.mode === "observe") ? filterFeed(payload, session.rules, hide) : [];
     const known = new Set(session.items.keys());
+    if (["users", "videos"].includes(session.kind) && session.items.size && offTopic(session.query, searchRaws(session.kind, payload))) {
+      Object.assign(session, { hasMore: false, offTopic: true });
+      this.sessions.set(session.key, session);
+      return { ...this.snapshot(session), offTopic: true };
+    }
     ingestExploreResponse(session, pathname, payload);
     if (session.error) throw session.error;
     if (!session.received || (session.kind === "profile" && !session.profile) || (session.kind === "detail" && !session.video))
@@ -166,7 +187,8 @@ export class DirectExplorer extends DouyinExplorer {
       throw new ExploreError("pagination_stalled", "接口未返回有效分页，已加载的内容仍保留。");
     signal?.throwIfAborted();
     session.cursors.add(session.cursor); session.cursor = next; session.hasMore = more;
-    session.searchId = payload.log_pb?.impr_id ?? session.searchId;
+    // 照网页来：翻页一直带第一页的 search_id，不换成每页新的 impr_id
+    session.searchId ??= payload.log_pb?.impr_id;
     if (ahead) await mixWords(session, known, ahead);
     this.sessions.set(session.key, session);
     if (this.sessions.size > 6) {

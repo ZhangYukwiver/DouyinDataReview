@@ -205,6 +205,7 @@ export function ExploreWorkspace({ connection, accountId = null, onOpenSettings,
   function moreButton(data: ExplorePage | null, input: ExploreQuery, target: "results" | "profile" | "comments") {
     if (!data) return null;
     return <View style={styles.pagination}>{data.limited ? <Text style={styles.muted}>{target === "profile" ? "已加载 500 条，这是上限，更早的作品请到抖音主页查看。" : "已展示 500 条，请缩小搜索范围或在原页继续查看。"}</Text>
+      : data.offTopic ? <Text style={styles.muted}>再往后抖音给的已经和搜索词无关，就到这里。可以换个说法再搜。</Text>
       : data.hasMore === false ? <Text style={styles.muted}>已显示全部已返回内容</Text>
         : <Button label={loading === "more" ? "正在加载…" : target === "comments" ? "加载更多评论" : "加载更多"} disabled={busy} onPress={() => void load({ ...input, sessionId: data.sessionId }, target, true)} />}</View>;
   }
