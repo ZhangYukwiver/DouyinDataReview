@@ -174,12 +174,14 @@ export class DirectChatClient {
     }
     return refreshed;
   }
-  async messages({ conversationId, older = false }, { signal } = {}) {
+  /** before：调用方自己拿着的游标（上一页回的 cursor），按它翻、不动这里记的翻页位置；不给就按 older 走这里记的位置 */
+  async messages({ conversationId, older = false, before = null }, { signal } = {}) {
     let conversation = this.conversations.get(conversationId);
     if (!conversation) throw new ChatSendError("conversation_unavailable", "当前账号找不到这个会话。", 410);
+    if (before !== null && !/^\d{1,30}$/u.test(String(before))) throw new ChatSendError("invalid_request", "翻页位置无效，请重新打开会话。", 400);
     const previous = this.messagePages.get(conversationId);
-    if (older && previous?.hasMore === false) return { conversationId, messages: previous.messages, pageMessages: [], hasMore: false };
-    const cursor = older && previous ? previous.cursor : String(BigInt(Date.now()) * 1_000n);
+    if (before === null && older && previous?.hasMore === false) return { conversationId, messages: previous.messages, pageMessages: [], hasMore: false, cursor: null };
+    const cursor = before !== null ? String(before) : older && previous ? previous.cursor : String(BigInt(Date.now()) * 1_000n);
     const response = await this.request("/v1/message/get_by_conversation", 301,
       [m(301, [s(1, conversationId), n(2, conversation.type), n(3, conversation.shortId), n(4, 1), n(5, cursor), n(6, 50)])], { signal });
     const normalized = await this.enrichPayload(normalizeChatPayload(response.buffer, { conversationId, conversationType: conversation.type,
@@ -187,10 +189,12 @@ export class DirectChatClient {
     if (typeof normalized.hasMore !== "boolean") throw new DirectHistoryError("pagination_missing", "聊天历史缺少分页状态。");
     if (normalized.hasMore === true && (!/^\d{1,30}$/u.test(normalized.nextTimestamp || "") || normalized.nextTimestamp === cursor))
       throw new DirectHistoryError("pagination_stalled", "聊天历史分页游标无效，已保留当前消息。");
-    const messages = [...new Map([...(older ? previous?.messages || [] : []), ...normalized.messages].map((message) => [message.id, message])).values()]
+    const next = normalized.hasMore ? normalized.nextTimestamp : null;
+    if (before !== null) return { conversationId, messages: normalized.messages, pageMessages: normalized.messages, hasMore: normalized.hasMore, cursor: next };
+    const messages =[...new Map([...(older ? previous?.messages || [] : []), ...normalized.messages].map((message) => [message.id, message])).values()]
       .sort((a, b) => (Date.parse(a.sentAt) || 0) - (Date.parse(b.sentAt) || 0)).slice(-1_000);
     this.messagePages.set(conversationId, { cursor: normalized.nextTimestamp, messages, hasMore: normalized.hasMore === true });
-    return { conversationId, messages, pageMessages: normalized.messages, hasMore: normalized.hasMore };
+    return { conversationId, messages, pageMessages: normalized.messages, hasMore: normalized.hasMore, cursor: next };
   }
   async streaks({ signal } = {}) {
     const rows = [];
