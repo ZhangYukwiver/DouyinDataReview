@@ -2165,6 +2165,8 @@ function AppContent() {
         onCheckAppUpdate={checkForAppUpdates}
         onDownloadAppUpdate={downloadAppUpdate}
         onInstallAppUpdate={installAppUpdate}
+        collectorStatus={collectorStatus}
+        collectorError={collectorError}
         feedbackUrl={siteNotices?.feedbackUrl ?? null}
         browserConnection={collectorToken && !isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
           onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined}
