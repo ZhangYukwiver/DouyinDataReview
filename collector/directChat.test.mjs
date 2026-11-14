@@ -118,6 +118,25 @@ describe("native chat protocol",()=>{
     for(let index=0;index<21;index++) { result=await chat.messages({conversationId:cid,older:index>0}); result.pageMessages.forEach(msg=>collected.add(msg.id)); }
     expect(collected.size).toBe(1050); expect(result.messages).toHaveLength(1000); expect(result.hasMore).toBe(false); await api.close();
   });
+  it("pages from a caller-held cursor without moving the shared paging position",async()=>{
+    const cursors=[];
+    const {api}=directApiFixture((url,options)=>{
+      if(!url.pathname.includes("get_by_conversation")) return handler(url,options);
+      const cursor=BigInt(protoInteger(protoChild(protoChild(decodeProto(options.data),8),301),5)); cursors.push(cursor.toString());
+      const id=String(cursors.length);
+      return {buffer:imResponse(301,[m(1,imMessage(id,{time:1_791_700_000_000_000n-BigInt(cursors.length)*1_000_000n})),n(2,cursor-1000n),n(3,cursors.length<3?1:0)])};
+    });
+    const chat=new DirectChatClient(api); chat.conversations.set(cid,conversation());
+    const latest=await chat.messages({conversationId:cid});
+    expect(latest.cursor).toBe(String(BigInt(cursors[0])-1000n));
+    const held=await chat.messages({conversationId:cid,before:latest.cursor});
+    expect(cursors[1]).toBe(latest.cursor); expect(held.messages.map(msg=>msg.id)).toEqual(["2"]);
+    // 别人拿着的游标翻页，不影响 older 记的位置
+    const older=await chat.messages({conversationId:cid,older:true});
+    expect(cursors[2]).toBe(latest.cursor); expect(older).toMatchObject({hasMore:false,cursor:null});
+    await expect(chat.messages({conversationId:cid,before:"1; drop"})).rejects.toMatchObject({code:"invalid_request"});
+    await api.close();
+  });
   it("confirms a server receipt, sends identity material, and honors moderation",async()=>{
     const {api,fetch}=directApiFixture(handler);const chat=new DirectChatClient(api);chat.conversations.set(cid,conversation());
     const input={requestId:"request-chat-123456",conversationId:cid,text:"测试消息"};

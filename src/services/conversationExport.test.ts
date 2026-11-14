@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildConversationExport, conversationExportName, conversationText } from "./conversationExport";
+import { buildConversationExport, conversationExportName, conversationText, groupSenders } from "./conversationExport";
 import type { ChatConversationSummary, ChatMessage } from "../domain/chatRecords";
 
 const friend: ChatConversationSummary = { id: "friend-a", kind: "friend", name: "同名好友", messageCount: 500, ownMessageCount: 250 };
@@ -19,8 +19,14 @@ describe("single conversation export", () => {
     expect(JSON.stringify(result)).not.toContain("must-not-export");
     expect(sensitive.voiceResource.secret).toBe("must-not-export");
   });
-  it("refuses group exports and empty matches", () => {
-    expect(() => buildConversationExport({ ...friend, kind: "group" }, [message(1)])).toThrow();
+  it("exports the picked group messages with the range note and refuses empty matches", () => {
+    const group: ChatConversationSummary = { id: "group-a", kind: "group", name: null, messageCount: 0, ownMessageCount: 0 };
+    const picked = [{ ...message(1, "group-a"), conversationType: "group" as const, senderId: "m1", senderName: null }];
+    const data = buildConversationExport(group, picked, "范围：近 7 天");
+    expect(data.chatMessages).toHaveLength(1);
+    expect(data.warnings).toEqual(["范围：近 7 天"]);
+    expect(conversationText(data, "self")).toMatch(/^群聊\r\n范围：近 7 天[\s\S]*\] 群成员\r\n测试 1/u);
+    expect(() => buildConversationExport(group, [message(1)])).toThrow();
     expect(() => buildConversationExport(friend, [message(1, "other")])).toThrow();
     expect(() => buildConversationExport(friend, [{ ...message(1), conversationType: "group" }])).toThrow();
   });
@@ -36,5 +42,11 @@ describe("single conversation export", () => {
     expect(new Date(`${stamp?.[1]}T${stamp?.[2]}`).toISOString()).toBe(sentAt);
     expect(data.chatMessages[0]?.sentAt).toBe(sentAt);
     expect(conversationText(buildConversationExport(friend, [{ ...message(1), sentAt: null }]), "self")).toContain("[时间未提供]");
+  });
+  it("lists group senders by message count with the latest nickname", () => {
+    const at = (id: number, senderId: string | null, senderName: string | null) => ({ ...message(id, "group-a"), senderId, senderName });
+    expect(groupSenders([at(1, "m1", "旧昵称"), at(2, "self", null), at(3, "m1", "新昵称"), at(4, "m1", null), at(5, null, null)], "self")).toEqual([
+      { id: "m1", name: "新昵称", count: 3 }, { id: "self", name: "我", count: 1 }, { id: "", name: "未知成员", count: 1 },
+    ]);
   });
 });

@@ -56,6 +56,7 @@ import { CHAT_EMOJI } from "../../domain/chatEmoji";
 import { renderEmojiText } from "./emojiText";
 import { SparkCardPreview } from "./SparkCardPreview";
 import { buildConversationExport, saveConversationExport } from "../../services/conversationExport";
+import { GroupExportDialog } from "./DataExportDialog";
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 // 与抖音网页输入框的上限一致
@@ -679,6 +680,7 @@ function ChatDetailPane({
 }) {
   const messageListRef = useRef<FlatList<ChatMessage>>(null);
   const [cardOpen, setCardOpen] = useState(false);
+  const [groupExportOpen, setGroupExportOpen] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const stickToBottomRef = useRef(true);
   const group = row?.kind === "group" && live ? live : null;
@@ -779,6 +781,12 @@ function ChatDetailPane({
               <Text style={styles.receptionButtonText}>导出文本</Text>
             </Pressable>
           </> : null}
+          {Platform.OS === "web" && !privacy && group ? (
+            <Pressable {...ws("btn small")} accessibilityRole="button" accessibilityLabel="导出群聊记录"
+              onPress={() => setGroupExportOpen(true)} style={styles.receptionButton} testID="chat-group-export">
+              <Text style={styles.receptionButtonText}>导出记录</Text>
+            </Pressable>
+          ) : null}
           <View {...ws("stamp-ghost c-ro")} style={styles.readonlyBadge}>
             <ShieldCheck color={color.green} size={13} strokeWidth={2} />
             <Text style={styles.readonlyBadgeText}>{group ? "不存本机" : "本地保存"}</Text>
@@ -846,6 +854,8 @@ function ChatDetailPane({
         // 读不到群消息时（没在接收），发出去这里看不到，只能靠一句提示
         sentNotice={row.kind === "group" && !group ? "已发到群里。群消息不会存到本机，所以这里不显示。" : undefined}
       />
+      {groupExportOpen && group ? <GroupExportDialog connection={group} conversation={{ id: row.id, kind: row.kind, name: row.name, messageCount: row.messageCount, ownMessageCount: row.ownMessageCount }}
+        onClose={() => setGroupExportOpen(false)} selfId={selfId} /> : null}
       {cardOpen ? <MemorialCard group={group ? groupMessages.messages : null} onClose={() => setCardOpen(false)} privacy={privacy} row={row} selfId={selfId} spark={spark} /> : null}
     </View>
   );
@@ -866,21 +876,24 @@ function useGroupMessages(connection: ChatSendConnection | null, conversationId:
   const [state, setState] = useState<{ messages: ChatMessage[]; hasMore: boolean; loading: boolean; error: string | null }>({ messages: [], hasMore: false, loading: false, error: null });
   const keepFromBottom = useRef<number | null>(null);
   const busy = useRef(false);
+  // 往上翻到的位置自己拿着：每 20 秒补新消息只看最新一批，不动这个位置。undefined = 第一批还没到
+  const cursor = useRef<string | null | undefined>(undefined);
   const load = async (older: boolean, fromBottom: number | null = null) => {
-    if (!connection || !conversationId || busy.current) return;
+    if (!connection || !conversationId || busy.current || (older && !cursor.current)) return;
     busy.current = true;
     setState((value) => ({ ...value, loading: true }));
     try {
-      const page = await loadLiveMessages(connection, conversationId, older);
+      const page = await loadLiveMessages(connection, conversationId, older ? cursor.current : null);
+      const paging = older || cursor.current === undefined;
+      if (paging) cursor.current = page.hasMore ? page.cursor : null;
       setState((value) => {
         const byId = new Map(value.messages.map((message) => [message.id, message]));
         const before = byId.size;
         for (const message of page.messages) byId.set(message.id, message);
-        // 往上翻却一条新的都没多，说明到头了（比如入群前的消息看不到）
         if (older) keepFromBottom.current = byId.size > before ? fromBottom : null;
         return {
           messages: [...byId.values()].sort((left, right) => messageTime(left.sentAt) - messageTime(right.sentAt)),
-          hasMore: older && byId.size === before ? false : page.hasMore,
+          hasMore: paging ? page.hasMore : value.hasMore,
           loading: false,
           error: null,
         };
@@ -917,7 +930,7 @@ function GroupSummary({ row, privacy }: { row: ChatConversationRow; privacy: boo
         <UsersRound color={row.accent} size={30} strokeWidth={1.7} />
       </View>
       <Text {...ws("w-emptytitle")} style={styles.groupSummaryTitle}>{privacy ? "群聊" : row.name}</Text>
-      <Text style={styles.groupSummaryBody}>群聊正文不会落盘，这里只展示采集到的统计信息。</Text>
+      <Text style={styles.groupSummaryBody}>群聊正文不会落盘，这里只展示采集到的统计信息。开始接收消息后，能从抖音现读群消息、按范围和成员导出。</Text>
       <View style={styles.groupFacts}>
         <ChatFact label="已采集消息" value={formatCount(row.messageCount)} />
         <ChatFact label="本人发言" value={formatCount(row.ownMessageCount)} />
