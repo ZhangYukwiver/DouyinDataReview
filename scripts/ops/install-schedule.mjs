@@ -41,6 +41,7 @@ async function installMac() {
   <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key><array><string>${nodePath}</string><string>${script}</string><string>--repo</string><string>${REPOSITORY}</string></array>
   <key>StartCalendarInterval</key><dict>${calendarInterval}</dict>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${path.dirname(nodePath)}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
   <key>WorkingDirectory</key><string>${ROOT}</string>
   <key>StandardOutPath</key><string>/tmp/${label}.out.log</string>
   <key>StandardErrorPath</key><string>/tmp/${label}.err.log</string>

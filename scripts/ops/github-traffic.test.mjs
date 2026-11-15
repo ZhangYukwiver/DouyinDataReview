@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
 
 import {
   buildWeeklyReport,
+  collectSnapshot,
   percentChange,
   resolveDataDirectory,
   splitWindow,
@@ -79,5 +80,21 @@ describe("GitHub traffic monitor", () => {
 
   it("treats unavailable traffic endpoints as empty series", () => {
     expect(trafficEntries({ traffic: { views: { available: false } } }, "views")).toEqual([]);
+  });
+
+  it("reads every traffic series from an endpoint GitHub actually serves", async () => {
+    // 只认 GitHub 真有的地址，其余一律 404，写错地址的那一项会变成不可用。
+    const served = /\/repos\/o\/r(\/traffic\/(views|clones|popular\/paths|popular\/referrers)|\/releases\?per_page=100)?$/u;
+    vi.stubGlobal("fetch", async (url) => {
+      const ok = served.test(url);
+      const body = !ok ? { message: "Not Found" } : /popular|releases/u.test(url) ? [] : {};
+      return new Response(JSON.stringify(body), { status: ok ? 200 : 404 });
+    });
+    try {
+      const { traffic } = await collectSnapshot({ repository: "o/r", token: "t" });
+      expect(Object.entries(traffic).filter(([, result]) => !result.available)).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
