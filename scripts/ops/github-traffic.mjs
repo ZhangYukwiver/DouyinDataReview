@@ -167,7 +167,7 @@ export async function collectSnapshot({ repository = DEFAULT_REPOSITORY, token =
     requestOptional(`/repos/${encodedRepository}/traffic/views`, token),
     requestOptional(`/repos/${encodedRepository}/traffic/clones`, token),
     requestOptional(`/repos/${encodedRepository}/traffic/popular/paths`, token),
-    requestOptional(`/repos/${encodedRepository}/traffic/referrers`, token),
+    requestOptional(`/repos/${encodedRepository}/traffic/popular/referrers`, token),
     requestJson(`/repos/${encodedRepository}/releases?per_page=100`, token),
   ]);
 
