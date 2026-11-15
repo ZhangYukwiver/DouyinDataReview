@@ -1108,6 +1108,73 @@ describe("DouyinCollector direct records", () => {
     expect(context.close).not.toHaveBeenCalled();
   });
 
+  it("waits out a rate limit and finishes the watch history read", async () => {
+    const store = mockStore("2026-08-14T00:00:00.000Z");
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => []), newPage: vi.fn() };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store });
+    collector.snapshot = emptySnapshot();
+    collector.syncRunId = 1;
+    collector.rateLimitWaitsMs = [1];
+    collector.ensureDirectApi = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
+    collector.readDirectHistory = vi.fn()
+      .mockRejectedValueOnce(new DirectHistoryError("rate_limited", "请求太频繁"))
+      .mockResolvedValue({ status_code: 0, aweme_list: [{ aweme_id: "history-a", history_info: { view_time: 1_700_003_600 } }], has_more: 0 });
+    const messages = [];
+    collector.subscribeStatus((status) => messages.push(status.message));
+
+    await collector.runDirectRecords(1, { types: ["watch_history"] });
+
+    expect(collector.readDirectHistory.mock.calls.slice(0, 2).map(([, cursor]) => cursor)).toEqual(["0", "0"]);
+    expect(messages).toContain("抖音限流了，等 0 秒后接着读观看历史（第 1 次等待）");
+    expect(store.save.mock.calls.at(-1)[0].watch_history.map((record) => record.videoId)).toEqual(["history-a"]);
+  });
+
+  it("stops waiting for a rate limit as soon as the read is stopped", async () => {
+    const context = { close: vi.fn(async () => undefined), pages: vi.fn(() => []), newPage: vi.fn() };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore("2026-08-14T00:00:00.000Z") });
+    collector.snapshot = emptySnapshot();
+    collector.syncRunId = 1;
+    collector.rateLimitWaitsMs = [60_000];
+    collector.ensureDirectApi = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
+    collector.readDirectHistory = vi.fn(async () => { throw new DirectHistoryError("rate_limited", "请求太频繁"); });
+    // stopSync 就是把运行编号往前拨一格
+    collector.subscribeStatus((status) => { if (status.message.startsWith("抖音限流了")) collector.syncRunId = 2; });
+    const started = Date.now();
+
+    await expect(collector.runDirectRecords(1, { types: ["watch_history"] })).rejects.toThrow("请求太频繁");
+
+    expect(collector.readDirectHistory).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("hands the same rate limit waiting to the likes and favorites reader", async () => {
+    let options;
+    const context = {
+      close: vi.fn(async () => undefined), pages: vi.fn(() => []), newPage: vi.fn(),
+      collectRecordPages: vi.fn(async (_type, onPage, given) => {
+        options = given;
+        given.onWait(30_000, 1);
+        await onPage({ status_code: 0, aweme_list: [{ aweme_id: "liked-a" }], has_more: 0, max_cursor: "0" }, 1);
+        return 1;
+      }),
+    };
+    const collector = new DouyinCollector({ executablePath: "chrome", dataDirectory: ".test", store: mockStore("2026-08-14T00:00:00.000Z") });
+    collector.snapshot = emptySnapshot();
+    collector.syncRunId = 1;
+    collector.rateLimitWaitsMs = [7];
+    collector.ensureDirectApi = vi.fn(async () => { collector.context = context; collector.contextHeadless = true; return context; });
+    const messages = [];
+    collector.subscribeStatus((status) => messages.push(status.message));
+
+    await collector.runDirectRecords(1, { types: ["liked_videos"] });
+
+    expect(options.waits).toEqual([7]);
+    expect(options.stopped()).toBe(false);
+    collector.syncRunId = 2;
+    expect(options.stopped()).toBe(true);
+    expect(messages).toContain("抖音限流了，等 30 秒后接着读点赞列表（第 1 次等待）");
+  });
+
   it("marks a type unfinished when an incremental read stops after saving new records", async () => {
     const initial = emptySnapshot();
     initial.warnings = ["无界面读取完成：新增观看 0、点赞 0、收藏 0；读取观看历史 1 页、点赞 1 页、收藏 1 页。"];
@@ -1137,6 +1204,7 @@ describe("DouyinCollector direct records", () => {
         max_cursor: "1700003000000",
       })
       .mockRejectedValueOnce(new DirectHistoryError("rate_limited", "请求太频繁"));
+    collector.rateLimitWaitsMs = [];
 
     await expect(collector.runDirectRecords(1)).rejects.toThrow("请求太频繁");
 

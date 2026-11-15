@@ -12,6 +12,7 @@ import {
   countMissingDirectHistoryViewTimes,
   fetchDirectHistoryPage,
   loadDirectHistoryTemplate,
+  RATE_LIMIT_WAITS_MS,
   retryBadPage,
   validateDirectHistoryUrl,
 } from "./directHistory.mjs";
@@ -476,6 +477,7 @@ export class DouyinCollector {
     this.newRecords = { run: 0, items: [] };
     // 边采边存的最小间隔，快照是整份重写的，不能每页都写
     this.progressPersistIntervalMs = 1_500;
+    this.rateLimitWaitsMs = RATE_LIMIT_WAITS_MS;
     this.chatHistoryPageLimit = CHAT_FRIEND_HISTORY_PAGE_LIMIT;
     this.snapshot = null;
     this.videoDownloadJobs = new Map();
@@ -1884,8 +1886,8 @@ export class DouyinCollector {
     return { completed, coveredFromMs: oldest };
   }
 
-  async collectDirectList(source, type, onPage) {
-    return source.collectRecordPages(type, onPage);
+  async collectDirectList(source, type, onPage, limitRetry) {
+    return source.collectRecordPages(type, onPage, limitRetry);
   }
 
   async prepareDirectHistoryTemplate(context, page, runId) {
@@ -2002,6 +2004,15 @@ export class DouyinCollector {
         const persistMs = Date.now() - persistStartedAt;
         nextProgressPersistAt = Date.now() + Math.max(this.progressPersistIntervalMs, persistMs >= 200 ? persistMs * 10 : 0);
       };
+      // 翻页碰上限流：等的时候把原因写在状态上，点了停止就不等了
+      const limitRetry = (type) => ({
+        waits: this.rateLimitWaitsMs,
+        stopped: () => runId !== this.syncRunId,
+        onWait: (ms, attempt) => this.updateStatus({
+          phase: type,
+          message: `抖音限流了，等 ${Math.round(ms / 1_000)} 秒后接着读${TYPE_LABELS[type]}（第 ${attempt} 次等待）`,
+        }),
+      });
       const skipped = [];
       // completed=false：这一类被跳过，「读完过」标记不动，下次再整份读
       const persistCompletedType = async (type, finalPhase, { completed = true } = {}) => {
@@ -2063,7 +2074,7 @@ export class DouyinCollector {
               await this.yieldToForeground(() => runId !== this.syncRunId);
               this.assertSyncActive(runId);
               return !result.recordIds.some((id) => knownIds.get(type).has(id));
-            });
+            }, limitRetry(type));
           } catch (error) {
             await skipType(type, error, readPages, phaseIndex === phases.length - 1);
             continue;
@@ -2082,7 +2093,7 @@ export class DouyinCollector {
               throw new DirectHistoryError("pagination_stalled", `${TYPE_LABELS[type]}分页游标重复，已停止且未保存本次结果。`);
             }
             cursors.add(cursor);
-            const payload = await retryBadPage(() => this.readDirectHistory(context, cursor));
+            const payload = await retryBadPage(() => this.readDirectHistory(context, cursor), undefined, limitRetry(type));
             this.assertSyncActive(runId);
             const result = accumulator.addResponse(endpoint, payload);
             trackResult(type, result);

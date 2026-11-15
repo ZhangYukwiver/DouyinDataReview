@@ -145,13 +145,30 @@ const DIRECT_LIST_REQUEST_TIMEOUT_MS = 30_000;
 // 一页喜欢/收藏本身就要传 1–2 MB；再隔 300ms，大约每秒一页，比抖音页面自己滚动加载（约每秒两页）还慢
 const DIRECT_LIST_PAGE_INTERVAL_MS = 300;
 
-// 连着翻几百页，偶尔会碰上一页坏响应：隔两秒重试一次，还不行再往上报
-export async function retryBadPage(ask, signal) {
-  return ask().catch(async (error) => {
-    if (!["http_error", "invalid_json", "request_failed"].includes(error?.code)) throw error;
-    await delay(2_000, undefined, { signal });
-    return ask();
-  });
+// 抖音回 429 限流时先等一阵再读这一页，越等越久；等完这几次还限流才往上报，整次读取停下。
+// ponytail: 没见过真实的限流窗口，时长是估的，要调就改这一行；也没读 Retry-After（不知道抖音给不给）
+export const RATE_LIMIT_WAITS_MS = [30_000, 60_000, 120_000];
+
+// 连着翻几百页，偶尔会碰上一页坏响应：隔两秒重试一次，还不行再往上报。
+// 限流按 waits 多等几次：stopped() 为真就不等了（用户点了停止），onWait 让调用方把「在等」写到状态上
+export async function retryBadPage(ask, signal, { waits = RATE_LIMIT_WAITS_MS, stopped, onWait } = {}) {
+  let retriedBad = false;
+  for (let limited = 0; ;) {
+    try {
+      return await ask();
+    } catch (error) {
+      if (error?.code === "rate_limited" && limited < waits.length && !stopped?.()) {
+        const wait = waits[limited];
+        limited += 1;
+        onWait?.(wait, limited);
+        for (let left = wait; left > 0 && !stopped?.(); left -= 500) await delay(Math.min(500, left), undefined, { signal });
+        if (stopped?.()) throw error;
+      } else if (!retriedBad && ["http_error", "invalid_json", "request_failed"].includes(error?.code)) {
+        retriedBad = true;
+        await delay(2_000, undefined, { signal });
+      } else throw error;
+    }
+  }
 }
 
 // 抖音会回 aweme_list: null 的空页：读到底时 has_more=0；收藏多的账号翻到中间也会碰上一段（多是失效视频），
@@ -688,7 +705,7 @@ export async function fetchDirectHistoryPage({
     if (status === 401 || status === 403) {
       throw new DirectHistoryError("session_rejected", `观看历史直接请求返回 HTTP ${status}，已停止且不会自动重试。`);
     }
-    if (status === 429) throw new DirectHistoryError("rate_limited", "观看历史直接请求触发限流，已停止且不会自动重试。");
+    if (status === 429) throw new DirectHistoryError("rate_limited", "观看历史直接请求触发限流，已停止读取，请过一阵再试。");
     if (status !== 200) throw new DirectHistoryError("http_error", `观看历史直接请求返回 HTTP ${status}。`);
     if (!validateDirectHistoryUrl(response.url(), { allowSignature: true, canonicalHost: true })) {
       throw new DirectHistoryError("unexpected_response", "观看历史响应来自非预期地址，已拒绝处理。");

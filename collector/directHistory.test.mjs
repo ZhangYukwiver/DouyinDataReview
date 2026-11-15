@@ -15,6 +15,7 @@ import {
   collectDirectRecordPages,
   directSignerProcessConfiguration,
   fetchDirectHistoryPage,
+  retryBadPage,
   scrollHiddenListPage,
 } from "./directHistory.mjs";
 
@@ -539,5 +540,44 @@ describe("hidden likes and favorites", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("retryBadPage on rate limits", () => {
+  const limited = () => new DirectHistoryError("rate_limited", "限流");
+
+  it("waits and reads the same page again", async () => {
+    const ask = vi.fn().mockRejectedValueOnce(limited()).mockRejectedValueOnce(limited()).mockResolvedValue("page");
+    const onWait = vi.fn();
+    await expect(retryBadPage(ask, undefined, { waits: [1, 2, 3], onWait })).resolves.toBe("page");
+    expect(ask).toHaveBeenCalledTimes(3);
+    expect(onWait.mock.calls).toEqual([[1, 1], [2, 2]]);
+  });
+
+  it("gives up once every wait is used", async () => {
+    const ask = vi.fn(async () => { throw limited(); });
+    await expect(retryBadPage(ask, undefined, { waits: [1, 1] })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(ask).toHaveBeenCalledTimes(3);
+  });
+
+  it("stops waiting without another request once the read is stopped", async () => {
+    let stopped = false;
+    const ask = vi.fn(async () => { throw limited(); });
+    const started = Date.now();
+    await expect(retryBadPage(ask, undefined, { waits: [60_000], stopped: () => stopped, onWait: () => { stopped = true; } }))
+      .rejects.toMatchObject({ code: "rate_limited" });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("still retries a bad page only once", async () => {
+    const ask = vi.fn(async () => { throw new DirectHistoryError("invalid_json", "坏页"); });
+    vi.useFakeTimers();
+    try {
+      const result = expect(retryBadPage(ask)).rejects.toMatchObject({ code: "invalid_json" });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await result;
+    } finally { vi.useRealTimers(); }
+    expect(ask).toHaveBeenCalledTimes(2);
   });
 });

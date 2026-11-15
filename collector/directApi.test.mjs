@@ -302,10 +302,15 @@ describe("direct list pagination", () => {
     await expect(api.collectRecordPages("liked_videos", () => true)).rejects.toMatchObject({ code: "pagination_stalled" });
     expect(context.fetch).toHaveBeenCalledTimes(1); await api.close();
   });
-  it.each([403,429])("stops on HTTP %s without retrying or invoking the page callback", async (status) => {
-    const { api, context } = client(() => ({ status, payload: {} })); const onPage = vi.fn();
-    await expect(api.collectRecordPages("liked_videos", onPage)).rejects.toMatchObject({ code: status === 403 ? "session_rejected" : "rate_limited" });
+  it("stops on HTTP 403 without retrying or invoking the page callback", async () => {
+    const { api, context } = client(() => ({ status: 403, payload: {} })); const onPage = vi.fn();
+    await expect(api.collectRecordPages("liked_videos", onPage)).rejects.toMatchObject({ code: "session_rejected" });
     expect(context.fetch).toHaveBeenCalledTimes(1); expect(onPage).not.toHaveBeenCalled(); await api.close();
+  });
+  it("waits out HTTP 429 and gives up only after the last wait", async () => {
+    const { api, context } = client(() => ({ status: 429, payload: {} })); const onPage = vi.fn();
+    await expect(api.collectRecordPages("liked_videos", onPage, { waits: [1, 1] })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(context.fetch).toHaveBeenCalledTimes(3); expect(onPage).not.toHaveBeenCalled(); await api.close();
   });
   it("cancels only its isolated request and leaves the saved session untouched", async () => {
     const dataDirectory = await directory(); await saveDirectSession(dataDirectory, session());
