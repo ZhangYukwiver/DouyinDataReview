@@ -290,7 +290,7 @@ export class DirectApiClient {
       throw this.sessionError(new DirectHistoryError("account_mismatch", "接口登录账号与当前账号不一致，已停止读取。"));
     return { uid };
   }
-  async collectRecordPages(type, onPage, { signal } = {}) {
+  async collectRecordPages(type, onPage, { signal, ...limitRetry } = {}) {
     if (!["liked_videos", "favorite_videos"].includes(type)) throw new DirectHistoryError("invalid_type", "记录类型无效。");
     const liked = type === "liked_videos";
     if (liked && !this.secUid) {
@@ -313,7 +313,7 @@ export class DirectApiClient {
         body: liked ? null : { count: "10", cursor }, signal,
         referer: `${ORIGIN}/user/self?showTab=${liked ? "like" : "favorite_collection"}`,
       });
-      const payload = fillEmptyPage(await retryBadPage(ask, signal));
+      const payload = fillEmptyPage(await retryBadPage(ask, signal, limitRetry));
       const data = payload.data ?? payload;
       const more = [1, "1", true].includes(data.has_more) ? true : [0, "0", false].includes(data.has_more) ? false : null;
       if (!Array.isArray(data.aweme_list)) throw new DirectHistoryError("schema_changed", "列表响应缺少作品数据。");
