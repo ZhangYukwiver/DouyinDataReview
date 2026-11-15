@@ -12,11 +12,11 @@ import { AiRuntimeField } from "./AiRuntimeField";
 import {
   collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites,
   findTwinAccount, formatAccountAddedDay, getBrowserLoginSources,
-  type BrowserLoginSource, type CollectorAccounts, type FeedExtensionStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings,
+  type BrowserLoginSource, type CollectorAccounts, type CollectorStatus, type FeedExtensionStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings,
 } from "../../services/localCollector";
 import { ease, revealFrom, ws } from "./motion";
 import { RELEASE_NOTES } from "./releaseNotes";
-import { appUpdateAction } from "./setupModel";
+import { appUpdateAction, diagnosticText } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
 
@@ -59,6 +59,9 @@ export interface SettingsDialogProps {
   onCheckAppUpdate: () => Promise<void>;
   onDownloadAppUpdate: () => Promise<void>;
   onInstallAppUpdate: () => Promise<void>;
+  /** 「复制诊断信息」要带上的采集器状态和页面上正显示的报错 */
+  collectorStatus?: CollectorStatus | null;
+  collectorError?: string | null;
   /** 下载站 notice.json 里的问卷地址；没填或读不到就只写 QQ 群 */
   feedbackUrl?: string | null;
   browserConnection?: Omit<BrowserConnectionPanelProps, "visible" | "blocked">;
@@ -783,6 +786,17 @@ function Assistant({ appStyle, assistantInstalled, collector, onToggleAssistant 
   );
 }
 
+/** 复制到剪贴板；内嵌浏览器可能不给剪贴板权限，退回到选中文字再复制 */
+function copyText(text: string): Promise<boolean> {
+  const fallback = () => {
+    const area = Object.assign(document.createElement("textarea"), { value: text });
+    document.body.append(area); area.select();
+    const done = document.execCommand("copy"); area.remove();
+    return done;
+  };
+  return navigator.clipboard.writeText(text).then(() => true, fallback);
+}
+
 /** 用户自己的 AI 客户端接 MCP：命令由采集器按本机实际路径给，用应用自带的运行环境跑转发程序，不用装 AI 助手也不用装 Node。 */
 function McpAccess({ appStyle, connection }: { appStyle: AppStyle; connection: { baseUrl: string; token: string } }) {
   const [client, setClient] = useState<McpClient | null>(null);
@@ -795,14 +809,7 @@ function McpAccess({ appStyle, connection }: { appStyle: AppStyle; connection: {
   if (!client) return null;
   const commands = mcpCommands(client);
   const items = [["claude", "Claude Code", commands.claude], ["codex", "Codex", commands.codex], ["json", "其他客户端（填进 MCP 配置）", commands.json]] as const;
-  // 内嵌浏览器可能不给剪贴板权限，退回到选中文字再复制
-  const fallback = (text: string) => {
-    const area = Object.assign(document.createElement("textarea"), { value: text });
-    document.body.append(area); area.select();
-    const done = document.execCommand("copy"); area.remove();
-    return done;
-  };
-  const copy = (key: string, text: string) => void navigator.clipboard.writeText(text).then(() => true, () => fallback(text)).then((done) => setCopied(done ? key : null));
+  const copy = (key: string, text: string) => void copyText(text).then((done) => setCopied(done ? key : null));
   return (
     <View style={[styles.row, styles.rowStacked]} testID="settings-mcp">
       <RowCopy
@@ -822,15 +829,26 @@ function McpAccess({ appStyle, connection }: { appStyle: AppStyle; connection: {
   );
 }
 
-function About({ appStyle, appUpdate, feedbackUrl = null, installBlocked = false, onCheckAppUpdate, onDownloadAppUpdate, onInstallAppUpdate }: SettingsDialogProps) {
+function About({ appStyle, appUpdate, collectorError = null, collectorStatus = null, connected, feedbackUrl = null, installBlocked = false, onCheckAppUpdate, onDownloadAppUpdate, onInstallAppUpdate }: SettingsDialogProps) {
+  const [copied, setCopied] = useState(false);
+  const copyDiagnostics = () => void copyText(diagnosticText({
+    version: appUpdate?.currentVersion ?? RELEASE_NOTES[0]?.version ?? null, userAgent: navigator.userAgent, appStyle,
+    connected, status: collectorStatus, error: collectorError, update: appUpdate,
+  })).then(setCopied);
   const feedback = (
-    <View style={styles.row}>
-      <View style={styles.copy}>
-        <Text style={styles.rowTitle}>反馈渠道</Text>
-        <Text selectable style={styles.detail} testID="settings-feedback">遇到问题或想交流，可以加 QQ 群「DDDouyin」，群号 1124211302；也可以直接加 QQ 940537208。{feedbackUrl ? "不方便进群的话，也可以填反馈问卷。" : ""}</Text>
+    <>
+      <View style={styles.row}>
+        <View style={styles.copy}>
+          <Text style={styles.rowTitle}>反馈渠道</Text>
+          <Text selectable style={styles.detail} testID="settings-feedback">遇到问题或想交流，可以加 QQ 群「DDDouyin」，群号 1124211302；也可以直接加 QQ 940537208。{feedbackUrl ? "不方便进群的话，也可以填反馈问卷。" : ""}</Text>
+        </View>
+        {feedbackUrl ? <Button appStyle={appStyle} label="填写问卷" onPress={() => void Linking.openURL(feedbackUrl).catch(() => undefined)} testID="settings-feedback-survey" /> : null}
       </View>
-      {feedbackUrl ? <Button appStyle={appStyle} label="填写问卷" onPress={() => void Linking.openURL(feedbackUrl).catch(() => undefined)} testID="settings-feedback-survey" /> : null}
-    </View>
+      <View style={styles.row}>
+        <RowCopy detail="反馈问题时点一下复制，和问题一起发过来。里面只有应用版本、系统、采集器状态和眼前的报错，不含 Cookie 和记录内容。" title="诊断信息" />
+        <Button appStyle={appStyle} icon={copied ? Check : Copy} label={copied ? "已复制" : "复制"} onPress={copyDiagnostics} testID="settings-diagnostics" />
+      </View>
+    </>
   );
   const releaseNotes = RELEASE_NOTES.length > 0 && (
     <View style={styles.row}>

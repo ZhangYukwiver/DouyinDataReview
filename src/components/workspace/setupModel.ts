@@ -296,6 +296,52 @@ export function hasAppUpdate(state: DesktopUpdateState | null): boolean {
   return state?.phase === "available" || state?.phase === "downloaded";
 }
 
+// ---------- 诊断信息 ----------
+
+export interface DiagnosticInput {
+  version: string | null;
+  userAgent: string;
+  appStyle: string;
+  connected: boolean;
+  status: CollectorStatus | null;
+  /** 页面上正显示的那句报错 */
+  error: string | null;
+  update: DesktopUpdateState | null;
+  now?: Date;
+}
+
+/** 「复制诊断信息」的全文：反馈问题时一键带上版本、系统、采集器状态和眼前的报错。
+ * 状态里的 account 整个不取，也碰不到 Cookie、令牌和记录内容。 */
+// ponytail: 只带眼前这一次的状态和报错，不留历史；要「最近几次错误码」再让采集器记一个环形日志。
+// ponytail: 系统版本取自 UA，是冻结值（Win11 也写 NT 10.0）；要精确版本再走主进程 os.release()。
+export function diagnosticText({ version, userAgent, appStyle, connected, status, error, update, now = new Date() }: DiagnosticInput): string {
+  // 提示语里唯一会带出昵称的是「账号对不上」那句，昵称在引号里；引号内容一律打码，错误码已经够定位
+  const safe = (text: string | null | undefined) => text?.trim().replace(/「[^」]*」/gu, "「…」") || "无";
+  const lines = [
+    "DouyinDataReview 诊断信息",
+    `时间：${now.toISOString()}`,
+    `版本：${version ?? "未知"}`,
+    `系统：${userAgent}`,
+    `风格：${appStyle}`,
+  ];
+  if (!connected || !status) lines.push(`采集器：${connected ? "已连接，还没拿到状态" : "未连接"}`);
+  else {
+    const source = status.browserSource;
+    const { watch_history: watch, liked_videos: liked, favorite_videos: favorite, chat_messages: chat } = status.counts;
+    lines.push(
+      `采集器：${status.state}，错误码 ${status.code ?? "无"}，阶段 ${status.phase ?? "无"}，方式 ${status.syncMode ?? "无"}`,
+      `采集器提示：${safe(status.message)}`,
+      `登录凭据：${source ? `${source.credentials ?? "未知"}（${source.mode} / ${source.browser ?? "无"}，浏览器${source.connected ? "已连接" : "未连接"}）` : "未知"}`,
+      `聊天接收：${status.chat.state}，错误码 ${status.chat.code ?? "无"}，连接 ${status.chat.connection ?? "无"}`,
+      `聊天提示：${safe(status.chat.message)}`,
+      `已读条数：观看 ${watch}，喜欢 ${liked}，收藏 ${favorite}，聊天 ${chat}`,
+    );
+  }
+  lines.push(`页面报错：${safe(error)}`);
+  if (update) lines.push(`应用更新：${update.phase}${update.error ? `，${update.error}` : ""}`);
+  return lines.join("\n");
+}
+
 // ---------- 日期和条数的说法 ----------
 
 /** 内容记录卡头那一句：一共多少条、最早到哪天；没有记录时说能读到哪几类 */

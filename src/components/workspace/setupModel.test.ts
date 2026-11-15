@@ -9,6 +9,7 @@ import {
   credentialsExpired,
   deriveSetup,
   desktopLoginNeeded,
+  diagnosticText,
   formatLongDay,
   formatWhen,
   hourName,
@@ -295,5 +296,47 @@ describe("日期说法", () => {
     expect(hourName(0)).toBe("凌晨 0 点");
     expect(hourName(12)).toBe("中午 12 点");
     expect(hourName(19)).toBe("晚上 7 点");
+  });
+});
+
+describe("diagnosticText", () => {
+  const base = { version: "1.49.0", userAgent: "UA/1", appStyle: "minimal", error: null, update: null, now: new Date("2026-11-14T00:00:00Z") };
+
+  it("carries version, system, collector state and the error on screen", () => {
+    const text = diagnosticText({
+      ...base, connected: true, error: "读取失败",
+      status: status({
+        state: "error", code: "rate_limited", phase: "watch_history", syncMode: "direct_records", message: "触发限流",
+        counts: { watch_history: 12, liked_videos: 3, favorite_videos: 4, chat_messages: 5 },
+        browserSource: { mode: "independent", browser: "app", connected: false, credentials: "reconnect_required" },
+      }),
+    });
+    expect(text.split("\n")).toEqual([
+      "DouyinDataReview 诊断信息",
+      "时间：2026-11-14T00:00:00.000Z",
+      "版本：1.49.0",
+      "系统：UA/1",
+      "风格：minimal",
+      "采集器：error，错误码 rate_limited，阶段 watch_history，方式 direct_records",
+      "采集器提示：触发限流",
+      "登录凭据：reconnect_required（independent / app，浏览器未连接）",
+      "聊天接收：idle，错误码 无，连接 无",
+      "聊天提示：无",
+      "已读条数：观看 12，喜欢 3，收藏 4，聊天 5",
+      "页面报错：读取失败",
+    ]);
+  });
+
+  it("leaves out the account and masks the nickname quoted in a message", () => {
+    const text = diagnosticText({
+      ...base, connected: true, error: "导入的登录凭据属于另一个抖音号「小明」，这次读到的没有保存。",
+      status: status({ account: { id: "a", uid: "998877", nickname: "小明", avatar: "https://example.com/a.jpg" }, message: "属于「小明」" }),
+    });
+    expect(text).not.toMatch(/小明|998877|example\.com/u);
+    expect(text).toContain("页面报错：导入的登录凭据属于另一个抖音号「…」，这次读到的没有保存。");
+  });
+
+  it("still says something useful before the collector is reachable", () => {
+    expect(diagnosticText({ ...base, connected: false, status: null, error: "连不上采集器" })).toContain("采集器：未连接\n页面报错：连不上采集器");
   });
 });
