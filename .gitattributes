@@ -1,2 +1,4 @@
 # 在线体验版的打包产物（npm run build:demo），不算进语言统计，PR 里默认折叠
 docs/app/** linguist-generated
+# 报告页副本（npm run sync:story 从 prototype/ 拷出），不算进语言统计，PR 里默认折叠
+public/story/** linguist-generated
