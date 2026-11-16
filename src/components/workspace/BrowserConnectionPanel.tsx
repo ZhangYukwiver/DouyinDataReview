@@ -238,7 +238,8 @@ export function BrowserConnectionPanel({ visible, baseUrl, token, status, blocke
       <View style={[styles.panel, styles.panelCompact]} testID="browser-login-panel">
         {renderStart({ title: "扫码登录抖音", done: loggedIn && !revealed, busy: false, revealed, verify: false, sms: null, onSms, image: waitingForScan ? qrcode?.image ?? null : null,
           disabled: (blocked && !connecting) || !source?.available,
-          onStart: () => { setRevealed(true); if (!connecting) void connect(); },
+          // 已登录时点「重新扫码登录」多半是要换号：直接清掉登录窗口出新码，不先弹当前号的确认导入
+          onStart: () => { setRevealed(true); if (!connecting) void connect(loggedIn); },
           // 「改用别的方式导入」码亮着时也给，不用先取消
           actions: [
             ...(revealed ? [

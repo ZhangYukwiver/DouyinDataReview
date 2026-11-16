@@ -717,21 +717,29 @@ export async function startCollectorServer({
               sendJson(response, 200, { candidate: await browserCandidate(id, "desktop", login.identity) });
               return;
             }
-            const connection = await browserConnector(source, { fresh: body.fresh === true });
-            activeBrowserConnection = connection;
-            try {
-              loginController.signal.throwIfAborted();
-              const page = await connection.context.newPage();
-              browserLoginPage = page;
-              await page.bringToFront?.();
-              const identity = await browserIdentity(connection, page, { signal: loginController.signal, timeoutMs: BROWSER_LOGIN_TIMEOUT_MS });
-              loginController.signal.throwIfAborted();
-              page.conceal?.();
-              const id = randomUUID();
-              const timer = setTimeout(() => { void clearPendingBrowser(id); }, 2 * 60_000); timer.unref();
-              pendingBrowser = { id, connection, page, identity, timer };
-              sendJson(response, 200, { candidate: await browserCandidate(id, connection.browser, identity) });
-            } catch (error) { await connection.disconnect(); throw error; }
+            // 应用内登录窗口里还登着上次扫的别的号（刚添加账号、换到另一个号再登录）：别拿它当这次扫的，清掉登录状态重新出码
+            for (const fresh of body.fresh === true ? [true] : [false, true]) {
+              const connection = await browserConnector(source, { fresh });
+              activeBrowserConnection = connection;
+              try {
+                loginController.signal.throwIfAborted();
+                const page = await connection.context.newPage();
+                browserLoginPage = page;
+                await page.bringToFront?.();
+                // 认出来时还是打开前那个登录会话，才是窗口里留下的号；扫码登录会换新会话，扫的是谁都照收
+                const session = async () => (await connection.context.cookies("https://www.douyin.com/")).find(cookie => cookie.name === "sessionid")?.value;
+                const leftover = source.inApp && !fresh ? await session() : undefined;
+                const identity = await browserIdentity(connection, page, { signal: loginController.signal, timeoutMs: BROWSER_LOGIN_TIMEOUT_MS });
+                loginController.signal.throwIfAborted();
+                if (leftover && leftover === await session() && identity.uid !== accounts.active().uid) { await connection.disconnect(); continue; }
+                page.conceal?.();
+                const id = randomUUID();
+                const timer = setTimeout(() => { void clearPendingBrowser(id); }, 2 * 60_000); timer.unref();
+                pendingBrowser = { id, connection, page, identity, timer };
+                sendJson(response, 200, { candidate: await browserCandidate(id, connection.browser, identity) });
+                break;
+              } catch (error) { await connection.disconnect(); throw error; }
+            }
           } else if (url.pathname === "/v1/browser/confirm") {
             const readPermissions = parseReadPermissions(body.readPermissions);
             const pending = pendingBrowser;

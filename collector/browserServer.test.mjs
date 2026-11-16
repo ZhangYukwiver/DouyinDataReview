@@ -14,7 +14,7 @@ import { directSessionFixture } from "./fixtures/directClient.mjs";
 const ALL_TYPES = ["watch_history", "liked_videos", "favorite_videos"];
 const cleanups = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function fixture({ isLoggedIn = () => true, prepare } = {}) {
+async function fixture({ isLoggedIn = () => true, prepare, extraSources = [] } = {}) {
   const dataDirectory = await mkdtemp(path.join(tmpdir(), "cdp-server-")); cleanups.push(() => rm(dataDirectory, { recursive: true, force: true }));
   await prepare?.(dataDirectory);
   const identity = { uid: "123456", nickname: "合成账号", secUid: null, avatar: null };
@@ -54,7 +54,7 @@ async function fixture({ isLoggedIn = () => true, prepare } = {}) {
     this.updateStatus({ state: "complete", phase: null, progress: null, message: "已完成合成记录读取" });
   });
   const runtime = await startCollectorServer({ port: 0, dataDirectory, executablePath: process.execPath,
-    browserSources: [{ id: "chrome", label: "Chrome", directory: dataDirectory, inspectUrl: "chrome://inspect/#remote-debugging" }], browserConnector });
+    browserSources: [{ id: "chrome", label: "Chrome", directory: dataDirectory, inspectUrl: "chrome://inspect/#remote-debugging" }, ...extraSources], browserConnector });
   cleanups.push(() => runtime.close());
   const paired = await fetch(`${runtime.baseUrl}/v1/pair`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: runtime.getPairingCode() }) }).then(response => response.json());
   const headers = { Authorization: `Bearer ${paired.token}`, "Content-Type": "application/json" };
@@ -64,7 +64,7 @@ async function fixture({ isLoggedIn = () => true, prepare } = {}) {
     const response = await fetch(`${runtime.baseUrl}${route}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  return { runtime, call, headers, dataDirectory, connections, browserConnector, identity, loginButton, bootstrap, readRecords, page };
+  return { runtime, call, headers, dataDirectory, connections, browserConnector, identity, loginButton, bootstrap, readRecords, page, context, cookies };
 }
 
 describe("browser login HTTP handshake", () => {
@@ -238,6 +238,41 @@ describe("browser login HTTP handshake", () => {
     // 上一个号的窗口先关掉，连接器才去清登录分区
     expect(connections[0].disconnect.mock.invocationCallOrder[0]).toBeLessThan(browserConnector.mock.invocationCallOrder[1]);
     expect((await call("/v1/browser/confirm", "POST", { id: first.id })).body.error).toBe("browser_candidate_expired");
+  });
+  it("clears an in-app login window still signed in to another account, but keeps whoever just scanned", async () => {
+    let loggedIn = false;
+    const { call, identity, browserConnector, connections, loginButton, context, cookies } = await fixture({ isLoggedIn: () => loggedIn, extraSources: [{ id: "app", label: "应用内登录", inApp: true }] });
+    // 点开登录框就当用户扫了码；抖音每次登录都发新会话
+    let logins = 0;
+    loginButton.click.mockImplementation(async () => { loggedIn = true; cookies[0].value = `scan-${++logins}`; });
+    const options = () => browserConnector.mock.calls.map(([, value]) => value);
+    // 第一次扫码：扫的号不是当前账号的（当前账号还没绑定），照收
+    const first = (await call("/v1/browser/connect", "POST", { browser: "app" })).body.candidate;
+    expect(first.uid).toBe("123456");
+    await call("/v1/browser/confirm", "POST", { id: first.id });
+    // 同一个号再登录：窗口里留着的登录直接认出来，不清
+    const same = (await call("/v1/browser/connect", "POST", { browser: "app" })).body.candidate;
+    expect(same.uid).toBe("123456");
+    await call("/v1/browser/pending", "DELETE", { id: same.id });
+    expect(options()).toEqual([{ fresh: false }, { fresh: false }]);
+    // 添加账号以后窗口里还登着上一个号：关掉它、清登录分区，等用户扫新号
+    expect((await call("/v1/accounts", "POST")).status).toBe(201);
+    const scan = browserConnector.getMockImplementation();
+    browserConnector.mockImplementation(async (source, value) => { if (value.fresh) { loggedIn = false; identity.uid = "789"; } return scan(source, value); });
+    const added = (await call("/v1/browser/connect", "POST", { browser: "app" })).body.candidate;
+    expect(added.uid).toBe("789");
+    expect(options().slice(2)).toEqual([{ fresh: false }, { fresh: true }]);
+    expect(connections[2].disconnect.mock.invocationCallOrder[0]).toBeLessThan(browserConnector.mock.invocationCallOrder[3]);
+    await call("/v1/browser/pending", "DELETE", { id: added.id });
+    // 窗口里留着的登录失效了（Cookie 还在、页面要重新登录）：重新扫进来的是谁都照收，不清
+    loggedIn = false; identity.uid = "555";
+    context.cookies.mockImplementation(async () => cookies);
+    expect((await call("/v1/browser/connect", "POST", { browser: "app" })).body.candidate.uid).toBe("555");
+    expect(options()).toHaveLength(5);
+    // 外部浏览器里登着谁就导谁，不去清
+    identity.uid = "123456";
+    expect((await call("/v1/browser/connect", "POST", { browser: "chrome" })).body.candidate.uid).toBe("123456");
+    expect(options().at(-1)).toEqual({ fresh: false });
   });
   it("disconnects the temporary browser when the login wait is cancelled", async () => {
     let loggedIn = false;
