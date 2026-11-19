@@ -37,6 +37,7 @@ import { saveVideoCopies } from "../desktop/videoDownloads.mjs";
 import { UsageSessions } from "./usageSessions.mjs";
 import { UsageAutoConnect, discoverUsageBrowser } from "./usageAutoConnect.mjs";
 import { BrowserUsageMonitor, connectBrowserUsage } from "./browserUsage.mjs";
+import { createXiaohongshu, XIAOHONGSHU_LISTS, XIAOHONGSHU_READS } from "./xiaohongshu.mjs";
 
 const DEFAULT_PORT = 4765;
 const MAX_BODY_BYTES = 4 * 1024;
@@ -279,6 +280,7 @@ export async function startCollectorServer({
   browserConnector = connectExternalBrowser,
   usageBrowserConnector = connectBrowserUsage,
   usageBrowserDiscovery = discoverUsageBrowser,
+  xiaohongshuContext,
   // 抖音桌面端的数据目录和登录态读取可替换，测试里用假的客户端目录
   desktopDirectory = desktopDataDirectory(),
   // 抖音电脑客户端有 Windows 和 Mac 版，别的系统上不列出这一项
@@ -347,6 +349,7 @@ export async function startCollectorServer({
   let accountWork = null;
   let switching = false;
   let browserWork = null;
+  const xiaohongshu = createXiaohongshu({ dataDirectory, ...(xiaohongshuContext ? { openContext: xiaohongshuContext } : {}) });
   let browserLoginController = null;
   // 正在等登录的那个页面：应用内登录时工作台从这里取二维码
   let browserLoginPage = null;
@@ -584,6 +587,45 @@ export async function startCollectorServer({
       || (request.method === "POST" && ["/v1/feed-filter", "/v1/feed-filter/events", "/v1/feed-filter/removed", "/v1/downloads"].includes(url.pathname)))) {
       sendJson(response, 403, { error: "extension_not_allowed" });
       return;
+    }
+
+    // 小红书：后台任务 + 轮询。登录用无头浏览器，二维码透传给工作台扫
+    if (url.pathname === "/v1/xiaohongshu" || url.pathname.startsWith("/v1/xiaohongshu/")) {
+      if (!isLoopbackAddress(request.socket.remoteAddress)) return sendJson(response, 403, { error: "loopback_only" });
+      const action = `${request.method} ${url.pathname.slice("/v1/xiaohongshu".length)}`;
+      try {
+        if (action === "GET ") return sendJson(response, 200, await xiaohongshu.status());
+        if (action === "GET /latest") return sendJson(response, 200, { latest: await xiaohongshu.latest() });
+        if (action === "POST /login") return sendJson(response, 202, { job: xiaohongshu.start([]) });
+        if (action === "POST /export") {
+          const body = await readJsonBody(request);
+          const lists = body?.lists ?? Object.keys(XIAOHONGSHU_LISTS);
+          if (!Array.isArray(lists) || !lists.length) return sendJson(response, 400, { error: "invalid_request", message: "至少选一类：favorites 或 likes。" });
+          return sendJson(response, 202, { job: xiaohongshu.start(lists) });
+        }
+        if (request.method === "POST" && XIAOHONGSHU_READS.includes(action.slice("POST /".length))) {
+          // 推荐、搜索、详情、评论、主页：请求等到读完；调用方断开就关掉这次的浏览器
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          response.once("close", abort);
+          try {
+            const result = await xiaohongshu.read(action.slice("POST /".length), await readJsonBody(request), controller.signal);
+            return sendJson(response, 200, result);
+          } finally { response.off("close", abort); }
+        }
+        if (action === "POST /cancel") { xiaohongshu.cancel(); return sendJson(response, 200, { ok: true }); }
+        if (action === "POST /logout") { await xiaohongshu.logout(); return sendJson(response, 200, { ok: true }); }
+        return sendJson(response, 404, { error: "not_found" });
+      } catch (error) {
+        if (response.destroyed) return;
+        const known = error instanceof BrowserConnectionError;
+        const malformed = error instanceof SyntaxError || error.message === "body_too_large";
+        if (!known && !malformed) console.warn("[xiaohongshu]", error);
+        return sendJson(response, known ? error.status : malformed ? 400 : 500, {
+          error: known ? error.code : malformed ? "invalid_request" : "xiaohongshu_failed",
+          message: known ? error.message : malformed ? "请求格式无效。" : "小红书读取中断，请稍后重试。",
+        });
+      }
     }
 
     // 刷视频、探索、下载是人在等的：记一下时间，读取记录和聊天历史先给它们让路
@@ -1381,6 +1423,7 @@ export async function startCollectorServer({
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    xiaohongshu.cancel();
     browserLoginController?.abort();
     await usageAutoConnect.close();
     await usageBrowser.stop().catch(() => {});

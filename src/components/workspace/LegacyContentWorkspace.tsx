@@ -52,6 +52,7 @@ import {
   Sparkles,
   Bot,
   BookOpenText,
+  BookHeart,
   Star,
   Trash2,
   TvMinimalPlay,
@@ -122,7 +123,7 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "knowledge" | "sources";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "knowledge" | "xiaohongshu" | "sources";
 
 export interface ContentWorkspaceProps {
   /** 连接与采集：嵌在外壳里的一页，自带顶栏；入口在侧栏底部的账号菜单 */
@@ -135,6 +136,7 @@ export interface ContentWorkspaceProps {
   assistant?: React.ReactNode;
   /** 知识库：视频解析的结果都收在这里 */
   knowledge?: React.ReactNode;
+  xiaohongshu?: React.ReactNode;
   foldersRevision?: string | null;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
@@ -189,6 +191,7 @@ const navItems: NavItem[] = [
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
   { id: "assistant", label: "AI 助手", icon: Bot, accent: color.accent },
   { id: "knowledge", label: "知识库", icon: BookOpenText, accent: color.amber },
+  { id: "xiaohongshu", label: "小红书", icon: BookHeart, accent: color.accent },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
@@ -208,14 +211,14 @@ type SideKey = WorkspaceViewKey | "library" | "report";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
 const reportItems = navItems.filter((item) => isReportView(item.id));
 // 刷视频、探索、创作者中心和 AI 助手是工具页：不显示条数、隐私和重新读取
-const toolView = (view: SideKey) => view === "feed" || view === "explore" || view === "creator" || view === "assistant" || view === "knowledge";
+const toolView = (view: SideKey) => view === "feed" || view === "explore" || view === "creator" || view === "assistant" || view === "knowledge" || view === "xiaohongshu";
 // 「报告」这一项也不挂条数：条数在它的页签上
 const showsCount = (view: SideKey) => !toolView(view) && view !== "report";
 const sideItem = (id: SideKey) => navItems.find((item) => item.id === id)!;
 // 侧栏按「来这儿做什么」分三组：发现（看新的）/ 我的（自己留下的）/ 洞察（从记录里看出什么）
 const sideGroups: ReadonlyArray<{ label: string; items: NavItem<SideKey>[] }> = [
   { label: "发现", items: [sideItem("feed"), sideItem("explore")] },
-  { label: "我的", items: [{ id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan }, sideItem("chat"), sideItem("knowledge")] },
+  { label: "我的", items: [{ id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan }, sideItem("chat"), sideItem("knowledge"), sideItem("xiaohongshu")] },
   { label: "洞察", items: [{ id: "report", label: "报告", icon: LayoutDashboard, accent: color.green }, sideItem("creator"), sideItem("assistant")] },
 ];
 
@@ -246,6 +249,7 @@ export function ContentWorkspace({
   creator,
   assistant,
   knowledge,
+  xiaohongshu,
   activeView,
   records,
   liveRecords = null,
@@ -349,6 +353,7 @@ export function ContentWorkspace({
     creator: 0,
     assistant: 0,
     knowledge: 0,
+    xiaohongshu: 0,
     watch_history: watchedVideos.length + incomingVideos.length,
     live: watchedLives.length + incomingLives.length,
     liked_videos: records.liked_videos.length + (liveRecords?.liked_videos.length ?? 0),
@@ -614,7 +619,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "knowledge" ? knowledge : activeView === "chat" ? (
+        {activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "knowledge" ? knowledge : activeView === "xiaohongshu" ? xiaohongshu : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
