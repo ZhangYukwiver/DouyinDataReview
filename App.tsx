@@ -126,6 +126,7 @@ import { buildDataExportWithVoice, type DataExportSelection } from "./src/servic
 import { readRecordFolders, type RecordFolders } from "./src/services/recordFolders";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 import { KnowledgeWorkspace } from "./src/components/workspace/KnowledgeWorkspace";
+import { XiaohongshuWorkspace } from "./src/components/workspace/XiaohongshuWorkspace";
 // @ts-expect-error react-native-web 没给内部模块出类型
 import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
 
@@ -2059,6 +2060,7 @@ function AppContent() {
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           knowledge={<KnowledgeWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} accountId={collectorStatus?.account?.id ?? null}
             records={workspaceRecords} onOpenSettings={openSettings} onOpenAiSettings={() => openPreferences("ai")} />}
+          xiaohongshu={<XiaohongshuWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} />}
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
             videoLibrary={!privacy && !switchingAccount && collectorAccounts?.activeId ? { accountId: collectorAccounts.activeId, records: workspaceRecords } : undefined}
             onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} /> : undefined}

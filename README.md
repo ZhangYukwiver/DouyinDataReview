@@ -26,7 +26,7 @@
 
 **DouyinDataReview 是一款免费开源的抖音数据采集、导出与分析桌面应用。** 它用你本人登录的抖音会话读取观看历史、喜欢、收藏和好友聊天记录，保存在本机；能按关键词控制抖音推荐流，把视频解析成逐字稿、学习笔记和分镜脚本。工作台还能在电脑上刷抖音推荐、下载视频、实时聊天、看创作者中心和直播，生成持续报告和抖音年度报告（Douyin Wrapped），另有可选的 AI 助手。
 
-只支持抖音（中国版），不支持国际版 TikTok；提供 Windows x64、macOS Apple Silicon 和 Linux x64 安装包。本项目是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。完整步骤见[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)，给检索工具读的项目事实在 [llms.txt](llms.txt)。
+工作台面向抖音（中国版），不支持国际版 TikTok。工作台另能扫码导出[小红书的收藏和点赞](#小红书收藏和点赞导出)并出看板，也能看小红书推荐、搜笔记、读评论和主页（[接口](#小红书内容读取)）。桌面版提供 Windows x64、macOS Apple Silicon 和 Linux x64 安装包。本项目是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。完整步骤见[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)，给检索工具读的项目事实在 [llms.txt](llms.txt)。
 
 > [!NOTE]
 > 只能读到本人账号在接口当前返回的记录，不保证取回全部历史。采集用的是抖音没有公开承诺的接口，可能失效，也可能触发账号风控。
@@ -148,6 +148,42 @@ npm run web
 - 桌面开发版：`npm run desktop`；打安装包：`npm run desktop:build`（Windows）、`npm run desktop:build:mac`（Apple Silicon）或 `npm run desktop:build:linux`（x64，要先装 nasm），输出到 `release/`。
 - 验证：`npm run typecheck`、`npm test`、`npm run build:web`。
 - 手机连接：电脑和手机在同一可信局域网时，用 `npm run collector -- --lan --origin http://<手机打开的页面地址>` 启动采集器，手机上把服务地址改成采集器显示的局域网地址。
+
+### 小红书收藏和点赞导出
+
+工作台侧栏「我的 → 小红书」：在页面里扫码登录小红书，选收藏、点赞或两类一起导出，导出完出看板（常看的作者、常见话题、最热的笔记、可搜索的笔记列表）；「推荐 / 搜索 / 主页」页签用登录的账号读首页推荐、搜笔记、看主页，点开一篇看正文和评论。需要本机装有 Chrome（Windows 也可用 Edge），采集器用无头浏览器打开小红书网页，二维码透传到工作台，不弹浏览器窗口。登录状态存在采集器数据目录的 `xiaohongshu/browser-profile`，「退出登录」会删掉它。
+
+也可以直接调接口（只接受本机请求，沿用工作台的 Bearer 配对令牌：本机 `GET /v1/pairing-code` 取配对码，再以 `{"code":"配对码"}` 请求 `POST /v1/pair` 拿 `token`）：
+
+```sh
+curl -X POST http://127.0.0.1:4765/v1/xiaohongshu/export \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"lists":["favorites","likes"]}'
+```
+
+| 接口 | 作用 |
+|---|---|
+| `POST /v1/xiaohongshu/export` | 开始导出，`lists` 可只传 `favorites`（收藏）或 `likes`（点赞），省略时两类都导；没登录会先等扫码 |
+| `POST /v1/xiaohongshu/login` | 只扫码登录 |
+| `GET /v1/xiaohongshu` | 任务进度（`job.state`：starting / login / reading / done / failed / cancelled；等扫码时 `job.qr` 是二维码图片）和上次登录的账号 |
+| `GET /v1/xiaohongshu/latest` | 看板数据：每类最近一次导出的笔记 |
+| `POST /v1/xiaohongshu/cancel`、`POST /v1/xiaohongshu/logout` | 取消当前任务、退出登录 |
+
+采集器通过本人主页读取网页接口 `GET /api/sns/web/v2/note/collect/page`（收藏）和 `GET /api/sns/web/v1/note/like/page`（点赞），再逐篇打开笔记读正文。导出完成后 `job.file` 是本机 JSON 文件的绝对路径，`lists.favorites.notes` 和 `lists.likes.notes` 包含笔记 ID、标题、作者、类型、封面、链接、赞数和正文；详情页读不到时 `body` 为 `null`，列表翻页失败会让任务失败。导出文件位于采集器数据目录下的 `xiaohongshu/`。
+
+### 小红书内容读取
+
+以下接口和导出共用配对令牌和小红书登录（先扫码登录过），均为 `POST`、JSON 请求体，读完直接返回结果。每次读取在后台开一次无头浏览器，通常 5–12 秒。
+
+| 路径 | 请求体 | 返回数据 |
+|---|---|---|
+| `/v1/xiaohongshu/feed` | `{}` | 登录账号首页当前加载的推荐笔记，按页面顺序 |
+| `/v1/xiaohongshu/search` | `{"keyword":"阅读笔记"}` | 首批搜索结果 `notes` 和平台的 `has_more` |
+| `/v1/xiaohongshu/detail` | `{"url":"笔记网页链接"}` | 笔记 ID、标题、正文、作者、作者主页和赞/收藏/评论数 |
+| `/v1/xiaohongshu/comments` | `{"url":"笔记网页链接"}` | 首批一级评论：评论 ID、作者、正文、点赞数、回复数及 `has_more` |
+| `/v1/xiaohongshu/profile` | `{}` 或 `{"url":"用户主页链接"}` | 默认读本人主页；指定主页时返回昵称、简介、统计和首批已发布笔记 |
+
+例如先搜索，把 `notes[0].url` 原样传给详情或评论接口，再用详情的 `author_url` 读作者主页。链接用 `www.xiaohongshu.com` 的完整网页地址，保留小红书带的 `xsec_token` 参数。列表只读首批，`has_more` 表示平台还有后续。没登录或登录失效返回 `409 xiaohongshu_login_required`；正在登录或导出时返回 `409 xiaohongshu_busy`；同时发起的多个读取会排队依次执行。
 
 ## 免责声明
 
