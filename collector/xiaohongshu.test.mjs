@@ -128,4 +128,17 @@ describe("小红书导出任务", () => {
     expect(await xhs.read("detail", { url: url + "?xsec_token=t&xsec_source=pc_feed" }, new AbortController().signal)).toMatchObject({
       note_id: "aaaaaaaaaaaaaaaaaaaaaaaa", url: url + "?xsec_token=t&xsec_source=pc_feed", body: "正文 #旅行 #露营" });
   });
+
+  it("认不出的错误把第一行原因带进提示", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "xhs-"));
+    dirs.push(dataDirectory);
+    const browser = fakeBrowser({ notes: { 收藏: [], 点赞: [] } });
+    const context = await browser.openContext();
+    const page = context.pages()[0];
+    page.getByRole = () => ({ first: () => ({ isVisible: async () => { throw new Error("\u001b[2mlocator.isVisible: strict mode violation\u001b[22m\n  call log"); } }) });
+    const xhs = createXiaohongshu({ dataDirectory, openContext: async () => context });
+    xhs.start([]);
+    const status = await until(xhs, job => job.state === "failed");
+    expect(status.job.message).toBe("小红书登录中断，请重试（locator.isVisible: strict mode violation）。");
+  });
 });

@@ -37,7 +37,7 @@ import { saveVideoCopies } from "../desktop/videoDownloads.mjs";
 import { UsageSessions } from "./usageSessions.mjs";
 import { UsageAutoConnect, discoverUsageBrowser } from "./usageAutoConnect.mjs";
 import { BrowserUsageMonitor, connectBrowserUsage } from "./browserUsage.mjs";
-import { createXiaohongshu, XIAOHONGSHU_LISTS, XIAOHONGSHU_READS } from "./xiaohongshu.mjs";
+import { createXiaohongshu, errorCause, XIAOHONGSHU_LISTS, XIAOHONGSHU_READS } from "./xiaohongshu.mjs";
 
 const DEFAULT_PORT = 4765;
 const MAX_BODY_BYTES = 4 * 1024;
@@ -623,7 +623,7 @@ export async function startCollectorServer({
         if (!known && !malformed) console.warn("[xiaohongshu]", error);
         return sendJson(response, known ? error.status : malformed ? 400 : 500, {
           error: known ? error.code : malformed ? "invalid_request" : "xiaohongshu_failed",
-          message: known ? error.message : malformed ? "请求格式无效。" : "小红书读取中断，请稍后重试。",
+          message: known ? error.message : malformed ? "请求格式无效。" : `小红书读取中断，请稍后重试（${errorCause(error)}）。`,
         });
       }
     }
