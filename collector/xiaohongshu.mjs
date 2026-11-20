@@ -14,6 +14,9 @@ const ACTIVE = new Set(["starting", "login", "reading"]);
 
 export const XIAOHONGSHU_READS = ["feed", "search", "detail", "comments", "profile"];
 
+/** 认不出的错误只取第一行放进提示，用户反馈时能带上原因 */
+export const errorCause = error => String(error?.message ?? error).split("\n")[0].replace(/\u001b\[[0-9;]*m/gu, "").slice(0, 100);
+
 function loginRequired() {
   return new BrowserConnectionError("xiaohongshu_login_required", "还没登录小红书，或登录已失效。先在工作台「小红书」页扫码登录（或调用 POST /v1/xiaohongshu/login），再重试。");
 }
@@ -52,12 +55,14 @@ async function writeJson(file, value, signal) {
 async function signIn(page, { onQr, signal, timeoutMs }) {
   // 被风控时首页会跳到「安全限制」页，goto 会因为跳转中断而报错：交给下面的轮询按地址判断
   await page.goto(site + "/explore", { waitUntil: "domcontentloaded" }).catch(() => {});
-  const me = page.getByRole("link", { name: "我", exact: true });
-  const qr = page.locator(".login-container img.qrcode-img");
+  // 页面偶尔同时挂着两个登录框或两个「我」，多个匹配时 isVisible 会抛严格模式错误：一律取第一个
+  const me = page.getByRole("link", { name: "我", exact: true }).first();
+  const qr = page.locator(".login-container img.qrcode-img").first();
   // 二维码上的状态层：过期时是「二维码已过期 / 点击刷新」，扫了之后提示去手机上确认
-  const status = page.locator(".login-container .qrcode .status");
-  const refresh = status.locator(".refresh");
-  const loginButton = page.locator("#login-btn");
+  const status = page.locator(".login-container .qrcode .status").first();
+  const refresh = status.locator(".refresh").first();
+  // 全新的浏览器配置里首页有两个 #login-btn（实测），点看得见的那个
+  const loginButton = page.locator("#login-btn").filter({ visible: true }).first();
   let deadline = Date.now() + 30_000;
   let waiting = false;
   for (;;) {
@@ -255,7 +260,7 @@ export function createXiaohongshu({ dataDirectory, openContext = launchContext, 
         if (!signal.aborted && !(error instanceof BrowserConnectionError)) console.warn("[xiaohongshu]", error);
         Object.assign(current, signal.aborted
           ? { state: "cancelled", message: "已取消。" }
-          : { state: "failed", message: error instanceof BrowserConnectionError ? error.message : "小红书导出中断，请重试。" });
+          : { state: "failed", message: error instanceof BrowserConnectionError ? error.message : `小红书${current.lists.length ? "导出" : "登录"}中断，请重试（${errorCause(error)}）。` });
       }).finally(() => { current.qr = null; current.progress = null; });
       return { ...current };
     },
