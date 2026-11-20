@@ -327,3 +327,5 @@
 .lv-unread { position: absolute; left: 50%; bottom: 72px; gap: 4px; height: 28px; padding: 0 12px; border-radius: 14px; background: #fe2c55; font-size: 12px !important; transform: translateX(-50%); box-shadow: 0 6px 20px #0008; }
 .lv-note { margin: 0; padding: 12px 18px 16px; border-top: 1px solid #ffffff0d; color: #82828d; font-size: 11px; line-height: 1.6; }
 @media (prefers-reduced-motion: reduce) { .lv-layout { animation: none; } }
+.rv-library-save { position: absolute; z-index: 12; right: 76px; bottom: 18%; max-width: min(360px, 65%); padding: 12px; border-radius: 10px; background: var(--ws-surface, #fff); box-shadow: 0 4px 24px #0005; }
+.rv-library-save > button { display: block; margin-left: auto; }

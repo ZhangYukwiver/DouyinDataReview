@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { homedir, networkInterfaces } from "node:os";
 import path from "node:path";
@@ -11,6 +11,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 import { AccountRegistry, isAccountId } from "./accounts.mjs";
+import { PlatformAccountRegistry } from "./platformAccounts.mjs";
 import { AssistantError, parseAssistantConfig } from "./assistant/chat.mjs";
 import { createAssistant } from "./assistant/index.mjs";
 import { createLocalAi } from "./localAi.mjs";
@@ -38,6 +39,9 @@ import { UsageSessions } from "./usageSessions.mjs";
 import { UsageAutoConnect, discoverUsageBrowser } from "./usageAutoConnect.mjs";
 import { BrowserUsageMonitor, connectBrowserUsage } from "./browserUsage.mjs";
 import { createXiaohongshu, errorCause, XIAOHONGSHU_LISTS, XIAOHONGSHU_READS } from "./xiaohongshu.mjs";
+import { createBilibiliRoutes } from "./bilibiliRoutes.mjs";
+import { ContentLibraryStore } from "./contentLibrary.mjs";
+import { createContentLibraryRoutes, isContentLibraryPath } from "./contentLibraryRoutes.mjs";
 
 const DEFAULT_PORT = 4765;
 const MAX_BODY_BYTES = 4 * 1024;
@@ -265,6 +269,22 @@ async function readJsonBody(request, limit = MAX_BODY_BYTES) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+async function mapWithConcurrency(values, limit, mapper) {
+  const list = Array.from(values);
+  const result = new Array(list.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      if (index >= list.length) return;
+      result[index] = await mapper(list[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker));
+  return result;
+}
+
 export async function startCollectorServer({
   lan = false,
   port = DEFAULT_PORT,
@@ -281,6 +301,7 @@ export async function startCollectorServer({
   usageBrowserConnector = connectBrowserUsage,
   usageBrowserDiscovery = discoverUsageBrowser,
   xiaohongshuContext,
+  bilibiliEnabled = process.env.DY_BILIBILI_ENABLED !== "0",
   // 抖音桌面端的数据目录和登录态读取可替换，测试里用假的客户端目录
   desktopDirectory = desktopDataDirectory(),
   // 抖音电脑客户端有 Windows 和 Mac 版，别的系统上不列出这一项
@@ -322,6 +343,9 @@ export async function startCollectorServer({
       onAccountIdentity: (identity) => accounts.updateIdentity(account.id, identity).catch(() => undefined),
     });
     await next.initialize();
+    next.subscribeStatus(status => {
+      if (status.updatedAt) void accounts.update(account.id, { lastSyncedAt: status.updatedAt }).catch(() => undefined);
+    });
     // 读取时读到的抖音收藏夹并进收藏栏的文件夹；没变就不写，免得打断正在整理的页面
     next.onDouyinFolders = async (remote) => {
       let changed = false;
@@ -347,9 +371,159 @@ export async function startCollectorServer({
   };
   // 账号操作（切换、新建、删除）一次只做一个；切换期间旧采集器在关、新的还没接上
   let accountWork = null;
+  // A sync owns its original collector, store and browser profile until its
+  // final write. The foreground can switch without redirecting the job.
+  const backgroundSyncs = new Map();
+  function keepSyncing(id, runtime) {
+    const entry = { runtime, closing: null };
+    backgroundSyncs.set(id, entry);
+    Promise.resolve(runtime.syncPromise).catch(() => {}).then(async () => {
+      if (backgroundSyncs.get(id) !== entry) return;
+      entry.closing = runtime.shutdown();
+      try { await entry.closing; } finally { if (backgroundSyncs.get(id) === entry) backgroundSyncs.delete(id); }
+    }).catch(error => console.warn("[background-sync]", error.code ?? error.name));
+  }
   let switching = false;
   let browserWork = null;
   const xiaohongshu = createXiaohongshu({ dataDirectory, ...(xiaohongshuContext ? { openContext: xiaohongshuContext } : {}) });
+  const bilibiliAccountRoot = path.join(dataDirectory, "bilibili");
+  const bilibiliAccounts = new PlatformAccountRegistry(bilibiliAccountRoot, "bilibili");
+  let bilibiliAccountLoad;
+  const loadBilibiliAccounts = () => bilibiliAccountLoad ??= bilibiliAccounts.load().catch(error => {
+    bilibiliAccountLoad = null;
+    throw error;
+  });
+  const contentLibrary = new ContentLibraryStore(dataDirectory, { analysisRoot: path.join(dataDirectory, "video-analysis") });
+  let contentLibraryRefresh = null;
+  let contentLibrarySourceSignature = "";
+
+  // 内容库从每个平台的本地快照重建。重建只更新平台账号关系，内容库本身的手动保存和专题始终留在 content-library.json。
+  const listBilibiliSourceCandidates = async () => {
+    if (!bilibiliEnabled) return [];
+    await loadBilibiliAccounts();
+    return bilibiliAccounts.list().accounts.map(account => {
+      const directory = bilibiliAccounts.directory(account);
+      return { accountId: account.id, directory, file: path.join(directory, "snapshot.json") };
+    });
+  };
+  const readBilibiliSnapshots = async (candidates) => {
+    candidates ??= await listBilibiliSourceCandidates();
+    const snapshots = [];
+    for (const candidate of candidates) {
+      const snapshot = await readFile(candidate.file, "utf8").then(value => JSON.parse(value)).catch(() => null);
+      if (!snapshot || snapshot.platform !== "bilibili") continue;
+      if (snapshot.account?.accountId && snapshot.account.accountId !== candidate.accountId) continue;
+      const accountId = candidate.accountId;
+      const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+      snapshots.push({
+        platform: "bilibili", accountId, accountName: snapshot.account?.uname ?? null,
+        updatedAt: snapshot.fetchedAt ?? null,
+        records: { lists: {
+          history: items.filter(item => item?.sources?.includes("history")),
+          favorite: items.filter(item => item?.sources?.includes("favorite")),
+          saved: items.filter(item => item?.sources?.includes("manual") || item?.savedAt),
+        } },
+        accountDirectory: candidate.directory,
+        sourceFiles: [candidate.file],
+      });
+    }
+    return snapshots;
+  };
+  const bilibiliRoutes = createBilibiliRoutes({
+    dataDirectory: bilibiliAccountRoot,
+    accountRegistry: bilibiliAccounts,
+    contentLibrary,
+    enabled: () => bilibiliEnabled,
+  });
+  const listContentLibrarySources = async () => {
+    const sources = [{ file: path.join(dataDirectory, "accounts.json") }, { file: path.join(dataDirectory, "xiaohongshu", "accounts.json") }, { file: path.join(bilibiliAccountRoot, "accounts.json") }];
+    for (const listed of accounts.list().accounts) {
+      const account = accounts.get(listed.id);
+      if (!account) continue;
+      const directory = accounts.directory(account);
+      sources.push({ platform: "douyin", accountId: account.id, file: path.join(directory, "records.json"), analysisDirectory: path.join(directory, "video-analysis") });
+    }
+    const xhsDirectory = path.join(dataDirectory, "xiaohongshu");
+    const xhsAccounts = await xiaohongshu.accounts();
+    for (const account of xhsAccounts.accounts ?? []) {
+      const directory = path.join(xhsDirectory, account.id === "default" ? "" : path.join("accounts", account.id));
+      sources.push({ platform: "xiaohongshu", accountId: account.id, file: path.join(directory, "latest.json"), identityFile: path.join(directory, "account.json") });
+    }
+    for (const candidate of await listBilibiliSourceCandidates()) sources.push({ platform: "bilibili", accountId: candidate.accountId, file: candidate.file });
+    return sources;
+  };
+  const contentLibrarySourceSignatureOf = async (sources) => {
+    const files = [...new Set(sources.flatMap(source => [source.file, source.identityFile].filter(Boolean)))];
+    const values = await mapWithConcurrency(files, 16, async file => {
+      const info = await stat(file).catch(() => null);
+      return `${file}:${info ? `${info.mtimeMs}:${info.size}` : "missing"}`;
+    });
+    for (const directory of [...new Set(sources.map(source => source.analysisDirectory).filter(Boolean))]) {
+      const walk = async current => {
+        const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+        const directoryInfo = await stat(current).catch(() => null);
+        const nested = [`${current}:directory:${directoryInfo ? `${directoryInfo.mtimeMs}:${directoryInfo.size}` : "missing"}`];
+        for (const entry of entries) {
+          const target = path.join(current, entry.name);
+          if (entry.isDirectory()) nested.push(await walk(target));
+          else {
+            const info = await stat(target).catch(() => null);
+            nested.push(`${target}:${info ? `${info.mtimeMs}:${info.size}` : "missing"}`);
+          }
+        }
+        return nested.join("|");
+      };
+      values.push(`${directory}:${await walk(directory)}`);
+    }
+    return values.sort().join("|");
+  };
+  const readContentLibrarySnapshots = async () => {
+    const snapshots = [];
+    for (const listed of accounts.list().accounts) {
+      const account = accounts.get(listed.id);
+      if (!account) continue;
+      const directory = accounts.directory(account);
+      const stored = await new CollectorStore(directory).load();
+      snapshots.push({ platform: "douyin", accountId: account.id, accountName: account.nickname, updatedAt: stored.updatedAt ?? null, records: stored, analysisDirectory: path.join(directory, "video-analysis"), sourceFiles: [path.join(directory, "records.json")] });
+    }
+    const xhsDirectory = path.join(dataDirectory, "xiaohongshu");
+    const xhsAccounts = await xiaohongshu.accounts();
+    for (const account of xhsAccounts.accounts ?? []) {
+      const latest = await xiaohongshu.latest(account.id);
+      const directory = path.join(xhsDirectory, account.id === "default" ? "" : path.join("accounts", account.id));
+      snapshots.push({ platform: "xiaohongshu", accountId: account.id, accountName: account.nickname, updatedAt: latest?.exported_at ?? null, records: latest ?? { lists: {} }, accountDirectory: directory, sourceFiles: [path.join(directory, "latest.json"), path.join(directory, "account.json")] });
+    }
+    snapshots.push(...await readBilibiliSnapshots());
+    return snapshots;
+  };
+  const refreshContentLibrary = async ({ force = false } = {}) => {
+    const sources = await listContentLibrarySources();
+    const signature = await contentLibrarySourceSignatureOf(sources);
+    if (!force && signature === contentLibrarySourceSignature) return;
+    if (contentLibraryRefresh) return contentLibraryRefresh;
+    contentLibraryRefresh = readContentLibrarySnapshots()
+      .then(snapshots => contentLibrary.rebuildFromSnapshots(snapshots))
+      .then(result => { contentLibrarySourceSignature = signature; return result; })
+      .finally(() => { contentLibraryRefresh = null; });
+    return contentLibraryRefresh;
+  };
+  const contentLibraryRoutes = createContentLibraryRoutes({
+    library: contentLibrary, refresh: refreshContentLibrary, localAi,
+    async resolveAccount(platform, id) {
+      if (platform === "douyin") return accounts.get(id);
+      if (platform === "bilibili" && bilibiliEnabled) { await loadBilibiliAccounts(); return bilibiliAccounts.get(id); }
+      if (platform === "xiaohongshu") return (await xiaohongshu.accounts()).accounts.find(account => account.id === id);
+      return null;
+    },
+  });
+  const detachContentLibraryAccount = async (accountId, platform) => {
+    // Keep the legacy account-delete endpoint side-effect free for installations
+    // that have never opened the cross-platform library.
+    const hasLibrary = await stat(contentLibrary.filePath).then(() => true, () => false)
+      || await stat(contentLibrary.metaFilePath).then(() => true, () => false);
+    if (!hasLibrary) return { detached: false, removed: [] };
+    return contentLibrary.detachAccount(accountId, { platform, deleteOrphans: true });
+  };
   let browserLoginController = null;
   // 正在等登录的那个页面：应用内登录时工作台从这里取二维码
   let browserLoginPage = null;
@@ -446,13 +620,141 @@ export async function startCollectorServer({
     return true;
   };
 
-  const accountBusyMessage = () => {
+  const accountBusyMessage = (allowSync = false) => {
     if (accountWork) return "上一个账号操作还没做完，请稍等。";
-    if (collector.syncPromise) return "正在读取记录，先停下再切换账号。";
+    if (collector.syncPromise && !allowSync) return "正在读取记录，请等同步结束。";
     if (collector.hasSavingVideoDownload()) return "正在下载视频，等下载完再切换账号。";
     if (explorer.busy) return "正在搜索或打开作品，等它结束再切换账号。";
     return null;
   };
+
+  const clearDouyinLoginFiles = async account => {
+    const directory = accounts.directory(account);
+    await rm(path.join(directory, "browser-profile"), { recursive: true, force: true });
+    await rm(path.join(directory, "direct-session.json"), { force: true });
+    await rm(path.join(directory, "direct-history-template.json"), { force: true });
+    await rm(path.join(directory, "external-browser.json"), { force: true });
+  };
+
+  // 退出当前抖音账号不能只改注册表：采集器里可能还开着旧 profile，先完整关掉再删登录态，
+  // 然后给当前账号换一个没有登录态的采集器，保证之后的设置页仍可继续操作。
+  const logoutActiveDouyin = async account => {
+    const revision = collector.statusRevision;
+    await clearPendingBrowser();
+    await explorer.close();
+    await collector.shutdown();
+    await clearDouyinLoginFiles(account);
+    await accounts.update(account.id, { loggedIn: false });
+    const next = await openCollector(account);
+    next.statusRevision = revision + 1;
+    collector = next;
+    explorer = new ExplorerBridge(next);
+    const status = next.getStatus();
+    for (const finish of [...statusWaiters]) finish(status);
+    return status;
+  };
+
+  const platformBusyError = message => Object.assign(new Error(message), { code: "collector_busy", status: 409 });
+  const platformAccountNotFound = platform => Object.assign(new Error(`没有这个${platform === "douyin" ? "抖音" : platform === "xiaohongshu" ? "小红书" : "B 站"}账号。`), { code: "account_not_found", status: 404 });
+
+  const platformAccountsOf = async platform => {
+    if (platform === "douyin") {
+      const listed = accounts.list();
+      return { platform, activeId: listed.activeId, accounts: listed.accounts.map(account => ({ platform, ...account })) };
+    }
+    if (platform === "xiaohongshu") return xiaohongshu.accounts();
+    if (platform === "bilibili") return bilibiliAccounts.list();
+    throw Object.assign(new Error("这个平台还没有接入账号管理。"), { code: "platform_not_supported", status: 404 });
+  };
+
+  const platformAccountOf = async (platform, id) => {
+    const listed = await platformAccountsOf(platform);
+    const account = listed.accounts.find(item => item.id === id);
+    if (!account) throw platformAccountNotFound(platform);
+    return { listed, account };
+  };
+
+  const platformTaskBusyMessage = async (platform, id) => {
+    if (platform === "douyin") {
+      if (backgroundSyncs.has(id)) return "这个账号仍在后台同步。";
+      if (id !== accounts.activeId) return null;
+      if (collector.syncPromise) return "这个账号正在读取记录，请等同步结束。";
+      if (collector.hasSavingVideoDownload()) return "这个账号正在下载视频，请等下载结束。";
+      if (explorer.busy) return "这个账号正在搜索或打开作品，请等操作结束。";
+      if (browserWork) return "这个账号正在登录或连接浏览器，请等操作结束。";
+      return null;
+    }
+    if (platform === "xiaohongshu") {
+      const status = await xiaohongshu.status(id);
+      return ["starting", "login", "reading"].includes(status.job?.state) ? "这个账号仍在小红书任务中。" : null;
+    }
+    if (platform === "bilibili") {
+      const job = [...bilibiliRoutes.service.jobs.values()].find(item => item.accountId === id && ["starting", "login", "syncing"].includes(item.state));
+      return job ? "这个账号仍在 B 站任务中。" : null;
+    }
+    return null;
+  };
+
+  const activatePlatformAccount = async (platform, account) => {
+    if (platform === "douyin") {
+      switching = true;
+      try { return await switchTo(account); } finally { switching = false; }
+    }
+    if (platform === "xiaohongshu") return xiaohongshu.activateAccount(account.id);
+    if (platform === "bilibili") return bilibiliAccounts.setActive(account.id);
+    throw Object.assign(new Error("这个平台还没有接入账号管理。"), { code: "platform_not_supported", status: 404 });
+  };
+
+  const createPlatformAccount = async platform => {
+    if (platform === "douyin") return accounts.create();
+    if (platform === "xiaohongshu") return xiaohongshu.createAccount();
+    if (platform === "bilibili") return bilibiliAccounts.create();
+    throw Object.assign(new Error("这个平台还没有接入账号管理。"), { code: "platform_not_supported", status: 404 });
+  };
+
+  const replacementFor = async (platform, listed, removingId) => {
+    for (const candidate of listed.accounts.filter(item => item.id !== removingId)) {
+      if (!await platformTaskBusyMessage(platform, candidate.id)) return { account: candidate, created: false };
+    }
+    return { account: await createPlatformAccount(platform), created: true };
+  };
+
+  const removePlatformAccount = (platform, id) => {
+    // The legacy /v1/accounts route does not pass through the platform-route
+    // guard, so reserve the same single-operation slot here as well.
+    if (accountWork) return Promise.reject(platformBusyError("上一个账号操作还没做完，请稍等。"));
+    return runAccountWork(async () => {
+      const { listed, account } = await platformAccountOf(platform, id);
+      const busy = await platformTaskBusyMessage(platform, id);
+      if (busy) throw platformBusyError(busy);
+
+      let replacement = null;
+      if (listed.activeId === id) {
+        replacement = await replacementFor(platform, listed, id);
+        try {
+          await activatePlatformAccount(platform, replacement.account);
+        } catch (error) {
+          if (replacement.created) {
+            if (platform === "douyin") await accounts.remove(replacement.account.id).catch(() => undefined);
+            else if (platform === "xiaohongshu") await xiaohongshu.removeAccount(replacement.account.id).catch(() => undefined);
+            else if (platform === "bilibili") await bilibiliAccounts.remove(replacement.account.id).catch(() => undefined);
+          }
+          throw error;
+        }
+      }
+
+      const directory = platform === "douyin" ? accounts.directory(account) : null;
+      if (platform === "douyin") await accounts.remove(id);
+      else if (platform === "xiaohongshu") await xiaohongshu.removeAccount(id);
+      else if (platform === "bilibili") await bilibiliAccounts.remove(id);
+      else throw Object.assign(new Error("这个平台还没有接入账号管理。"), { code: "platform_not_supported", status: 404 });
+      await detachContentLibraryAccount(id, platform);
+      if (directory) folderStores.delete(directory);
+      return platformAccountsOf(platform);
+    });
+  };
+
+  const removeDouyinAccount = id => removePlatformAccount("douyin", id);
 
   const runAccountWork = (work) => {
     const promise = work().finally(() => {
@@ -465,21 +767,31 @@ export async function startCollectorServer({
   // 切到另一个账号：收掉当前账号的浏览器和任务，换上那个账号目录的采集器，正在长轮询的状态请求直接拿新状态返回
   // 新采集器先建好再记成当前账号，中途失败时旧的还留着能用
   const switchTo = async (account) => {
+    if (account.id === accounts.activeId) return collector.getStatus();
     await clearPendingBrowser();
     await explorer.close();
-    await collector.shutdown();
+    const previous = collector;
+    const previousId = accounts.activeId;
+    const finishingSync = Boolean(previous.syncPromise);
+    if (!finishingSync) await previous.shutdown();
+    const background = backgroundSyncs.get(account.id);
+    if (background) backgroundSyncs.delete(account.id);
     let next;
     try {
-      next = await openCollector(account);
+      if (background?.closing) await background.closing;
+      next = background && !background.closing ? background.runtime : await openCollector(account);
       await accounts.setActive(account.id);
     } catch (error) {
+      if (background && !background.closing) keepSyncing(account.id, background.runtime);
+      else if (next) await next.shutdown();
       // 没换过去就留在原账号：静默停下的任务不改状态，这里复位，别还显示“正在接收”、浏览器开着
-      collector.updateStatus({ state: "idle", phase: null, progress: null, message: "没能切换账号，已留在原账号。", browserOpen: Boolean(collector.context) });
+      if (!finishingSync) collector.updateStatus({ state: "idle", phase: null, progress: null, message: "没能切换账号，已留在原账号。", browserOpen: Boolean(collector.context) });
       throw error;
     }
     next.statusRevision = collector.statusRevision + 1;
     collector = next;
     explorer = new ExplorerBridge(next);
+    if (finishingSync) keepSyncing(previousId, previous);
     const status = next.getStatus();
     for (const finish of [...statusWaiters]) finish(status);
     return status;
@@ -497,7 +809,7 @@ export async function startCollectorServer({
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
         "Access-Control-Allow-Headers": "Authorization, Content-Type",
-        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
         "Access-Control-Max-Age": "600",
       });
       response.end();
@@ -589,19 +901,176 @@ export async function startCollectorServer({
       return;
     }
 
+    if (isContentLibraryPath(url.pathname)) {
+      await contentLibraryRoutes({ request, response, url, readJsonBody, sendJson });
+      return;
+    }
+
+    if (bilibiliRoutes.matches(url.pathname)) {
+      try {
+        if (bilibiliEnabled) await loadBilibiliAccounts();
+        const body = request.method === "POST" ? await readJsonBody(request) : null;
+        const reply = await bilibiliRoutes.handle({
+          method: request.method,
+          pathname: url.pathname,
+          searchParams: url.searchParams,
+          body,
+          loopback: isLoopbackAddress(request.socket.remoteAddress ?? ""),
+        });
+        if (reply) sendJson(response, reply.status, reply.body);
+        else sendJson(response, 404, { error: "not_found" });
+      } catch (error) {
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        sendJson(response, malformed ? 400 : 500, { error: malformed ? "invalid_request" : "bilibili_failed", message: malformed ? "请求格式无效。" : "B 站操作失败，请稍后重试。" });
+      }
+      return;
+    }
+
+    const platformAccountMatch = url.pathname.match(/^\/v1\/platform-accounts(?:\/([^/]+)(?:\/([^/]+)(\/activate|\/logout|\/impact)?)?)?$/u);
+    if (platformAccountMatch) {
+      const listing = request.method === "GET" && !platformAccountMatch[2];
+      if (!listing && !isLoopbackAddress(request.socket.remoteAddress)) {
+        sendJson(response, 403, { error: "loopback_only", message: "平台账号只能在当前电脑管理。" });
+        return;
+      }
+      try {
+        const platform = platformAccountMatch[1];
+        if (bilibiliEnabled && (!platform || platform === "bilibili")) await loadBilibiliAccounts();
+        const id = platformAccountMatch[2];
+        const suffix = platformAccountMatch[3];
+        if (accountWork && (request.method !== "GET" || suffix === "/impact")) throw platformBusyError("上一个账号操作还没做完，请稍等。");
+        const douyinAccounts = () => {
+          const listed = accounts.list();
+          return {
+            platform: "douyin",
+            activeId: listed.activeId,
+            accounts: listed.accounts.map(account => ({ platform: "douyin", ...account })),
+          };
+        };
+        const bilibiliAccountList = () => bilibiliEnabled
+          ? bilibiliAccounts.list()
+          : { platform: "bilibili", activeId: null, accounts: [] };
+        if (request.method === "GET" && !platform) {
+          sendJson(response, 200, {
+            platforms: {
+              douyin: douyinAccounts(),
+              xiaohongshu: await xiaohongshu.accounts(),
+              bilibili: bilibiliAccountList(),
+            },
+            bilibiliEnabled: Boolean(bilibiliEnabled),
+          });
+        } else if (!platform) {
+          sendJson(response, 404, { error: "not_found" });
+        } else if (platform === "xiaohongshu" && request.method === "GET" && !id) {
+          sendJson(response, 200, await xiaohongshu.accounts());
+        } else if (platform === "xiaohongshu" && request.method === "POST" && !id) {
+          const account = await xiaohongshu.createAccount();
+          sendJson(response, 201, { ...await xiaohongshu.accounts(), account });
+        } else if (platform === "xiaohongshu" && request.method === "POST" && id && suffix === "/activate") {
+          await xiaohongshu.activateAccount(id);
+          sendJson(response, 200, await xiaohongshu.accounts());
+        } else if (platform === "xiaohongshu" && request.method === "POST" && id && suffix === "/logout") {
+          await xiaohongshu.logout(id);
+          sendJson(response, 200, await xiaohongshu.accounts());
+        } else if (platform === "xiaohongshu" && request.method === "PATCH" && id && !suffix) {
+          const body = await readJsonBody(request);
+          await xiaohongshu.updateAccount(id, { note: body?.note });
+          sendJson(response, 200, await xiaohongshu.accounts());
+        } else if (platform === "xiaohongshu" && request.method === "GET" && id && suffix === "/impact") {
+          await refreshContentLibrary({ force: true });
+          sendJson(response, 200, await contentLibrary.accountImpact(id, platform));
+        } else if (platform === "xiaohongshu" && request.method === "DELETE" && id && !suffix) {
+          sendJson(response, 200, await removePlatformAccount("xiaohongshu", id));
+        } else if (platform === "douyin" && request.method === "GET" && !id) {
+          sendJson(response, 200, douyinAccounts());
+        } else if (platform === "douyin" && request.method === "POST" && !id) {
+          const account = await accounts.create();
+          sendJson(response, 201, { ...douyinAccounts(), account: { platform: "douyin", ...account } });
+        } else if (platform === "douyin" && request.method === "POST" && id && suffix === "/activate") {
+          const account = accounts.get(id);
+          if (!account) throw Object.assign(new Error("没有这个账号。"), { code: "account_not_found", status: 404 });
+          const busy = accountBusyMessage(true);
+          if (busy) throw Object.assign(new Error(busy), { code: "collector_busy", status: 409 });
+          const status = await runAccountWork(async () => {
+            switching = true;
+            try { return await switchTo(account); } finally { switching = false; }
+          });
+          sendJson(response, 200, { ...douyinAccounts(), status });
+        } else if (platform === "douyin" && request.method === "POST" && id && suffix === "/logout") {
+          if (backgroundSyncs.has(id)) throw Object.assign(new Error("这个账号仍在后台同步。"), { code: "collector_busy", status: 409 });
+          const account = accounts.get(id);
+          if (!account) throw Object.assign(new Error("没有这个账号。"), { code: "account_not_found", status: 404 });
+          const busy = account.id === accounts.activeId ? accountBusyMessage() || (browserWork ? "正在登录或连接浏览器，请稍等。" : null) : null;
+          if (busy) throw Object.assign(new Error(busy), { code: "collector_busy", status: 409 });
+          const status = account.id === accounts.activeId
+            ? await runAccountWork(() => logoutActiveDouyin(account))
+            : (await clearDouyinLoginFiles(account), await accounts.update(id, { loggedIn: false }), null);
+          sendJson(response, 200, { ...douyinAccounts(), ...(status ? { status } : {}) });
+        } else if (platform === "douyin" && request.method === "PATCH" && id && !suffix) {
+          const body = await readJsonBody(request);
+          await accounts.update(id, { note: body?.note });
+          sendJson(response, 200, douyinAccounts());
+        } else if (platform === "douyin" && request.method === "GET" && id && suffix === "/impact") {
+          const account = accounts.get(id);
+          if (!account) throw Object.assign(new Error("没有这个账号。"), { code: "account_not_found", status: 404 });
+          await refreshContentLibrary({ force: true });
+          sendJson(response, 200, await contentLibrary.accountImpact(id, platform));
+        } else if (platform === "douyin" && request.method === "DELETE" && id && !suffix) {
+          sendJson(response, 200, await removeDouyinAccount(id));
+        } else if (platform === "bilibili" && !bilibiliEnabled) {
+          sendJson(response, 404, { error: "bilibili_not_released", message: "这台采集器已关闭 B 站接入。" });
+        } else if (platform === "bilibili" && request.method === "GET" && !id) {
+          sendJson(response, 200, bilibiliAccountList());
+        } else if (platform === "bilibili" && request.method === "POST" && !id) {
+          const account = await bilibiliAccounts.create();
+          sendJson(response, 201, { ...bilibiliAccountList(), account });
+        } else if (platform === "bilibili" && request.method === "POST" && id && suffix === "/activate") {
+          await bilibiliAccounts.setActive(id);
+          sendJson(response, 200, bilibiliAccountList());
+        } else if (platform === "bilibili" && request.method === "POST" && id && suffix === "/logout") {
+          await bilibiliRoutes.service.logout(id);
+          sendJson(response, 200, bilibiliAccountList());
+        } else if (platform === "bilibili" && request.method === "PATCH" && id && !suffix) {
+          const body = await readJsonBody(request);
+          await bilibiliAccounts.update(id, { note: body?.note });
+          sendJson(response, 200, bilibiliAccountList());
+        } else if (platform === "bilibili" && request.method === "GET" && id && suffix === "/impact") {
+          await refreshContentLibrary({ force: true });
+          sendJson(response, 200, await contentLibrary.accountImpact(id, platform));
+        } else if (platform === "bilibili" && request.method === "DELETE" && id && !suffix) {
+          sendJson(response, 200, await removePlatformAccount("bilibili", id));
+        } else {
+          sendJson(response, 404, { error: "platform_not_supported", message: "这个平台还没有接入账号管理。" });
+        }
+      } catch (error) {
+        const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
+        sendJson(response, error?.status ?? (malformed ? 400 : 500), {
+          error: error?.code ?? (malformed ? "invalid_request" : "platform_account_failed"),
+          message: error?.status ? error.message : malformed ? "请求格式无效。" : "平台账号操作失败，请稍后重试。",
+        });
+      }
+      return;
+    }
     // 小红书：后台任务 + 轮询。登录用无头浏览器，二维码透传给工作台扫
     if (url.pathname === "/v1/xiaohongshu" || url.pathname.startsWith("/v1/xiaohongshu/")) {
       if (!isLoopbackAddress(request.socket.remoteAddress)) return sendJson(response, 403, { error: "loopback_only" });
-      const action = `${request.method} ${url.pathname.slice("/v1/xiaohongshu".length)}`;
+      const action = request.method + " " + url.pathname.slice("/v1/xiaohongshu".length);
       try {
-        if (action === "GET ") return sendJson(response, 200, await xiaohongshu.status());
-        if (action === "GET /latest") return sendJson(response, 200, { latest: await xiaohongshu.latest() });
-        if (action === "POST /login") return sendJson(response, 202, { job: xiaohongshu.start([]) });
+        const requestedAccount = url.searchParams.get("accountId") ?? url.searchParams.get("account");
+        if (action === "GET ") return sendJson(response, 200, await xiaohongshu.status(requestedAccount));
+        if (action === "GET /accounts") return sendJson(response, 200, await xiaohongshu.accounts());
+        if (action === "GET /latest") return sendJson(response, 200, { latest: await xiaohongshu.latest(requestedAccount) });
+        if (action === "POST /login") {
+          const body = await readJsonBody(request).catch(() => ({}));
+          const selected = body?.accountId ?? body?.account ?? requestedAccount ?? (await xiaohongshu.accounts()).activeId;
+          return sendJson(response, 202, { job: xiaohongshu.start([], selected) });
+        }
         if (action === "POST /export") {
-          const body = await readJsonBody(request);
+          const body = await readJsonBody(request).catch(() => ({}));
           const lists = body?.lists ?? Object.keys(XIAOHONGSHU_LISTS);
           if (!Array.isArray(lists) || !lists.length) return sendJson(response, 400, { error: "invalid_request", message: "至少选一类：favorites 或 likes。" });
-          return sendJson(response, 202, { job: xiaohongshu.start(lists) });
+          const selected = body?.accountId ?? body?.account ?? requestedAccount ?? (await xiaohongshu.accounts()).activeId;
+          return sendJson(response, 202, { job: xiaohongshu.start(lists, selected) });
         }
         if (request.method === "POST" && XIAOHONGSHU_READS.includes(action.slice("POST /".length))) {
           // 推荐、搜索、详情、评论、主页：请求等到读完；调用方断开就关掉这次的浏览器
@@ -609,12 +1078,23 @@ export async function startCollectorServer({
           const abort = () => controller.abort();
           response.once("close", abort);
           try {
-            const result = await xiaohongshu.read(action.slice("POST /".length), await readJsonBody(request), controller.signal);
+            const body = await readJsonBody(request);
+            const selected = requestedAccount && body?.accountId == null && body?.account == null
+              ? { ...body, accountId: requestedAccount } : body;
+            const result = await xiaohongshu.read(action.slice("POST /".length), selected, controller.signal);
             return sendJson(response, 200, result);
           } finally { response.off("close", abort); }
         }
-        if (action === "POST /cancel") { xiaohongshu.cancel(); return sendJson(response, 200, { ok: true }); }
-        if (action === "POST /logout") { await xiaohongshu.logout(); return sendJson(response, 200, { ok: true }); }
+        if (action === "POST /cancel") {
+          const body = await readJsonBody(request).catch(() => ({}));
+          await xiaohongshu.cancel(body?.accountId ?? body?.account ?? requestedAccount);
+          return sendJson(response, 200, { ok: true });
+        }
+        if (action === "POST /logout") {
+          const body = await readJsonBody(request).catch(() => ({}));
+          await xiaohongshu.logout(body?.accountId ?? body?.account ?? requestedAccount);
+          return sendJson(response, 200, { ok: true });
+        }
         return sendJson(response, 404, { error: "not_found" });
       } catch (error) {
         if (response.destroyed) return;
@@ -859,29 +1339,21 @@ export async function startCollectorServer({
         // 请求里的 id 先过格式校验再到列表里查，绝不拿来拼路径
         sendJson(response, 404, { error: "account_not_found", message: "没有这个账号。" });
       } else if (request.method === "DELETE" && accountMatch && !accountMatch[2]) {
-        if (account.id === accounts.activeId) {
-          sendJson(response, 409, { error: "account_active", message: "正在用的账号不能删除，先切换到别的账号。" });
-        } else if (accountWork) {
-          sendJson(response, 409, { error: "collector_busy", message: accountBusyMessage() });
-        } else {
-          try {
-            await runAccountWork(() => accounts.remove(account.id));
-            // 目录已经删了，缓存里的文件夹也别留着
-            folderStores.delete(accounts.directory(account));
-            sendJson(response, 200, accounts.list());
-          } catch (error) {
-            sendJson(response, error?.status ?? 500, {
-              error: error?.code ?? "account_remove_failed",
-              message: error?.status ? error.message : "没删干净，请稍后再试。",
-            });
-          }
+        try {
+          await removeDouyinAccount(account.id);
+          sendJson(response, 200, accounts.list());
+        } catch (error) {
+          sendJson(response, error?.status ?? 500, {
+            error: error?.code ?? "account_remove_failed",
+            message: error?.status ? error.message : "没删干净，请稍后再试。",
+          });
         }
       } else if (request.method === "POST" && (!accountMatch || accountMatch[2])) {
         if (account && account.id === accounts.activeId) {
           sendJson(response, 200, { ...accounts.list(), status: collector.getStatus() });
           return;
         }
-        const busy = accountBusyMessage();
+        const busy = accountBusyMessage(Boolean(account));
         if (busy) {
           sendJson(response, 409, { error: "collector_busy", message: busy });
           return;
@@ -1423,7 +1895,10 @@ export async function startCollectorServer({
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    xiaohongshu.cancel();
+    const background = [...backgroundSyncs.values()];
+    backgroundSyncs.clear();
+    await Promise.allSettled(background.map(entry => entry.closing ?? entry.runtime.shutdown()));
+    await Promise.allSettled([xiaohongshu.cancel(), bilibiliRoutes.service.close()]);
     browserLoginController?.abort();
     await usageAutoConnect.close();
     await usageBrowser.stop().catch(() => {});
@@ -1455,6 +1930,8 @@ export async function startCollectorServer({
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     dataDirectory,
+    contentLibrary,
+    refreshContentLibrary,
     getPairingCode: () => pairing.displayCode(),
     setAppUsageActive: active => usageSessions.setActive("app", active, { reason: "hidden" }),
     setUsageSuspended: suspended => usageSessions.setSuspended(suspended),

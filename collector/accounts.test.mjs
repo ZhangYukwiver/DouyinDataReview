@@ -110,6 +110,24 @@ describe("AccountRegistry", () => {
     await expect(registry.updateIdentity(other.id, { nickname: "乙" })).resolves.toBeNull();
   });
 
+  it("does not overwrite a slot with a different login identity or treat login as a sync", async () => {
+    const root = await makeRoot();
+    const registry = new AccountRegistry(root);
+    await registry.load();
+    await registry.update("default", { uid: "uid-old", lastSyncedAt: "2026-11-19T00:00:00.000Z" });
+    await expect(registry.updateIdentity("default", { uid: "uid-new", nickname: "错号" }))
+      .rejects.toMatchObject({ code: "account_mismatch", status: 409 });
+    expect(registry.get("default")).toMatchObject({ uid: "uid-old", lastSyncedAt: "2026-11-19T00:00:00.000Z" });
+    await registry.updateIdentity("default", { uid: "uid-old", nickname: "同号" });
+    expect(registry.get("default")).toMatchObject({ nickname: "同号", uid: "uid-old", lastSyncedAt: "2026-11-19T00:00:00.000Z" });
+
+    // A stale login file from a rejected scan cannot make the old slot appear
+    // logged in under the wrong identity on the next process start.
+    await writeFile(path.join(root, "direct-session.json"), JSON.stringify({ uid: "uid-new" }));
+    const reopened = new AccountRegistry(root);
+    expect((await reopened.load()).accounts[0]).toMatchObject({ uid: "uid-old", loggedIn: false, lastSyncedAt: "2026-11-19T00:00:00.000Z" });
+  });
+
   it("keeps a broken list aside and rebuilds it from the account directories", async () => {
     const root = await makeRoot();
     await writeFile(path.join(root, "records.json"), "{}");

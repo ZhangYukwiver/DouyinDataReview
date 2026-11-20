@@ -4,6 +4,7 @@ import { collectorFetch, LocalCollectorError } from "./localCollector";
 // 小红书导出：采集器在本机用无头浏览器登录和读取，这里只发指令、轮询进度、取看板数据。见 collector/xiaohongshu.mjs
 
 export type XhsListKey = "favorites" | "likes";
+export type XhsConnection = ExploreConnection & { accountId?: string };
 export const XHS_LIST_LABEL: Record<XhsListKey, string> = { favorites: "收藏", likes: "点赞" };
 
 export interface XhsJob {
@@ -25,10 +26,11 @@ export interface XhsExport { exported_at: string; account: XhsAccount; lists: Pa
 
 export const xhsJobActive = (job: XhsJob | null | undefined) => !!job && ["starting", "login", "reading"].includes(job.state);
 
-async function request<T>(connection: ExploreConnection, path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(connection: XhsConnection, path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
-    response = await collectorFetch(connection, `/v1/xiaohongshu${path}`, {
+    const scope = connection.accountId ? "?accountId=" + encodeURIComponent(connection.accountId) : "";
+    response = await collectorFetch(connection, `/v1/xiaohongshu${path}${scope}`, {
       ...init, headers: init.body ? { "Content-Type": "application/json" } : undefined, signal: init.signal ?? AbortSignal.timeout(20_000),
     });
   } catch (error) {

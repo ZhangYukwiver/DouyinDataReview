@@ -47,9 +47,9 @@ function fakeBrowser({ uid = "u1", notes }) {
 const dirs = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
-async function until(xhs, check) {
+async function until(xhs, check, accountId) {
   for (let i = 0; i < 200; i++) {
-    const status = await xhs.status();
+    const status = await xhs.status(accountId);
     if (check(status.job)) return status;
     await new Promise(resolve => setTimeout(resolve, 5));
   }
@@ -57,6 +57,42 @@ async function until(xhs, check) {
 }
 
 describe("小红书导出任务", () => {
+  it("同步时切换同名账号、退出再扫码时保持原导出的归属", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "xhs-two-"));
+    dirs.push(dataDirectory);
+    const first = fakeBrowser({ uid: "user-one", notes: { 收藏: [note("first-note")] } });
+    const second = fakeBrowser({ uid: "user-two", notes: { 收藏: [note("second-note")] } });
+    const profiles = new Set();
+    let primaryBrowser = first;
+    const xhs = createXiaohongshu({ dataDirectory, openContext: directory => {
+      profiles.add(directory);
+      return (directory.includes(path.sep + "accounts" + path.sep) ? second : primaryBrowser).openContext();
+    } });
+    const other = await xhs.createAccount();
+    xhs.start(["favorites"], "default");
+    await until(xhs, job => job?.state === "login", "default");
+    await xhs.activateAccount(other.id);
+    expect((await xhs.status(other.id)).job).toBeNull();
+    first.scan();
+    expect((await until(xhs, job => job?.state === "done", "default")).account.user_id).toBe("user-one");
+    second.scan();
+    xhs.start(["favorites"], other.id);
+    await until(xhs, job => job?.state === "done", other.id);
+    expect(profiles.size).toBe(2);
+    expect((await xhs.accounts()).accounts.map(a => a.nickname)).toEqual(["小明", "小明"]);
+    await xhs.logout("default");
+    expect((await xhs.status("default")).account).toBeNull();
+    primaryBrowser = second;
+    xhs.start(["favorites"], "default");
+    expect((await until(xhs, job => job?.state === "failed", "default")).job.message).toMatch(/不一致/u);
+    primaryBrowser = first;
+    xhs.start([], "default");
+    expect((await until(xhs, job => job?.state === "done", "default")).account.user_id).toBe("user-one");
+    expect((await xhs.latest("default")).lists.favorites.notes[0].note_id).toBe("first-note");
+    expect((await xhs.latest(other.id)).lists.favorites.notes[0].note_id).toBe("second-note");
+    expect((await xhs.accounts()).activeId).toBe(other.id);
+  });
+
   it("透传二维码，扫码后导出两类，再单导一类时另一类留在看板数据里", async () => {
     const dataDirectory = await mkdtemp(path.join(tmpdir(), "xhs-"));
     dirs.push(dataDirectory);

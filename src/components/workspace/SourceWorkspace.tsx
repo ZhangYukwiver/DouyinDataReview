@@ -397,7 +397,7 @@ function SketchSetupWorkspace({
                   <ActionButton key={action.key} seed={`act-${action.key}`} compact={narrow} disabled={action.disabled} icon={READ_ICONS[action.icon]} label={action.label} onPress={() => runReadCommand(action.command, handlers)} busy={action.busy} />
                 ))}
               </View>
-              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在设置 → 账号中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
+              <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在账号管理中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
               <HRule seed="auto-rule" color={C.pencil} style={[styles.rule, short && styles.ruleShort]} />
               <Pressable accessibilityRole="switch" disabled={!setup.videosAllowed} accessibilityState={{ checked: autoSyncEnabled && setup.videosAllowed, disabled: !setup.videosAllowed }} aria-checked={autoSyncEnabled && setup.videosAllowed} onPress={onToggleAutoSync} style={(state) => [styles.auto, state.pressed && styles.pressed, pointer]}>
                 <Text style={[styles.strong, styles.flex]}>自动补读新记录</Text>
@@ -508,7 +508,7 @@ function AccountMenu({ accounts, activeId, blocked, maxListHeight, onActivate, o
         <HRule color={C.pencil} seed="account-rule-bottom" style={styles.menuRule} />
         <View style={styles.menuFoot}>
           <SketchButton disabled={Boolean(blocked)} icon={UserRoundPlus} kind="ink" label="添加账号" onPress={onAdd} seed="account-add" testID="account-add" />
-          <Text style={[styles.fine, styles.flex]}>添加后在设置 → 账号中连接浏览器并导入该账号的凭据。</Text>
+          <Text style={[styles.fine, styles.flex]}>添加后在账号管理中连接浏览器并导入该账号的凭据。</Text>
         </View>
       </SketchBox>
     </View>

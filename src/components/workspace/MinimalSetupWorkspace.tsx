@@ -192,7 +192,7 @@ export function MinimalSetupWorkspace({
             <View style={[styles.dot, connected && styles.dotOn]} />
             <Text numberOfLines={1} style={styles.statusText}>{setup.statusLine}</Text>
             {connected ? (
-              <Pressable accessibilityLabel={`抖音账号：${accountName}，在设置里切换或添加`} accessibilityRole="button" onPress={() => onOpenPreferences("account")} style={(state) => [styles.account, hovered(state) && styles.accountHover, pointer, ease("background-color", 140)]} testID="account-button">
+              <Pressable accessibilityLabel={`抖音账号：${accountName}，在账号管理里切换或添加`} accessibilityRole="button" onPress={() => onOpenPreferences("account")} style={(state) => [styles.account, hovered(state) && styles.accountHover, pointer, ease("background-color", 140)]} testID="account-button">
                 {switchingAccount ? <View style={[styles.glyph, { width: 14, height: 14 }]}><ActivityIndicator color={color.textMuted} size={14} /></View> : <Glyph icon={UserRound} size={14} tint={color.textMuted} />}
                 <Text numberOfLines={1} style={[styles.accountText, { maxWidth: narrow ? 96 : 160 }]}>{accountName}</Text>
               </Pressable>
@@ -282,7 +282,7 @@ export function MinimalSetupWorkspace({
                 <ChatProgress progress={setup.chatProgress} />
                 <ReadTypePicker types={readTypes} onToggle={onToggleReadType} disabled={busy || !setup.videosAllowed} textStyle={styles.meta} activeStyle={styles.readTypeOn} />
                 <ReadButtons actions={actions} oneRow={oneRow} onRun={run} />
-                <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在设置 → 账号中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
+                <Text style={styles.hint}>{status?.readPermissions ? `视频读取${setup.videosAllowed ? "已开启" : "未开启"} · 聊天读取${setup.chatAllowed ? "已开启" : "未开启"}。${desktopLogin ? "重新扫码登录时可调整。" : "在账号管理中重新导入凭据可调整。"}` : "凭据有效时，完整和增量读取均无需打开浏览器。"}</Text>
                 <View style={[styles.rule, short && styles.ruleShort]} />
                 <Pressable accessibilityRole="switch" disabled={!setup.videosAllowed} accessibilityState={{ checked: autoSyncEnabled && setup.videosAllowed, disabled: !setup.videosAllowed }} aria-checked={autoSyncEnabled && setup.videosAllowed} onPress={onToggleAutoSync} style={(state) => [styles.auto, pointer, state.pressed && styles.autoPressed]}>
                   <View style={styles.flex}>

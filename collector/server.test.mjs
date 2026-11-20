@@ -133,18 +133,21 @@ describe("collector accounts", () => {
     expect(again.status).toBe(200);
     expect(again.body.status.revision).toBe(back.body.status.revision);
 
-    const activeDelete = await call("/v1/accounts/default", "DELETE");
-    expect(activeDelete.status).toBe(409);
-    expect(activeDelete.body.error).toBe("account_active");
+    // 账号中心删除当前账号时，先安全切到另一个账号；不能因为它恰好是 active 就留下孤儿资料。
+    const activeDelete = await call("/v1/platform-accounts/douyin/default", "DELETE");
+    expect(activeDelete.status).toBe(200);
+    expect(activeDelete.body).toMatchObject({ platform: "douyin", activeId: newId, accounts: [{ id: newId }] });
+    expect(await exists(path.join(dataDirectory, "records.json"))).toBe(false);
 
     const removed = await call(`/v1/accounts/${newId}`, "DELETE");
     expect(removed.status).toBe(200);
-    expect(removed.body).toMatchObject({ activeId: "default", accounts: [{ id: "default" }] });
+    expect(removed.body.activeId).not.toBe(newId);
     expect(removed.body.accounts).toHaveLength(1);
     expect(await exists(path.join(dataDirectory, "accounts", newId))).toBe(false);
-    for (const name of ["direct-signer/signer.js", "backups/old.json", "launcher-error.txt", "records.json"]) {
+    for (const name of ["direct-signer/signer.js", "backups/old.json", "launcher-error.txt"]) {
       expect(await exists(path.join(dataDirectory, name))).toBe(true);
     }
+    expect(await exists(path.join(dataDirectory, "records.json"))).toBe(false);
     expect((await call(`/v1/accounts/${newId}/activate`, "POST")).body.error).toBe("account_not_found");
   });
 
@@ -164,6 +167,25 @@ describe("collector accounts", () => {
     // mcp-token 是所有账号共用的 MCP 令牌，删默认账号不动它
     expect((await readdir(dataDirectory)).sort()).toEqual(["accounts", "accounts.json", "backups", "direct-signer", "launcher-error.txt", "mcp-token", "notes.txt"]);
     expect(await exists(path.join(dataDirectory, "direct-signer", "signer.js"))).toBe(true);
+  });
+
+  it("deletes an active platform account by switching first and creates an empty last slot", async () => {
+    const { call } = await startPaired("platform-account-delete-");
+    const added = await call("/v1/platform-accounts/xiaohongshu", "POST");
+    expect(added.status).toBe(201);
+    const secondId = added.body.account.id;
+    expect((await call(`/v1/platform-accounts/xiaohongshu/${secondId}/activate`, "POST")).status).toBe(200);
+
+    const removedActive = await call(`/v1/platform-accounts/xiaohongshu/${secondId}`, "DELETE");
+    expect(removedActive.status).toBe(200);
+    expect(removedActive.body).toMatchObject({ platform: "xiaohongshu", activeId: "default", accounts: [{ id: "default" }] });
+
+    const removedLast = await call("/v1/platform-accounts/xiaohongshu/default", "DELETE");
+    expect(removedLast.status).toBe(200);
+    expect(removedLast.body.accounts).toHaveLength(1);
+    expect(removedLast.body.activeId).not.toBe("default");
+    expect(removedLast.body.accounts[0].id).toBe(removedLast.body.activeId);
+    expect(removedLast.body.accounts[0].loggedIn).toBe(false);
   });
 
   it("rejects malformed account ids without touching the file system", async () => {
@@ -221,7 +243,32 @@ describe("collector accounts", () => {
     }
   });
 
-  it("refuses to switch while records are being read or another account operation runs", async () => {
+  it("keeps a running sync attached to its original account after switching", async () => {
+    let finish;
+    const run = vi.spyOn(DouyinCollector.prototype, "runDirectRecords").mockImplementation(async function () {
+      await new Promise(resolve => { finish = resolve; });
+      await this.store.save({ watch_history: [], favorite_videos: [], liked_videos: [
+        { id: "liked:123", videoId: "123", title: "原账号的记录", author: null, url: null, occurredAt: null },
+      ] });
+    });
+    try {
+      const { call, runtime, headers, dataDirectory } = await startPaired("background-sync-");
+      const second = (await call("/v1/accounts", "POST")).body.activeId;
+      await call("/v1/accounts/default/activate", "POST");
+      expect((await fetch(runtime.baseUrl + "/v1/sync", { method: "POST", headers, body: "{}" })).status).toBe(202);
+      const changed = await call("/v1/accounts/" + second + "/activate", "POST");
+      expect(changed.body.activeId).toBe(second);
+      const platformDelete = await call("/v1/platform-accounts/douyin/default", "DELETE");
+      expect(platformDelete.status).toBe(409);
+      expect(platformDelete.body).toMatchObject({ error: "collector_busy" });
+      expect((await call("/v1/accounts/default", "DELETE")).status).toBe(409);
+      finish();
+      await vi.waitFor(async () => expect(JSON.parse(await readFile(path.join(dataDirectory, "records.json"), "utf8")).records.liked_videos[0]?.title).toBe("原账号的记录"));
+      expect((await call("/v1/records")).body.records.liked_videos).toHaveLength(0);
+    } finally { finish?.(); run.mockRestore(); }
+  });
+
+  it("refuses to create accounts while records are being read or another account operation runs", async () => {
     let finishRun;
     const runSync = vi.spyOn(DouyinCollector.prototype, "runDirectRecords").mockImplementation(() => new Promise((resolve) => { finishRun = resolve; }));
     try {
@@ -233,6 +280,9 @@ describe("collector accounts", () => {
       const refused = await call("/v1/accounts", "POST");
       expect(refused.status).toBe(409);
       expect(refused.body).toMatchObject({ error: "collector_busy", message: expect.stringContaining("读取") });
+      const refusedDelete = await call("/v1/platform-accounts/douyin/default", "DELETE");
+      expect(refusedDelete.status).toBe(409);
+      expect(refusedDelete.body).toMatchObject({ error: "collector_busy", message: expect.stringContaining("读取") });
       expect((await call("/v1/accounts")).body.accounts).toHaveLength(1);
       finishRun();
       for (let attempt = 0; attempt < 50 && (await call("/v1/status")).body.syncMode !== null; attempt += 1) {

@@ -5,6 +5,7 @@ import { CHAT_EMOJI, splitChatEmoji } from "../../domain/chatEmoji";
 import type { PersonalVideoRecord } from "../../domain/personalRecords";
 import type { ExploreComment, ExploreConnection, ExploreOutcome, ExplorePage, ExploreSharee, WatchedItem } from "../../services/explorer";
 import { analysisVideoIdOf, buildVideoFeed, createVideoCommentsSession, createVideoShareSession, createVideoWheelGesture, reactVideo, videoIdOf, waitForCollector } from "../../services/videoFeed";
+import { SaveContentControl } from "./SaveContentControl";
 import { LocalCollectorError, type PlaybackMedia } from "../../services/localCollector";
 import { VideoAnalysisPanel } from "./VideoAnalysisPanel";
 import type { RecordDownloadState } from "./LegacyContentWorkspace";
@@ -353,6 +354,8 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
   const [acting, setActing] = useState<"like" | "collect" | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
+  const libraryId = videoIdOf(record);
   const analysisVideoId = analysisVideoIdOf(record);
   const canAnalyze = analysisVideoId && !album;
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(null), 3_500); return () => clearTimeout(timer); }, [toast]);
@@ -496,6 +499,8 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
         <button className="rv-stat" data-share-toggle aria-label="分享给朋友" aria-expanded={shareOpen} onClick={() => { setAnalysisOpen(false); onToggleShare(); }}>
           <Forward color={shareOpen ? "#ff2c55" : "#fff"} fill={shareOpen ? "#ff2c55" : "#fff"} size={30} /><span>{count(record.stats?.shareCount)}</span>
         </button>
+        {commentsConnection && accountId && libraryId && <button className="rv-stat" aria-label="整理到本地内容库" aria-expanded={organizing} onClick={() => setOrganizing(!organizing)}>
+          <Bookmark size={25} color="#fff" /><span>本地整理</span></button>}
         {record.url && onDownload ? <button className="rv-stat" aria-label={DOWNLOAD_SPOKEN[downloadState]} disabled={downloadState === "queued" || downloadState === "running"} onClick={onDownload}>
           {downloadState === "queued" || downloadState === "running" ? <span className="rv-download-spin"><span className="rv-spinner" /></span>
             : downloadState === "complete" ? <Check color="#fff" size={30} /> : <Download color="#fff" size={30} />}<span>{DOWNLOAD_LABEL[downloadState]}</span>
@@ -505,6 +510,10 @@ function Playback({ active, record, onLoadVideo, muted, onToggleMute, commentsOp
           <Sparkles color={analysisOpen ? "#ff2c55" : "#fff"} fill={analysisOpen ? "#ff2c55" : "none"} size={29} /><span>解析视频</span>
         </button> : null}
       </aside>
+      {active && organizing && commentsConnection && accountId && libraryId && <section className="rv-library-save" aria-label="本地整理">
+        <button className="rv-icon-button" aria-label="关闭本地整理" onClick={() => setOrganizing(false)}>×</button>
+        <SaveContentControl key={accountId + libraryId} connection={commentsConnection} item={{ platform: "douyin", accountId, contentId: libraryId,
+          title: record.title, author: record.author, url: record.url, coverUrl: record.coverUrl, mediaType: record.mediaType }} /></section>}
       <div className="rv-caption">
         <strong>@{record.author ?? "抖音用户"}{record.publishedAt ? <small> · {date(record.publishedAt)}</small> : null}</strong>
         {pickedFor ? <span className="rv-picked">来自词条「{pickedFor}」</span> : null}

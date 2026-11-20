@@ -38,6 +38,9 @@ function parseRegistry(value) {
       nickname: optionalText(item.nickname),
       avatar: optionalText(item.avatar),
       uid: optionalText(item.uid),
+      note: optionalText(item.note),
+      loggedIn: item.loggedIn === true,
+      lastSyncedAt: optionalText(item.lastSyncedAt),
       createdAt: optionalText(item.createdAt),
     });
   }
@@ -46,13 +49,40 @@ function parseRegistry(value) {
 }
 
 function newAccount(id, createdAt = new Date().toISOString()) {
-  return { id, dir: accountDirectory(id), nickname: null, avatar: null, uid: null, createdAt };
+  return { id, dir: accountDirectory(id), nickname: null, avatar: null, uid: null, note: null, loggedIn: false, lastSyncedAt: null, createdAt };
 }
 
 async function createdAtOf(directory) {
   const info = await stat(directory).catch(() => null);
   const time = info ? info.birthtimeMs || info.mtimeMs : Date.now();
   return new Date(time).toISOString();
+}
+
+async function loginStateOf(directory) {
+  // A browser profile may be left behind by an interrupted login. Persisted
+  // credential markers are the reliable account-local login signal.
+  return Promise.any([
+    stat(path.join(directory, "direct-session.json")),
+    stat(path.join(directory, "external-browser.json")),
+  ]).then(() => true, () => false);
+}
+
+async function storedUidOf(directory) {
+  for (const name of ["direct-session.json", "external-browser.json"]) {
+    const value = await readFile(path.join(directory, name), "utf8").then(text => JSON.parse(text)).catch(() => null);
+    const uid = typeof value?.uid === "string" && value.uid
+      ? value.uid
+      : typeof value?.identity?.uid === "string" && value.identity.uid ? value.identity.uid : null;
+    if (uid) return uid;
+  }
+  return null;
+}
+
+async function storedSyncAtOf(directory) {
+  const value = await readFile(path.join(directory, "records.json"), "utf8").then(text => JSON.parse(text)).catch(() => null);
+  if (typeof value?.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt))) return value.updatedAt;
+  const info = await stat(path.join(directory, "records.json")).catch(() => null);
+  return info?.mtimeMs ? new Date(info.mtimeMs).toISOString() : null;
 }
 
 export class AccountRegistry {
@@ -84,6 +114,24 @@ export class AccountRegistry {
     }
     if (parsed) {
       this.data = parsed;
+      let changed = false;
+      for (const account of parsed.accounts) {
+        const directory = this.directory(account);
+        const storedUid = await storedUidOf(directory);
+        const uid = account.uid ?? storedUid;
+        // A stale credential file must never make a slot look logged in as its
+        // registered UID. The collector will require a fresh identity check
+        // instead of treating that file as belonging to this account.
+        const loggedIn = Boolean(uid && (!storedUid || storedUid === uid) && await loginStateOf(directory));
+        const lastSyncedAt = account.lastSyncedAt ?? await storedSyncAtOf(directory);
+        if (account.uid !== uid || account.loggedIn !== loggedIn || account.lastSyncedAt !== lastSyncedAt) {
+          account.uid = uid;
+          account.loggedIn = loggedIn;
+          account.lastSyncedAt = lastSyncedAt;
+          changed = true;
+        }
+      }
+      if (changed) await this.commit(parsed);
       return this.list();
     }
     // 坏文件留底，再按磁盘上的目录重建；昵称头像丢了没关系，下次登录会重新识别
@@ -97,7 +145,12 @@ export class AccountRegistry {
     const accounts = [];
     for (const entry of nested) {
       if (!entry.isDirectory() || !NESTED_ID_PATTERN.test(entry.name)) continue;
-      accounts.push(newAccount(entry.name, await createdAtOf(path.join(this.root, "accounts", entry.name))));
+      const directory = path.join(this.root, "accounts", entry.name);
+      const account = newAccount(entry.name, await createdAtOf(directory));
+      account.uid = await storedUidOf(directory);
+      account.loggedIn = Boolean(account.uid && await loginStateOf(directory));
+      account.lastSyncedAt = await storedSyncAtOf(directory);
+      accounts.push(account);
     }
     accounts.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     const rootEntries = await readdir(this.root).catch(() => []);
@@ -107,7 +160,11 @@ export class AccountRegistry {
       const createdAt = accounts[0] && accounts[0].createdAt <= rootCreatedAt
         ? new Date(Date.parse(accounts[0].createdAt) - 1).toISOString()
         : rootCreatedAt;
-      accounts.unshift(newAccount("default", createdAt));
+      const account = newAccount("default", createdAt);
+      account.uid = await storedUidOf(this.root);
+      account.loggedIn = Boolean(account.uid && await loginStateOf(this.root));
+      account.lastSyncedAt = await storedSyncAtOf(this.root);
+      accounts.unshift(account);
     }
     return { schemaVersion: SCHEMA_VERSION, activeId: accounts[0].id, accounts };
   }
@@ -134,7 +191,7 @@ export class AccountRegistry {
       activeId: this.data.activeId,
       accounts: [...this.data.accounts]
         .sort((left, right) => (left.createdAt ?? "").localeCompare(right.createdAt ?? ""))
-        .map(({ id, nickname, avatar, uid, createdAt }) => ({ id, nickname, avatar, uid, createdAt })),
+        .map(({ id, nickname, avatar, uid, note, loggedIn, lastSyncedAt, createdAt }) => ({ id, nickname, avatar, uid, note, loggedIn, lastSyncedAt, createdAt })),
     };
   }
 
@@ -197,14 +254,39 @@ export class AccountRegistry {
     return this.enqueue(async () => {
       const account = this.get(id);
       if (!account) return null;
+      if (account.uid && identity?.uid && account.uid !== identity.uid) {
+        throw accountError("account_mismatch", "登录身份与当前抖音账号不一致，没有覆盖原账号资料。", 409);
+      }
       const next = {
         ...account,
         nickname: optionalText(identity?.nickname) ?? account.nickname,
         avatar: optionalText(identity?.avatar) ?? account.avatar,
         uid: optionalText(identity?.uid) ?? account.uid,
+        loggedIn: identity?.loggedIn === false ? false : (optionalText(identity?.uid) || account.uid ? true : account.loggedIn),
+        lastSyncedAt: identity?.lastSyncedAt ?? account.lastSyncedAt,
       };
-      if (next.nickname !== account.nickname || next.avatar !== account.avatar || next.uid !== account.uid) {
+      if (JSON.stringify(next) !== JSON.stringify(account)) {
         await this.commit({ ...this.data, accounts: this.data.accounts.map((item) => item.id === id ? next : item) });
+      }
+      return next;
+    });
+  }
+
+  update(id, patch) {
+    return this.enqueue(async () => {
+      const account = this.get(id);
+      if (!account) throw accountError("account_not_found", "没有这个账号。", 404);
+      const next = {
+        ...account,
+        ...(patch && Object.hasOwn(patch, "nickname") ? { nickname: optionalText(patch.nickname) } : {}),
+        ...(patch && Object.hasOwn(patch, "avatar") ? { avatar: optionalText(patch.avatar) } : {}),
+        ...(patch && Object.hasOwn(patch, "uid") ? { uid: optionalText(patch.uid) } : {}),
+        ...(patch && Object.hasOwn(patch, "note") ? { note: optionalText(patch.note) } : {}),
+        ...(patch && Object.hasOwn(patch, "loggedIn") ? { loggedIn: patch.loggedIn === true } : {}),
+        ...(patch && Object.hasOwn(patch, "lastSyncedAt") ? { lastSyncedAt: optionalText(patch.lastSyncedAt) } : {}),
+      };
+      if (JSON.stringify(next) !== JSON.stringify(account)) {
+        await this.commit({ ...this.data, accounts: this.data.accounts.map(item => item.id === id ? next : item) });
       }
       return next;
     });

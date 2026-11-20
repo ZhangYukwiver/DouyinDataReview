@@ -258,11 +258,11 @@ export function tipNotes(state: TipInput, layout: "sketch" | "minimal" = "sketch
     : state.loginNeeded
       ? state.desktop
         ? { title: "扫码以后", body: "在手机上确认登录，这里会显示是哪个抖音号；核对后导入凭据，读取会自动开始。" }
-        : { title: "要先登录抖音", body: "在设置 → 账号中扫码登录（或连接已登录的浏览器），确认账号并导入凭据后再读取。" }
+        : { title: "要先登录抖音", body: "在账号管理中扫码登录（或连接已登录的浏览器），确认账号并导入凭据后再读取。" }
       : !state.connected
         ? state.desktop
           ? { title: "第一次用？", body: "应用自带的采集器连上后就能扫码登录抖音，确认账号后自动开始读取。" }
-          : { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。然后在设置 → 账号中扫码登录（或连接已登录的浏览器）并导入凭据。" }
+          : { title: "第一次用？", body: "点「连接采集器」，配对码会自动填好。然后在账号管理中扫码登录（或连接已登录的浏览器）并导入凭据。" }
         : state.syncing
           ? { title: "正在读取", body: "随时可以点「停止读取」停下，已经读到的会先存好。" }
           : state.ready

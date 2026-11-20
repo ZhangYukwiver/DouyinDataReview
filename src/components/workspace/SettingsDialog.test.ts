@@ -21,8 +21,6 @@ vi.mock("lucide-react-native", () => {
 });
 
 import type { DesktopUpdateState } from "../../desktopRuntime";
-import type { CollectorAccount } from "../../services/localCollector";
-import { accountNote } from "./SettingsDialog";
 // 设置面板和手绘页的更新面板共用这一条规则
 import { appUpdateAction as updateActionFor } from "./setupModel";
 
@@ -46,25 +44,5 @@ describe("updateActionFor", () => {
     expect(updateActionFor(update({ phase: "downloaded" }), false)).toEqual({ kind: "install", label: "重启并安装", disabled: false });
     expect(updateActionFor(update({ phase: "downloaded" }), true)).toEqual({ kind: "install", label: "采集完成后安装", disabled: true });
     expect(updateActionFor(update({ phase: "unsupported" }), false)).toBeNull();
-  });
-});
-
-describe("accountNote", () => {
-  const account = (id: string, uid: string | null, createdAt: string | null): CollectorAccount => ({ id, nickname: null, avatar: null, uid, createdAt });
-  const year = new Date().getFullYear();
-
-  it("says when the account was added", () => {
-    expect(accountNote([account("a", "1", `${year}-08-03T10:00:00`)], 0)).toBe("8 月 3 日添加");
-  });
-
-  it("points out a second copy of the same Douyin account", () => {
-    const rows = [account("a", "same", `${year}-08-03T10:00:00`), account("b", "same", null)];
-    expect(accountNote(rows, 0)).toBe("8 月 3 日添加，和另一个是同一个抖音号");
-    expect(accountNote(rows, 1)).toBe("和另一个是同一个抖音号");
-  });
-
-  it("is empty when nothing is known", () => {
-    expect(accountNote([account("a", null, null)], 0)).toBe("");
-    expect(accountNote([], 3)).toBe("");
   });
 });

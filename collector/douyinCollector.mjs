@@ -183,7 +183,7 @@ function mergeChatConversationSnapshots(previous = [], current = []) {
 }
 
 function accountMismatchError(nickname) {
-  return new CollectorAdapterError("account_mismatch", `导入的登录凭据属于另一个抖音号${nickname ? `「${nickname}」` : ""}，这次读到的没有保存。请在设置 → 账号中重新连接浏览器，确认正确账号后导入凭据。`);
+  return new CollectorAdapterError("account_mismatch", `导入的登录凭据属于另一个抖音号${nickname ? `「${nickname}」` : ""}，这次读到的没有保存。请在账号管理中重新连接浏览器，确认正确账号后导入凭据。`);
 }
 
 function safeMessage(error, fallback) {
@@ -568,7 +568,7 @@ export class DouyinCollector {
 
   assertReadPermission(kind) {
     if (!this.getReadPermissions()[kind]) throw new BrowserConnectionError(`${kind}_read_disabled`,
-      `当前账号未开启读取${kind === "videos" ? "视频" : "聊天"}。请在设置 → 账号中重新导入凭据并勾选对应权限。`, 403);
+      `当前账号未开启读取${kind === "videos" ? "视频" : "聊天"}。请在账号管理中重新导入凭据并勾选对应权限。`, 403);
   }
 
   externalSessionError(error, { fromRequest = false } = {}) {
@@ -594,7 +594,7 @@ export class DouyinCollector {
   reconnectError(cause) {
     const reason = String(cause?.message ?? "").split(/[，。]/u)[0];
     const problem = new DirectHistoryError("browser_reconnect_required",
-      `导入的登录凭据已失效或不完整${reason ? `（${reason}）` : ""}，请在设置 → 账号中重新扫码登录或连接浏览器，完成登录或验证后再次导入。`);
+      `导入的登录凭据已失效或不完整${reason ? `（${reason}）` : ""}，请在账号管理中重新扫码登录或连接浏览器，完成登录或验证后再次导入。`);
     // 调用方要分清是登录失效还是安全验证
     problem.cause = cause;
     return problem;
@@ -650,7 +650,7 @@ export class DouyinCollector {
       await this.detachExternalBrowser();
       this.updateStatus({ state: "idle", phase: null, progress: null, browserOpen: false,
         message: connection.browser === "app"
-          ? `已导入「${identity.nickname || "抖音账号"}」的登录凭据；凭据失效后再到设置 → 账号里扫码登录。`
+          ? `已导入「${identity.nickname || "抖音账号"}」的登录凭据；凭据失效后再到账号管理里扫码登录。`
           : `已导入 ${connection.label} 中「${identity.nickname || "抖音账号"}」的登录凭据，可以关闭浏览器；凭据失效后再重新连接。` });
     } catch (error) {
       await this.close();

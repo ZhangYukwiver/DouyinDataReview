@@ -113,6 +113,17 @@ export function saveAssistantInstalled(installed: boolean, storage: StyleStorage
   save(ASSISTANT_KEY, installed ? "on" : "off", storage);
 }
 
+// AI 助手右下角的悬浮圆钮：默认显示，设置里能关；关了 ⌘J 照样打开浮动面板
+const ASSISTANT_FAB_KEY = "content-insights.assistant-fab";
+
+export function loadAssistantFabShown(storage: StyleStorage | undefined = globalThis.localStorage): boolean {
+  return load<string>(ASSISTANT_FAB_KEY, ON_OFF, "on", storage) === "on";
+}
+
+export function saveAssistantFabShown(shown: boolean, storage: StyleStorage | undefined = globalThis.localStorage): void {
+  save(ASSISTANT_FAB_KEY, shown ? "on" : "off", storage);
+}
+
 // 「刷视频」也能在设置里隐藏：默认显示，隐藏后侧栏不放它、进工作台直接到持续报告
 const FEED_KEY = "content-insights.feed";
 
