@@ -123,7 +123,7 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "knowledge" | "xiaohongshu" | "sources";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "knowledge" | "xiaohongshu" | "sources" | "catalog" | "topics" | "platformAccounts" | "bilibili" | "douyinKnowledge";
 
 export interface ContentWorkspaceProps {
   /** 连接与采集：嵌在外壳里的一页，自带顶栏；入口在侧栏底部的账号菜单 */
@@ -137,6 +137,12 @@ export interface ContentWorkspaceProps {
   /** 知识库：视频解析的结果都收在这里 */
   knowledge?: React.ReactNode;
   xiaohongshu?: React.ReactNode;
+  bilibili?: React.ReactNode;
+  catalog?: React.ReactNode;
+  topics?: React.ReactNode;
+  platformAccounts?: React.ReactNode;
+  platformSwitcher?: React.ReactNode;
+  douyinKnowledge?: React.ReactNode;
   foldersRevision?: string | null;
   activeView: WorkspaceViewKey;
   records: PersonalRecordCollection;
@@ -186,6 +192,11 @@ type IconComponent = React.ComponentType<{
 type NavItem<Id extends string = WorkspaceViewKey> = { id: Id; label: string; icon: IconComponent; accent: string };
 
 const navItems: NavItem[] = [
+  { id: "catalog", label: "内容库", icon: LibraryBig, accent: color.cyan },
+  { id: "topics", label: "专题", icon: Folder, accent: color.amber },
+  { id: "platformAccounts", label: "账号管理", icon: UsersRound, accent: color.cyan },
+  { id: "bilibili", label: "B 站", icon: TvMinimalPlay, accent: color.cyan },
+  { id: "douyinKnowledge", label: "视频解析库", icon: BookOpenText, accent: color.amber },
   { id: "feed", label: "刷视频", icon: TvMinimalPlay, accent: color.accent },
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
@@ -207,20 +218,21 @@ const navItems: NavItem[] = [
 // 一级入口在侧栏，二级用页内页签：观看历史、直播、喜欢、收藏、推荐流挡掉的、我的评论并成「内容库」，持续报告和变化线索并成「报告」
 const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered", "comments"];
 const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
-type SideKey = WorkspaceViewKey | "library" | "report";
+type SideKey = WorkspaceViewKey | "library" | "report" | "douyin";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
 const reportItems = navItems.filter((item) => isReportView(item.id));
 // 刷视频、探索、创作者中心和 AI 助手是工具页：不显示条数、隐私和重新读取
-const toolView = (view: SideKey) => view === "feed" || view === "explore" || view === "creator" || view === "assistant" || view === "knowledge" || view === "xiaohongshu";
+const toolView = (view: SideKey) => ["catalog", "topics", "platformAccounts", "douyin", "bilibili", "douyinKnowledge", "feed", "explore", "creator", "assistant", "knowledge", "xiaohongshu"].includes(view);
 // 「报告」这一项也不挂条数：条数在它的页签上
-const showsCount = (view: SideKey) => !toolView(view) && view !== "report";
+const showsCount = (view: SideKey) => !toolView(view) && view !== "report" && view !== "sources";
 const sideItem = (id: SideKey) => navItems.find((item) => item.id === id)!;
 // 侧栏按「来这儿做什么」分三组：发现（看新的）/ 我的（自己留下的）/ 洞察（从记录里看出什么）
 const sideGroups: ReadonlyArray<{ label: string; items: NavItem<SideKey>[] }> = [
-  { label: "发现", items: [sideItem("feed"), sideItem("explore")] },
-  { label: "我的", items: [{ id: "library", label: "内容库", icon: LibraryBig, accent: color.cyan }, sideItem("chat"), sideItem("knowledge"), sideItem("xiaohongshu")] },
-  { label: "洞察", items: [{ id: "report", label: "报告", icon: LayoutDashboard, accent: color.green }, sideItem("creator"), sideItem("assistant")] },
+  { label: "我的内容", items: [sideItem("catalog"), sideItem("topics"), sideItem("knowledge")] },
+  { label: "平台", items: [{ id: "douyin", label: "抖音", icon: Music2, accent: color.accent }, sideItem("xiaohongshu"), sideItem("bilibili")] },
 ];
+export const isDouyinSpace = (view: WorkspaceViewKey) =>
+  isLibraryView(view) || isReportView(view) || ["feed", "explore", "creator", "chat", "douyinKnowledge"].includes(view);
 
 const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as object) : null;
 
@@ -250,6 +262,7 @@ export function ContentWorkspace({
   assistant,
   knowledge,
   xiaohongshu,
+  bilibili, catalog, topics, platformAccounts, platformSwitcher, douyinKnowledge,
   activeView,
   records,
   liveRecords = null,
@@ -298,10 +311,10 @@ export function ContentWorkspace({
   // root 的桌面内边距与 stage 边框会占掉 36px，使用同一个主区宽度供各内容页计算。
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
   const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
-  const sideKey: SideKey = isLibraryView(activeView) ? "library" : reportView ? "report" : activeView;
+  const sideKey: SideKey = isDouyinSpace(activeView) ? "douyin" : activeView;
   // 刷视频和 AI 助手都能在设置里隐藏，没传就不进侧栏（feed 传 null 是年志盖着时先不挂播放器，侧栏照常有它）
-  const groups = sideGroups.map((group) => ({ ...group, items: group.items.filter((item) => (item.id !== "assistant" || assistant) && (item.id !== "feed" || feed !== undefined)) }));
-  const sides = groups.flatMap((group) => group.items);
+  const groups = sideGroups.map(group => ({ ...group, items: group.items.filter(item => item.id !== "bilibili" || bilibili) }));
+  const sides = [...groups.flatMap(group => group.items), sideItem("platformAccounts")];
   // 点侧栏「内容库」「报告」回到上次看的那一栏
   const lastLibraryView = useRef<WorkspaceViewKey>(isLibraryView(activeView) ? activeView : "watch_history");
   if (isLibraryView(activeView)) lastLibraryView.current = activeView;
@@ -347,6 +360,7 @@ export function ContentWorkspace({
   const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
   const myComments = useMyComments(commentsConnection, status?.account?.id, status?.state, activeView === "comments");
   const counts: Record<SideKey, number> = {
+    catalog: 0, topics: 0, platformAccounts: 0, douyin: 0, douyinKnowledge: 0, bilibili: 0,
     sources: 0,
     feed: 0,
     explore: 0,
@@ -386,7 +400,7 @@ export function ContentWorkspace({
   const [ringRef, ringDrawn] = useDraw<View>();
 
   const changeView = (next: SideKey) => {
-    const nextView = next === "library" ? lastLibraryView.current : next === "report" ? lastReportView.current : next;
+    const nextView = next === "douyin" ? "favorite_videos" : next === "library" ? lastLibraryView.current : next === "report" ? lastReportView.current : next;
     if (isReportView(nextView) && !reportView) setReportAutoCollapsed(true);
     onChangeView(nextView);
   };
@@ -495,10 +509,14 @@ export function ContentWorkspace({
               </React.Fragment>
             ) : null)}
           </View>
-          <BadgeWall compact={compactSidebar} />
-          <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} />
+          {sideKey === "douyin" && <><BadgeWall compact={compactSidebar} />
+            <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} /></>}
           </View>
           <View style={styles.sidebarFooter}>
+            <NavButton count={0} compact={compactSidebar} item={sideItem("platformAccounts")} selected={activeView === "platformAccounts"} onPress={() => changeView("platformAccounts")} />
+            {onOpenPreferences && <NavButton count={0} compact={compactSidebar} item={{ ...sideItem("platformAccounts"), label: "设置", icon: Settings, id: "sources" }} selected={false} onPress={() => onOpenPreferences()} />}
+            {assistant && <NavButton count={0} compact={compactSidebar} item={sideItem("assistant")} selected={activeView === "assistant"} onPress={() => changeView("assistant")} />}
+            {sideKey === "douyin" && <>
             <Pressable
               accessibilityLabel={`${accountTitle}，${accountNote}，打开菜单`}
               accessibilityRole="button"
@@ -526,6 +544,7 @@ export function ContentWorkspace({
               </View>
             </Pressable>
             {accountMenu.element}
+            </>}
           </View>
         </View>
       ) : null}
@@ -570,7 +589,7 @@ export function ContentWorkspace({
                 <Text numberOfLines={1} style={styles.replayButtonText}>{replayLabel}</Text>
               </Pressable>
             ) : null}
-            {!toolView(activeView) ? <Pressable
+            {(!toolView(activeView) || ["catalog", "topics", "knowledge", "platformAccounts"].includes(activeView)) ? <Pressable
               accessibilityLabel={privacy ? "关闭隐私模式" : "开启隐私模式"}
               accessibilityRole="switch"
               accessibilityState={{ checked: privacy }}
@@ -604,6 +623,12 @@ export function ContentWorkspace({
           </View>
         </View>}
 
+        {platformSwitcher}
+        {sideKey === "douyin" ? <ScrollView horizontal style={{ flexGrow: 0, flexShrink: 0 }} contentContainerStyle={styles.libraryTabs}>
+          {([...(feed === undefined ? [] : ["feed"]), "explore", "favorite_videos", "chat", "creator", "summary", "douyinKnowledge"] as WorkspaceViewKey[]).map(id =>
+            <Pressable key={id} accessibilityRole="tab" accessibilityState={{ selected: id === activeView || (id === "favorite_videos" && isLibraryView(activeView)) || (id === "summary" && reportView) }}
+              onPress={() => changeView(id)} style={styles.libraryTab}><Text style={styles.libraryTabText}>{id === "favorite_videos" ? "个人记录与收藏夹" : id === "summary" ? "报告" : sideItem(id).label}</Text></Pressable>)}
+        </ScrollView> : null}
         {tabsInTop ? null : libraryTabs}
 
         {reportView && reportUpdateNotice ? (
@@ -619,7 +644,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "knowledge" ? knowledge : activeView === "xiaohongshu" ? xiaohongshu : activeView === "chat" ? (
+        {activeView === "catalog" ? catalog : activeView === "topics" ? topics : activeView === "platformAccounts" ? platformAccounts : activeView === "bilibili" ? bilibili : activeView === "douyinKnowledge" ? douyinKnowledge : activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "knowledge" ? knowledge : activeView === "xiaohongshu" ? xiaohongshu : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}

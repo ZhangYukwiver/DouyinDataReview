@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright-core";
 import { BrowserConnectionError } from "./browserConnection.mjs";
+import { isPlatformAccountId, PlatformAccountRegistry } from "./platformAccounts.mjs";
+import { migrateXhsExports } from "./xiaohongshuMigration.mjs";
 import { contentOptions, noteLink, readContent, readNoteDetail, site, upstreamError } from "./xiaohongshuContent.mjs";
 
 const api = "https://edith.xiaohongshu.com";
@@ -153,15 +155,66 @@ async function readBody(page, note) {
  */
 export function createXiaohongshu({ dataDirectory, openContext = launchContext, loginTimeoutMs = 10 * 60_000 }) {
   const directory = path.join(dataDirectory, "xiaohongshu");
-  const file = name => path.join(directory, name);
+  const accounts = new PlatformAccountRegistry(directory, "xiaohongshu");
+  // Keep collector startup side-effect free. The platform directory is
+  // created only when an XHS endpoint is first used.
+  let accountsReady = null;
   let job = null;
   let controller = null;
   // 上一个任务的浏览器关干净了才开下一个（同一个浏览器配置目录只能开一个）
   let running = Promise.resolve();
 
+  function ensureAccounts() {
+    return accountsReady ??= accounts.load().then(() => migrateXhsExports(accounts)).catch(error => {
+      accountsReady = null;
+      throw error;
+    });
+  }
+
+  function accountIdFrom(value) {
+    if (value === undefined || value === null || value === "") return null;
+    if (!isPlatformAccountId(value)) throw new BrowserConnectionError("invalid_request", "小红书账号编号无效。", 400);
+    return value;
+  }
+
+  async function getAccount(id = null) {
+    await ensureAccounts();
+    const account = accounts.get(id ?? accounts.activeId);
+    if (!account) throw new BrowserConnectionError("account_not_found", "没有这个小红书账号。", 404);
+    return account;
+  }
+
+  function accountStatus(account) {
+    if (!account?.uid || !account.loggedIn) return null;
+    return {
+      user_id: account.uid,
+      nickname: account.nickname ?? "",
+      ...(account.avatar ? { avatar: account.avatar } : {}),
+      account_id: account.id,
+      checked_at: account.lastSyncedAt,
+    };
+  }
+
+  function assertIdentity(account, uid) {
+    if (account.uid && account.uid !== uid) {
+      throw new BrowserConnectionError("account_mismatch", "扫码登录的账号与当前小红书账号不一致，请切换到对应账号后重试。", 409);
+    }
+  }
+
+  async function markExpired(accountId, error) {
+    if (accountId && ["xiaohongshu_login_required", "account_mismatch"].includes(error?.code)) {
+      await accounts.update(accountId, { loggedIn: false });
+    }
+  }
+
   async function run(current, signal) {
+    await ensureAccounts();
+    const account = await getAccount(current.accountId);
+    current.accountId = account.id;
+    const accountDirectory = accounts.directory(account);
+    const file = name => path.join(accountDirectory, name);
     signal.throwIfAborted();
-    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await mkdir(accountDirectory, { recursive: true, mode: 0o700 });
     const context = await openContext(file("browser-profile"));
     const close = () => context.close().catch(() => {});
     signal.addEventListener("abort", close, { once: true });
@@ -172,6 +225,7 @@ export function createXiaohongshu({ dataDirectory, openContext = launchContext, 
         signal, timeoutMs: loginTimeoutMs,
         onQr: (qr, note) => { if (qr?.startsWith("data:image/")) Object.assign(current, { state: "login", qr, message: note || "用小红书 App 扫码登录" }); },
       });
+      assertIdentity(account, uid);
       Object.assign(current, { state: "reading", qr: null, message: "已登录，正在打开个人主页…" });
       const responses = new Map(current.lists.map(key => [XIAOHONGSHU_LISTS[key].endpoint, new Map()]));
       page.on("response", response => {
@@ -182,9 +236,11 @@ export function createXiaohongshu({ dataDirectory, openContext = launchContext, 
       });
       await me.click();
       const nickname = (await page.locator(".user-page .user-name").first().innerText({ timeout: 10_000 })).trim();
-      const account = { user_id: uid, nickname };
-      await writeJson(file("account.json"), { ...account, checked_at: new Date().toISOString() }, signal);
-      current.account = account;
+      const identity = { user_id: uid, nickname };
+      const checkedAt = new Date().toISOString();
+      await writeJson(file("account.json"), { ...identity, checked_at: checkedAt }, signal);
+      await accounts.update(current.accountId, { uid, nickname, loggedIn: true });
+      current.account = { ...identity, account_id: current.accountId };
       if (!current.lists.length) {
         Object.assign(current, { state: "done", message: `已登录小红书：${nickname}` });
         return;
@@ -209,7 +265,7 @@ export function createXiaohongshu({ dataDirectory, openContext = launchContext, 
       current.progress = null;
 
       const exportedAt = new Date().toISOString();
-      const output = { exported_at: exportedAt, account, lists: {} };
+      const output = { exported_at: exportedAt, account: identity, lists: {} };
       for (const [key, notes] of cards) {
         output.lists[key] = {
           exported_at: exportedAt,
@@ -229,6 +285,7 @@ export function createXiaohongshu({ dataDirectory, openContext = launchContext, 
       const previous = await readJson(file("latest.json"));
       const kept = previous?.account?.user_id === uid ? previous.lists ?? {} : {};
       await writeJson(file("latest.json"), { ...output, lists: { ...kept, ...output.lists } }, signal);
+      await accounts.update(current.accountId, { lastSyncedAt: exportedAt });
       const counts = Object.entries(output.lists).map(([key, list]) => `${XIAOHONGSHU_LISTS[key].label} ${list.notes.length} 篇`).join("、");
       Object.assign(current, { state: "done", file: saved, message: `导出完成：${counts}` });
     } finally {
@@ -241,22 +298,45 @@ export function createXiaohongshu({ dataDirectory, openContext = launchContext, 
   const busyError = () => new BrowserConnectionError("xiaohongshu_busy", "小红书正在登录或导出，等它结束或先取消。");
 
   return {
-    async status() {
-      return { job: job && { ...job }, account: await readJson(file("account.json")) };
+    async status(accountId = null) {
+      await ensureAccounts();
+      const requested = accountIdFrom(accountId);
+      const account = await getAccount(requested ?? job?.accountId ?? null);
+      const identity = accountStatus(account);
+      const accountJob = job && (!job.accountId || job.accountId === account.id) ? job : null;
+      return {
+        job: accountJob && { ...accountJob },
+        account: identity ? { user_id: identity.user_id, nickname: identity.nickname, ...(identity.avatar ? { avatar: identity.avatar } : {}), checked_at: identity.checked_at } : null,
+      };
     },
-    latest: () => readJson(file("latest.json")),
+    async latest(accountId = null) {
+      const account = await getAccount(accountIdFrom(accountId));
+      return readJson(path.join(accounts.directory(account), "latest.json"));
+    },
+    accounts: async () => {
+      await ensureAccounts();
+      return accounts.list();
+    },
+    createAccount: async () => { await ensureAccounts(); return accounts.create(); },
+    activateAccount: async id => { await ensureAccounts(); return accounts.setActive(accountIdFrom(id)); },
+    removeAccount: async id => { await ensureAccounts(); return accounts.remove(accountIdFrom(id)); },
+    updateAccount: async (id, patch) => { await ensureAccounts(); return accounts.update(accountIdFrom(id), patch); },
     /** lists 为空数组 = 只扫码登录 */
-    start(lists) {
+    start(lists, accountId = null) {
       if (!Array.isArray(lists) || lists.some(key => typeof key !== "string" || !Object.hasOwn(XIAOHONGSHU_LISTS, key))) {
         throw new BrowserConnectionError("invalid_request", "lists 应为由 favorites、likes 组成的数组。", 400);
       }
+      // Bind the task to the registry's current account before starting the async
+      // browser work. Explicit account IDs are never affected by a later switch.
+      const selectedAccountId = accountIdFrom(accountId) ?? accounts.activeId;
       if (busy()) throw busyError();
-      const current = { id: randomUUID(), lists: [...new Set(lists)], state: "starting", message: "正在打开小红书…", qr: null, progress: null, account: null, file: null };
+      const current = { id: randomUUID(), accountId: selectedAccountId, lists: [...new Set(lists)], state: "starting", message: "正在打开小红书…", qr: null, progress: null, account: null, file: null };
       job = current;
       controller = new AbortController();
       const { signal } = controller;
       const previous = running;
-      running = previous.then(() => run(current, signal)).catch(error => {
+      running = previous.then(() => run(current, signal)).catch(async error => {
+        if (!signal.aborted) await markExpired(current.accountId, error);
         if (!signal.aborted && !(error instanceof BrowserConnectionError)) console.warn("[xiaohongshu]", error);
         Object.assign(current, signal.aborted
           ? { state: "cancelled", message: "已取消。" }
@@ -268,18 +348,30 @@ export function createXiaohongshu({ dataDirectory, openContext = launchContext, 
     async read(action, body, signal) {
       if (!XIAOHONGSHU_READS.includes(action)) throw new BrowserConnectionError("invalid_request", "未知的小红书读取操作。", 400);
       const options = contentOptions(action, body);
+      const selectedAccountId = accountIdFrom(body?.accountId ?? body?.account ?? null);
       if (busy()) throw busyError();
       // ponytail: 每次读取都冷启动浏览器（约 5 秒）；要更快就留一个空闲一分钟再关的会话
       const task = running.then(async () => {
+        const account = await getAccount(selectedAccountId);
         signal.throwIfAborted();
-        const profile = file("browser-profile");
-        if (!await stat(profile).then(() => true, () => false)) throw loginRequired();
+        const profile = path.join(accounts.directory(account), "browser-profile");
+        if (!await stat(profile).then(() => true, () => false)) {
+          const error = loginRequired();
+          await markExpired(account.id, error);
+          throw error;
+        }
         const context = await openContext(profile);
         const close = () => context.close().catch(() => {});
         signal.addEventListener("abort", close, { once: true });
         try {
           const page = context.pages()[0] ?? await context.newPage();
-          return await readContent(action, options, { page, ...await signIn(page, { signal, timeoutMs: 0 }) });
+          const identity = await signIn(page, { signal, timeoutMs: 0 });
+          assertIdentity(account, identity.uid);
+          await accounts.update(account.id, { uid: identity.uid, nickname: account.nickname, loggedIn: true });
+          return await readContent(action, options, { page, ...identity });
+        } catch (error) {
+          if (!signal.aborted) await markExpired(account.id, error);
+          throw error;
         } finally {
           signal.removeEventListener("abort", close);
           await close();
@@ -288,16 +380,26 @@ export function createXiaohongshu({ dataDirectory, openContext = launchContext, 
       running = task.catch(() => {});
       return task;
     },
-    cancel() {
+    async cancel(accountId = null) {
+      await ensureAccounts();
+      const requested = accountIdFrom(accountId);
+      const targetId = requested ?? job?.accountId ?? accounts.activeId;
+      const account = await getAccount(targetId);
+      if (job && job.accountId && job.accountId !== account.id) {
+        throw new BrowserConnectionError("account_changed", "小红书任务属于另一个账号，本次没有取消。", 409);
+      }
       controller?.abort();
-      if (busy()) Object.assign(job, { state: "cancelled", message: "已取消。", qr: null, progress: null });
+      if (job?.accountId === account.id && busy()) Object.assign(job, { state: "cancelled", message: "已取消。", qr: null, progress: null });
     },
-    async logout() {
-      if (busy()) throw busyError();
-      await running;
-      await rm(file("browser-profile"), { recursive: true, force: true });
-      await rm(file("account.json"), { force: true });
-      job = null;
+    async logout(accountId = null) {
+      const account = await getAccount(accountIdFrom(accountId));
+      if (busy() && job?.accountId === account.id) throw busyError();
+      if (!busy()) await running;
+      const accountDirectory = accounts.directory(account);
+      await rm(path.join(accountDirectory, "browser-profile"), { recursive: true, force: true });
+      await rm(path.join(accountDirectory, "account.json"), { force: true });
+      await accounts.update(account.id, { loggedIn: false });
+      if (!job || job.accountId === account.id) job = null;
     },
   };
 }

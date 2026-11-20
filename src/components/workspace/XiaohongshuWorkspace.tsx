@@ -10,8 +10,10 @@ import { BarList } from "./CreatorCharts";
 import { Empty, ErrorLine, kit, Loading, MetricTile, Panel, Segmented, SmallButton, Tabs } from "./CreatorKit";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ws } from "./motion";
+import { SaveContentControl } from "./SaveContentControl";
+import type { XhsConnection } from "../../services/xiaohongshu";
 
-type Props = { connection: ExploreConnection | null; onOpenSettings: () => void };
+type Props = { connection: ExploreConnection | null; accountId?: string; onOpenSettings: () => void };
 type Choice = XhsListKey | "both";
 type Row = XhsCard & { body?: string | null; in?: XhsListKey[] };
 type Pane = "board" | "feed" | "search" | "profile";
@@ -22,10 +24,10 @@ const PANES: Array<{ label: string; value: Pane }> = [{ label: "看板", value: 
 const message = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback);
 const when = (iso?: string) => (iso ? new Date(iso).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 
-export function XiaohongshuWorkspace({ connection: given, onOpenSettings }: Props) {
+export function XiaohongshuWorkspace({ connection: given, accountId, onOpenSettings }: Props) {
   // 外壳每次重渲染都会新建连接对象：按地址和令牌认，不然轮询会被反复重启
   const baseUrl = given?.baseUrl, token = given?.token;
-  const connection = useMemo(() => (baseUrl && token ? { baseUrl, token } : null), [baseUrl, token]);
+  const connection = useMemo(() => (baseUrl && token ? { baseUrl, token, accountId } : null), [baseUrl, token, accountId]);
   const [job, setJob] = useState<XhsJob | null>(null);
   const [account, setAccount] = useState<XhsAccount | null>(null);
   const [latest, setLatest] = useState<XhsExport | null | undefined>(undefined);
@@ -272,7 +274,7 @@ function Browse({ kind, connection, blocked, profileUrl, onOpenAuthor }: {
 }
 
 function NoteDetail({ card, connection, blocked, onClose, onOpenAuthor }: {
-  card: XhsCard; connection: ExploreConnection; blocked: boolean; onClose: () => void; onOpenAuthor: (url: string) => void;
+  card: XhsCard; connection: XhsConnection; blocked: boolean; onClose: () => void; onOpenAuthor: (url: string) => void;
 }) {
   const [detail, runDetail] = useRead<XhsDetail>();
   const [comments, runComments] = useRead<{ comments: XhsComment[]; has_more?: boolean }>();
@@ -291,6 +293,9 @@ function NoteDetail({ card, connection, blocked, onClose, onOpenAuthor }: {
     </View>
     {detail.loading ? <Loading label="正在读取正文" /> : detail.error ? <ErrorLine text={detail.error} onRetry={() => runDetail(signal => readXhs(connection, "detail", { url: card.url }, signal))} />
       : data ? <Text style={kit.body} selectable>{data.body || "（没有正文）"}</Text> : null}
+    {connection.accountId && <SaveContentControl key={card.note_id} connection={connection} item={{ platform: "xiaohongshu", accountId: connection.accountId,
+      contentId: card.note_id, title: data?.title || card.title || "小红书笔记", body: data?.body, author: data?.author ?? card.author ?? null,
+      url: card.url, coverUrl: card.cover, mediaType: card.type }} />}
     {comments.data ? <View style={{ gap: 10 }}>
       <Text style={kit.subhead}>评论{comments.data.has_more ? "（第一批）" : ""}</Text>
       {comments.data.comments.length ? comments.data.comments.map(item => <View key={item.comment_id} style={styles.comment}>

@@ -75,7 +75,6 @@ import {
   startCollectorVideoDownload,
   stopCollectorSync,
   stopCollectorChatObservation,
-  removeCollectorAccount,
   fetchCollectorVideoFiles,
   setCollectorTokenRenewal,
   type CollectorAccounts,
@@ -127,6 +126,13 @@ import { readRecordFolders, type RecordFolders } from "./src/services/recordFold
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 import { KnowledgeWorkspace } from "./src/components/workspace/KnowledgeWorkspace";
 import { XiaohongshuWorkspace } from "./src/components/workspace/XiaohongshuWorkspace";
+import { BilibiliWorkspace } from "./src/components/workspace/BilibiliWorkspace";
+import { CatalogWorkspace } from "./src/components/workspace/CatalogWorkspace";
+import { PlatformAccountsWorkspace, PlatformSwitcher, accountPath } from "./src/components/workspace/PlatformAccountsWorkspace";
+import { useWorkspaceRead } from "./src/components/workspace/ContentWorkspaceControls";
+import { isDouyinSpace } from "./src/components/workspace/LegacyContentWorkspace";
+import { type ContentPlatform, type PlatformDirectory, workspaceRequest } from "./src/services/contentWorkspace";
+import { clearCreatorCache, Empty, ErrorLine, Loading } from "./src/components/workspace/CreatorKit";
 // @ts-expect-error react-native-web 没给内部模块出类型
 import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
 
@@ -271,9 +277,10 @@ function opensExploreFromUrl(): boolean {
 }
 
 function AppContent() {
-  const [activeView, setActiveView] = useState<ViewKey>(() => opensExploreFromUrl() ? "summary" : "sources");
-  const [dashboardOpen, setDashboardOpen] = useState(opensExploreFromUrl);
-  const [dashboardView, setDashboardView] = useState<LegacyWorkspaceViewKey>(() => opensExploreFromUrl() ? "explore" : "summary");
+  const [activeView, setActiveView] = useState<ViewKey>(Platform.OS === "web" ? "summary" : "sources");
+  const [dashboardOpen, setDashboardOpen] = useState(Platform.OS === "web");
+  const [dashboardView, setDashboardView] = useState<LegacyWorkspaceViewKey>(() => opensExploreFromUrl() ? "explore" : "catalog");
+  const returnAfterConnect = useRef<LegacyWorkspaceViewKey | null>(null);
   const [privacy, setPrivacy] = useState(false);
   const [selectedArchive, setSelectedArchive] = useState<SelectedArchive | null>(null);
   const [pickingArchive, setPickingArchive] = useState(false);
@@ -324,6 +331,13 @@ function AppContent() {
   // 首屏正在扫码登录或导入凭据（桌面版）：同样挡住读取和换号，但界面上不写成「正在切换账号」
   const [loggingIn, setLoggingIn] = useState(false);
   const [collectorAccounts, setCollectorAccounts] = useState<CollectorAccounts | null>(null);
+  const workspaceConnection = useMemo(() => collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null, [collectorUrl, collectorToken]);
+  const [directoryRevision, setDirectoryRevision] = useState(0);
+  const [platformSwitching, setPlatformSwitching] = useState(false);
+  const refreshDirectory = () => setDirectoryRevision(v => v + 1);
+  const directoryResult = useWorkspaceRead<{ platforms: PlatformDirectory; bilibiliEnabled?: boolean }>(workspaceConnection, "/v1/platform-accounts", directoryRevision);
+  const directory = directoryResult?.value?.platforms;
+  const biliEnabled = directoryResult?.value?.bilibiliEnabled === true;
   // 每换一次账号加一，让「自动补读」像刚连上时那样对新账号再跑一次
   const [accountEpoch, setAccountEpoch] = useState(0);
   const sparkRenewing = useSyncExternalStore(sparkRenewJob.subscribe, sparkRenewJob.snapshot)?.running === true;
@@ -353,7 +367,12 @@ function AppContent() {
   const [feedShown, setFeedShown] = useState(loadFeedShown);
   const [assistantView, setAssistantView] = useState<AssistantView | null>(null);
   const [assistantPanel, setAssistantPanel] = useState(false);
-  const toggleAssistantPanel = useCallback(() => setAssistantPanel((open) => !open), []);
+  const [libraryAskRequest, requestLibraryQuestion] = useState(0);
+  const inLibrary = activeView !== "sources" && ["catalog", "topics", "knowledge"].includes(dashboardView);
+  const toggleAssistantPanel = useCallback(() => {
+    if (inLibrary && !assistantPanel) { requestLibraryQuestion(v => v + 1); return; }
+    setAssistantPanel(open => !open);
+  }, [assistantPanel, inLibrary]);
   const assistantUiSeq = useRef<number | null>(null);
   // 内容年志开着时读的是打开那一刻写好的数据，外层先不拉整份快照（见 pollCollector），关掉时补一次
   const storyOpenRef = useRef(false);
@@ -1162,7 +1181,11 @@ function AppContent() {
       setCollectorToken(pairedToken);
       setPairingCode("");
       const status = await adoptCollector(normalizedUrl, pairedToken, requestId);
-      if (revealSources && status?.browserSource?.credentials === "reconnect_required") openLogin();
+      if (revealSources && returnAfterConnect.current && status) {
+        const view = returnAfterConnect.current;
+        returnAfterConnect.current = null;
+        changeDashboardView(view);
+      } else if (revealSources && status?.browserSource?.credentials === "reconnect_required") openLogin();
     } catch (error) {
       if (pollRequest.current !== requestId) return;
       if (!pairedToken) {
@@ -1316,6 +1339,7 @@ function AppContent() {
 
   // 已经换到别的账号了：旧账号留在前端的东西（下载、续火花、报告、导入的文件、冻结的旧样本）收掉，免得串到新账号上
   function forgetPreviousAccount() {
+    clearCreatorCache();
     setDownloadChoice(null);
     downloadRequestRef.current += 1;
     downloadInFlightRef.current.clear();
@@ -1333,7 +1357,7 @@ function AppContent() {
   async function changeAccount(target: { add: true } | { id: string }) {
     const token = collectorToken;
     const baseUrl = collectorUrl;
-    if (!token || switchingAccount || collectorBusy) return;
+    if (!token || switchingAccount || (collectorBusy && !isCollectorSyncing(true, collectorStatus))) return;
     const adding = "add" in target;
     const blocker = accountChangeBlocker();
     if (blocker) {
@@ -1447,7 +1471,7 @@ function AppContent() {
     setAccountEpoch(value => value + 1);
   }
 
-  function confirmRemoveAccount(id: string, name: string) {
+  async function confirmRemoveAccount(id: string, name: string) {
     const token = collectorToken;
     const baseUrl = collectorUrl;
     if (!token || switchingAccount || removingAccountRef.current) return;
@@ -1455,6 +1479,10 @@ function AppContent() {
     const rows = collectorAccounts?.accounts ?? [];
     const account = rows.find((item) => item.id === id) ?? null;
     const added = formatAccountAddedDay(account?.createdAt ?? null);
+    const accountUrl = accountPath("douyin", id);
+    let impact;
+    try { impact = await workspaceRequest<{ entryCount: number; topicCount: number }>({ baseUrl, token }, accountUrl + "/impact"); }
+    catch (e) { showAlert("无法读取账号资料", e instanceof Error ? e.message : "请重新连接采集器。"); return; }
     const twin = account ? findTwinAccount(rows, account) : null;
     const twinNote = !account || !twin ? ""
       : rows.indexOf(account) < rows.indexOf(twin)
@@ -1462,13 +1490,13 @@ function AppContent() {
         : "另一个账号登录的也是这个抖音号，这是后添加的那个。";
     confirmAlert(
       "删除这个抖音账号",
-      `会删掉这台电脑上「${name}」${added ? `（${added}添加）` : ""}的登录和读到的记录，抖音上的内容不受影响。${twinNote}`,
+      `将删除这台电脑上「${name}」${added ? `（${added}添加）` : ""}的登录和记录，涉及 ${impact.entryCount} 条内容、${impact.topicCount} 个专题。${twinNote}`,
       "删除",
       (confirmed) => {
         if (!confirmed) return;
         removingAccountRef.current = true;
-        void removeCollectorAccount(baseUrl, token, id)
-          .then(applyCollectorAccounts)
+        void workspaceRequest({ baseUrl, token }, accountUrl, { method: "DELETE" })
+          .then(() => { refreshDirectory(); void refreshCollectorAccounts(baseUrl, token); })
           .catch((error: unknown) => {
             showAlert("无法删除账号", collectorErrorMessage(error));
             void refreshCollectorAccounts(baseUrl, token);
@@ -1852,16 +1880,16 @@ function AppContent() {
     setActiveView("summary");
   }
 
-  // 「进入工作台」默认刷视频（隐藏了就去持续报告）
   function openDashboard() {
     setStorySrc(null);
-    setDashboardView(feedShown ? "feed" : "summary");
+    setDashboardView("catalog");
     setDashboardOpen(true);
     setActiveView("summary");
   }
 
   // 「连接与采集」：回到采集器页（历史上叫 settings，各页的「去连接」按钮都调它）
   function openSettings() {
+    returnAfterConnect.current = !collectorToken && !isDouyinSpace(dashboardView) ? dashboardView : null;
     setStorySrc(null);
     setDashboardOpen(false);
     setActiveView("sources");
@@ -2040,12 +2068,37 @@ function AppContent() {
     setDashboardOpen(true);
     if (activeView === "sources") setActiveView("summary");
   };
+  const space: ContentPlatform | null = activeView === "sources" ? null : isDouyinSpace(dashboardView) ? "douyin" :
+    dashboardView === "xiaohongshu" || dashboardView === "bilibili" ? dashboardView : null;
+  useEffect(refreshDirectory, [collectorAccounts, space, dashboardView === "platformAccounts"]);
+  const chooseAccount = async (p: ContentPlatform, id: string) => {
+    if (!workspaceConnection || platformSwitching || switchingAccount) throw new Error("正在切换账号，请稍后重试。");
+    if (p === "douyin") {
+      if (id !== collectorAccounts?.activeId) {
+        await changeAccount({ id });
+        const current = await getCollectorAccounts(workspaceConnection.baseUrl, workspaceConnection.token);
+        if (current.activeId !== id) throw new Error("抖音账号仍在使用中，未能切换。");
+      }
+    } else if (id !== directory?.[p]?.activeId) {
+      setPlatformSwitching(true);
+      try { await workspaceRequest(workspaceConnection, accountPath(p, id) + "/activate", { method: "POST" }); }
+      finally { setPlatformSwitching(false); }
+    }
+    refreshDirectory();
+  };
+  const catalogProps = { connection: workspaceConnection, accounts: directory, onConnect: openSettings, onOpen: openRecord,
+    onAiSettings: () => openPreferences("ai"), biliEnabled, revision: directoryRevision, askRequest: libraryAskRequest };
+  const scopedCatalog = (page: "catalog" | "topics" | "knowledge") => privacy
+    ? <View style={{ padding: 24 }}><Text>隐私模式已开启</Text></View>
+    : <CatalogWorkspace key={page} page={page} {...catalogProps} />;
+  const waitingForDirectory = directoryResult?.error ? <ErrorLine text={directoryResult.error} onRetry={refreshDirectory} />
+    : directory ? <Empty text="请在账号管理中添加平台账号。" /> : <Loading label="正在读取平台账号" />;
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
       <StatusBar style="light" />
       {/* 采集器页首屏自己就摆着扫码，不用再挂 */}
-      {loginExpired && !loginNoticeHidden && activeView !== "sources"
+      {loginExpired && !loginNoticeHidden && space === "douyin"
         ? <CredentialBanner onLogin={openLogin} onDismiss={() => setLoginNoticeHidden(true)} /> : null}
       {siteNotice && activeView !== "sources"
         ? <SiteNoticeBanner text={siteNotice.text} url={siteNotice.url} onOpen={(url) => void Linking.openURL(url).catch(() => undefined)} onDismiss={() => dismissSiteNotice(siteNotice.id)} /> : null}
@@ -2058,9 +2111,25 @@ function AppContent() {
             onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} />}
           explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} accountId={collectorStatus?.account?.id ?? null} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
-          knowledge={<KnowledgeWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} accountId={collectorStatus?.account?.id ?? null}
+          catalog={scopedCatalog("catalog")} topics={scopedCatalog("topics")} knowledge={scopedCatalog("knowledge")}
+          platformSwitcher={space && <PlatformSwitcher platform={space} accounts={directory} disabled={switchingAccount || platformSwitching}
+            onSelect={id => void chooseAccount(space, id).catch(e => showAlert("无法切换账号", e.message))}
+            onManage={() => changeDashboardView("platformAccounts")} />}
+          platformAccounts={privacy ? <View style={{ padding: 24 }}><Text>隐私模式已开启</Text></View> : <PlatformAccountsWorkspace connection={workspaceConnection} accounts={directory} error={directoryResult?.error}
+            onConnect={openSettings} onReload={refreshDirectory} onSelect={chooseAccount} biliEnabled={biliEnabled} disabled={switchingAccount || platformSwitching}
+            onDouyinSessionChange={async () => {
+              if (!workspaceConnection) return;
+              const requestId = ++pollRequest.current;
+              statusPollAbortRef.current?.abort();
+              await recoverAfterAccountChange(workspaceConnection.baseUrl, workspaceConnection.token, requestId, collectorStatus?.account?.id ?? null);
+            }}
+            onAddDouyin={() => changeAccount({ add: true })} onLogin={async (p, id) => {
+              await chooseAccount(p, id); if (p === "douyin") openLogin(); else changeDashboardView(p);
+            }} />}
+          douyinKnowledge={<KnowledgeWorkspace connection={workspaceConnection} accountId={collectorStatus?.account?.id ?? null}
             records={workspaceRecords} onOpenSettings={openSettings} onOpenAiSettings={() => openPreferences("ai")} />}
-          xiaohongshu={<XiaohongshuWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} />}
+          xiaohongshu={workspaceConnection && !directory?.xiaohongshu.activeId ? waitingForDirectory : <XiaohongshuWorkspace key={directory?.xiaohongshu.activeId} connection={workspaceConnection} accountId={directory?.xiaohongshu.activeId ?? undefined} onOpenSettings={openSettings} />}
+          bilibili={biliEnabled && (workspaceConnection && !directory?.bilibili.activeId ? waitingForDirectory : <BilibiliWorkspace key={directory?.bilibili.activeId} enabled connection={workspaceConnection} accountId={directory?.bilibili.activeId ?? undefined} onOpenSettings={openSettings} />)}
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
             videoLibrary={!privacy && !switchingAccount && collectorAccounts?.activeId ? { accountId: collectorAccounts.activeId, records: workspaceRecords } : undefined}
             onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} /> : undefined}

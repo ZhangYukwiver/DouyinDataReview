@@ -3,6 +3,7 @@
 import { getDefaultCollectorBaseUrl } from "../services/localCollector";
 import { ACCOUNT_AVATAR, avatar, cover, TOPIC_COLORS } from "./demoArt";
 import { answerCreatorRead } from "./demoCreator";
+import type { LibraryItem, LibraryTopic } from "../services/contentWorkspace";
 
 const DAY = 86_400_000;
 
@@ -320,7 +321,47 @@ const SYNC_PATHS = ["/v1/sync", "/v1/sync/stop", "/v1/experimental/records-direc
 // ponytail: 只按路径分流；以后哪个页面要更像样的演示数据，在 answer 里加一条路径
 const UNAVAILABLE = { error: "collector_busy", message: "在线体验版不连抖音，这个操作要下载桌面版才能用。" };
 
+const demoTopics: LibraryTopic[] = [];
+let demoIndex: Map<string, LibraryItem> | undefined;
+function libraryDemo(method: string, path: string, query: URLSearchParams, body: unknown): unknown {
+  if (!demoIndex) {
+    demoIndex = new Map();
+    for (const [list, records] of Object.entries(demoSnapshot().records)) for (const record of records) {
+      const key = "douyin:" + record.videoId;
+      const entry = demoIndex.get(key) ?? { key, platform: "douyin", contentId: record.videoId, title: record.title, author: record.author, url: record.url,
+        sourceAccounts: [{ accountId: "default", accountName: "示例账号", signals: [] as string[] }] };
+      const signal = list === "watch_history" ? "watched" : list === "liked_videos" ? "liked" : "favorited";
+      if (!entry.sourceAccounts[0]!.signals.includes(signal)) entry.sourceAccounts[0]!.signals.push(signal);
+      demoIndex.set(key, entry);
+    }
+  }
+  const input = body as { name?: string; key?: string } | null;
+  const topic = demoTopics.find(t => t.id === (query.get("topicId") || path.split("/")[4]));
+  if (path === "/v1/library/topics" && method === "POST" && input?.name?.trim()) {
+    const created = { id: "demo-" + (demoTopics.length + 1), name: input.name.trim(), items: [] };
+    demoTopics.push(created); return { topic: created };
+  }
+  if (path === "/v1/library/topics") return { topics: demoTopics };
+  if (topic && path.endsWith("/items") && input?.key && demoIndex.has(input.key)) {
+    topic.items = topic.items.filter(key => key !== input.key);
+    if (method === "POST") topic.items.push(input.key);
+    return { topic };
+  }
+  if (path.startsWith("/v1/library/items/")) return { item: demoIndex.get(decodeURIComponent(path.slice("/v1/library/items/".length))) };
+  if (path !== "/v1/library") return null;
+  const keyword = query.get("query")?.toLowerCase() ?? "";
+  const items = [...demoIndex.values()].filter(item => (!topic || topic.items.includes(item.key)) &&
+    (!query.get("platform") || query.get("platform") === "douyin") && (!query.get("accountId") || query.get("accountId") === "default") &&
+    (!query.get("signal") || item.sourceAccounts[0]!.signals.includes(query.get("signal")!)) &&
+    [item.title, item.author].some(field => field?.toLowerCase().includes(keyword)));
+  const offset = Number(query.get("offset") || 0);
+  return { total: items.length, items: items.slice(offset, offset + Number(query.get("limit") || 40)) };
+}
+
 function answer(method: string, path: string, query: URLSearchParams, body: unknown): unknown {
+  if (path === "/v1/platform-accounts") return { platforms: { douyin: { ...ACCOUNTS, accounts: ACCOUNTS.accounts.map(a => ({ ...a, loggedIn: false, lastSyncedAt: SAMPLE_AT.toISOString() })) },
+    xiaohongshu: { activeId: null, accounts: [] }, bilibili: { activeId: null, accounts: [] } } };
+  if (path === "/v1/library" || path.startsWith("/v1/library/")) return libraryDemo(method, path, query, body);
   if (path === "/v1/creator/read" && method === "POST") return answerCreatorRead(body);
   if (path === "/v1/health") return { ok: true, version: 1 };
   if (path === "/v1/pairing-code") return { code: "20261113" };
