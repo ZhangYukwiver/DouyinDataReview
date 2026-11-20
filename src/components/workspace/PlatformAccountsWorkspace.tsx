@@ -20,8 +20,10 @@ export function PlatformSwitcher({ platform, accounts, onSelect, onManage, disab
 type Props = { connection: ExploreConnection | null; accounts?: PlatformDirectory; error?: string; onReload: () => void; onConnect: () => void;
   onDouyinSessionChange: () => Promise<void>;
   onSelect: (p: ContentPlatform, id: string) => Promise<void>; onAddDouyin: () => Promise<void>; onLogin: (p: ContentPlatform, id: string) => Promise<void>;
-  biliEnabled: boolean; disabled: boolean };
-export function PlatformAccountsWorkspace({ connection, accounts, error, onReload, onConnect, onSelect, onAddDouyin, onLogin, onDouyinSessionChange, biliEnabled, disabled }: Props) {
+  biliEnabled: boolean; disabled: boolean;
+  /** 抖音那栏最下面多放的东西（网页版用浏览器导入登录的面板） */
+  douyinExtra?: React.ReactNode };
+export function PlatformAccountsWorkspace({ connection, accounts, error, onReload, onConnect, onSelect, onAddDouyin, onLogin, onDouyinSessionChange, biliEnabled, disabled, douyinExtra }: Props) {
   const [actionError, setError] = useState("");
   const [busy, setBusy] = useState(false);
   if (!connection) return <ConnectLibrary onConnect={onConnect} />;
@@ -46,6 +48,7 @@ export function PlatformAccountsWorkspace({ connection, accounts, error, onReloa
           connection={connection} platform={platform} onSelect={() => onSelect(platform, account.id)} onLogin={() => onLogin(platform, account.id)}
           busy={busy || disabled} run={run} onSessionChange={platform === "douyin" && group.activeId === account.id ? onDouyinSessionChange : undefined} />)}
         {!group.accounts.length && <Empty small text="还没有添加这个平台的账号。" />}
+        {platform === "douyin" ? douyinExtra : null}
       </Panel>;
     })}
     <View style={kit.row}><SmallButton label="连接与采集" onPress={onConnect} /><SmallButton label="刷新账号列表" onPress={onReload} /></View>

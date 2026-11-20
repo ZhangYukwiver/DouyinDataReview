@@ -123,7 +123,7 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "knowledge" | "xiaohongshu" | "sources" | "catalog" | "topics" | "platformAccounts" | "bilibili" | "douyinKnowledge";
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "knowledge" | "xiaohongshu" | "sources" | "catalog" | "topics" | "platformAccounts" | "bilibili" | "douyinKnowledge" | "xhs_feed" | "xhs_search";
 
 export interface ContentWorkspaceProps {
   /** 连接与采集：嵌在外壳里的一页，自带顶栏；入口在侧栏底部的账号菜单 */
@@ -137,6 +137,9 @@ export interface ContentWorkspaceProps {
   /** 知识库：视频解析的结果都收在这里 */
   knowledge?: React.ReactNode;
   xiaohongshu?: React.ReactNode;
+  /** 刷视频、探索切到小红书时的两页 */
+  xiaohongshuFeed?: React.ReactNode;
+  xiaohongshuSearch?: React.ReactNode;
   bilibili?: React.ReactNode;
   catalog?: React.ReactNode;
   topics?: React.ReactNode;
@@ -197,6 +200,8 @@ const navItems: NavItem[] = [
   { id: "platformAccounts", label: "账号管理", icon: UsersRound, accent: color.cyan },
   { id: "bilibili", label: "B 站", icon: TvMinimalPlay, accent: color.cyan },
   { id: "douyinKnowledge", label: "视频解析库", icon: BookOpenText, accent: color.amber },
+  { id: "xhs_feed", label: "刷视频", icon: TvMinimalPlay, accent: color.accent },
+  { id: "xhs_search", label: "探索", icon: Search, accent: color.cyan },
   { id: "feed", label: "刷视频", icon: TvMinimalPlay, accent: color.accent },
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
@@ -218,19 +223,26 @@ const navItems: NavItem[] = [
 // 一级入口在侧栏，二级用页内页签：观看历史、直播、喜欢、收藏、推荐流挡掉的、我的评论并成「内容库」，持续报告和变化线索并成「报告」
 const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered", "comments"];
 const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
-type SideKey = WorkspaceViewKey | "library" | "report" | "douyin";
+type SideKey = WorkspaceViewKey | "library" | "report";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
 const reportItems = navItems.filter((item) => isReportView(item.id));
 // 刷视频、探索、创作者中心和 AI 助手是工具页：不显示条数、隐私和重新读取
-const toolView = (view: SideKey) => ["catalog", "topics", "platformAccounts", "douyin", "bilibili", "douyinKnowledge", "feed", "explore", "creator", "assistant", "knowledge", "xiaohongshu"].includes(view);
+const toolView = (view: SideKey) => ["catalog", "topics", "platformAccounts", "bilibili", "douyinKnowledge", "feed", "explore", "creator", "assistant", "knowledge", "xiaohongshu", "xhs_feed", "xhs_search"].includes(view);
 // 「报告」这一项也不挂条数：条数在它的页签上
 const showsCount = (view: SideKey) => !toolView(view) && view !== "report" && view !== "sources";
 const sideItem = (id: SideKey) => navItems.find((item) => item.id === id)!;
-// 侧栏按「来这儿做什么」分三组：发现（看新的）/ 我的（自己留下的）/ 洞察（从记录里看出什么）
+// 侧栏只按「来这儿做什么」分三组：发现（看新的）/ 我的（自己留下的）/ 洞察（从记录里看出什么）。
+// 平台不进侧栏：抖音、小红书、B站在每页顶上切（platformChips），这个平台没有的功能就灰着
 const sideGroups: ReadonlyArray<{ label: string; items: NavItem<SideKey>[] }> = [
-  { label: "我的内容", items: [sideItem("catalog"), sideItem("topics"), sideItem("knowledge")] },
-  { label: "平台", items: [{ id: "douyin", label: "抖音", icon: Music2, accent: color.accent }, sideItem("xiaohongshu"), sideItem("bilibili")] },
+  { label: "发现", items: [sideItem("feed"), sideItem("explore")] },
+  { label: "我的", items: [sideItem("catalog"), sideItem("topics"), sideItem("chat"), sideItem("knowledge")] },
+  { label: "洞察", items: [{ id: "report", label: "报告", icon: LayoutDashboard, accent: color.green }, sideItem("creator"), sideItem("assistant")] },
 ];
+// 小红书、B站和视频解析笔记的页面挂在对应的功能项下面
+const sideOf = (view: WorkspaceViewKey): SideKey =>
+  isLibraryView(view) || view === "xiaohongshu" || view === "bilibili" ? "catalog"
+    : isReportView(view) ? "report"
+      : view === "xhs_feed" ? "feed" : view === "xhs_search" ? "explore" : view === "douyinKnowledge" ? "knowledge" : view;
 export const isDouyinSpace = (view: WorkspaceViewKey) =>
   isLibraryView(view) || isReportView(view) || ["feed", "explore", "creator", "chat", "douyinKnowledge"].includes(view);
 
@@ -262,6 +274,8 @@ export function ContentWorkspace({
   assistant,
   knowledge,
   xiaohongshu,
+  xiaohongshuFeed,
+  xiaohongshuSearch,
   bilibili, catalog, topics, platformAccounts, platformSwitcher, douyinKnowledge,
   activeView,
   records,
@@ -311,15 +325,17 @@ export function ContentWorkspace({
   // root 的桌面内边距与 stage 边框会占掉 36px，使用同一个主区宽度供各内容页计算。
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
   const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
-  const sideKey: SideKey = isDouyinSpace(activeView) ? "douyin" : activeView;
+  const sideKey = sideOf(activeView);
+  // 页面标题跟侧栏项走（切到小红书的刷视频也叫「刷视频」）；内容库和报告的页签照旧用页签名
+  const titleNav = isLibraryView(activeView) || reportView ? currentNav : navItems.find((item) => item.id === sideKey) ?? currentNav;
   // 刷视频和 AI 助手都能在设置里隐藏，没传就不进侧栏（feed 传 null 是年志盖着时先不挂播放器，侧栏照常有它）
-  const groups = sideGroups.map(group => ({ ...group, items: group.items.filter(item => item.id !== "bilibili" || bilibili) }));
-  const sides = [...groups.flatMap(group => group.items), sideItem("platformAccounts")];
-  // 点侧栏「内容库」「报告」回到上次看的那一栏
+  const groups = sideGroups.map((group) => ({ ...group, items: group.items.filter((item) => (item.id !== "assistant" || assistant) && (item.id !== "feed" || feed !== undefined)) }));
+  const sides = groups.flatMap((group) => group.items);
+  // 点侧栏某项回到它下面上次看的那一页（内容库切到的平台、报告的页签……）；内容库的「抖音」回到上次的记录页签
+  const lastViewBySide = useRef<Partial<Record<SideKey, WorkspaceViewKey>>>({});
+  lastViewBySide.current[sideKey] = activeView;
   const lastLibraryView = useRef<WorkspaceViewKey>(isLibraryView(activeView) ? activeView : "watch_history");
   if (isLibraryView(activeView)) lastLibraryView.current = activeView;
-  const lastReportView = useRef<WorkspaceViewKey>(reportView ? activeView : "summary");
-  if (reportView) lastReportView.current = activeView;
   const [reportUpdateNotice, setReportUpdateNotice] = useState(false);
   // 侧栏当前项的指示条：一根，随选中项滑动（各按钮 onLayout 报自己的 y）
   const [navTops, setNavTops] = useState<Record<string, number>>({});
@@ -360,7 +376,7 @@ export function ContentWorkspace({
   const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
   const myComments = useMyComments(commentsConnection, status?.account?.id, status?.state, activeView === "comments");
   const counts: Record<SideKey, number> = {
-    catalog: 0, topics: 0, platformAccounts: 0, douyin: 0, douyinKnowledge: 0, bilibili: 0,
+    catalog: 0, topics: 0, platformAccounts: 0, douyinKnowledge: 0, bilibili: 0, xhs_feed: 0, xhs_search: 0,
     sources: 0,
     feed: 0,
     explore: 0,
@@ -399,11 +415,45 @@ export function ContentWorkspace({
   const shownCount = useCountUp(counts[activeView]);
   const [ringRef, ringDrawn] = useDraw<View>();
 
-  const changeView = (next: SideKey) => {
-    const nextView = next === "douyin" ? "favorite_videos" : next === "library" ? lastLibraryView.current : next === "report" ? lastReportView.current : next;
+  const changeView = (nextView: WorkspaceViewKey) => {
     if (isReportView(nextView) && !reportView) setReportAutoCollapsed(true);
     onChangeView(nextView);
   };
+  const openSide = (side: SideKey) => changeView(lastViewBySide.current[side] ?? (side === "report" ? "summary" : side as WorkspaceViewKey));
+
+  // 平台在页面顶上切：同一个功能下抖音、小红书、B站各一页，这个平台没有的功能灰着点不了
+  type Chip = { key: string; label: string; on: boolean; go?: () => void };
+  const chip = (key: string, label: string, view: WorkspaceViewKey | null, on = view === activeView): Chip =>
+    ({ key, label, on, go: view ? () => changeView(view) : undefined });
+  const onlyDouyin = (): Chip[] => [chip("douyin", "抖音", activeView, true), chip("xiaohongshu", "小红书", null), chip("bilibili", "B站", null)];
+  const chips: Chip[] | null =
+    sideKey === "feed" ? [chip("douyin", "抖音", feed !== undefined ? "feed" : null), chip("xiaohongshu", "小红书", xiaohongshuFeed ? "xhs_feed" : null), chip("bilibili", "B站", null)]
+      : sideKey === "explore" ? [chip("douyin", "抖音", "explore"), chip("xiaohongshu", "小红书", xiaohongshuSearch ? "xhs_search" : null), chip("bilibili", "B站", null)]
+        : sideKey === "catalog" ? [chip("all", "全部", "catalog"), chip("douyin", "抖音", lastLibraryView.current, isLibraryView(activeView)),
+          chip("xiaohongshu", "小红书", xiaohongshu ? "xiaohongshu" : null), chip("bilibili", "B站", bilibili ? "bilibili" : null)]
+          : sideKey === "chat" || sideKey === "report" || sideKey === "creator" ? onlyDouyin()
+              : sideKey === "knowledge" ? [chip("all", "内容库问答", "knowledge"), chip("notes", "视频解析笔记", douyinKnowledge ? "douyinKnowledge" : null)]
+                : null;
+  const chipsRow = chips ? (
+    <View {...ws("w-libtabs")} accessibilityRole="tablist" style={[styles.libraryTabs, mobile && styles.libraryTabsMobile]} testID="platform-chips">
+      {chips.map((item) => (
+        <Pressable
+          key={item.key}
+          accessibilityLabel={item.go ? item.label : `${item.label}：这个平台没有这项功能`}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: item.on, disabled: !item.go }}
+          aria-selected={item.on}
+          disabled={!item.go}
+          {...fx({ hover: "tint", ws: item.on ? "c-filter on" : "c-filter" })}
+          onPress={item.go}
+          style={({ pressed }) => [styles.libraryTab, item.on && { backgroundColor: alpha(color.cyan, 0.13) }, !item.go && styles.buttonDisabled, pressed && styles.buttonPressed, item.go ? webPointer : null]}
+          testID={`platform-${sideKey}-${item.key}`}
+        >
+          <Text numberOfLines={1} style={[styles.libraryTabText, item.on && styles.libraryTabTextOn]}>{item.label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  ) : null;
 
   // 侧栏最下面一行：当前账号 + 连接状态，点开是全局菜单（读取、连接与采集、切换账号、设置）
   const account = status?.account ?? null;
@@ -433,7 +483,7 @@ export function ContentWorkspace({
       { id: "sources", label: "连接与采集", icon: icon(Plug), onSelect: onOpenSettings },
       ...(onOpenPreferences ? [
         { id: "account-sep", separator: true as const },
-        { id: "accounts", label: "切换账号", icon: icon(UsersRound), onSelect: () => onOpenPreferences("account") },
+        { id: "accounts", label: "账号管理", icon: icon(UsersRound), onSelect: () => changeView("platformAccounts") },
         { id: "preferences", label: "设置", icon: icon(Settings), onSelect: () => onOpenPreferences() },
       ] : []),
     ]);
@@ -502,31 +552,27 @@ export function ContentWorkspace({
                     count={counts[item.id]}
                     item={item}
                     onLayoutTop={(y) => reportNavTop(item.id, y)}
-                    onPress={() => changeView(item.id)}
+                    onPress={() => openSide(item.id)}
                     selected={item.id === sideKey}
                   />
                 ))}
               </React.Fragment>
             ) : null)}
           </View>
-          {sideKey === "douyin" && <><BadgeWall compact={compactSidebar} />
-            <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} /></>}
+          <BadgeWall compact={compactSidebar} />
+          <ActiveDays compact={compactSidebar} days={model.activeDays} drawn={ringDrawn} viewRef={ringRef} year={model.year} />
           </View>
           <View style={styles.sidebarFooter}>
-            <NavButton count={0} compact={compactSidebar} item={sideItem("platformAccounts")} selected={activeView === "platformAccounts"} onPress={() => changeView("platformAccounts")} />
-            {onOpenPreferences && <NavButton count={0} compact={compactSidebar} item={{ ...sideItem("platformAccounts"), label: "设置", icon: Settings, id: "sources" }} selected={false} onPress={() => onOpenPreferences()} />}
-            {assistant && <NavButton count={0} compact={compactSidebar} item={sideItem("assistant")} selected={activeView === "assistant"} onPress={() => changeView("assistant")} />}
-            {sideKey === "douyin" && <>
             <Pressable
               accessibilityLabel={`${accountTitle}，${accountNote}，打开菜单`}
               accessibilityRole="button"
               accessibilityState={{ expanded: accountMenu.isOpen }}
               aria-haspopup="menu"
-              // 连接与采集这一页归在账号行下面：在那一页时这一行是选中的
-              {...fx({ hover: "tint", ws: activeView === "sources" ? "w-nav w-replay w-account on" : "w-nav w-replay w-account" })}
+              // 连接与采集、账号管理归在账号行下面：在这两页时这一行是选中的
+              {...fx({ hover: "tint", ws: activeView === "sources" || activeView === "platformAccounts" ? "w-nav w-replay w-account on" : "w-nav w-replay w-account" })}
               onPress={openAccountMenu}
               ref={accountRef}
-              style={({ pressed }) => [styles.navButton, activeView === "sources" && styles.navButtonSelected, pressed && styles.buttonPressed, webPointer]}
+              style={({ pressed }) => [styles.navButton, (activeView === "sources" || activeView === "platformAccounts") && styles.navButtonSelected, pressed && styles.buttonPressed, webPointer]}
               testID="workspace-account"
             >
               <View style={styles.navIconWrap}>
@@ -544,7 +590,6 @@ export function ContentWorkspace({
               </View>
             </Pressable>
             {accountMenu.element}
-            </>}
           </View>
         </View>
       ) : null}
@@ -553,11 +598,12 @@ export function ContentWorkspace({
         {/* 连接与采集自带顶栏（状态、账号、打开报告），外壳这条让位 */}
         {activeView === "sources" ? null : <View {...ws("w-top")} testID="workspace-topbar" style={[styles.topbar, mobile && styles.topbarMobile]}>
           <View style={styles.topbarHeading}>
-            {tabsInTop && libraryTabs ? libraryTabs : <>
+            {/* 极简：平台切换（没有就是内容库、报告的页签）放进顶栏替掉标题；页签让到下面一行 */}
+            {tabsInTop && (chipsRow ?? libraryTabs) ? chipsRow ?? libraryTabs : <>
             {/* 极简不要装饰性的英文眉题 */}
             {appStyle !== "minimal" ? <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : archive ? "CONTENT ARCHIVE" : "CONTENT STREAMS"}</Text> : null}
             <View style={styles.topbarTitleRow}>
-              <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{currentNav.label}</Text>
+              <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{titleNav.label}</Text>
               {!toolView(activeView) ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
             </View>
             </>}
@@ -623,13 +669,9 @@ export function ContentWorkspace({
           </View>
         </View>}
 
+        {activeView === "sources" || tabsInTop ? null : chipsRow}
         {platformSwitcher}
-        {sideKey === "douyin" ? <ScrollView horizontal style={{ flexGrow: 0, flexShrink: 0 }} contentContainerStyle={styles.libraryTabs}>
-          {([...(feed === undefined ? [] : ["feed"]), "explore", "favorite_videos", "chat", "creator", "summary", "douyinKnowledge"] as WorkspaceViewKey[]).map(id =>
-            <Pressable key={id} accessibilityRole="tab" accessibilityState={{ selected: id === activeView || (id === "favorite_videos" && isLibraryView(activeView)) || (id === "summary" && reportView) }}
-              onPress={() => changeView(id)} style={styles.libraryTab}><Text style={styles.libraryTabText}>{id === "favorite_videos" ? "个人记录与收藏夹" : id === "summary" ? "报告" : sideItem(id).label}</Text></Pressable>)}
-        </ScrollView> : null}
-        {tabsInTop ? null : libraryTabs}
+        {tabsInTop && !chipsRow ? null : libraryTabs}
 
         {reportView && reportUpdateNotice ? (
           <Pressable
@@ -644,7 +686,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "catalog" ? catalog : activeView === "topics" ? topics : activeView === "platformAccounts" ? platformAccounts : activeView === "bilibili" ? bilibili : activeView === "douyinKnowledge" ? douyinKnowledge : activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "knowledge" ? knowledge : activeView === "xiaohongshu" ? xiaohongshu : activeView === "chat" ? (
+        {activeView === "catalog" ? catalog : activeView === "topics" ? topics : activeView === "platformAccounts" ? platformAccounts : activeView === "bilibili" ? bilibili : activeView === "douyinKnowledge" ? douyinKnowledge : activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "knowledge" ? knowledge : activeView === "xiaohongshu" ? xiaohongshu : activeView === "xhs_feed" ? xiaohongshuFeed : activeView === "xhs_search" ? xiaohongshuSearch : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
@@ -733,7 +775,7 @@ export function ContentWorkspace({
                 accessibilityLabel={showsCount(item.id) ? `${item.label}，${counts[item.id]} 条` : item.label}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
-                onPress={() => changeView(item.id)}
+                onPress={() => openSide(item.id)}
                 style={({ pressed }) => [styles.bottomNavItem, pressed && styles.buttonPressed, webPointer]}
               >
                 <Icon color={selected ? item.accent : color.textMuted} size={20} strokeWidth={selected ? 2.5 : 2} />

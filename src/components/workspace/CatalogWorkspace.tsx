@@ -41,7 +41,8 @@ export function CatalogWorkspace({ page, connection, accounts, onConnect, onOpen
   }, [askRequest, page, topicId]);
   const topics = useWorkspaceRead<{ topics: LibraryTopic[] }>(connection, api + "/topics", nonce + revision);
   const chosenTopic = topics?.value?.topics.find(t => t.id === topicId);
-  const libraryFilter = page === "topics" ? { platform: "", accountId: "" } : filter;
+  // 内容库的平台在工作台页顶切（全部 / 抖音 / 小红书 / B站），这一页就是「全部」：页里不再放第二排平台筛选
+  const libraryFilter = page === "topics" || page === "catalog" ? { platform: "", accountId: "" } : filter;
   const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
   if (libraryFilter.platform) params.set("platform", libraryFilter.platform);
   if (libraryFilter.accountId) params.set("accountId", libraryFilter.accountId);
@@ -98,9 +99,9 @@ export function CatalogWorkspace({ page, connection, accounts, onConnect, onOpen
       </Panel>
     </>}
     {page !== "topics" && !selected && <Panel title={page === "knowledge" ? "检索资料" : "查找内容"}>
-      <Tabs value={filter.platform} onChange={p => changeFilter({ platform: p as ContentPlatform | "", accountId: "" })}
-        options={[{ value: "", label: "全部平台" }, ...platformOptions.map(value => ({ value, label: platformLabels[value] }))]} />
-      {filteredAccounts && <Tabs value={filter.accountId} onChange={accountId => changeFilter({ ...filter, accountId })}
+      {page !== "catalog" && <Tabs value={filter.platform} onChange={p => changeFilter({ platform: p as ContentPlatform | "", accountId: "" })}
+        options={[{ value: "", label: "全部平台" }, ...platformOptions.map(value => ({ value, label: platformLabels[value] }))]} />}
+      {page !== "catalog" && filteredAccounts && <Tabs value={filter.accountId} onChange={accountId => changeFilter({ ...filter, accountId })}
         options={[{ value: "", label: "全部账号" }, ...filteredAccounts.map(a => ({ value: a.id, label: accountChoiceLabel(a, filteredAccounts) }))]} />}
       {page === "catalog" && <Tabs value={signal} options={allSignals} onChange={s => { setSignal(s); setOffset(0); }} />}
       {page === "knowledge" && Boolean(topics?.value?.topics.length) && <Tabs value={topicId} onChange={chooseTopic}
@@ -131,7 +132,7 @@ export function CatalogWorkspace({ page, connection, accounts, onConnect, onOpen
             <Text style={kit.muted}>{[platformLabels[entry.platform], entry.author,
               ...new Set(entry.sourceAccounts.flatMap(a => a.signals.map(s => signalLabels[s as LibrarySignal] || (s === "manual" ? "手动保存" : s))))].filter(Boolean).join(" · ")}</Text></View>
           <ChevronRight size={16} color={color.textMuted} />
-        </Pressable>) : index.value && <Empty small text={query || signal || filter.platform ? "当前筛选下没有内容。" : topicId ? "在内容详情中选择「加入专题」，资料就会出现在这里。" : "同步平台收藏或手动保存内容后，可在这里查找。"} />}
+        </Pressable>) : index.value && <Empty small text={query || signal || libraryFilter.platform ? "当前筛选下没有内容。" : topicId ? "在内容详情中选择「加入专题」，资料就会出现在这里。" : "同步平台收藏或手动保存内容后，可在这里查找。"} />}
       {(offset > 0 || (index?.value?.total ?? 0) > pageSize) && <View style={kit.row}>
         <SmallButton label="上一页" disabled={!offset} onPress={() => setOffset(v => Math.max(0, v - pageSize))} />
         <Text style={kit.muted}>第 {1 + offset / pageSize} 页</Text>

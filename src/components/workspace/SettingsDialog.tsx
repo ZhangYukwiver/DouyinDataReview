@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
-import { Check, Copy, Download, FolderOpen, Puzzle, RefreshCw, Trash2, UserRoundPlus, X, type LucideIcon } from "lucide-react-native";
+import { Check, Copy, Download, FolderOpen, Puzzle, RefreshCw, Trash2, X, type LucideIcon } from "lucide-react-native";
 
 import { canDragDesktopExtension, getDesktopOpenAtLogin, getDesktopQuitOnClose, getDesktopVideoDownloadDirectory, openDesktopVideoDownloadDirectory, setDesktopOpenAtLogin, setDesktopQuitOnClose, startDesktopExtensionDrag, type DesktopUpdateState } from "../../desktopRuntime";
 import { APP_STYLES, loadAppStyleFonts, loadFeedWords, saveFeedWords, STORY_STYLES, type AppStyle, type StoryStyle } from "../../services/appStyle";
@@ -10,15 +10,15 @@ import { usageAutoSettings, type UsageAutoSettings } from "../../services/usageS
 import { DEFAULT_ASSISTANT_CONFIG, getMcpClient, isLocalAiRuntime, loadAssistantConfig, loadVideoModelConfig, mcpCommands, saveAssistantConfig, saveVideoModelConfig, type AssistantConfig, type McpClient, type VideoModelConfig } from "../../services/assistant";
 import { AiRuntimeField } from "./AiRuntimeField";
 import {
-  collectorAccountName, collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites,
-  findTwinAccount, formatAccountAddedDay, getBrowserLoginSources,
-  type BrowserLoginSource, type CollectorAccounts, type CollectorStatus, type FeedExtensionStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings,
+  collectorFeedFilter, collectorFeedFilterEvents, collectorOpenBrowserExtensions, collectorRemoveFeedExtension, collectorWrites,
+  getBrowserLoginSources,
+  type BrowserLoginSource, type CollectorStatus, type FeedExtensionStatus, type FeedFilterEvent, type FeedFilterMode, type FeedFilterSettings,
 } from "../../services/localCollector";
 import { ease, revealFrom, ws } from "./motion";
 import { RELEASE_NOTES } from "./releaseNotes";
 import { appUpdateAction, diagnosticText } from "./setupModel";
 import { alpha, palettes, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
-import { BrowserConnectionPanel, type BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
+import type { BrowserConnectionPanelProps } from "./BrowserConnectionPanel";
 
 export type SettingsSection = "appearance" | "reading" | "privacy" | "account" | "data" | "feed" | "ai" | "about";
 
@@ -39,16 +39,8 @@ export interface SettingsDialogProps {
   /** 连上的采集器：「允许在抖音上操作」存在采集器那边 */
   collector?: { baseUrl: string; token: string } | null;
   connected: boolean;
-  accounts: CollectorAccounts | null;
-  /** 当前账号的显示名（采集器状态里的昵称优先） */
-  activeAccountName: string | null;
-  /** 现在不能换号的原因；null 表示可以换 */
-  accountBlocked: string | null;
-  /** 正在换号：删除也先禁用（和手绘账号面板一样；App 换号期间会直接忽略删除） */
+  /** 正在换号：点遮罩不关面板 */
   switchingAccount?: boolean;
-  onActivateAccount: (id: string) => void;
-  onAddAccount: () => void;
-  onRemoveAccount: (id: string, name: string) => void;
   onExportData: () => void;
   /** 有本地记录且采集器不忙时才能清除 */
   canClear: boolean;
@@ -65,13 +57,12 @@ export interface SettingsDialogProps {
   /** 下载站 notice.json 里的问卷地址；没填或读不到就只写 QQ 群 */
   feedbackUrl?: string | null;
   browserConnection?: Omit<BrowserConnectionPanelProps, "visible" | "blocked">;
-  /** 桌面版：登录在采集器页首屏，设置里只放一个过去的按钮，不再开第二个登录面板 */
-  onShowLogin?: () => void;
-  /** 正在用的号登录失效了：账号行和「登录与凭据」那行都要说出来 */
-  loginExpired?: boolean;
   /** AI 助手是可选功能：装上才在侧栏出现 */
   assistantInstalled: boolean;
   onToggleAssistant: () => void;
+  /** 各页面右下角的 AI 圆钮，可以关 */
+  assistantFabShown: boolean;
+  onToggleAssistantFab: () => void;
   /** 刷视频默认显示，可以隐藏 */
   feedShown: boolean;
   onToggleFeed: () => void;
@@ -83,20 +74,11 @@ const SECTIONS: ReadonlyArray<{ key: SettingsSection; title: string }> = [
   { key: "appearance", title: "外观" },
   { key: "reading", title: "读取" },
   { key: "privacy", title: "隐私" },
-  { key: "account", title: "账号" },
   { key: "data", title: "数据" },
   { key: "feed", title: "推荐流" },
   { key: "ai", title: "AI" },
   { key: "about", title: "关于" },
 ];
-
-/** 账号名下面那行小字：哪天添加的；同一个抖音号添加了两次时提醒一下，删的时候分得清 */
-export function accountNote(accounts: CollectorAccounts["accounts"], index: number): string {
-  const account = accounts[index];
-  if (!account) return "";
-  const added = formatAccountAddedDay(account.createdAt);
-  return [added ? `${added}添加` : null, findTwinAccount(accounts, account) ? "和另一个是同一个抖音号" : null].filter(Boolean).join("，");
-}
 
 /** 设置面板：App 级模态，采集器页与工作台共用，颜色字体圆角全跟整体风格的 token 走。 */
 export function SettingsDialog(props: SettingsDialogProps) {
@@ -195,7 +177,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
             {tab === "appearance" ? <Appearance {...props} contentWidth={contentWidth} />
               : tab === "reading" ? <Reading {...props} openAtLogin={openAtLogin} onToggleOpenAtLogin={toggleOpenAtLogin} quitOnClose={quitOnClose} onToggleQuitOnClose={toggleQuitOnClose} />
                 : tab === "privacy" ? <Privacy {...props} />
-                  : tab === "account" ? <Account {...props} />
                     : tab === "data" ? <Data {...props} />
                       : tab === "feed" ? <><FeedPage {...props} /><FeedFilter {...props} /></>
                         : tab === "ai" ? <Assistant {...props} />
@@ -284,7 +265,7 @@ function Reading({ autoSyncEnabled, onToggleAutoSync, onToggleOpenAtLogin, openA
     <>
       <View style={styles.row}>
         <RowCopy
-          detail={videosAllowed ? "开着时，回到窗口或刚连上采集器，会补读新的观看、喜欢和收藏记录。导入凭据时勾选读取视频，会自动完整读取一次。" : "当前账号未开启视频读取，自动补读不执行。在设置 → 账号中重新导入凭据并勾选读取视频可开启。"}
+          detail={videosAllowed ? "开着时，回到窗口或刚连上采集器，会补读新的观看、喜欢和收藏记录。导入凭据时勾选读取视频，会自动完整读取一次。" : "当前账号未开启视频读取，自动补读不执行。在账号管理中重新导入凭据并勾选读取视频可开启。"}
           title="自动补读新记录"
         />
         <Toggle disabled={!videosAllowed} label="自动补读新记录" onPress={onToggleAutoSync} testID="settings-auto-sync" value={autoSyncEnabled && videosAllowed} />
@@ -393,65 +374,6 @@ function Privacy({ collector, onTogglePrivacy, privacy }: SettingsDialogProps) {
         />
         <Toggle disabled={writes === null} label="允许在抖音上操作" onPress={toggleWrites} testID="settings-writes" value={writes === true} />
       </View>
-    </>
-  );
-}
-
-function Account({ accountBlocked, accounts, activeAccountName, appStyle, connected, onActivateAccount, onAddAccount, onClose, onRemoveAccount, switchingAccount = false, browserConnection, onShowLogin, loginExpired = false, visible }: SettingsDialogProps) {
-  if (!connected) {
-    return (
-      <View style={styles.row}>
-        <RowCopy detail="先在「连接与采集」连上采集器，这里才能切换、添加或删除抖音账号。" title="抖音账号" />
-      </View>
-    );
-  }
-  const rows = accounts?.accounts ?? [];
-  const blocked = Boolean(accountBlocked);
-  return (
-    <>
-      <View style={[styles.row, styles.rowIntro]}>
-        <Text style={styles.detail}>
-          {activeAccountName ? `现在用的是「${activeAccountName}」。` : ""}每个账号的登录和记录分开存，切换不会删掉记录。
-        </Text>
-        {accountBlocked ? <Text accessibilityLiveRegion="polite" style={styles.warning} testID="settings-account-blocked">{accountBlocked}</Text> : null}
-      </View>
-      {rows.length ? rows.map((account, index) => {
-        const current = account.id === accounts?.activeId;
-        const name = current && activeAccountName ? activeAccountName : collectorAccountName(account, index);
-        const note = accountNote(rows, index);
-        const avatar = color.avatars[index % color.avatars.length]!;
-        return (
-          <View key={account.id} style={styles.row} testID={`settings-account-${account.id}`}>
-            <AccountAvatar appStyle={appStyle} avatarUrl={account.avatar} accent={avatar}
-              initial={account.nickname ? Array.from(account.nickname)[0]! : String(index + 1)} name={name} />
-            <View style={styles.copy}>
-              <Text numberOfLines={1} style={styles.rowTitle}>{name}</Text>
-              {note ? <Text numberOfLines={1} style={styles.detail}>{note}</Text> : null}
-            </View>
-            {current ? (
-              <View style={styles.currentTag}><Text style={[styles.currentText, loginExpired && { color: color.danger }]}>{loginExpired ? "登录失效" : "正在用"}</Text></View>
-            ) : (
-              <View style={styles.actions}>
-                <Button appStyle={appStyle} accessibilityLabel={`切换到${name}`} disabled={blocked} label="切换" onPress={() => onActivateAccount(account.id)} />
-                <Button appStyle={appStyle} accessibilityLabel={`删除${name}`} disabled={switchingAccount} kind="danger" label="删除" onPress={() => onRemoveAccount(account.id, name)} />
-              </View>
-            )}
-          </View>
-        );
-      }) : (
-        <View style={styles.row}><Text style={styles.detail}>还没读到账号列表，稍等一下再打开看看。</Text></View>
-      )}
-      <View style={styles.row}>
-        <RowCopy detail="扫码登录或连接浏览器，确认账号后导入凭据。" title="添加账号" />
-        <Button appStyle={appStyle} disabled={blocked} icon={UserRoundPlus} label="添加账号" onPress={() => { onClose(); onAddAccount(); }} testID="settings-account-add" />
-      </View>
-      {browserConnection ? <BrowserConnectionPanel {...browserConnection} visible={visible} blocked={blocked} />
-        : onShowLogin ? <View style={styles.row}>
-          {loginExpired
-            ? <RowCopy detail="抖音登录过期了或者要安全验证，搜索、下载和读取都停了。到「连接与采集」重新扫码就好。" title="登录失效了" />
-            : <RowCopy detail="在「连接与采集」扫码登录；也可以在那里改用 Chrome、Edge 或 Comet 导入。" title="登录与凭据" />}
-          <Button appStyle={appStyle} kind={loginExpired ? "primary" : "secondary"} label="去扫码登录" onPress={() => { onClose(); onShowLogin(); }} testID="settings-show-login" />
-        </View> : null}
     </>
   );
 }
@@ -722,7 +644,7 @@ function FeedFilter({ appStyle, collector }: SettingsDialogProps) {
   );
 }
 
-function Assistant({ appStyle, assistantInstalled, collector, onToggleAssistant }: SettingsDialogProps) {
+function Assistant({ appStyle, assistantInstalled, assistantFabShown, collector, onToggleAssistant, onToggleAssistantFab }: SettingsDialogProps) {
   const [config, setConfig] = useState<AssistantConfig>(() => loadAssistantConfig());
   const connection = collector ? { baseUrl: collector.baseUrl, token: collector.token } : null;
   // 改一项存一项：以前「改了没点保存就关窗」会把选择丢掉
@@ -747,6 +669,10 @@ function Assistant({ appStyle, assistantInstalled, collector, onToggleAssistant 
         />
         <Button appStyle={appStyle} kind={assistantInstalled ? "danger" : "primary"} label={assistantInstalled ? "移除" : "安装"} onPress={onToggleAssistant} testID="settings-assistant" />
       </View>
+      {assistantInstalled ? <View style={styles.row}>
+        <RowCopy detail="各页面右下角的 AI 圆钮。关掉后从侧栏「AI 助手」进对话，或按 ⌘J（Windows 上是 Ctrl+J）打开浮动面板；要你确认的动作照样会弹出来。" title="悬浮按钮" />
+        <Toggle label="悬浮按钮" onPress={onToggleAssistantFab} testID="settings-assistant-fab" value={assistantFabShown} />
+      </View> : null}
       {/* 模型不跟着「安装」藏起来：视频解析的学习笔记、分镜脚本没装 AI 助手也在用它 */}
       <>
         <View style={[styles.row, styles.rowStacked]}>
@@ -1045,25 +971,6 @@ function StyleSwatch({ kind }: { kind: AppStyle }) {
   );
 }
 
-function AccountAvatar({ appStyle, avatarUrl, accent, initial, name }: {
-  appStyle: AppStyle; avatarUrl: string | null; accent: string; initial: string; name: string;
-}) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [avatarUrl]);
-  return (
-    <View {...role(appStyle, "c-avatar")} style={[styles.avatar, { backgroundColor: alpha(accent, 0.19) }]}>
-      {avatarUrl?.startsWith("https://") && !failed ? (
-        <Image accessibilityLabel={`${name}的头像`} source={{ uri: avatarUrl }} style={styles.avatarImage} onError={() => setFailed(true)} />
-      ) : <Text style={[styles.avatarText, { color: accent }]}>{initial}</Text>}
-    </View>
-  );
-}
-
-/**
- * 版式角色（data-ws）只给另外三种风格，让它们的版式层把面板印成自己的样子（年志的玻璃、海报的粗线按钮……）。
- * 极简的样子已经全在下面按 token 写好；工作台的极简版式层是按角色选元素的，挂上角色它会把危险按钮的红字、
- * 行标题的字重一起改掉，所以极简下一个角色都不挂。
- */
 function role(appStyle: AppStyle, ...names: Array<string | false | null | undefined>): ReturnType<typeof ws> {
   return appStyle === "minimal" ? {} : ws(...names);
 }

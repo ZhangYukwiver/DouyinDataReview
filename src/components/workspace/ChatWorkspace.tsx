@@ -308,7 +308,7 @@ export function ChatWorkspace({
   const chatAllowed = status?.readPermissions?.chat !== false;
   const chatError = status?.chat.state === "error" ? status.chat.message : null;
   const receptionLabel = !connected ? "未连接采集器"
-    : !chatAllowed ? "聊天读取未开启 · 在设置 → 账号中重新导入凭据可开启"
+    : !chatAllowed ? "聊天读取未开启 · 在账号管理中重新导入凭据可开启"
     : chatError ? "聊天接收失败"
       : !receiving ? "已暂停接收"
       : status?.chatConnection === "connected" ? "实时接收中"

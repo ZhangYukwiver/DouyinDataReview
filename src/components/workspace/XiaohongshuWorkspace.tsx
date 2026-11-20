@@ -13,7 +13,7 @@ import { ws } from "./motion";
 import { SaveContentControl } from "./SaveContentControl";
 import type { XhsConnection } from "../../services/xiaohongshu";
 
-type Props = { connection: ExploreConnection | null; accountId?: string; onOpenSettings: () => void };
+type Props = { connection: ExploreConnection | null; accountId?: string; onOpenSettings: () => void; panes?: readonly Pane[] };
 type Choice = XhsListKey | "both";
 type Row = XhsCard & { body?: string | null; in?: XhsListKey[] };
 type Pane = "board" | "feed" | "search" | "profile";
@@ -21,10 +21,12 @@ type Pane = "board" | "feed" | "search" | "profile";
 const CHOICES: Array<{ label: string; value: Choice }> = [{ label: "收藏", value: "favorites" }, { label: "点赞", value: "likes" }, { label: "两类一起", value: "both" }];
 const PAGE = 50;
 const PANES: Array<{ label: string; value: Pane }> = [{ label: "看板", value: "board" }, { label: "推荐", value: "feed" }, { label: "搜索", value: "search" }, { label: "主页", value: "profile" }];
+const ALL_PANES: readonly Pane[] = PANES.map(pane => pane.value);
 const message = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback);
 const when = (iso?: string) => (iso ? new Date(iso).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 
-export function XiaohongshuWorkspace({ connection: given, accountId, onOpenSettings }: Props) {
+// 工作台把这一页拆开挂在几个功能下面：内容库只要看板（登录和导出），刷视频要推荐，探索要搜索；主页是点作者进去的，跟着推荐和搜索走
+export function XiaohongshuWorkspace({ connection: given, accountId, onOpenSettings, panes = ALL_PANES }: Props) {
   // 外壳每次重渲染都会新建连接对象：按地址和令牌认，不然轮询会被反复重启
   const baseUrl = given?.baseUrl, token = given?.token;
   const connection = useMemo(() => (baseUrl && token ? { baseUrl, token, accountId } : null), [baseUrl, token, accountId]);
@@ -34,8 +36,9 @@ export function XiaohongshuWorkspace({ connection: given, accountId, onOpenSetti
   const [error, setError] = useState("");
   const [choice, setChoice] = useState<Choice>("both");
   const [revision, refresh] = useState(0);
-  const [view, setView] = useState<Pane>("board");
-  const [seen, setSeen] = useState<ReadonlySet<Pane>>(() => new Set(["board"]));
+  const [view, setView] = useState<Pane>(panes[0]!);
+  const [seen, setSeen] = useState<ReadonlySet<Pane>>(() => new Set([panes[0]!]));
+  const board = panes.includes("board");
   const [profileUrl, setProfileUrl] = useState<string | undefined>(undefined);
   const active = xhsJobActive(job);
   const show = (next: Pane) => { setView(next); setSeen(prev => new Set(prev).add(next)); };
@@ -78,12 +81,13 @@ export function XiaohongshuWorkspace({ connection: given, accountId, onOpenSetti
   const who = job?.account ?? account;
 
   return <ScrollView testID="xiaohongshu-workspace" style={styles.root} contentContainerStyle={styles.content}>
-    <View style={{ gap: 6 }}>
+    {board ? <View style={{ gap: 6 }}>
       <Text accessibilityRole="header" style={styles.title}>小红书</Text>
       <Text style={kit.muted}>扫码登录后导出自己收藏和点赞的笔记，也能在这里看推荐、搜笔记、翻主页和评论。数据都只存在这台电脑上。</Text>
-    </View>
+    </View> : null}
 
-    <View {...ws("e-box")} style={styles.panel}>
+    {/* 推荐、搜索页登录好了就不占这一大块；没登录时照样在这里扫码 */}
+    {board || !who || active ? <View {...ws("e-box")} style={styles.panel}>
       <View style={styles.loginSide}>
         {job?.state === "login" && job.qr ? <View style={styles.qrBox} testID="xhs-login-qr">
           <Image source={{ uri: job.qr }} style={styles.qr} accessibilityLabel="小红书登录二维码" />
@@ -103,7 +107,7 @@ export function XiaohongshuWorkspace({ connection: given, accountId, onOpenSetti
             <SmallButton label="扫码登录" disabled={active} onPress={() => act(() => startXhsLogin(connection))} />
           </View>}
       </View>
-      <View style={styles.exportSide}>
+      {board ? <View style={styles.exportSide}>
         <Text style={kit.subhead}>导出哪些</Text>
         <Segmented options={CHOICES} value={choice} onChange={setChoice} />
         <View style={kit.row}>
@@ -118,17 +122,17 @@ export function XiaohongshuWorkspace({ connection: given, accountId, onOpenSetti
         {job?.state === "done" && job.file ? <Text style={kit.muted} selectable>{job.message}。文件：{job.file}</Text> : null}
         {job?.state === "failed" ? <ErrorLine text={job.message} onRetry={() => act(() => (job.lists.length ? startXhsExport(connection, job.lists) : startXhsLogin(connection)))} /> : null}
         {error ? <ErrorLine text={error} onRetry={() => refresh(v => v + 1)} /> : null}
-      </View>
-    </View>
+      </View> : null}
+    </View> : null}
 
-    <Tabs options={PANES} value={view} onChange={show} />
+    {panes.length > 1 ? <Tabs options={PANES.filter(pane => panes.includes(pane.value))} value={view} onChange={show} /> : null}
     {/* 切走的页签只藏起来，回来时列表还在；推荐和主页第一次打开才去读 */}
-    <View style={view === "board" ? null : styles.hidden}>
+    {board ? <View style={view === "board" ? null : styles.hidden}>
       {latest === undefined ? (error ? null : <Loading label="正在读取导出数据" />)
         : latest ? <Dashboard data={latest} />
         : <Empty lines={["还没有导出过。", "扫码登录后选收藏、点赞或两类一起，导出完这里会出看板。"]} />}
-    </View>
-    {(["feed", "search", "profile"] as const).map(key => seen.has(key) ? <View key={key} style={view === key ? null : styles.hidden}>
+    </View> : null}
+    {(["feed", "search", "profile"] as const).map(key => seen.has(key) && panes.includes(key) ? <View key={key} style={view === key ? null : styles.hidden}>
       {!who ? <Empty lines={["先在上面扫码登录小红书。", "推荐、搜索和主页都用登录的账号去读。"]} />
         : <Browse kind={key} connection={connection} blocked={active} profileUrl={key === "profile" ? profileUrl : undefined}
           onOpenAuthor={url => { setProfileUrl(url); show("profile"); }} />}

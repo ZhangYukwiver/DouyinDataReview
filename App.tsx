@@ -29,6 +29,7 @@ import {
   type SettingsSection,
   workspaceColors,
 } from "./src/components/workspace";
+import { BrowserConnectionPanel } from "./src/components/workspace/BrowserConnectionPanel";
 import { accountBlockedReason, activeAccountName, credentialsExpired, isCollectorSyncing } from "./src/components/workspace/setupModel";
 import { buildPersonalSummary } from "./src/domain/annualReport";
 import { buildLivingReport } from "./src/domain/livingReport";
@@ -107,7 +108,7 @@ import {
 import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadReadTypes, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveReadTypes, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantFabShown, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadReadTypes, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantFabShown, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveReadTypes, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { getAssistant, type AssistantVideo, type AssistantView } from "./src/services/assistant";
 import { loadDismissedNotices, loadSiteNotices, saveDismissedNotices, type SiteNotices } from "./src/services/siteNotice";
 import { RELEASE_NOTES } from "./src/components/workspace/releaseNotes";
@@ -177,7 +178,7 @@ interface CollectorConnectionOptions {
 }
 
 const TERMINAL_COLLECTOR_STATES = new Set(["idle", "complete", "partial", "error"]);
-const RECONNECT_NOTICE = "抖音登录凭据失效了，打开工作台，在设置 → 账号里重新连接浏览器后才能接着读取。";
+const RECONNECT_NOTICE = "抖音登录凭据失效了，打开工作台，在账号管理里重新连接浏览器后才能接着读取。";
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -365,6 +366,7 @@ function AppContent() {
   const [assistantInstalled, setAssistantInstalled] = useState(() => Platform.OS === "web" && loadAssistantInstalled());
   // 刷视频能在设置里隐藏（默认显示）：隐藏了侧栏就没有它，进工作台去持续报告
   const [feedShown, setFeedShown] = useState(loadFeedShown);
+  const [assistantFab, setAssistantFab] = useState(loadAssistantFabShown);
   const [assistantView, setAssistantView] = useState<AssistantView | null>(null);
   const [assistantPanel, setAssistantPanel] = useState(false);
   const [libraryAskRequest, requestLibraryQuestion] = useState(0);
@@ -913,7 +915,7 @@ function AppContent() {
   function triggerAutoSync(options: { manual?: boolean; timer?: boolean } = {}) {
     if (!canReadCollector(collectorStatus, "videos")) {
       pendingManualSyncRef.current = false;
-      if (options.manual) notifyDesktopBackgroundSyncBlocked("当前账号未开启视频读取，请在设置 → 账号中重新导入凭据并勾选读取视频。");
+      if (options.manual) notifyDesktopBackgroundSyncBlocked("当前账号未开启视频读取，请在账号管理中重新导入凭据并勾选读取视频。");
       return;
     }
     const manual = options.manual === true || pendingManualSyncRef.current;
@@ -1223,7 +1225,7 @@ function AppContent() {
     } else if (status.browserSource?.credentials === "reconnect_required") {
       chatStartupRef.current.cancel();
       // 桌面版首屏就是扫码登录，不用再写一句去设置
-      if (!isDesktopApp()) setCollectorError("请在设置 → 账号中连接已登录的浏览器并导入凭据。");
+      if (!isDesktopApp()) setCollectorError("请在账号管理中连接已登录的浏览器并导入凭据。");
     } else if (canReadCollector(status, "chat")) {
       chatStartupRef.current.request();
     } else {
@@ -1264,7 +1266,7 @@ function AppContent() {
     syncConfirmationOpenRef.current = true;
     confirmAlert(
       "增量读取",
-      `这次读${readTypeNames}。尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。使用已导入的凭据读取，凭据失效时请到设置 → 账号中重新连接浏览器并导入。`,
+      `这次读${readTypeNames}。尚未建立边界的分类会读取全部可见记录；已有边界的分类只读取到本地已知记录为止。使用已导入的凭据读取，凭据失效时请到账号管理中重新连接浏览器并导入。`,
       "读取新记录",
       (confirmed) => {
         syncConfirmationOpenRef.current = false;
@@ -1896,7 +1898,11 @@ function AppContent() {
   }
 
   // 设置面板：采集器页和工作台共用一个 App 级模态
-  const openPreferences = (section: SettingsSection = "appearance") => setPreferences(section);
+  // 「账号」不在设置里了：是工作台的账号管理页，老入口照样带过去
+  const openPreferences = (section: SettingsSection = "appearance") => {
+    if (section === "account") changeDashboardView("platformAccounts");
+    else setPreferences(section);
+  };
 
   useEffect(() => {
     if (Platform.OS !== "web" || !collectorToken) { setAssistantView(null); return; }
@@ -1950,6 +1956,11 @@ function AppContent() {
     if (!next && dashboardView === "assistant") setDashboardView("summary");
   };
 
+  const toggleAssistantFab = () => {
+    setAssistantFab(!assistantFab);
+    saveAssistantFabShown(!assistantFab);
+  };
+
   const toggleFeed = () => {
     const next = !feedShown;
     setFeedShown(next);
@@ -1967,7 +1978,7 @@ function AppContent() {
       showAlert("没保存下来", collectorErrorMessage(error));
     }
   }
-  // 要登录或重新导入凭据：桌面版回采集器页首屏扫码，网页版去设置 → 账号连浏览器
+  // 要登录或重新导入凭据：桌面版回采集器页首屏扫码，网页版去账号管理连浏览器
   const openLogin = () => {
     if (!isDesktopApp()) { openPreferences("account"); return; }
     setPreferences(null);
@@ -2069,7 +2080,14 @@ function AppContent() {
     if (activeView === "sources") setActiveView("summary");
   };
   const space: ContentPlatform | null = activeView === "sources" ? null : isDouyinSpace(dashboardView) ? "douyin" :
-    dashboardView === "xiaohongshu" || dashboardView === "bilibili" ? dashboardView : null;
+    dashboardView === "xiaohongshu" || dashboardView === "xhs_feed" || dashboardView === "xhs_search" ? "xiaohongshu" : dashboardView === "bilibili" ? "bilibili" : null;
+  // 网页版用浏览器导入登录的面板：设置里的「账号」页签搬走后放在账号管理的抖音那栏
+  const browserConnection = collectorToken && !isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
+    onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined;
+  // 小红书的一页拆成三处：内容库（登录、导出、看板）、刷视频（推荐）、探索（搜索）；主页跟着推荐和搜索
+  const xiaohongshuPage = (panes: ReadonlyArray<"board" | "feed" | "search" | "profile">) =>
+    workspaceConnection && !directory?.xiaohongshu.activeId ? waitingForDirectory
+      : <XiaohongshuWorkspace key={directory?.xiaohongshu.activeId} panes={panes} connection={workspaceConnection} accountId={directory?.xiaohongshu.activeId ?? undefined} onOpenSettings={openSettings} />;
   useEffect(refreshDirectory, [collectorAccounts, space, dashboardView === "platformAccounts"]);
   const chooseAccount = async (p: ContentPlatform, id: string) => {
     if (!workspaceConnection || platformSwitching || switchingAccount) throw new Error("正在切换账号，请稍后重试。");
@@ -2112,11 +2130,12 @@ function AppContent() {
           explore={<ExploreWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} accountId={collectorStatus?.account?.id ?? null} onOpenSettings={openSettings} onOpenRecord={openRecord} onDownloadRecord={(record) => downloadRecord(record, true)} downloadStates={downloadStates} onBatchDownloadActiveChange={setBatchDownloadActive} />}
           creator={<CreatorWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} onOpenSettings={openSettings} onOpenRecord={openRecord} />}
           catalog={scopedCatalog("catalog")} topics={scopedCatalog("topics")} knowledge={scopedCatalog("knowledge")}
-          platformSwitcher={space && <PlatformSwitcher platform={space} accounts={directory} disabled={switchingAccount || platformSwitching}
+          platformSwitcher={space && (directory?.[space]?.accounts.length ?? 0) > 1 && <PlatformSwitcher platform={space} accounts={directory} disabled={switchingAccount || platformSwitching}
             onSelect={id => void chooseAccount(space, id).catch(e => showAlert("无法切换账号", e.message))}
             onManage={() => changeDashboardView("platformAccounts")} />}
           platformAccounts={privacy ? <View style={{ padding: 24 }}><Text>隐私模式已开启</Text></View> : <PlatformAccountsWorkspace connection={workspaceConnection} accounts={directory} error={directoryResult?.error}
-            onConnect={openSettings} onReload={refreshDirectory} onSelect={chooseAccount} biliEnabled={biliEnabled} disabled={switchingAccount || platformSwitching}
+            onConnect={openSettings} onReload={refreshDirectory} onSelect={chooseAccount} biliEnabled={biliEnabled}
+            douyinExtra={browserConnection ? <BrowserConnectionPanel {...browserConnection} visible blocked={Boolean(loginBlocked)} /> : null} disabled={switchingAccount || platformSwitching}
             onDouyinSessionChange={async () => {
               if (!workspaceConnection) return;
               const requestId = ++pollRequest.current;
@@ -2128,7 +2147,7 @@ function AppContent() {
             }} />}
           douyinKnowledge={<KnowledgeWorkspace connection={workspaceConnection} accountId={collectorStatus?.account?.id ?? null}
             records={workspaceRecords} onOpenSettings={openSettings} onOpenAiSettings={() => openPreferences("ai")} />}
-          xiaohongshu={workspaceConnection && !directory?.xiaohongshu.activeId ? waitingForDirectory : <XiaohongshuWorkspace key={directory?.xiaohongshu.activeId} connection={workspaceConnection} accountId={directory?.xiaohongshu.activeId ?? undefined} onOpenSettings={openSettings} />}
+          xiaohongshu={xiaohongshuPage(["board"])} xiaohongshuFeed={xiaohongshuPage(["feed", "profile"])} xiaohongshuSearch={xiaohongshuPage(["search", "profile"])}
           bilibili={biliEnabled && (workspaceConnection && !directory?.bilibili.activeId ? waitingForDirectory : <BilibiliWorkspace key={directory?.bilibili.activeId} enabled connection={workspaceConnection} accountId={directory?.bilibili.activeId ?? undefined} onOpenSettings={openSettings} />)}
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
             videoLibrary={!privacy && !switchingAccount && collectorAccounts?.activeId ? { accountId: collectorAccounts.activeId, records: workspaceRecords } : undefined}
@@ -2221,13 +2240,7 @@ function AppContent() {
         onTogglePrivacy={() => setPrivacy((value) => !value)}
         collector={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null}
         connected={collectorToken !== null}
-        accounts={collectorAccounts}
-        activeAccountName={accountName}
         switchingAccount={switchingAccount}
-        accountBlocked={loginBlocked}
-        onActivateAccount={(id) => void changeAccount({ id })}
-        onAddAccount={() => void changeAccount({ add: true })}
-        onRemoveAccount={confirmRemoveAccount}
         onExportData={exportCurrentData}
         canClear={workspaceRecords.watch_history.length + workspaceRecords.liked_videos.length + workspaceRecords.favorite_videos.length > 0 && !collectorBusy}
         onClearCache={clearCurrentRecords}
@@ -2239,18 +2252,17 @@ function AppContent() {
         collectorStatus={collectorStatus}
         collectorError={collectorError}
         feedbackUrl={siteNotices?.feedbackUrl ?? null}
-        browserConnection={collectorToken && !isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
-          onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined}
-        onShowLogin={isDesktopApp() ? openLogin : undefined}
-        loginExpired={loginExpired}
+        browserConnection={browserConnection}
         assistantInstalled={assistantInstalled}
         onToggleAssistant={toggleAssistant}
+        assistantFabShown={assistantFab}
+        onToggleAssistantFab={toggleAssistantFab}
         feedShown={feedShown}
         onToggleFeed={toggleFeed}
       />
       {/* 不在对话页时：右下角 AI 圆钮 + 浮动对话面板；外部 AI（MCP）等发起的待确认动作也浮在这里 */}
       {onAssistantPage ? null
-        : <AssistantDock open={assistantPanel} button={assistantInstalled} onToggle={toggleAssistantPanel}
+        : <AssistantDock open={assistantPanel} button={assistantInstalled} fab={assistantFab} onToggle={toggleAssistantPanel}
           connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
           onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} />}
       {exportSnapshot ? <DataExportDialog snapshot={exportSnapshot} onClose={closeDataExport} onExport={exportSelectedData} progress={exportProgress} /> : null}

@@ -218,7 +218,8 @@ export function AssistantConfirmCards({ connection, confirms, floating = false }
  * 面板没开时，等确认的对外动作（含外部 AI 经 MCP 发起的）也浮在这里，叠在圆钮旁边。
  * 按住圆钮或面板标题栏能拖到别处，位置记在本机。
  */
-export function AssistantDock({ open, button, onToggle, ...chat }: Props & { open: boolean; button: boolean; onToggle: () => void }) {
+// button = 装了助手（⌘J 和面板都看它）；fab = 圆钮本身露不露，设置里能关
+export function AssistantDock({ open, button, fab = true, onToggle, ...chat }: Props & { open: boolean; button: boolean; fab?: boolean; onToggle: () => void }) {
   const { width, height } = useWindowDimensions();
   const [spot, setSpot] = useState(loadDockSpot);
   const [size, setSize] = useState(loadDockSize);
@@ -303,7 +304,7 @@ export function AssistantDock({ open, button, onToggle, ...chat }: Props & { ope
         <View style={[styles.resizeMark, onLeft ? { right: 5, borderRightWidth: 1.5 } : { left: 5, borderLeftWidth: 1.5 }, onTop ? { bottom: 5, borderBottomWidth: 1.5 } : { top: 5, borderTopWidth: 1.5 }]} />
       </View> : null}
     </View> : confirms.length && chat.connection ? <AssistantConfirmCards connection={chat.connection} confirms={confirms} floating /> : null}
-    {button ? <Pressable accessibilityLabel={open ? "收起 AI 助手" : "打开 AI 助手（⌘J）"} accessibilityRole="button"
+    {button && fab ? <Pressable accessibilityLabel={open ? "收起 AI 助手" : "打开 AI 助手（⌘J）"} accessibilityRole="button"
       onPress={() => { if (dragged.current) dragged.current = false; else onToggle(); }}
       style={(state) => [styles.fab, (state as { hovered?: boolean }).hovered && styles.fabHover, pointer, ease("transform", 160)]} testID="assistant-fab" {...ws("btn-solid")}>
       {open ? <X color={color.buttonText} size={20} strokeWidth={2.2} /> : <Sparkles color={color.buttonText} size={20} strokeWidth={2} />}

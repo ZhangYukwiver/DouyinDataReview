@@ -373,7 +373,7 @@ function sessionValue(cookies, name) {
 function requireSessionCookies(cookies) {
   const values = selectedCookies(cookies);
   if (![...LOGIN_COOKIE_NAMES].some((name) => values.has(name))) {
-    throw new DirectHistoryError("login_required", "尚未导入登录凭据，请在设置 → 账号中连接浏览器并导入。");
+    throw new DirectHistoryError("login_required", "尚未导入登录凭据，请在账号管理中连接浏览器并导入。");
   }
   for (const name of ["s_v_web_id", "UIFID"]) {
     if (!sessionValue(cookies, name)) {
