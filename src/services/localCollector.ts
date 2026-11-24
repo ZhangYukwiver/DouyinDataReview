@@ -109,6 +109,8 @@ export interface CollectorChatStatus {
   message: string | null;
   progress: CollectorProgress | null;
   code?: string | null;
+  /** 最近一次没发成的消息：错误码、卡在哪一步、抖音回执码；老版本采集器没有这一项 */
+  lastSendError?: { code: string | null; step: string | null; platformStatus: string | null; at: string } | null;
 }
 
 export interface CollectorSnapshot {
@@ -802,6 +804,12 @@ function parseChatStatus(value: unknown, validStates: CollectorState[]): Collect
     message: typeof raw.message === "string" ? raw.message : null,
     progress: parseCollectorProgress(raw.progress),
     code: typeof raw.code === "string" ? raw.code : null,
+    ...(isObject(raw.lastSendError) && typeof raw.lastSendError.at === "string" ? { lastSendError: {
+      code: typeof raw.lastSendError.code === "string" ? raw.lastSendError.code : null,
+      step: typeof raw.lastSendError.step === "string" ? raw.lastSendError.step : null,
+      platformStatus: typeof raw.lastSendError.platformStatus === "string" ? raw.lastSendError.platformStatus : null,
+      at: raw.lastSendError.at,
+    } } : {}),
   };
 }
 

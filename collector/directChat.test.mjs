@@ -159,6 +159,17 @@ describe("native chat protocol",()=>{
     await expect(chat.send({requestId:"request-preflight-123",conversationId:cid,text:"测试"})).rejects.toMatchObject({code:"identity_token_rejected"});
     expect(onDispatch).toHaveBeenCalledOnce(); await api.close();
   });
+  it("falls back to the cached ticket when the pre-send info lookup is rejected, and names the step otherwise",async()=>{
+    const {api}=directApiFixture((url,options)=>url.pathname.includes("get_info_list") ? {buffer:imResponse(610,[],1)} : handler(url,options));
+    const chat=new DirectChatClient(api);
+    try {
+      chat.conversations.set(cid,conversation());
+      await expect(chat.send({requestId:"request-fallback-123",conversationId:cid,text:"测试"})).resolves.toMatchObject({outcome:"confirmed"});
+      chat.conversations.set(cid,{...conversation(),ticket:""});
+      await expect(chat.send({requestId:"request-noticket-123",conversationId:cid,text:"测试"}))
+        .rejects.toMatchObject({code:"platform_rejected",step:"conversation_info",message:expect.stringContaining("回执码 1")});
+    } finally { await api.close(); }
+  });
   it("does not confirm a receipt belonging to a different client message",async()=>{
     const {api}=directApiFixture((url,options)=>url.pathname.endsWith("/send")
       ? {buffer:imResponse(100,[n(1,serverId),n(3,0),s(4,"another-request-123456"),n(5,0)])} : handler(url,options));

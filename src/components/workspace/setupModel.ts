@@ -334,6 +334,7 @@ export function diagnosticText({ version, userAgent, appStyle, connected, status
       `登录凭据：${source ? `${source.credentials ?? "未知"}（${source.mode} / ${source.browser ?? "无"}，浏览器${source.connected ? "已连接" : "未连接"}）` : "未知"}`,
       `聊天接收：${status.chat.state}，错误码 ${status.chat.code ?? "无"}，连接 ${status.chat.connection ?? "无"}`,
       `聊天提示：${safe(status.chat.message)}`,
+      `最近发送失败：${status.chat.lastSendError ? `${status.chat.lastSendError.at}，错误码 ${status.chat.lastSendError.code ?? "无"}，步骤 ${status.chat.lastSendError.step ?? "无"}，回执码 ${status.chat.lastSendError.platformStatus ?? "无"}` : "无"}`,
       `已读条数：观看 ${watch}，喜欢 ${liked}，收藏 ${favorite}，聊天 ${chat}`,
     );
   }

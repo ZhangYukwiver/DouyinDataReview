@@ -1499,10 +1499,14 @@ export class DouyinCollector {
     if (this.chatSendPromise) throw new ChatSendError("collector_busy", "上一条还在发送，请稍等。");
     if (this.chatSends.size >= 1000) throw new ChatSendError("send_limit", "本次会话发送数量已达上限，请重启采集器。");
     // One send at a time, deduplicated by requestId; a dispatched message is never retried here.
+    // 最近一次没发成的记在状态里，「复制诊断信息」才看得到；只留错误码、步骤和回执码，不留正文
+    const noteFailure = (code, step, platformStatus) => this.updateChat({ lastSendError: {
+      code: code || null, step: step || null, platformStatus: platformStatus ?? null, at: new Date().toISOString() } });
     const result = observation.client.send(request).then((outcome) => {
       if (outcome.chatMessage) observation.acceptSent?.(outcome.chatMessage);
+      if (outcome.outcome !== "confirmed") noteFailure(outcome.code || outcome.outcome, "send", outcome.platformStatus);
       return outcome;
-    });
+    }, (error) => { noteFailure(error?.code, error?.step, error?.platformStatus); throw error; });
     this.chatSends.set(request.requestId, { fingerprint, result });
     this.chatSendPromise = result;
     try {
