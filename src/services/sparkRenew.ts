@@ -11,7 +11,7 @@ export interface SparkSendUpdate { state: SparkSendState; message?: string }
 // 一轮最多发 10 位：批量发私信最容易被抖音当成群发限制
 export const MAX_SPARK_BATCH = 10;
 // 和具体好友无关的问题：剩下的也会同样失败，或者不该再发，直接停下
-const STOP_CODES = new Set([CHAT_SEND_UNCONFIRMED, "not_receiving", "not_connected", "verification_required", "login_required", "browser_reconnect_required", "not_paired", "explore_unreachable"]);
+const STOP_CODES = new Set([CHAT_SEND_UNCONFIRMED, "account_changed", "not_receiving", "not_connected", "verification_required", "login_required", "browser_reconnect_required", "not_paired", "explore_unreachable"]);
 const STOPPED = "已停下，这位没发。";
 
 /** 分享名单里的 ID：私信会话 0:1:<一方>:<另一方> 取不是自己的那段（名单里有你自己，采集器那边也会排除）；群聊就是会话 ID 本身。 */
@@ -25,8 +25,8 @@ const pause = (ms: number, signal: AbortSignal) => new Promise<void>((resolve) =
 });
 
 // 一次只发一位，中间隔几秒，像手动一条条发；发出去以后绝不重试，结果不明就标待确认。
-export async function renewSparks(connection: ChatSendConnection, conversationIds: readonly string[], payload: SparkPayload, { signal, onUpdate, selfId = null, gapMs = () => 2_000 + Math.random() * 2_500 }: {
-  signal: AbortSignal; onUpdate: (conversationId: string, update: SparkSendUpdate) => void; selfId?: string | null; gapMs?: () => number;
+export async function renewSparks(connection: ChatSendConnection, conversationIds: readonly string[], payload: SparkPayload, { signal, onUpdate, selfId = null, accountId = null, gapMs = () => 2_000 + Math.random() * 2_500 }: {
+  signal: AbortSignal; onUpdate: (conversationId: string, update: SparkSendUpdate) => void; selfId?: string | null; accountId?: string | null; gapMs?: () => number;
 }): Promise<void> {
   const queue = conversationIds.slice(0, MAX_SPARK_BATCH);
   const share = payload.kind === "video" ? createVideoShareSession(connection, payload.record) : null;
@@ -52,7 +52,7 @@ export async function renewSparks(connection: ChatSendConnection, conversationId
       onUpdate(id, { state: "sending" });
       let state: SparkSendState;
       try {
-        const outcome = share ? await share.share(peer!) : await waitForCollector(() => sendChatMessage(connection, id, payload.kind === "text" ? payload.text : ""), signal);
+        const outcome = share ? await share.share(peer!) : await waitForCollector(() => sendChatMessage(connection, id, payload.kind === "text" ? payload.text : "", accountId), signal);
         state = outcome.outcome === "confirmed" ? "sent" : outcome.outcome === "rejected" ? "failed" : "unknown";
         onUpdate(id, { state, message: outcome.message });
       } catch (error) {
@@ -80,14 +80,14 @@ const publish = (next: SparkRenewRun | null) => { current = next; for (const lis
 export const sparkRenewJob = {
   subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
   snapshot: () => current,
-  start(connection: ChatSendConnection, ids: readonly string[], payload: SparkPayload, selfId: string | null) {
+  start(connection: ChatSendConnection, ids: readonly string[], payload: SparkPayload, selfId: string | null, accountId: string | null = null) {
     if (current?.running || !ids.length) return;
     const run = new AbortController();
     controller = run;
     publish({ ids: [...ids], progress: Object.fromEntries(ids.map((id) => [id, { state: "waiting" }])), running: true });
     // 被 reset 丢掉的那一轮还会把手上那一个发完，它的进度别写进下一轮
     void renewSparks(connection, ids, payload, {
-      signal: run.signal, selfId,
+      signal: run.signal, selfId, accountId,
       onUpdate: (id, update) => { if (controller === run && current) publish({ ...current, progress: { ...current.progress, [id]: update } }); },
     }).finally(() => {
       if (controller !== run) return;

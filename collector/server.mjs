@@ -524,7 +524,9 @@ export async function startCollectorServer({
     const hasLibrary = await stat(contentLibrary.filePath).then(() => true, () => false)
       || await stat(contentLibrary.metaFilePath).then(() => true, () => false);
     if (!hasLibrary) return { detached: false, removed: [] };
-    return contentLibrary.detachAccount(accountId, { platform, deleteOrphans: true });
+    const result = await contentLibrary.detachAccount(accountId, { platform, deleteOrphans: true });
+    contentLibrarySourceSignature = "";
+    return result;
   };
   let browserLoginController = null;
   // 正在等登录的那个页面：应用内登录时工作台从这里取二维码
@@ -625,6 +627,7 @@ export async function startCollectorServer({
   const accountBusyMessage = (allowSync = false) => {
     if (accountWork) return "上一个账号操作还没做完，请稍等。";
     if (collector.syncPromise && !allowSync) return "正在读取记录，请等同步结束。";
+    if (collector.chatSendPromise) return "正在发送消息，请等发完再切换账号。";
     if (collector.hasSavingVideoDownload()) return "正在下载视频，等下载完再切换账号。";
     if (explorer.busy) return "正在搜索或打开作品，等它结束再切换账号。";
     return null;
@@ -681,6 +684,7 @@ export async function startCollectorServer({
       if (backgroundSyncs.has(id)) return "这个账号仍在后台同步。";
       if (id !== accounts.activeId) return null;
       if (collector.syncPromise) return "这个账号正在读取记录，请等同步结束。";
+      if (collector.chatSendPromise) return "这个账号正在发送消息，请等发送结束。";
       if (collector.hasSavingVideoDownload()) return "这个账号正在下载视频，请等下载结束。";
       if (explorer.busy) return "这个账号正在搜索或打开作品，请等操作结束。";
       if (browserWork) return "这个账号正在登录或连接浏览器，请等操作结束。";
@@ -745,11 +749,14 @@ export async function startCollectorServer({
       }
 
       const directory = platform === "douyin" ? accounts.directory(account) : null;
+      // Clean up cross-platform content library references before removing the
+      // account directory so a storage failure does not leave an already-deleted
+      // account behind with unrecoverable orphaned entries.
+      await detachContentLibraryAccount(id, platform);
       if (platform === "douyin") await accounts.remove(id);
       else if (platform === "xiaohongshu") await xiaohongshu.removeAccount(id);
       else if (platform === "bilibili") await bilibiliAccounts.remove(id);
       else throw Object.assign(new Error("这个平台还没有接入账号管理。"), { code: "platform_not_supported", status: 404 });
-      await detachContentLibraryAccount(id, platform);
       if (directory) folderStores.delete(directory);
       return platformAccountsOf(platform);
     });
@@ -799,6 +806,7 @@ export async function startCollectorServer({
   };
 
   const server = createServer(async (request, response) => {
+    try {
     const origin = typeof request.headers.origin === "string" ? request.headers.origin : "";
     if (!isAllowedOrigin(origin, options.origins)) {
       applyHeaders(response, "");
@@ -817,7 +825,16 @@ export async function startCollectorServer({
       return;
     }
 
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    let url;
+    try {
+      const host = typeof request.headers.host === "string" && request.headers.host ? request.headers.host : "localhost";
+      if (/[\s/\\@#?]/u.test(host)) throw new TypeError("Invalid Host header");
+      url = new URL(request.url ?? "/", `http://${host}`);
+    } catch {
+      request.resume();
+      sendJson(response, 400, { error: "invalid_request", message: "请求地址无效。" });
+      return;
+    }
     const ownPage = fromOwnPage(request, server.address()?.port);
     if (request.method === "GET" && url.pathname === "/v1/health") {
       sendJson(response, 200, { ok: true, version: 1 });
@@ -1815,10 +1832,37 @@ export async function startCollectorServer({
       const started = collector.startChatObservation();
       sendJson(response, started ? 202 : 200, { started, status: collector.getStatus() });
     } else if (request.method === "POST" && url.pathname === "/v1/chat/send") {
+      const initialTarget = collector;
       try {
         // 16000 characters of worst-case JSON escaping fit well inside this.
         const body = await readJsonBody(request, 128 * 1024);
-        sendJson(response, 200, await collector.sendChatMessage(body));
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          sendJson(response, 400, { error: "invalid_request", message: "发送请求无效，请重试。" });
+          return;
+        }
+        const queryAccount = url.searchParams.get("account")?.trim() || null;
+        const hasBodyAccount = body.accountId !== undefined && body.accountId !== null;
+        if (hasBodyAccount && (typeof body.accountId !== "string" || !body.accountId.trim())) {
+          sendJson(response, 400, { error: "invalid_request", message: "发送请求无效，请重试。" });
+          return;
+        }
+        const bodyAccount = hasBodyAccount ? body.accountId.trim() : null;
+        if (queryAccount && bodyAccount && queryAccount !== bodyAccount) {
+          sendJson(response, 400, { error: "invalid_request", message: "发送请求无效，请重试。" });
+          return;
+        }
+        const expectedAccount = bodyAccount ?? queryAccount;
+        if (rejectWhileSwitching(response)) return;
+        const target = collector;
+        const activeId = accounts.activeId;
+        const targetAccountId = target.getStatus?.().account?.id ?? activeId;
+        if ((expectedAccount && (expectedAccount !== activeId || expectedAccount !== targetAccountId))
+          || target !== initialTarget
+          || targetAccountId !== activeId) {
+          sendJson(response, 409, { error: "account_changed", message: "采集器已经换到另一个账号了，这条消息没有发出去。界面已换成那个账号，看一眼再决定要不要发。" });
+          return;
+        }
+        sendJson(response, 200, await target.sendChatMessage(body));
       } catch (error) {
         const known = error instanceof ChatSendError || error instanceof DirectHistoryError;
         const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
@@ -1888,6 +1932,15 @@ export async function startCollectorServer({
       }
     } else {
       sendJson(response, 404, { error: "not_found" });
+    }
+    } catch (error) {
+      console.error("[collector-server] unhandled request error:", error);
+      request.resume();
+      if (!response.headersSent && !response.destroyed && !response.writableEnded) {
+        sendJson(response, 500, { error: "internal_error", message: "请求处理失败，请稍后重试。" });
+      } else if (!response.destroyed && !response.writableEnded) {
+        response.end();
+      }
     }
   });
 

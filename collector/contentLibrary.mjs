@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { documentOf } from "./knowledgeBase.mjs";
@@ -227,13 +227,18 @@ function normalizeTopic(value, fallbackId = null) {
   };
 }
 
+function normalizeRevision(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
 function emptySnapshot() {
-  return { schemaVersion: CONTENT_LIBRARY_SCHEMA_VERSION, updatedAt: null, entries: {}, topics: [] };
+  return { schemaVersion: CONTENT_LIBRARY_SCHEMA_VERSION, revision: 0, updatedAt: null, entries: {}, topics: [] };
 }
 
 function normalizeSnapshot(value) {
   const snapshot = emptySnapshot();
   if (!value || typeof value !== "object" || Array.isArray(value)) return snapshot;
+  snapshot.revision = normalizeRevision(value.revision);
   const entries = value.entries && typeof value.entries === "object" && !Array.isArray(value.entries) ? value.entries : {};
   let count = 0;
   for (const [key, item] of Object.entries(entries)) {
@@ -421,9 +426,17 @@ export class ContentLibraryStore {
 
   async load() {
     if (this.snapshot) return this.snapshot;
-    let parsed;
+    let parsed = null;
+    let mainLoaded = false;
     try {
-      parsed = JSON.parse(await readFile(this.filePath, "utf8"));
+      const candidate = JSON.parse(await readFile(this.filePath, "utf8"));
+      if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+        parsed = candidate;
+        mainLoaded = true;
+      } else {
+        const broken = `${this.filePath}.broken-${Date.now()}`;
+        await rename(this.filePath, broken).catch(() => undefined);
+      }
     } catch (error) {
       if (error?.code !== "ENOENT" && error instanceof SyntaxError) {
         const broken = `${this.filePath}.broken-${Date.now()}`;
@@ -431,18 +444,29 @@ export class ContentLibraryStore {
       } else if (error?.code !== "ENOENT") {
         throw error;
       }
-      parsed = emptySnapshot();
     }
-    this.snapshot = normalizeSnapshot(parsed);
-    // Topics and manually saved entries have their own recovery file. This
-    // lets a damaged or deleted derived index be rebuilt without losing the
-    // user's local organization.
+    this.snapshot = normalizeSnapshot(parsed ?? emptySnapshot());
+    // Topics and manually saved entries have their own recovery file. Only
+    // apply it when the primary index is missing/damaged or strictly older by
+    // commit revision so an outdated recovery file can never resurrect deleted
+    // entries after an interrupted write.
     const metadata = await readFile(this.metaFilePath, "utf8").then(value => JSON.parse(value)).catch(() => null);
-    if (metadata && typeof metadata === "object") {
-      const meta = normalizeSnapshot({ entries: metadata.recoveryEntries ?? metadata.manualEntries, topics: metadata.topics, updatedAt: metadata.updatedAt });
-      for (const [key, entry] of Object.entries(meta.entries)) this.snapshot.entries[key] = this.snapshot.entries[key] ? mergeEntry(this.snapshot.entries[key], entry) : entry;
-      if (Array.isArray(metadata.topics)) this.snapshot.topics = meta.topics;
-      this.snapshot.updatedAt ??= meta.updatedAt;
+    if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+      const metaRevision = normalizeRevision(metadata.revision);
+      if (!mainLoaded || metaRevision > this.snapshot.revision) {
+        const meta = normalizeSnapshot({
+          revision: metaRevision,
+          entries: metadata.recoveryEntries ?? metadata.manualEntries,
+          topics: metadata.topics,
+          updatedAt: metadata.updatedAt,
+        });
+        for (const [key, entry] of Object.entries(meta.entries)) {
+          this.snapshot.entries[key] = this.snapshot.entries[key] ? mergeEntry(this.snapshot.entries[key], entry) : entry;
+        }
+        if (Array.isArray(metadata.topics)) this.snapshot.topics = meta.topics;
+        this.snapshot.updatedAt ??= meta.updatedAt;
+        this.snapshot.revision = Math.max(this.snapshot.revision, meta.revision);
+      }
     }
     return this.snapshot;
   }
@@ -840,30 +864,41 @@ export class ContentLibraryStore {
     return `任务：跨平台内容库问答。问题：${safe(question)}\n以下是本地内容库检索出的片段，不是全部内容。材料不足时明确说明，不把未检索到视为内容中没有。回答关键事实必须标注给定的 [C编号]，不得编造引用编号。\n<解析片段>\n${(sources ?? []).map((source) => `[${safe(source.citation)}] ${source.platform} ${source.title ? `《${safe(source.title)}》` : ""}\n${safe(source.quote)}`).join("\n\n")}\n</解析片段>`;
   }
 
+  async commitFile(temporaryPath, targetPath) {
+    await rename(temporaryPath, targetPath);
+  }
+
   async write(snapshot) {
     await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 });
-    const temporaryPath = `${this.filePath}.${process.pid}.tmp`;
-    const file = await open(temporaryPath, "w", 0o600);
-    try {
-      await file.writeFile(`${JSON.stringify({ ...snapshot, schemaVersion: CONTENT_LIBRARY_SCHEMA_VERSION })}\n`);
-      await file.sync();
-    } finally {
-      await file.close();
-    }
-    await rename(temporaryPath, this.filePath);
+    const revision = normalizeRevision(snapshot.revision) + 1;
+    const token = `${process.pid}.${randomUUID()}`;
+    const temporaryPath = `${this.filePath}.${token}.tmp`;
+    const metadataPath = `${this.metaFilePath}.${token}.tmp`;
     const topicKeys = new Set(snapshot.topics.flatMap(topic => topic.items));
     // Keep every entry needed to reopen a local topic, not just manually
     // saved entries. The derived platform index may be deleted/rebuilt later.
     const recoveryEntries = Object.fromEntries(Object.entries(snapshot.entries).filter(([key, entry]) => topicKeys.has(key) || Boolean(entry.savedAt) || entry.sourceAccounts.some((item) => item.signals.includes("manual"))));
-    const metadataPath = `${this.metaFilePath}.${process.pid}.tmp`;
-    const metadataFile = await open(metadataPath, "w", 0o600);
+    const writeTemp = async (filePath, payload) => {
+      const handle = await open(filePath, "w", 0o600);
+      try {
+        await handle.writeFile(payload);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    };
     try {
-      await metadataFile.writeFile(`${JSON.stringify({ schemaVersion: CONTENT_LIBRARY_SCHEMA_VERSION, updatedAt: snapshot.updatedAt, topics: snapshot.topics, manualEntries: recoveryEntries, recoveryEntries })}\n`);
-      await metadataFile.sync();
-    } finally {
-      await metadataFile.close();
+      await writeTemp(temporaryPath, `${JSON.stringify({ ...snapshot, schemaVersion: CONTENT_LIBRARY_SCHEMA_VERSION, revision })}\n`);
+      await this.commitFile(temporaryPath, this.filePath);
+      snapshot.revision = revision;
+      await writeTemp(metadataPath, `${JSON.stringify({ schemaVersion: CONTENT_LIBRARY_SCHEMA_VERSION, revision, updatedAt: snapshot.updatedAt, topics: snapshot.topics, manualEntries: recoveryEntries, recoveryEntries })}\n`);
+      await this.commitFile(metadataPath, this.metaFilePath);
+    } catch (error) {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+      await rm(metadataPath, { force: true }).catch(() => undefined);
+      this.snapshot = null;
+      throw error;
     }
-    await rename(metadataPath, this.metaFilePath);
   }
 }
 

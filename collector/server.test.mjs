@@ -1,4 +1,6 @@
 import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import http from "node:http";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -850,6 +852,155 @@ describe("推荐流过滤扩展接口", () => {
     for (const origin of ["chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "https://www.douyin.com"]) {
       const response = await fetch(`${runtime.baseUrl}/v1/pair`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: "{}" });
       expect(response.status).toBe(403);
+    }
+  });
+});
+
+describe("chat send account isolation and HTTP resilience", () => {
+  it("rejects stale-account sends for a shared group chat after another window switches accounts and pins the active collector", async () => {
+    const calls = [];
+    const sendSpy = vi.spyOn(DouyinCollector.prototype, "sendChatMessage").mockImplementation(async function (input) {
+      calls.push({ accountId: this.getStatus().account?.id ?? null, input });
+      return { outcome: "confirmed", message: "已发送" };
+    });
+    try {
+      const { runtime, call, headers } = await startPaired("chat-send-accounts-");
+      const created = await call("/v1/accounts", "POST");
+      expect(created.status).toBe(201);
+      const secondId = created.body.activeId;
+      const sharedGroupId = "7091970798369407526";
+
+      // Window 1 still shows default while Window 2 already switched the collector to secondId.
+      const stale = await fetch(`${runtime.baseUrl}/v1/chat/send`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: "req-stale-window-0001", conversationId: sharedGroupId, text: "旧窗口发言", accountId: "default" }),
+      });
+      expect(stale.status).toBe(409);
+      expect(await stale.json()).toMatchObject({ error: "account_changed" });
+      expect(calls).toHaveLength(0);
+
+      // Mismatched query and body accountIds are rejected as malformed.
+      const mismatched = await fetch(`${runtime.baseUrl}/v1/chat/send?account=default`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: "req-mismatch-000001", conversationId: sharedGroupId, text: "冲突账号", accountId: secondId }),
+      });
+      expect(mismatched.status).toBe(400);
+      expect(calls).toHaveLength(0);
+
+      // A request matching the currently active account sends through that exact collector instance.
+      const ok = await fetch(`${runtime.baseUrl}/v1/chat/send?account=${encodeURIComponent(secondId)}`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: "req-active-window-01", conversationId: sharedGroupId, text: "新窗口发言", accountId: secondId }),
+      });
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toEqual({ outcome: "confirmed", message: "已发送" });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].accountId).toBe(secondId);
+
+      // If another window switches accounts while the request body is still streaming in,
+      // the server rejects the send instead of dispatching it on the newly active collector.
+      const port = Number(new URL(runtime.baseUrl).port);
+      const inFlightResponse = new Promise((resolve, reject) => {
+        const req = http.request({
+          hostname: "127.0.0.1",
+          port,
+          path: "/v1/chat/send",
+          method: "POST",
+          headers: { ...headers, "Content-Type": "application/json" },
+        }, (res) => {
+          const chunks = [];
+          res.on("data", (chunk) => chunks.push(chunk));
+          res.on("end", () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) }));
+        });
+        req.on("error", reject);
+        req.write(JSON.stringify({ requestId: "req-in-flight-00001", conversationId: sharedGroupId, text: "切号中发送" }).slice(0, 20));
+        setTimeout(async () => {
+          try {
+            const switched = await call("/v1/accounts/default/activate", "POST");
+            expect(switched.status).toBe(200);
+            req.end(JSON.stringify({ requestId: "req-in-flight-00001", conversationId: sharedGroupId, text: "切号中发送" }).slice(20));
+          } catch (error) {
+            reject(error);
+          }
+        }, 40);
+      });
+      const raced = await inFlightResponse;
+      expect(raced.status).toBe(409);
+      expect(raced.body.error).toBe("account_changed");
+      expect(calls).toHaveLength(1);
+    } finally {
+      sendSpy.mockRestore();
+    }
+  });
+
+  it("keeps the account directory intact when content library cleanup fails during account deletion", async () => {
+    const { dataDirectory, runtime, call } = await startPaired("account-delete-library-order-");
+    const created = await call("/v1/accounts", "POST");
+    expect(created.status).toBe(201);
+    const secondId = created.body.activeId;
+    await runtime.contentLibrary.manualSave({
+      platform: "douyin",
+      accountId: secondId,
+      contentId: "777",
+      title: "副号保存",
+      url: "https://www.douyin.com/video/777",
+    });
+    expect((await call("/v1/accounts/default/activate", "POST")).status).toBe(200);
+
+    const originalCommit = runtime.contentLibrary.commitFile.bind(runtime.contentLibrary);
+    const commitSpy = vi.spyOn(runtime.contentLibrary, "commitFile").mockRejectedValueOnce(new Error("library_io_error"));
+    const failedDelete = await call(`/v1/platform-accounts/douyin/${secondId}`, "DELETE");
+    expect(failedDelete.status).toBe(500);
+    expect(await exists(path.join(dataDirectory, "accounts", secondId))).toBe(true);
+
+    commitSpy.mockImplementation(originalCommit);
+    const retriedDelete = await call(`/v1/platform-accounts/douyin/${secondId}`, "DELETE");
+    expect(retriedDelete.status).toBe(200);
+    expect(await exists(path.join(dataDirectory, "accounts", secondId))).toBe(false);
+    expect(await runtime.contentLibrary.get("douyin:777")).toBeNull();
+  });
+
+  it("returns 400 for malformed Host or request URLs without unhandled rejections and keeps serving traffic", async () => {
+    const { runtime, call } = await startPaired("malformed-http-");
+    const port = Number(new URL(runtime.baseUrl).port);
+    const unhandled = [];
+    const onUnhandled = (reason) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    const sendRaw = (payload) => new Promise((resolve, reject) => {
+      const socket = net.connect({ host: "127.0.0.1", port }, () => socket.write(payload));
+      const chunks = [];
+      socket.on("data", (chunk) => chunks.push(chunk));
+      socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      socket.on("error", reject);
+    });
+
+    try {
+      for (const rawRequest of [
+        "GET /v1/health HTTP/1.1\r\nHost: bad host\r\nConnection: close\r\n\r\n",
+        "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1:99999\r\nConnection: close\r\n\r\n",
+        "GET http://[ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      ]) {
+        const rawResponse = await sendRaw(rawRequest);
+        expect(rawResponse).toMatch(/^HTTP\/1\.1 400 /u);
+        expect(rawResponse).toContain("\"invalid_request\"");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+
+      const health = await fetch(`${runtime.baseUrl}/v1/health`);
+      expect(health.status).toBe(200);
+      expect(await health.json()).toEqual({ ok: true, version: 1 });
+
+      const status = await call("/v1/status");
+      expect(status.status).toBe(200);
+      expect(status.body.account.id).toBe("default");
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
     }
   });
 });

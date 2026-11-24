@@ -16,6 +16,8 @@ const MAX_MEDIA_BYTES = 512 * 1024 * 1024;
 const DEFAULT_PAGE_TIMEOUT_MS = 45_000;
 const DEFAULT_MEDIA_WAIT_MS = 25_000;
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1_000;
+const MAX_MEDIA_REDIRECTS = 8;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 const PAGE_HOSTS = [
   "douyin.com",
@@ -97,9 +99,59 @@ function isHttpsUrlOn(value, hosts) {
     const url = new URL(value);
     return url.protocol === "https:"
       && isHostInList(url.hostname, hosts)
-      && (!url.port || url.port === "443");
+      && (!url.port || url.port === "443")
+      && !url.username
+      && !url.password;
   } catch {
     return false;
+  }
+}
+
+async function fetchAllowedMedia({
+  url,
+  hosts,
+  signal,
+  headersForUrl,
+  maxRedirects = MAX_MEDIA_REDIRECTS,
+}) {
+  if (!isHttpsUrlOn(url, hosts)) {
+    throw new VideoDownloadError("invalid_media_url", "抖音媒体地址不在允许范围内。", { retryable: false });
+  }
+  let currentUrl = url;
+  for (let hop = 0; ; hop += 1) {
+    signal?.throwIfAborted();
+    const headers = await headersForUrl(currentUrl, hop);
+    const response = await fetch(currentUrl, {
+      redirect: "manual",
+      signal,
+      headers,
+    });
+    if (REDIRECT_STATUSES.has(response.status)) {
+      const location = response.headers.get("location");
+      await response.body?.cancel().catch(() => undefined);
+      let nextUrl = null;
+      if (location) {
+        try {
+          nextUrl = new URL(location, currentUrl).toString();
+        } catch {
+          nextUrl = null;
+        }
+      }
+      if (!nextUrl || !isHttpsUrlOn(nextUrl, hosts)) {
+        throw new VideoDownloadError("media_redirect_blocked", "抖音媒体地址重定向到了不受支持的域名。", { retryable: false });
+      }
+      if (hop >= maxRedirects) {
+        throw new VideoDownloadError("media_redirect_blocked", "抖音媒体地址重定向次数过多。", { retryable: false });
+      }
+      currentUrl = nextUrl;
+      continue;
+    }
+    const resolvedUrl = response.url || currentUrl;
+    if (!isHttpsUrlOn(resolvedUrl, hosts)) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new VideoDownloadError("media_redirect_blocked", "抖音媒体地址重定向到了不受支持的域名。", { retryable: false });
+    }
+    return { response, url: resolvedUrl };
   }
 }
 
@@ -711,16 +763,19 @@ export async function downloadMediaFile({
   };
   let digest = null;
   try {
-    const cookies = await fetchCookieHeader(context, media.url);
     requestStartedAt = new Date().toISOString();
-    const response = await fetch(media.url, {
-      redirect: "follow",
+    const { response } = await fetchAllowedMedia({
+      url: media.url,
+      hosts: MEDIA_HOSTS,
       signal: controller.signal,
-      headers: {
-        Accept: "video/mp4,video/*;q=0.9,*/*;q=0.8",
-        Referer: referer,
-        ...(userAgent ? { "User-Agent": userAgent } : {}),
-        ...(cookies ? { Cookie: cookies } : {}),
+      headersForUrl: async (targetUrl) => {
+        const cookies = await fetchCookieHeader(context, targetUrl);
+        return {
+          Accept: "video/mp4,video/*;q=0.9,*/*;q=0.8",
+          Referer: referer,
+          ...(userAgent ? { "User-Agent": userAgent } : {}),
+          ...(cookies ? { Cookie: cookies } : {}),
+        };
       },
     });
     responseReceivedAt = new Date().toISOString();
@@ -730,12 +785,6 @@ export async function downloadMediaFile({
       evidenceOutcome = "http_error";
       await response.body?.cancel().catch(() => undefined);
       throw new VideoDownloadError("media_http_error", `抖音媒体地址返回 HTTP ${response.status}。`);
-    }
-    const resolvedMediaUrl = response.url || media.url;
-    if (!isAllowedMediaUrl(resolvedMediaUrl)) {
-      evidenceOutcome = "redirect_blocked";
-      await response.body.cancel().catch(() => undefined);
-      throw new VideoDownloadError("media_redirect_blocked", "抖音媒体地址重定向到了不受支持的域名。", { retryable: false });
     }
     const declaredLength = numberOrZero(response.headers.get("content-length"));
     declaredBytes = declaredLength || null;
@@ -780,7 +829,9 @@ export async function downloadMediaFile({
     return { filePath: finalPath, fileName: safeName, bytes, skipped: false, evidence };
   } catch (error) {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
-    if (evidenceOutcome === "network_error" && error instanceof VideoDownloadError) evidenceOutcome = error.code;
+    if (evidenceOutcome === "network_error" && error instanceof VideoDownloadError) {
+      evidenceOutcome = error.code === "media_redirect_blocked" ? "redirect_blocked" : error.code;
+    }
     if (error instanceof VideoDownloadError) throw error;
     if (controller.signal.aborted) {
       const code = controller.signal.reason?.message === "download_timeout" ? "download_timeout" : "download_aborted";
@@ -932,18 +983,20 @@ export async function fetchMediaStream({ url, referer, cookie, range, signal, ho
   if (!isHttpsUrlOn(url, hosts)) {
     throw new VideoDownloadError("invalid_media_url", "抖音媒体地址不在允许范围内。", { retryable: false });
   }
-  const response = await fetch(url, {
-    redirect: "follow",
+  const initialOrigin = new URL(url).origin;
+  const { response } = await fetchAllowedMedia({
+    url,
+    hosts,
     signal,
-    headers: {
+    headersForUrl: (targetUrl) => ({
       Accept: "video/mp4,video/*;q=0.9,*/*;q=0.8",
       "Accept-Encoding": "identity",
       Referer: referer,
-      ...(cookie ? { Cookie: cookie } : {}),
+      ...(cookie && new URL(targetUrl).origin === initialOrigin ? { Cookie: cookie } : {}),
       ...(range ? { Range: range } : {}),
-    },
+    }),
   });
-  if (!response.ok || !response.body || !isHttpsUrlOn(response.url || url, hosts)) {
+  if (!response.ok || !response.body) {
     await response.body?.cancel().catch(() => undefined);
     throw new VideoDownloadError("media_http_error", `抖音媒体地址返回 HTTP ${response.status}。`);
   }

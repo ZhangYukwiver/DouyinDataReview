@@ -78,6 +78,8 @@ export interface ChatWorkspaceProps {
   onCollectHistory?: () => void;
   /** 有连接才能发送；消息经采集器里的抖音网页发出。 */
   sendConnection?: ChatSendConnection | null;
+  /** 界面上当前选中的抖音账号 ID，发私信时交给采集器核对，防止双窗口切号后发错号。 */
+  accountId?: string | null;
   /** 续火花选视频用：喜欢和收藏里的作品。 */
   videoRecords?: PersonalRecordCollection;
   onOpenRecord: (url: string) => Promise<void>;
@@ -212,6 +214,7 @@ export function ChatWorkspace({
   onToggleReception,
   onCollectHistory,
   sendConnection = null,
+  accountId = null,
   videoRecords,
   onOpenRecord,
   onOpenSettings,
@@ -220,6 +223,7 @@ export function ChatWorkspace({
   // Use the authenticated Douyin UID, not the local account directory ID or
   // the most frequent sender (which can be a friend or the self-chat thread).
   const selfId = status?.account?.uid?.trim() || null;
+  const selectedAccountId = accountId ?? status?.account?.id ?? null;
   const [sparkBoard, setSparkBoard] = useState(false);
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [query, setQuery] = useState("");
@@ -324,7 +328,7 @@ export function ChatWorkspace({
       : status?.chat.state !== "observing" || status.chat.progress ? "聊天历史整理完就能发消息"
         : status.chatConnection !== "connected" ? "消息连接好了才能发"
           : privacy ? "隐私模式下不能发消息" : null;
-  const sendMessage = (conversationId: string, text: string) => sendChatMessage(sendConnection!, conversationId, text);
+  const sendMessage = (conversationId: string, text: string) => sendChatMessage(sendConnection!, conversationId, text, selectedAccountId);
   const renewRun = useSyncExternalStore(sparkRenewJob.subscribe, sparkRenewJob.snapshot);
 
   return (
@@ -414,6 +418,7 @@ export function ChatWorkspace({
           ) : null}
           {sparkBoard ? (
             <SparkBoard
+              accountId={selectedAccountId}
               live={receiving && status?.chatConnection === "connected"}
               mobile={mobile}
               now={now}
@@ -954,6 +959,7 @@ function ChatFact({ label, value }: { label: string; value: string }) {
 }
 
 function SparkBoard({
+  accountId,
   draftKey,
   live,
   mobile,
@@ -969,6 +975,7 @@ function SparkBoard({
   targets,
   videos,
 }: {
+  accountId: string | null;
   /** 续火花草稿按抖音账号分开存，换了号不会勾上另一个号的会话 */
   draftKey: string;
   live: boolean;
@@ -1032,7 +1039,7 @@ function SparkBoard({
     if (!sendConnection || running) return;
     const ids = targets.map((row) => row.id).filter((id) => picked.has(id));
     saveRenewDraft(draftKey, { ...content, picked: ids });
-    sparkRenewJob.start(sendConnection, ids, payload, selfId);
+    sparkRenewJob.start(sendConnection, ids, payload, selfId, accountId);
   };
 
   return (
