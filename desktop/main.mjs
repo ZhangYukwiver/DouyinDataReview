@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, session, shell, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,6 +20,11 @@ const APP_NAME = "DouyinDataReview";
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(moduleDirectory, "..");
 const ICON_PATH = path.join(projectDirectory, "build", "icon.png");
+// 用 `electron desktop/main.mjs` 起的时候 app.getVersion() 是 Electron 自己的版本（诊断里出现过 43.8.3），直接读项目的 package.json
+const APP_VERSION = (() => {
+  try { return JSON.parse(readFileSync(path.join(projectDirectory, "package.json"), "utf8")).version || app.getVersion(); }
+  catch { return app.getVersion(); }
+})();
 // 抖音网页只给最近一段观看历史，几天不开就会断档；托盘里隔几个小时读一次把它接上
 const BACKGROUND_SYNC_MS = 3 * 60 * 60 * 1000;
 // Windows 的开机启动项靠这个参数认出自己，读写登录项设置时也要带同一组参数
@@ -359,7 +364,7 @@ async function launch() {
     updater,
     isPackaged: app.isPackaged,
     platform: process.platform,
-    currentVersion: app.getVersion(),
+    currentVersion: APP_VERSION,
     emit: (state) => {
       if (state.phase === "error") updateInstallRequested = false;
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("desktop:app-update-state", state);

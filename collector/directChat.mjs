@@ -226,7 +226,17 @@ export class DirectChatClient {
     let conversation = this.conversations.get(request.conversationId);
     if (!conversation) throw new ChatSendError("conversation_unavailable", "当前账号找不到这个会话。", 410);
     const identity = await this.identityToken();
-    conversation = await this.refreshConversation(conversation.id);
+    try { conversation = await this.refreshConversation(conversation.id); }
+    catch (error) {
+      // 有的号查会话资料被拒（回执码 1），但接收时缓存的票据还能发；没缓存票据才报错，报错里带上是哪一步、回执码多少
+      const cached = this.conversations.get(conversation.id);
+      if (error.code !== "platform_rejected" || !cached?.ticket) {
+        if (error.code === "platform_rejected") error.message = `抖音拒绝了发送前的会话资料查询（回执码 ${error.platformStatus ?? "无"}），消息未提交。`;
+        error.step = "conversation_info";
+        throw error;
+      }
+      conversation = cached;
+    }
     if (!conversation.ticket) throw new ChatSendError("conversation_unavailable", "抖音尚未提供这个会话的发送票据。", 410);
     const payload = content || { aweType: 700, type: 0, richTextInfos: [], text: request.text };
     const clientId = request.requestId;
@@ -241,7 +251,9 @@ export class DirectChatClient {
       });
       const acknowledgement = protoChild(response.body, 100), serverId = protoInteger(acknowledgement, 1);
       const status = protoInteger(acknowledgement, 3), checkCode = protoInteger(acknowledgement, 5) ?? protoInteger(acknowledgement, 4);
-      if ((status && status !== "0") || (checkCode && checkCode !== "0")) return { outcome: "rejected", message: "抖音没有接收这条消息。" };
+      if ((status && status !== "0") || (checkCode && checkCode !== "0"))
+        return { outcome: "rejected", code: "platform_rejected", platformStatus: status && status !== "0" ? status : checkCode,
+          message: `抖音没有接收这条消息（回执码 ${status && status !== "0" ? status : checkCode}）。` };
       const echoedClientId = protoText(acknowledgement, 4);
       if (!/^[1-9]\d*$/u.test(serverId || "") || protoText(response.fields, 4) !== "OK" || (echoedClientId && echoedClientId !== clientId))
         return { outcome: "unknown", message: "还未确认发送结果，请查看手机后再决定是否重发。" };
@@ -250,8 +262,9 @@ export class DirectChatClient {
       return { outcome: "confirmed", message: "已发送", chatMessage };
     } catch (error) {
       if (!dispatched) throw error;
-      return { outcome: error.code === "platform_rejected" ? "rejected" : "unknown", code: error.code || null, message: error.code === "platform_rejected"
-        ? "抖音没有接收这条消息。" : "发送结果尚未确认，请查看手机后再决定是否重发。" };
+      return { outcome: error.code === "platform_rejected" ? "rejected" : "unknown", code: error.code || null, platformStatus: error.platformStatus ?? null,
+        message: error.code === "platform_rejected"
+          ? `抖音没有接收这条消息（回执码 ${error.platformStatus ?? "无"}）。` : "发送结果尚未确认，请查看手机后再决定是否重发。" };
     }
   }
   async connect({ onPayload, onConnection, onError }) {

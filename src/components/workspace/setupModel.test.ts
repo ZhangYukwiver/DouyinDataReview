@@ -322,9 +322,16 @@ describe("diagnosticText", () => {
       "登录凭据：reconnect_required（independent / app，浏览器未连接）",
       "聊天接收：idle，错误码 无，连接 无",
       "聊天提示：无",
+      "最近发送失败：无",
       "已读条数：观看 12，喜欢 3，收藏 4，聊天 5",
       "页面报错：读取失败",
     ]);
+  });
+
+  it("carries the last failed send with its step and platform status", () => {
+    const text = diagnosticText({ ...base, connected: true, status: status({ chat: { state: "observing", connection: "connected", message: null, progress: null, code: null,
+      lastSendError: { code: "platform_rejected", step: "conversation_info", platformStatus: "1", at: "2026-11-24T08:30:00.000Z" } } }) });
+    expect(text).toContain("最近发送失败：2026-11-24T08:30:00.000Z，错误码 platform_rejected，步骤 conversation_info，回执码 1");
   });
 
   it("leaves out the account and masks the nickname quoted in a message", () => {
