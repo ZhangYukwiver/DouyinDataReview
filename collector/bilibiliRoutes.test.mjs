@@ -180,7 +180,7 @@ describe("bilibili route adapter", () => {
     const openContext = vi.fn(async profile => protocolContext(async target => {
       if (target.pathname === "/x/web-interface/nav") return { data: nav };
       if (target.pathname !== "/x/space/like/video") throw new Error(`unexpected ${target.pathname}`);
-      if (profile.includes(`/accounts/${otherId}/`)) return { data: [] };
+      if (path.basename(path.dirname(profile)) === otherId) return { data: [] };
       firstRead.resolve();
       await releaseFirst.promise;
       return { status: 412, body: "" };
