@@ -331,25 +331,68 @@ describe("media candidate selection", () => {
 describe("fetchMediaStream", () => {
   const stream = { url: "https://v3-web.douyinvod.com/a.mp4", referer: "https://www.douyin.com/video/1", cookie: "a=1" };
 
-  it("forwards the range with the page's referer and cookies", async () => {
+  it("forwards the range with the page's referer and cookies using manual redirects", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("part", { status: 206, headers: { "Content-Range": "bytes 0-3/10" } }));
     vi.stubGlobal("fetch", fetchMock);
     const response = await fetchMediaStream({ ...stream, range: "bytes=0-3" });
     expect(response.status).toBe(206);
+    expect(fetchMock.mock.calls[0][1].redirect).toBe("manual");
     expect(fetchMock.mock.calls[0][1].headers).toMatchObject({ Range: "bytes=0-3", Referer: stream.referer, Cookie: "a=1" });
   });
 
-  it("refuses hosts outside the media allowlist before and after redirects", async () => {
+  it("refuses hosts, protocols, ports, and userinfo outside the media allowlist before sending redirected requests", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     await expect(fetchMediaStream({ ...stream, url: "https://example.com/a.mp4" })).rejects.toMatchObject({ code: "invalid_media_url" });
     expect(fetchMock).not.toHaveBeenCalled();
+
+    for (const location of [
+      "https://example.com/evil.mp4",
+      "http://v3-web.douyinvod.com/downgraded.mp4",
+      "https://v3-web.douyinvod.com:8443/alt-port.mp4",
+      "https://user:pass@v3-web.douyinvod.com/auth.mp4",
+    ]) {
+      fetchMock.mockReset().mockResolvedValueOnce(new Response(null, { status: 302, headers: { Location: location } }));
+      await expect(fetchMediaStream(stream), location).rejects.toMatchObject({ code: "media_redirect_blocked" });
+      expect(fetchMock, location).toHaveBeenCalledTimes(1);
+    }
+
     const redirected = new Response("x");
     Object.defineProperty(redirected, "url", { value: "https://example.com/a.mp4" });
-    fetchMock.mockResolvedValue(redirected);
+    fetchMock.mockReset().mockResolvedValue(redirected);
+    await expect(fetchMediaStream(stream)).rejects.toMatchObject({ code: "media_redirect_blocked" });
+    fetchMock.mockReset().mockResolvedValue(new Response("expired", { status: 403 }));
     await expect(fetchMediaStream(stream)).rejects.toMatchObject({ code: "media_http_error" });
-    fetchMock.mockResolvedValue(new Response("expired", { status: 403 }));
-    await expect(fetchMediaStream(stream)).rejects.toMatchObject({ code: "media_http_error" });
+  });
+
+  it("validates each redirect hop, follows allowed redirects, and strips cookies across origins", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { Location: "/hop-1.mp4" } }))
+      .mockResolvedValueOnce(new Response(null, { status: 307, headers: { Location: "https://v3-dy-o.zjcdn.com/final.mp4" } }))
+      .mockResolvedValueOnce(new Response("ok", { status: 206, headers: { "Content-Range": "bytes 0-1/2" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await fetchMediaStream({ ...stream, range: "bytes=0-1" });
+    expect(response.status).toBe(206);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://v3-web.douyinvod.com/a.mp4",
+      "https://v3-web.douyinvod.com/hop-1.mp4",
+      "https://v3-dy-o.zjcdn.com/final.mp4",
+    ]);
+    expect(fetchMock.mock.calls[0][1].headers.Cookie).toBe("a=1");
+    expect(fetchMock.mock.calls[1][1].headers.Cookie).toBe("a=1");
+    expect(fetchMock.mock.calls[2][1].headers.Cookie).toBeUndefined();
+    expect(fetchMock.mock.calls[2][1].headers.Range).toBe("bytes=0-1");
+  });
+
+  it("stops excessive redirect chains on allowed hosts", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(null, {
+      status: 302,
+      headers: { Location: "https://v3-web.douyinvod.com/loop.mp4" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(fetchMediaStream(stream)).rejects.toMatchObject({ code: "media_redirect_blocked" });
+    expect(fetchMock).toHaveBeenCalledTimes(9);
   });
 });
 
@@ -463,6 +506,54 @@ describe("downloadMediaFile", () => {
     await expect(readFile(first.filePath)).resolves.toEqual(webm);
     expect((await downloadMediaFile(args)).skipped).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks disallowed redirects in downloadMediaFile before contacting the target host", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-video-redirect-block-"));
+    temporaryDirectories.push(directory);
+    const evidence = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, {
+      status: 302,
+      headers: { Location: "https://evil.example/leak.mp4" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(downloadMediaFile({
+      context: { cookies: vi.fn().mockResolvedValue([{ name: "sessionid", value: "secret" }]) },
+      media: { url: "https://video-web-cn.douyin.com/aweme/v1/play/1" },
+      outputDirectory: directory,
+      fileName: "blocked.mp4",
+      onEvidence: evidence,
+    })).rejects.toMatchObject({ code: "media_redirect_blocked", retryable: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].redirect).toBe("manual");
+    expect(evidence).toHaveBeenCalledWith(expect.objectContaining({ kind: "media", outcome: "redirect_blocked" }));
+  });
+
+  it("follows allowed redirects in downloadMediaFile and resolves cookies per hop", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "douyin-video-redirect-ok-"));
+    temporaryDirectories.push(directory);
+    const mp4 = Buffer.from("\x00\x00\x00\x18ftypisomredirected");
+    const cookies = vi.fn(async (url) => (
+      url.startsWith("https://video-web-cn.douyin.com/")
+        ? [{ name: "sessionid", value: "douyin-only" }]
+        : []
+    ));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { Location: "https://p3.douyinvod.com/final.mp4" } }))
+      .mockResolvedValueOnce(new Response(mp4, { status: 200, headers: { "Content-Type": "video/mp4", "Content-Length": String(mp4.length) } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await downloadMediaFile({
+      context: { cookies },
+      media: { url: "https://video-web-cn.douyin.com/aweme/v1/play/1" },
+      outputDirectory: directory,
+      fileName: "redirected.mp4",
+    });
+    expect(result.bytes).toBe(mp4.length);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers.Cookie).toBe("sessionid=douyin-only");
+    expect(fetchMock.mock.calls[1][1].headers.Cookie).toBeUndefined();
   });
 });
 

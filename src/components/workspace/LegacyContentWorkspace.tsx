@@ -693,6 +693,7 @@ export function ContentWorkspace({
             onToggleReception={onToggleChatReception ?? onOpenSettings}
             onCollectHistory={onCollectChatHistory}
             sendConnection={commentsConnection}
+            accountId={status?.account?.id ?? null}
             videoRecords={records}
             conversations={chatConversations}
             messages={chatMessages}

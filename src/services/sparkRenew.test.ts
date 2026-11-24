@@ -41,6 +41,19 @@ describe("renewing sparks", () => {
     expect(Object.values(finalStates(await run()))).toEqual(["failed", "skipped", "skipped"]);
     expect(sendChatMessage).toHaveBeenCalledTimes(1);
   });
+  it("forwards the selected accountId and stops immediately when the collector account changes", async () => {
+    vi.mocked(sendChatMessage).mockRejectedValueOnce(new LocalCollectorError("account_changed", "采集器已经换到另一个账号了"));
+    const log: Array<[string, SparkSendUpdate]> = [];
+    await renewSparks(connection, friends, { kind: "text", text: "[续火花吧]" }, {
+      signal: new AbortController().signal,
+      gapMs: () => 0,
+      accountId: "acc-window-1",
+      onUpdate: (id, update) => log.push([id, update]),
+    });
+    expect(Object.values(finalStates(log))).toEqual(["failed", "skipped", "skipped"]);
+    expect(sendChatMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sendChatMessage).mock.calls[0]?.[3]).toBe("acc-window-1");
+  });
   it("sends to at most 10 in one run", async () => {
     vi.mocked(sendChatMessage).mockResolvedValue(sent);
     const many = Array.from({ length: 12 }, (_, index) => `0:1:${me}:${1_000_000 + index}`);

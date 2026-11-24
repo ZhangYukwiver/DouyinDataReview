@@ -574,14 +574,16 @@ export const TOOLS = [
       const ids = [...new Set((Array.isArray(args.conversationIds) ? args.conversationIds : [args.conversationId]).filter((id) => typeof id === "string" && id))];
       if (!ids.length || ids.length > MAX_BATCH) return fail("invalid_targets", `一次发给 1 到 ${MAX_BATCH} 个会话。`);
       const collector = ctx.collector();
+      const accountId = collector.getStatus().account?.id ?? ctx.accounts?.().activeId ?? null;
       if (!["launching_browser", "observing"].includes(collector.getStatus().chat?.state)) return fail("not_receiving", "还没在接收聊天，先调 start_reading（kind=chat），等它开始接收再发。");
       const conversations = collector.snapshot.chatConversations ?? [];
       const names = ids.map((id) => conversations.find((item) => item.id === id)?.name ?? null);
       if (names.includes(null)) return fail("conversation_not_found", "有的会话找不到，先用 list_conversations 查一下。");
       await ctx.confirm({ action: "发私信", target: everyone(names), text: message });
+      const endpoint = accountId ? `/v1/chat/send?account=${encodeURIComponent(accountId)}` : "/v1/chat/send";
       return sendEach(ids.map((conversationId, index) => ({
         name: names[index],
-        send: () => ctx.api("POST", "/v1/chat/send", { requestId: requestId(), conversationId, text: message }),
+        send: () => ctx.api("POST", endpoint, { requestId: requestId(), conversationId, text: message, ...(accountId ? { accountId } : {}) }),
       })), { signal });
     },
   },

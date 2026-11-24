@@ -7,18 +7,20 @@ export interface ChatSendOutcome { outcome: "confirmed" | "unknown" | "rejected"
 // 发送结果拿不到时不能当成失败：消息可能已经发出去了。
 export const CHAT_SEND_UNCONFIRMED = "chat_send_unconfirmed";
 
-export async function sendChatMessage(connection: ChatSendConnection, conversationId: string, text: string): Promise<ChatSendOutcome> {
+export async function sendChatMessage(connection: ChatSendConnection, conversationId: string, text: string, accountId?: string | null): Promise<ChatSendOutcome> {
   const controller = new AbortController();
   // 采集器最多花约 35 秒（打开会话 8 秒 + 输入 + 等回执 20 秒）
   const timeout = setTimeout(() => controller.abort(), 45_000);
+  const account = typeof accountId === "string" && accountId.trim() ? accountId.trim() : null;
+  const endpoint = account ? `/v1/chat/send?account=${encodeURIComponent(account)}` : "/v1/chat/send";
   let value: Partial<ChatSendOutcome> & { error?: string } | null;
   let response: Response;
   try {
-    response = await collectorFetch(connection, `/v1/chat/send`, {
+    response = await collectorFetch(connection, endpoint, {
       method: "POST",
       signal: controller.signal,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestId: crypto.randomUUID(), conversationId, text }),
+      body: JSON.stringify({ requestId: crypto.randomUUID(), conversationId, text, ...(account ? { accountId: account } : {}) }),
     });
     value = await response.json().catch(() => null);
   } catch {

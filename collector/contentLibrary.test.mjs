@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ContentLibraryStore, contentKey, normalizeContentLibrarySnapshot } from "./contentLibrary.mjs";
 
@@ -284,6 +284,52 @@ describe("ContentLibraryStore", () => {
       await recovered.rebuildFromSnapshots([{ platform: "douyin", accountId: "dy-main", records: { watch_history: [], liked_videos: [], favorite_videos: [] } }]);
       expect(await recovered.get("douyin:100")).not.toBeNull();
       expect((await recovered.listTopics())[0].items).toEqual(["douyin:100"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not resurrect deleted entries or topics on restart when recovery file replacement fails after primary commit", async () => {
+    const root = await directory();
+    try {
+      const store = new ContentLibraryStore(root);
+      await store.manualSave({ platform: "xiaohongshu", accountId: "xhs-only", contentId: "note-1", title: "私密保存", url: "https://www.xiaohongshu.com/explore/note-1" });
+      const topic = await store.createTopic({ name: "临时专题" });
+      await store.addToTopic(topic.id, "xiaohongshu:note-1");
+
+      const originalCommit = store.commitFile.bind(store);
+      let metaFailed = false;
+      vi.spyOn(store, "commitFile").mockImplementation(async (temporaryPath, targetPath) => {
+        if (targetPath === store.metaFilePath && !metaFailed) {
+          metaFailed = true;
+          throw new Error("simulated_meta_write_failure");
+        }
+        return originalCommit(temporaryPath, targetPath);
+      });
+
+      await expect(store.detachAccount("xhs-only", { platform: "xiaohongshu", deleteOrphans: true }))
+        .rejects.toThrow("simulated_meta_write_failure");
+
+      const mainOnDisk = JSON.parse(await readFile(store.filePath, "utf8"));
+      const metaOnDisk = JSON.parse(await readFile(store.metaFilePath, "utf8"));
+      expect(mainOnDisk.entries["xiaohongshu:note-1"]).toBeUndefined();
+      expect(metaOnDisk.recoveryEntries["xiaohongshu:note-1"]).toBeDefined();
+      expect(mainOnDisk.revision).toBeGreaterThan(metaOnDisk.revision);
+
+      // A fresh instance after restart must trust the newer primary commit and
+      // never restore the deleted item or topic membership from the stale meta file.
+      const restarted = new ContentLibraryStore(root);
+      expect(await restarted.get("xiaohongshu:note-1")).toBeNull();
+      expect((await restarted.listTopics())[0].items).toEqual([]);
+
+      // Topic deletion interrupted before meta replacement must also stay deleted on restart.
+      const topicCommit = restarted.commitFile.bind(restarted);
+      vi.spyOn(restarted, "commitFile").mockImplementation(async (temporaryPath, targetPath) => {
+        if (targetPath === restarted.metaFilePath) throw new Error("simulated_topic_meta_failure");
+        return topicCommit(temporaryPath, targetPath);
+      });
+      await expect(restarted.deleteTopic(topic.id)).rejects.toThrow("simulated_topic_meta_failure");
+      expect(await new ContentLibraryStore(root).listTopics()).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
