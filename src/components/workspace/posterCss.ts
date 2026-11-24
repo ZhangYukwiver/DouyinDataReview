@@ -1,5 +1,5 @@
 /**
- * 海报风格的版式层：只挂在 :root[data-style="poster"] 下，档案馆和内容年志一条也匹配不到。
+ * 海报风格的版式层：只挂在 :root[data-style="poster"] 下，极简和内容年志一条也匹配不到。
  * 组件上用 ws("角色") / fx({ ws }) 打 data-ws 标记（见 motion.tsx），这里按角色把它们印成展览海报：
  * 墨黑 / 新闻纸 / 纯白 / 信号橙，3px 实心黑线，零圆角零阴影，Anton 数字、Noto Sans SC 900 标题、JetBrains Mono 戳。
  * RN-web 的原子类和行内样式都要压过，所以版式声明一律 !important。

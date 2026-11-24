@@ -10,7 +10,7 @@
   // 页面上标了 data-private 的都来自这些字段
   const PRIVATE_TEXT = new Set(["title", "author", "name", "nickname", "both", "sharedOnly", "likedOnly"]);
   const PRIVATE_LINK = new Set(["url", "coverUrl", "avatarUrl"]);
-  // 话题词：档案馆当隐私，海报和内容年志开着隐私也照常显示；聊天里的高频词三个页面都当隐私
+  // 话题词：海报和内容年志开着隐私也照常显示；聊天里的高频词两页都当隐私（privateTopics 默认 true 作为兜底）
   const TOPIC_ZONES = new Set(["topics", "topTopic", "lexicon"]);
   const TOPIC_WORDS = new Set(["name", "both", "sharedOnly", "likedOnly"]);
   const SHARED_SCRIPTS = ["story-glide.js", "story-card.js"];

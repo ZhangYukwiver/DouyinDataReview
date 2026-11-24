@@ -174,7 +174,7 @@ export interface ContentWorkspaceProps {
   onSync: () => void;
   onTogglePrivacy: () => void;
   privacy: boolean;
-  /** 整体风格：文案与纸纹装饰跟着走，配色本身由 workspaceTheme 的 CSS 变量切换 */
+  /** 整体风格：文案跟着走，配色本身由 workspaceTheme 的 CSS 变量切换 */
   appStyle?: AppStyle;
   /** 极简风格打开报告时借用的那套故事页（决定「重看」按钮叫什么） */
   storyStyle?: StoryStyle;
@@ -256,7 +256,7 @@ const COLLAPSE_MS = 380;
 const collapseWidth = ease("width", COLLAPSE_MS);
 const collapseCopy = ease("opacity", 220);
 
-// ponytail: 包一层给全页默认正文字体（档案馆衬线 / 年志 Inter），比给上百条 style 逐个加 fontFamily 省
+// ponytail: 包一层给全页默认正文字体，比给上百条 style 逐个加 fontFamily 省
 const bodyType = { fontFamily: font.body } as const;
 function Text({ style, ...rest }: TextProps) {
   return <RNText {...rest} style={[bodyType, style]} />;
@@ -303,10 +303,8 @@ export function ContentWorkspace({
 }: ContentWorkspaceProps) {
   const { width, height } = useWindowDimensions();
   const mobile = width < 720;
-  // 只有档案馆的工作台铺纸纹；年志、海报、极简都不铺
-  const archive = appStyle === "archive";
   const story = resolveStoryStyle(appStyle, storyStyle);
-  const replayLabel = story === "poster" ? "重看年度海报" : story === "trace" ? "重读内容年志" : "重翻年度档案";
+  const replayLabel = story === "poster" ? "重看年度海报" : "重读内容年志";
   const reportView = isReportView(activeView);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // 持续报告首次打开时自动收起；用户仍可用左上角按钮临时展开。
@@ -602,7 +600,7 @@ export function ContentWorkspace({
             {/* 极简：平台切换（没有就是内容库、报告的页签）放进顶栏替掉标题；页签让到下面一行 */}
             {tabsInTop && (chipsRow ?? libraryTabs) ? chipsRow ?? libraryTabs : <>
             {/* 极简不要装饰性的英文眉题 */}
-            {appStyle !== "minimal" ? <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : archive ? "CONTENT ARCHIVE" : "CONTENT STREAMS"}</Text> : null}
+            {appStyle !== "minimal" ? <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : "CONTENT STREAMS"}</Text> : null}
             <View style={styles.topbarTitleRow}>
               <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{titleNav.label}</Text>
               {!activeTool ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
@@ -745,22 +743,6 @@ export function ContentWorkspace({
           />
         )}
       </View>
-
-      {Platform.OS === "web" && archive ? (
-        <>
-          <View {...ws("w-grain")} pointerEvents="none" style={styles.paperGrain}>
-            <Image resizeMode="repeat" source={require("./assets/paper-grain.png")} style={styles.paperGrainImg} />
-          </View>
-          <View {...ws("w-tint")} pointerEvents="none" style={styles.paperTint} />
-          {!mobile ? (
-            <View {...ws("w-corners")} pointerEvents="none" style={styles.paperTint}>
-              {[styles.cornerTL, styles.cornerTR, styles.cornerBL, styles.cornerBR].map((corner, index) => (
-                <View key={index} style={[styles.corner, corner]} />
-              ))}
-            </View>
-          ) : null}
-        </>
-      ) : null}
 
       {mobile ? (
         <View {...ws("w-bottom g-ink")} accessibilityRole="tablist" style={styles.bottomNav}>
@@ -2516,14 +2498,6 @@ const styles = StyleSheet.create({
   rootMobile: { padding: 0 },
   stage: { position: "relative", flex: 1, minHeight: 0, flexDirection: "row", overflow: "hidden", borderWidth: 1, borderColor: color.frame, borderRadius: radius.large, backgroundColor: color.surface, boxShadow: color.shadow },
   stageMobile: { borderWidth: 0 },
-  paperGrain: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, opacity: 0.3, zIndex: 40 },
-  paperGrainImg: { width: "100%", height: "100%" },
-  paperTint: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 41, backgroundColor: "rgba(38,32,24,0.05)" },
-  corner: { position: "absolute", width: 26, height: 26, borderColor: color.frame, opacity: 0.9 },
-  cornerTL: { left: 8, top: 8, borderLeftWidth: 1, borderTopWidth: 1 },
-  cornerTR: { right: 8, top: 8, borderRightWidth: 1, borderTopWidth: 1 },
-  cornerBL: { left: 8, bottom: 8, borderLeftWidth: 1, borderBottomWidth: 1 },
-  cornerBR: { right: 8, bottom: 8, borderRightWidth: 1, borderBottomWidth: 1 },
   // 收起态只改宽度：内边距、图标位置、各行高度都不变，窄侧栏是宽侧栏被裁出来的。
   sidebar: { width: 224, flexShrink: 0, paddingHorizontal: 14, paddingBottom: 16, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: color.border, backgroundColor: color.sidebar, overflow: "hidden" },
   sidebarCompact: { width: 82 },
@@ -2674,7 +2648,7 @@ const styles = StyleSheet.create({
   folderBadge: { flexShrink: 1, maxWidth: 110 },
   tileFolderButton: { position: "absolute", top: 10, right: 10, width: 34, height: 34, minHeight: 34, paddingHorizontal: 0 },
   rowFolder: { flexDirection: "row", alignItems: "center", gap: 4, maxWidth: 160 },
-  // 文件夹芯片照聊天页的筛选芯片写（c-filters / c-filter），另外三种风格的样式都已经覆盖到
+  // 文件夹芯片照聊天页的筛选芯片写（c-filters / c-filter），另外两种风格的样式都已经覆盖到
   folderBar: { marginBottom: 16 },
   // 内容库页签：顶栏下面一条，和文件夹小标签同一个路数，选中的用这一栏自己的颜色
   libraryTabs: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, paddingHorizontal: 24, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },

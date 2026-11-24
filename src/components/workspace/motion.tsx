@@ -55,7 +55,7 @@ function reduced(): boolean {
 
 /**
  * 一个元素上的动效标记：进场种类、错开序号（1–16，每级 70ms）、悬停反馈、是否已进入视口。
- * ws 是版式角色（空格分隔，可带状态词如 "btn on"），三种风格的版式层（archiveCss / posterCss / traceCss）按它改样子；native 不认。
+ * ws 是版式角色（空格分隔，可带状态词如 "btn on"），各套风格的版式层（minimalCss / posterCss / traceCss）按它改样子；native 不认。
  */
 export function fx(set: { motion?: Motion | false | null; i?: number; hover?: Hover; reveal?: boolean; ws?: string }): { dataSet?: Record<string, string> } {
   if (!web) return {};

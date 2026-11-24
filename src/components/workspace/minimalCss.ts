@@ -1,5 +1,5 @@
 /**
- * 极简风格的版式层：只挂在 :root[data-style="minimal"] 下，另外三种风格一条也匹配不到。
+ * 极简风格的版式层：只挂在 :root[data-style="minimal"] 下，另外两种风格一条也匹配不到。
  * 颜色、字体、圆角由 token 给（workspaceTheme 的 minimal），这里只做“少”：
  * - 灰绿纸面 #F2F4F2 上，侧栏直接铺在纸面，主区是一块浮起的白色圆角面板（1px 发丝线 + 极淡的环境投影）；
  *   卡片 16px 圆角、按钮一律胶囊，没有纹理、发光、渐变；
@@ -8,7 +8,7 @@
  * - 森林绿是主按钮、数据和可点的字，墨黑只做正文和选中，琥珀 / 红只在状态上；图表分类色是绿的深浅档加暖灰；
  * - 去掉装饰性的英文小标、编号水印、唱片圆盘、色条，缺封面是一块安静的浅灰；
  * - 悬停不抬、不放大，只换底色。
- * 写法同 posterCss / archiveCss：按 data-ws 角色选，声明一律 !important 压过 RN-web 的原子类和行内样式。
+ * 写法同 posterCss / traceCss：按 data-ws 角色选，声明一律 !important 压过 RN-web 的原子类和行内样式。
  * 只管工作台和它弹出的对话框；采集器页（MinimalSetupWorkspace）和设置面板各有自己的样式，这里不碰
  * （唯一例外是 body 上的 text-wrap:pretty，靠继承一起管到）。
  */
@@ -395,7 +395,7 @@ const blocks: string[] = [
   rule(sel("e-badge"), `${type(11, 500, WHITE)};background-color:rgba(20,20,20,.64)!important;border-radius:4px!important`),
 
   // ---------- 创作者中心 ----------
-  // 图表数据色：CreatorCharts 的 chartPalette 先取 --ws-chart-N（另外三种风格没定义，回退到原 token）。
+  // 图表数据色：CreatorCharts 的 chartPalette 先取 --ws-chart-N（另外两种风格没定义，回退到原 token）。
   // 极简接持续报告饼图那组：主数据是森林绿，分类是绿的深浅档 + 暖灰，不借琥珀 / 红；选中、标签仍是墨黑
   rule(M, Array.from({ length: 6 }, (_, index) => `--ws-chart-${index}:var(--ws-slices-${index})`).join(";")),
   // 刻度、轴名、说明、表头原来 10–11px；刻度字放大后最长的「62.5万」会贴到 svg 左沿，放开裁切

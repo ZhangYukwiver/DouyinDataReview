@@ -1,19 +1,18 @@
 import { PERSONAL_RECORD_TYPES, type PersonalRecordType } from "../domain/personalRecords";
-export type AppStyle = "minimal" | "archive" | "trace" | "poster";
+export type AppStyle = "minimal" | "trace" | "poster";
 /** 有自己报告页（/story 下的故事页）的风格；极简只换采集器和工作台，报告借用其中一套。 */
 export type StoryStyle = Exclude<AppStyle, "minimal">;
 
 // 整体风格：采集器页、工作台、报告共用同一个选择。默认极简：白底细线、系统字体，没有自己的报告页。
-// 采集器页在极简下是极简版式，其余三种风格下仍是那套手绘纸面（不跟风格换皮）。
+// 采集器页在极简下是极简版式，其余两种风格下仍是那套手绘纸面（不跟风格换皮）。
 export const DEFAULT_APP_STYLE: AppStyle = "minimal";
 export const APP_STYLES: ReadonlyArray<{ key: AppStyle; label: string; detail: string }> = [
   { key: "minimal", label: "极简", detail: "灰绿纸面 · 森林绿" },
   { key: "trace", label: "内容年志", detail: "墨夜玻璃 · 穿卡入口" },
-  { key: "archive", label: "档案馆", detail: "暗室星图卷宗 · 点击翻页" },
   { key: "poster", label: "海报", detail: "黑橙新闻纸 · 硬切长卷" },
 ];
 
-// 极简下「打开报告」用哪套故事页，默认内容年志；另外三种风格各用自己的。
+// 极简下「打开报告」用哪套故事页，默认内容年志；另外两种风格各用自己的。
 export const DEFAULT_STORY_STYLE: StoryStyle = "trace";
 export const STORY_STYLES = APP_STYLES.filter((item): item is { key: StoryStyle; label: string; detail: string } => item.key !== "minimal");
 
@@ -24,8 +23,6 @@ const FONTS: Partial<Record<AppStyle, string>> = {
   // 年志的巨大数字用 Fraunces 200 斜体，所以正斜两套都取整段字重（可变字体，一个文件）
   trace: "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=Inter:wght@300;400;500;600;700&display=swap",
   poster: "https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700;900&display=swap",
-  // 档案馆：Cormorant Garamond 细衬线做数字和英文，宋体做中文，黑体只留给很小的注释
-  archive: "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600&family=Noto+Serif+SC:wght@400;500;600;700;900&family=Noto+Sans+SC:wght@400;500&display=swap",
 };
 const STORY_STORAGE_KEY = "content-insights.story-style";
 const STORED: ReadonlySet<string> = new Set(APP_STYLES.map((item) => item.key));
@@ -54,7 +51,7 @@ function save(key: string, value: string, storage: StyleStorage | undefined): vo
 }
 
 // Native has no localStorage and private browsing may throw; both fall back to the default style.
-// 显式选过的风格照用（老用户选过年志/档案馆/海报的不变），其余情况（没选过 / 存了旧值）都用默认的极简。
+// 显式选过的风格照用（老用户选过年志/海报的不变），其余情况（没选过 / 存了已下线的档案馆或旧值）都退回默认的极简。
 export function loadAppStyle(storage: StyleStorage | undefined = globalThis.localStorage): AppStyle {
   return load(STORAGE_KEY, STORED, DEFAULT_APP_STYLE, storage);
 }
@@ -209,9 +206,4 @@ export function buildStoryEntryUrl(
 // 海报风格没有入口卡：故事页自己就是封面，数字全从 localStorage 的快照里读。
 export function buildPosterStoryUrl(options: StoryEntryOptions = {}): string {
   return `${process.env.EXPO_BASE_URL ?? ""}/story/story-poster.html${options.motion === "full" ? "?motion=full" : ""}`;
-}
-
-// 档案馆（web）同样是 /story 下的静态页，一页一屏、点击翻页；native 仍走应用内的分页报告。
-export function buildArchiveStoryUrl(options: StoryEntryOptions = {}): string {
-  return `${process.env.EXPO_BASE_URL ?? ""}/story/story-archive.html${options.motion === "full" ? "?motion=full" : ""}`;
 }

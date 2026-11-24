@@ -9,7 +9,6 @@ import { workspaceColors as color, workspaceFonts as font, workspaceRadii as rad
 
 const STYLES: ReadonlyArray<{ key: SparkCardStyle; label: string }> = [
   { key: "trace", label: "内容年志" },
-  { key: "archive", label: "档案馆" },
   { key: "poster", label: "海报" },
 ];
 

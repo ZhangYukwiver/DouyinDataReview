@@ -191,10 +191,10 @@ export function SettingsDialog(props: SettingsDialogProps) {
 // ---------- 各节 ----------
 
 function Appearance({ appStyle, contentWidth, onChangeAppStyle, onChangeStoryStyle, storyStyle }: SettingsDialogProps & { contentWidth: number }) {
-  // 四项一行；面板窄到放不下时排成两行两列。宽度按量到的为准（海报的框线粗，估算会多出几像素把第四张挤下去）
+  // 三项一行；面板窄到放不下时排成单列。宽度按量到的为准（海报的框线粗，估算会多出几像素把第三张挤下去）
   const [gridWidth, setGridWidth] = useState<number | null>(null);
   const width = gridWidth ?? contentWidth;
-  const columns = width >= 480 ? 4 : 2;
+  const columns = width >= 360 ? 3 : 1;
   const cardWidth = Math.floor((width - GRID_GAP * (columns - 1)) / columns);
   useEffect(() => { if (web) APP_STYLES.forEach((item) => loadAppStyleFonts(item.key)); }, []);
   return (
@@ -923,7 +923,7 @@ function Button({ accessibilityLabel, appStyle, busy = false, disabled = false, 
   );
 }
 
-/** 四种风格各一张小样，只用色块和细线拼：颜色取各自色板的原值，不跟着当前风格的变量走。圆点和圆圈用 svg 画（海报会把所有圆角压成直角）。 */
+/** 三种风格各一张小样，只用色块和细线拼：颜色取各自色板的原值，不跟着当前风格的变量走。圆点和圆圈用 svg 画（海报会把所有圆角压成直角）。 */
 function StyleSwatch({ kind }: { kind: AppStyle }) {
   const p = palettes[kind].colors;
   if (kind === "minimal") {
@@ -947,17 +947,6 @@ function StyleSwatch({ kind }: { kind: AppStyle }) {
           <View style={[styles.swLine, { width: "74%", backgroundColor: alpha(p.text, 0.85) }]} />
           <View style={[styles.swLine, { width: "52%", backgroundColor: alpha(p.text, 0.5) }]} />
           <View style={[styles.swLine, { width: "64%", backgroundColor: alpha(p.text, 0.3) }]} />
-        </View>
-      </View>
-    );
-  }
-  if (kind === "archive") {
-    return (
-      <View style={[styles.swatch, { backgroundColor: p.canvas, borderColor: p.border }]}>
-        <Svg height={30} style={styles.swRing} width={30}><Circle cx={15} cy={15} fill="none" r={12} stroke={p.accent} strokeWidth={1} /><Circle cx={15} cy={15} fill={p.accent} r={1.6} /></Svg>
-        <View style={[styles.swMain, styles.swMainRing]}>
-          <View style={[styles.swLine, { width: "70%", backgroundColor: p.accent }]} />
-          <View style={[styles.swLine, { width: "50%", backgroundColor: alpha(p.text, 0.45) }]} />
         </View>
       </View>
     );
@@ -1051,11 +1040,9 @@ const styles = StyleSheet.create({
   // 极简：纸面上浮一块白面板
   swPanel: { marginVertical: 5, marginRight: 5, borderWidth: 1, borderRadius: 4 },
   swMainWide: { paddingLeft: 4 },
-  swMainRing: { paddingLeft: 6 },
   swBar: { height: 3, borderRadius: 2 },
   swLine: { height: 1 },
   swDot: { marginLeft: 9, marginTop: 9 },
-  swRing: { alignSelf: "center", marginLeft: 9 },
   swBlock: { width: "38%", height: "100%" },
   swOrange: { position: "absolute", right: 10, top: 9, width: 16, height: 16 },
   swRule: { position: "absolute", left: "38%", right: 0, bottom: 11, height: 3 },
@@ -1072,7 +1059,7 @@ const styles = StyleSheet.create({
   knob: { position: "absolute", left: 2, top: 2, width: 14, height: 14, borderRadius: radius.pill, backgroundColor: color.white },
   knobOn: { transform: [{ translateX: 16 }] },
   // 账号行
-  // 头像和聊天页一样是圆的（不跟档案馆的直角圆角 token）
+  // 头像和聊天页一样是圆的（不跟海报的直角圆角 token）
   avatar: { width: 30, height: 30, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 15 },
   avatarImage: { width: 30, height: 30, borderRadius: 15 },
   avatarText: { fontFamily: font.sans, fontSize: 13, fontWeight: "600" },

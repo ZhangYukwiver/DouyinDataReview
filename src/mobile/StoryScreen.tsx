@@ -11,9 +11,9 @@ import { exportMobileFile } from "./mobileExport";
 import { STORY_PAGES, storyDocument, storyExportScript, type StoryPage } from "./storyDocument";
 import { C, mono, ui } from "./mobileUi";
 
-export type StoryStyle = "trace" | "archive" | "poster";
+export type StoryStyle = "trace" | "poster";
 export const STORY_STYLES: Array<{ id: StoryStyle; label: string; en: string }> = [
-  { id: "trace", label: "内容年志", en: "TRACE" }, { id: "archive", label: "档案馆", en: "ARCHIVE" }, { id: "poster", label: "海报", en: "POSTER" },
+  { id: "trace", label: "内容年志", en: "TRACE" }, { id: "poster", label: "海报", en: "POSTER" },
 ];
 // The heaviest computation in the app (~10× slower on Hermes than in a desktop browser). Snapshots are immutable,
 // so it runs once per saved snapshot; AndroidApp warms it while idle so opening a story does not freeze the tap.
@@ -33,7 +33,7 @@ export function storyDataFor(snapshot: MobileSnapshot): StoryData {
 export const hasStoryData = (snapshot: MobileSnapshot) => stories.has(snapshot);
 
 export function StoryScreen({ snapshot, style, onClose }: { snapshot: MobileSnapshot; style: StoryStyle; onClose: () => void }) {
-  const [page, setPage] = useState<StoryPage>(style === "archive" ? "story-archive.html" : style === "poster" ? "story-poster.html" : "story-entry.html");
+  const [page, setPage] = useState<StoryPage>(style === "poster" ? "story-poster.html" : "story-entry.html");
   const [notice, setNotice] = useState("");
   const [exporting, setExporting] = useState(false);
   const browser = useRef<WebView>(null);
@@ -68,7 +68,7 @@ export function StoryScreen({ snapshot, style, onClose }: { snapshot: MobileSnap
     // Read the visible privacy switch, and reuse the existing story's anonymizer.
     browser.current.injectJavaScript(storyExportScript(page, bridgeId.current, id));
   }
-  const label = page === "story-archive.html" ? "档案馆" : page === "story-poster.html" ? "海报" : "内容年志";
+  const label = page === "story-poster.html" ? "海报" : "内容年志";
   return <Modal visible animationType="slide" onRequestClose={onClose}><SafeAreaView style={[ui.screen, { backgroundColor: "#0c1220" }]}>
     <View style={{ height: 52, paddingHorizontal: 6, flexDirection: "row", alignItems: "center", backgroundColor: C.bg, borderBottomWidth: 1, borderColor: C.line }}>
       <Pressable accessibilityRole="button" accessibilityLabel="返回报告" onPress={onClose} hitSlop={8}

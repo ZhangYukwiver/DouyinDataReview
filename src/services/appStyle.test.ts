@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { APP_STYLES, applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadReadTypes, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveReadTypes, saveStoryStyle, STORY_STYLES } from "./appStyle";
+import { APP_STYLES, applyAppStyle, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAutoSync, loadReadTypes, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAutoSync, saveReadTypes, saveStoryStyle, STORY_STYLES } from "./appStyle";
 
 function memoryStorage(initial: Record<string, string> = {}) {
   const data = new Map(Object.entries(initial));
@@ -23,27 +23,28 @@ describe("app style", () => {
     const storage = memoryStorage();
     expect(loadAppStyle(storage)).toBe("minimal");
     expect(loadAppStyle(undefined)).toBe("minimal");
-    saveAppStyle("archive", storage);
-    expect(loadAppStyle(storage)).toBe("archive");
+    expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "archive" }))).toBe("minimal");
     expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "garbage" }))).toBe("minimal");
     expect(loadAppStyle(memoryStorage({ "content-insights.report-style": "trace" }))).toBe("trace");
     saveAppStyle("poster", storage);
     expect(loadAppStyle(storage)).toBe("poster");
     saveAppStyle("minimal", storage);
     expect(loadAppStyle(storage)).toBe("minimal");
-    expect(APP_STYLES[0]?.key).toBe("minimal");
+    expect(APP_STYLES.map((item) => item.key)).toEqual(["minimal", "trace", "poster"]);
   });
 
-  it("lets the minimal style borrow one of the three story pages", () => {
+  it("lets the minimal style borrow one of the two story pages", () => {
     const storage = memoryStorage();
-    expect(STORY_STYLES.map((item) => item.key)).toEqual(["trace", "archive", "poster"]);
+    expect(STORY_STYLES.map((item) => item.key)).toEqual(["trace", "poster"]);
     expect(loadStoryStyle(storage)).toBe("trace");
     saveStoryStyle("poster", storage);
     expect(loadStoryStyle(storage)).toBe("poster");
-    // 不认识的值（包括 minimal 自己）退回内容年志
+    // 不认识的值（包括 minimal 和已下线的 archive）退回内容年志
     expect(loadStoryStyle(memoryStorage({ "content-insights.story-style": "minimal" }))).toBe("trace");
-    expect(resolveStoryStyle("minimal", "archive")).toBe("archive");
-    expect(resolveStoryStyle("poster", "archive")).toBe("poster");
+    expect(loadStoryStyle(memoryStorage({ "content-insights.story-style": "archive" }))).toBe("trace");
+    expect(resolveStoryStyle("minimal", "poster")).toBe("poster");
+    expect(resolveStoryStyle("poster", "trace")).toBe("poster");
+    expect(resolveStoryStyle("trace", "poster")).toBe("trace");
   });
 
   it("remembers the auto-sync switch, on by default", () => {
@@ -84,13 +85,10 @@ describe("app style", () => {
 
   it("stamps the style on <html> and loads the trace fonts once", () => {
     const doc = fakeDocument();
-    applyAppStyle("archive", doc);
-    expect(doc.documentElement.dataset.style).toBe("archive");
-    expect(doc.nodes.get("content-insights-archive-fonts")?.href).toContain("family=Cormorant+Garamond");
     applyAppStyle("trace", doc);
     applyAppStyle("trace", doc);
     expect(doc.documentElement.dataset.style).toBe("trace");
-    expect(doc.nodes.size).toBe(2);
+    expect(doc.nodes.size).toBe(1);
     expect(doc.nodes.get("content-insights-trace-fonts")?.href).toContain("fonts.googleapis.com");
     expect(() => applyAppStyle("trace", undefined)).not.toThrow();
   });
@@ -112,11 +110,6 @@ describe("app style", () => {
     expect(doc.documentElement.dataset.style).toBe("trace");
     expect([...doc.nodes.keys()]).toEqual(["content-insights-poster-fonts", "content-insights-trace-fonts"]);
     expect(doc.nodes.get("content-insights-poster-fonts")?.href).toContain("family=Anton");
-  });
-
-  it("points the archive style at its paged story page", () => {
-    expect(buildArchiveStoryUrl()).toBe("/story/story-archive.html");
-    expect(buildArchiveStoryUrl({ motion: "full" })).toBe("/story/story-archive.html?motion=full");
   });
 
   it("points the poster style straight at its story page", () => {

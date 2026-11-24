@@ -1,23 +1,20 @@
 import { Platform } from "react-native";
 
 import type { AppStyle } from "../../services/appStyle";
-import { archiveCss } from "./archiveCss";
 import { minimalCss } from "./minimalCss";
 import { motionCss } from "./motion";
 import { posterCss } from "./posterCss";
 import { traceCss } from "./traceCss";
 
 /**
- * 四套整体风格共用一份 token 名：
- * - 极简（默认）：白底、发丝灰线、系统字体，墨黑做选中、一种蓝做数据和可点的东西，见 minimal
- * - 档案馆：暖金 + 冷青 + 近黑纸面（与 ReportWorkspace 十二章同源）；web 上同一套颜色，
- *   只把弱化字提亮到能读、字体换成宋体 + Cormorant 古典衬线数字，见 archiveWeb
+ * 三套整体风格共用一份 token 名：
+ * - 极简（默认）：白底、发丝灰线、系统字体，墨黑做选中、森林绿做数据和可点的东西，见 minimal
  * - 内容年志：入口卡的墨夜 / 玻璃 / 奶油字 / 信号蓝 / 琥珀光（prototype/story-entry.html）
  * - 海报：墨黑 / 新闻纸 / 信号橙
  * web 上每个 token 是 CSS 变量，<html data-style> 一换整套界面跟着换（见 ensureThemeStyles / applyAppStyle）；
- * native 没有 CSS 变量，永远拿档案馆的实色。
+ * native 没有 CSS 变量，保留原本的深色实色回退。
  */
-const archive = {
+const nativeDark = {
   canvas: "#0A0B0B",
   sidebar: "#0E1010",
   surface: "#131717",
@@ -62,7 +59,7 @@ const archive = {
   tints: ["#1B2422", "#232019", "#1E1A16", "#182120", "#241E17", "#1C1F1E"],
 };
 
-export type WorkspacePalette = typeof archive;
+export type WorkspacePalette = typeof nativeDark;
 
 // 内容年志：入口卡（public/story/story-entry.html）的墨夜——油画作固定底，面板是半透明的夜色玻璃，
 // 正文奶油色，可交互的是信号蓝，光和选中是琥珀。canvas 透明，让 traceCss 铺在 body 下的那张画透上来。
@@ -158,7 +155,7 @@ const poster: WorkspacePalette = {
 
 // 极简：灰绿纸面 #F2F4F2 上浮一块白色圆角面板，#E6E6E6 发丝线、系统字体、标题只用 500；
 // 森林绿 #255A41 是主按钮、数据和可点的字，墨黑只做正文和选中，琥珀 / 红只在状态上出现。
-// 不铺纹理、不发光，和另外三套（暗色玻璃 / 暗室卷宗 / 新闻纸）都不一样。
+// 不铺纹理、不发光，和另外两套（暗色玻璃 / 新闻纸）都不一样。
 const minimal: WorkspacePalette = {
   canvas: "#F2F4F2",
   sidebar: "#F2F4F2",
@@ -207,25 +204,15 @@ const minimal: WorkspacePalette = {
   tints: ["#EFF1EF", "#EFF1EF", "#EFF1EF", "#EFF1EF", "#EFF1EF", "#EFF1EF"],
 };
 
-// 档案馆（只在 web）：就是上面这套近黑纸面 + 暖金 + 冷青（主题色块、热力、饼图照旧用 slices / heat / tints）。
-// 只改两处能不能读的：弱化字 #7C7266 在纸面上只有 3.8:1，提到 #A09383（各层纸面上都 ≥5:1）；
-// 砖红 #B4664F 做报错字不到 4.5:1，提一档。native 看不到这组值，仍用上面的 archive。
-const archiveWeb: WorkspacePalette = {
-  ...archive,
-  textMuted: "#A09383",
-  danger: "#C47A62",
-};
+interface WorkspaceFonts {
+  serif: string;
+  didot: string;
+  body: string;
+  sans: string;
+  mono: string;
+}
 
-const archiveFonts = {
-  serif: "Georgia, 'Songti SC', 'STSong', 'SimSun', serif",
-  didot: "Didot, 'Bodoni 72', Georgia, 'Songti SC', serif",
-  // 内容库各页正文：档案馆整页衬线
-  body: "Georgia, 'Songti SC', 'STSong', 'SimSun', serif",
-  sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-  // 眉题 / 小标签：年志用等宽；档案馆里内容库沿用衬线
-  mono: "Georgia, 'Songti SC', 'STSong', 'SimSun', serif",
-};
-const traceFonts: typeof archiveFonts = {
+const traceFonts: WorkspaceFonts = {
   serif: "Fraunces, 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif",
   didot: "Fraunces, 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif",
   body: "Inter, 'PingFang SC', 'Helvetica Neue', sans-serif",
@@ -233,7 +220,7 @@ const traceFonts: typeof archiveFonts = {
   mono: "'SFMono-Regular', ui-monospace, 'Roboto Mono', monospace",
 };
 
-const posterFonts: typeof archiveFonts = {
+const posterFonts: WorkspaceFonts = {
   serif: "Anton, 'Noto Sans SC', 'PingFang SC', sans-serif",
   didot: "Anton, 'Noto Sans SC', 'PingFang SC', sans-serif",
   body: "'Noto Sans SC', 'PingFang SC', 'Helvetica Neue', sans-serif",
@@ -241,36 +228,19 @@ const posterFonts: typeof archiveFonts = {
   mono: "'JetBrains Mono', ui-monospace, 'Roboto Mono', monospace",
 };
 
-// 档案馆（web）：整页宋体（Noto Serif SC），数字和英文眉题用细而大的古典衬线 Cormorant Garamond
-// （字体链接见 appStyle 的 FONTS.archive）。按钮、对话框里的操作字仍是系统无衬线。
-const archiveWebFonts: typeof archiveFonts = {
-  serif: "'Noto Serif SC', 'Songti SC', 'STSong', serif",
-  didot: "'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif",
-  body: "'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif",
-  sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-  mono: "'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif",
-};
-
 // 极简：整页一种系统无衬线，数字用等宽数位（见 minimalCss）；不取任何网络字体
 const minimalSans = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', 'Segoe UI', 'Microsoft YaHei', sans-serif";
-const minimalFonts: typeof archiveFonts = { serif: minimalSans, didot: minimalSans, body: minimalSans, sans: minimalSans, mono: minimalSans };
+const minimalFonts: WorkspaceFonts = { serif: minimalSans, didot: minimalSans, body: minimalSans, sans: minimalSans, mono: minimalSans };
 
-// 档案页面是直角的；年志跟入口卡：卡片 24、按钮是胶囊
-const archiveRadii = { small: 0, medium: 0, large: 0, pill: 0 };
-const traceRadii: typeof archiveRadii = { small: 10, medium: 16, large: 24, pill: 50 };
-const minimalRadii: typeof archiveRadii = { small: 6, medium: 10, large: 16, pill: 999 };
+// 海报是直角的；年志跟入口卡：卡片 24、按钮是胶囊
+const zeroRadii = { small: 0, medium: 0, large: 0, pill: 0 };
+const traceRadii: typeof zeroRadii = { small: 10, medium: 16, large: 24, pill: 50 };
+const minimalRadii: typeof zeroRadii = { small: 6, medium: 10, large: 16, pill: 999 };
 
-export const palettes: Record<AppStyle, { colors: WorkspacePalette; fonts: typeof archiveFonts; radii: typeof archiveRadii }> = {
+export const palettes: Record<AppStyle, { colors: WorkspacePalette; fonts: WorkspaceFonts; radii: typeof zeroRadii }> = {
   minimal: { colors: minimal, fonts: minimalFonts, radii: minimalRadii },
-  archive: { colors: archive, fonts: archiveFonts, radii: archiveRadii },
   trace: { colors: trace, fonts: traceFonts, radii: traceRadii },
-  poster: { colors: poster, fonts: posterFonts, radii: archiveRadii },
-};
-
-/** web 上 CSS 变量实际取的值：只有档案馆与 native 不同。 */
-export const webPalettes: typeof palettes = {
-  ...palettes,
-  archive: { colors: archiveWeb, fonts: archiveWebFonts, radii: archiveRadii },
+  poster: { colors: poster, fonts: posterFonts, radii: zeroRadii },
 };
 
 const web = Platform.OS === "web";
@@ -284,15 +254,15 @@ function colorTokens(palette: WorkspacePalette): WorkspacePalette {
   ])) as WorkspacePalette;
 }
 
-export const workspaceColors = colorTokens(archive);
+export const workspaceColors = colorTokens(nativeDark);
 
-export const workspaceFonts: Record<keyof typeof archiveFonts, string | undefined> = web
+export const workspaceFonts: Record<keyof WorkspaceFonts, string | undefined> = web
   ? { serif: "var(--ws-font-serif)", didot: "var(--ws-font-didot)", body: "var(--ws-font-body)", sans: "var(--ws-font-sans)", mono: "var(--ws-font-mono)" }
   : { serif: undefined, didot: undefined, body: undefined, sans: undefined, mono: undefined };
 
-export const workspaceRadii: Record<keyof typeof archiveRadii, number | string> = web
+export const workspaceRadii: Record<keyof typeof zeroRadii, number | string> = web
   ? { small: "var(--ws-radius-small)", medium: "var(--ws-radius-medium)", large: "var(--ws-radius-large)", pill: "var(--ws-radius-pill)" }
-  : archiveRadii;
+  : zeroRadii;
 
 // 带透明度的 token。RN-web 只放行以 `var(` 开头的颜色字符串，所以借一个从不定义的变量的回退值把 color-mix 送进 CSS。
 export function alpha(token: string, ratio: number): string {
@@ -301,7 +271,7 @@ export function alpha(token: string, ratio: number): string {
 }
 
 function declarations(style: AppStyle): string {
-  const { colors, fonts, radii } = webPalettes[style];
+  const { colors, fonts, radii } = palettes[style];
   const lines: string[] = [];
   for (const [key, value] of Object.entries(colors)) {
     if (Array.isArray(value)) value.forEach((item, index) => lines.push(`${cssName(key, index)}:${item}`));
@@ -313,8 +283,8 @@ function declarations(style: AppStyle): string {
 }
 
 export function themeCss(): string {
-  // 默认极简：:root 直接发极简令牌，另外三套靠 data-style 覆盖。
-  return `:root{${declarations("minimal")}}\n:root[data-style="trace"]{${declarations("trace")}}\n:root[data-style="archive"]{${declarations("archive")}}\n:root[data-style="poster"]{${declarations("poster")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}\n${posterCss}\n${archiveCss}\n${minimalCss}\n${traceCss}`;
+  // 默认极简：:root 直接发极简令牌，另外两套靠 data-style 覆盖。
+  return `:root{${declarations("minimal")}}\n:root[data-style="trace"]{${declarations("trace")}}\n:root[data-style="poster"]{${declarations("poster")}}\nhtml,body{background:var(--ws-canvas)}\n${motionCss}\n${posterCss}\n${minimalCss}\n${traceCss}`;
 }
 
 const STYLE_ID = "content-insights-theme";

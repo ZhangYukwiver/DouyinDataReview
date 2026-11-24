@@ -10,7 +10,7 @@ import { STORY_STYLES, type StoryStyle } from "./StoryScreen";
 
 const modes: Array<{ id: ReportMode; label: string }> = [{ id: "summary", label: "概览" }, { id: "living", label: "近期" }, { id: "annual", label: "年度" }];
 
-// Each cover hints at its story's palette: ink night + amber / near-black + gold / newsprint + signal orange.
+// Each cover hints at its story's palette: ink night + amber / newsprint + signal orange.
 function StoryCover({ style }: { style: StoryStyle }) {
   const w = 132, h = 176, box = { width: "100%", height: "100%", viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "xMidYMid slice" } as const;
   if (style === "trace") return <Svg {...box}>
@@ -22,13 +22,6 @@ function StoryCover({ style }: { style: StoryStyle }) {
     <Circle cx={108} cy={30} r={40} stroke="#f6f1e4" strokeOpacity={0.35} strokeWidth={1} strokeDasharray="1 4" fill="none" />
     <Rect x={12} y={12} width={w - 24} height={h - 24} rx={10} stroke="#fefffc" strokeOpacity={0.35} fill="none" />
   </Svg>;
-  if (style === "archive") return <Svg {...box}>
-    <Rect width={w} height={h} fill="#0f0d0a" />
-    <Rect x={10} y={10} width={w - 20} height={h - 20} stroke="#c9a46a" strokeOpacity={0.7} fill="none" />
-    <Rect x={14} y={14} width={w - 28} height={h - 28} stroke="#c9a46a" strokeOpacity={0.3} fill="none" />
-    {[0, 1, 2].map(i => <Line key={i} x1={28} x2={w - 28} y1={92 + i * 9} y2={92 + i * 9} stroke="#e3c8a6" strokeOpacity={0.18} />)}
-    <Circle cx={w / 2} cy={58} r={16} stroke="#c9a46a" strokeOpacity={0.8} fill="none" /><Circle cx={w / 2} cy={58} r={3} fill="#e3c8a6" />
-  </Svg>;
   return <Svg {...box}>
     <Rect width={w} height={h} fill="#ece5d5" /><Rect x={0} y={0} width={w} height={34} fill="#141210" />
     <Rect x={12} y={112} width={58} height={52} fill="#ff4d1f" />
@@ -38,7 +31,7 @@ function StoryCover({ style }: { style: StoryStyle }) {
 }
 
 const coverText: Record<StoryStyle, { color: string; sub: string }> = {
-  trace: { color: "#f6f1e4", sub: "#eea44e" }, archive: { color: "#e3c8a6", sub: "#c9a46a" }, poster: { color: "#ece5d5", sub: "#ece5d5" },
+  trace: { color: "#f6f1e4", sub: "#eea44e" }, poster: { color: "#ece5d5", sub: "#ece5d5" },
 };
 
 export function ReportScreen({ snapshot, active, onCollect, onStory }: {

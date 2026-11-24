@@ -231,7 +231,7 @@ function MobileWorkspace() {
         <View style={{ flex: 1, gap: 6 }}>
           <Text style={[ui.eyebrow, { color: "#eea44e" }]}>TRACE · ANNUAL</Text>
           <Text style={{ fontFamily: serif, color: "#f6f1e4", fontSize: 24, lineHeight: 32 }}>打开你的年度故事</Text>
-          <Text style={{ color: "rgba(246,241,228,0.72)", fontSize: 13 }}>内容年志、档案馆、海报，三种看法</Text>
+          <Text style={{ color: "rgba(246,241,228,0.72)", fontSize: 13 }}>内容年志、海报，两种看法</Text>
         </View>
         <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(246,241,228,0.14)", alignItems: "center", justifyContent: "center" }}>
           <ChevronRight size={20} color="#f6f1e4" />

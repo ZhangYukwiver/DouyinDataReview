@@ -130,7 +130,7 @@ class DouyinNativeModule : Module() {
     }
 
     AsyncFunction("readStoryAsset") { name: String ->
-      require(name in setOf("story-entry.html", "story-draft_副本.html", "story-poster.html", "story-archive.html", "story-glide.js", "story-export.js", "story-card.js")
+      require(name in setOf("story-entry.html", "story-draft_副本.html", "story-poster.html", "story-glide.js", "story-export.js", "story-card.js")
         || name.matches(Regex("story-images/[a-z0-9-]+\\.(jpg|png)")))
       context.assets.open("story/$name").use { stream ->
         val bytes = stream.readBytesLimited(20000000)

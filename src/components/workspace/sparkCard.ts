@@ -3,12 +3,12 @@ import type { ChatMemorial } from "../../domain/chatMemorial";
 /*
  * 火花纪念卡：一个会话的聊天统计画成 3:4 的图（1080×1440），存成 PNG。
  * 和年度分享图一样直接在 canvas 上排字，不放头像（隐私，而且抖音 CDN 的图会污染 canvas，导不出来）。
- * 卡上写什么只在 sparkCardLines 里定，三种风格（sparkCardPoster / Archive / Trace）只管怎么摆。
+ * 卡上写什么只在 sparkCardLines 里定，两种风格（sparkCardPoster / Trace）只管怎么摆。
  */
 
 export const W = 1080;
 export const H = 1440;
-export type SparkCardStyle = "poster" | "archive" | "trace";
+export type SparkCardStyle = "poster" | "trace";
 
 export interface SparkCardStat {
   /** 小标题，如「最常聊的钟点」。 */
@@ -42,7 +42,7 @@ export interface SparkCardLines {
   emoji: Array<{ code: string; count: number }>;
   words: Array<{ word: string; count: number }>;
   firstLine: { text: string; by: string } | null;
-  /** 各块的小标题，三种风格共用。 */
+  /** 各块的小标题，两种风格共用。 */
   labels: { balance: string; hours: string; calendar: string; emoji: string; words: string; firstLine: string };
   /** 卡底的一句落款（叙事句）。 */
   footer: string;

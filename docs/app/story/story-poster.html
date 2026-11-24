@@ -122,7 +122,7 @@ figure{margin:0}
 @media (hover:hover){.nav-idx a:hover{background:var(--paper);color:var(--ink)}}
 .nav-idx a.on{background:var(--sig);color:var(--ink)}
 .nav-r{display:flex;align-items:center;gap:8px;padding:0 var(--gut) 3px 0;white-space:nowrap}
-/* 窄窗口里章节目录放不下：先收起「本机数据」（档案馆也这样），给「导出」腾地方；还放不下的那截压在右边按钮底下 */
+/* 窄窗口里章节目录放不下：先收起「本机数据」，给「导出」腾地方；还放不下的那截压在右边按钮底下 */
 @media (max-width:1160px){#navSrc{display:none}}
 .nav-r{position:relative;background:var(--ink)}
 .nav-r .btn{height:30px;padding:0 10px;border-width:2px;font-size:11px}
@@ -3599,7 +3599,7 @@ CH.push({
     const ITEMS = [
       { tag: "button", t: "进入持续报告", a: "→", d: FRAMED ? "回到工作台，报告会随着新的采集接着更新。" : "在应用里打开时，这一格会带你去工作台。", on: () => toWorkspace() },
       { tag: "button", t: "隐私模式", a: priv, d: "名字、标题、头像都换成方块，截图更放心。", on: () => togglePrivacy(), priv: true },
-      LIVE && window.StoryCard && { tag: "button", t: "存一张分享图", a: "↓", d: "时间段、几个数和三个词排成一张 3:4 的图，先预览，三种风格挑一种再存。", card: true },
+      LIVE && window.StoryCard && { tag: "button", t: "存一张分享图", a: "↓", d: "时间段、几个数和三个词排成一张 3:4 的图，先预览，两种风格挑一种再存。", card: true },
       { tag: "button", t: "从头再看", a: "↑", d: "回到封面，从第一章重新看一遍。", on: () => goTo(document.body) },
     ].filter(Boolean);
     let privBtn = null;
