@@ -301,6 +301,7 @@ export async function startCollectorServer({
   usageBrowserConnector = connectBrowserUsage,
   usageBrowserDiscovery = discoverUsageBrowser,
   xiaohongshuContext,
+  bilibiliContext,
   bilibiliEnabled = process.env.DY_BILIBILI_ENABLED !== "0",
   // 抖音桌面端的数据目录和登录态读取可替换，测试里用假的客户端目录
   desktopDirectory = desktopDataDirectory(),
@@ -434,6 +435,7 @@ export async function startCollectorServer({
     accountRegistry: bilibiliAccounts,
     contentLibrary,
     enabled: () => bilibiliEnabled,
+    openContext: bilibiliContext,
   });
   const listContentLibrarySources = async () => {
     const sources = [{ file: path.join(dataDirectory, "accounts.json") }, { file: path.join(dataDirectory, "xiaohongshu", "accounts.json") }, { file: path.join(bilibiliAccountRoot, "accounts.json") }];
@@ -689,8 +691,7 @@ export async function startCollectorServer({
       return ["starting", "login", "reading"].includes(status.job?.state) ? "这个账号仍在小红书任务中。" : null;
     }
     if (platform === "bilibili") {
-      const job = [...bilibiliRoutes.service.jobs.values()].find(item => item.accountId === id && ["starting", "login", "syncing"].includes(item.state));
-      return job ? "这个账号仍在 B 站任务中。" : null;
+      return bilibiliRoutes.service.busy(id) ? "这个账号仍在 B 站任务中。" : null;
     }
     return null;
   };
@@ -907,6 +908,9 @@ export async function startCollectorServer({
     }
 
     if (bilibiliRoutes.matches(url.pathname)) {
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      response.once("close", abort);
       try {
         if (bilibiliEnabled) await loadBilibiliAccounts();
         const body = request.method === "POST" ? await readJsonBody(request) : null;
@@ -916,12 +920,18 @@ export async function startCollectorServer({
           searchParams: url.searchParams,
           body,
           loopback: isLoopbackAddress(request.socket.remoteAddress ?? ""),
+          signal: controller.signal,
+          accountChanging: Boolean(accountWork),
         });
+        if (controller.signal.aborted) return;
         if (reply) sendJson(response, reply.status, reply.body);
         else sendJson(response, 404, { error: "not_found" });
       } catch (error) {
+        if (controller.signal.aborted) return;
         const malformed = error instanceof SyntaxError || error?.message === "body_too_large";
         sendJson(response, malformed ? 400 : 500, { error: malformed ? "invalid_request" : "bilibili_failed", message: malformed ? "请求格式无效。" : "B 站操作失败，请稍后重试。" });
+      } finally {
+        response.off("close", abort);
       }
       return;
     }

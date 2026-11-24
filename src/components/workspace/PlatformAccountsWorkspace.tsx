@@ -1,14 +1,14 @@
 import React, { useState } from "react";
 import { Image, ScrollView, Text, View } from "react-native";
 import type { ExploreConnection } from "../../services/explorer";
-import { accountChoiceLabel, accountLabel, platformLabels, workspaceRequest, type ContentPlatform, type PlatformAccount, type PlatformDirectory } from "../../services/contentWorkspace";
+import { accountChoiceLabel, accountLabel, platformLabels, workspacePlatforms, workspaceRequest, type WorkspacePlatform, type PlatformAccount, type PlatformDirectory } from "../../services/contentWorkspace";
 import { Empty, ErrorLine, kit, Loading, Panel, SmallButton, Tabs } from "./CreatorKit";
 import { ConnectLibrary, contentStyles as style, SearchField } from "./ContentWorkspaceControls";
 
 const base = "/v1/platform-accounts";
-export const accountPath = (platform: ContentPlatform, id?: string) => base + "/" + platform + (id ? "/" + encodeURIComponent(id) : "");
+export const accountPath = (platform: WorkspacePlatform, id?: string) => base + "/" + platform + (id ? "/" + encodeURIComponent(id) : "");
 export function PlatformSwitcher({ platform, accounts, onSelect, onManage, disabled }: {
-  platform: ContentPlatform; accounts?: PlatformDirectory; onSelect: (id: string) => void; onManage: () => void; disabled: boolean;
+  platform: WorkspacePlatform; accounts?: PlatformDirectory; onSelect: (id: string) => void; onManage: () => void; disabled: boolean;
 }) {
   const group = accounts?.[platform];
   return <View style={style.switcher}><Text style={style.label}>{platformLabels[platform]} · 操作账号</Text>
@@ -19,7 +19,7 @@ export function PlatformSwitcher({ platform, accounts, onSelect, onManage, disab
 
 type Props = { connection: ExploreConnection | null; accounts?: PlatformDirectory; error?: string; onReload: () => void; onConnect: () => void;
   onDouyinSessionChange: () => Promise<void>;
-  onSelect: (p: ContentPlatform, id: string) => Promise<void>; onAddDouyin: () => Promise<void>; onLogin: (p: ContentPlatform, id: string) => Promise<void>;
+  onSelect: (p: WorkspacePlatform, id: string) => Promise<void>; onAddDouyin: () => Promise<void>; onLogin: (p: WorkspacePlatform, id: string) => Promise<void>;
   biliEnabled: boolean; disabled: boolean;
   /** 抖音那栏最下面多放的东西（网页版用浏览器导入登录的面板） */
   douyinExtra?: React.ReactNode };
@@ -37,7 +37,7 @@ export function PlatformAccountsWorkspace({ connection, accounts, error, onReloa
   return <ScrollView style={{ flex: 1 }} contentContainerStyle={style.page} keyboardShouldPersistTaps="handled">
     {(error || actionError) && <ErrorLine text={actionError || error || ""} onRetry={onReload} />}
     {!accounts && !error && <Loading label="正在读取账号" />}
-    {accounts && (Object.keys(platformLabels) as ContentPlatform[]).filter(p => p !== "bilibili" || biliEnabled).map(platform => {
+    {accounts && workspacePlatforms.filter(p => p !== "bilibili" || biliEnabled).map(platform => {
       const group = accounts[platform];
       return <Panel key={platform} title={platformLabels[platform]} subtitle={group.accounts.length + " 个账号"}
         extra={<SmallButton label={"添加" + platformLabels[platform] + "账号"} disabled={busy || disabled} onPress={() => run(async () => {
@@ -56,7 +56,7 @@ export function PlatformAccountsWorkspace({ connection, accounts, error, onReloa
 }
 
 function AccountRow({ account, active, connection, platform, onSelect, onLogin, busy, run, onSessionChange }: {
-  account: PlatformAccount; active: boolean; connection: ExploreConnection; platform: ContentPlatform;
+  account: PlatformAccount; active: boolean; connection: ExploreConnection; platform: WorkspacePlatform;
   onSelect: () => Promise<void>; onLogin: () => Promise<void>; onSessionChange?: () => Promise<void>; busy: boolean; run: (operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);

@@ -3,6 +3,9 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright-core";
 import { BrowserConnectionError } from "./browserConnection.mjs";
+import { BILIBILI_API as API_ORIGIN, BILIBILI_ORIGIN, BilibiliError, normalizeBvid, openBilibiliProtocol } from "./bilibiliProtocol.mjs";
+
+export { BilibiliError, normalizeBvid };
 
 /**
  * B 站读取走普通网页会话。每个账号都使用自己的 persistent context，cookie 只留在
@@ -17,32 +20,14 @@ export const BILIBILI_LISTS = Object.freeze({
 
 export const BILIBILI_ACTIVE_STATES = Object.freeze(["starting", "login", "syncing"]);
 
-const BILIBILI_ORIGIN = "https://www.bilibili.com";
-const API_ORIGIN = "https://api.bilibili.com";
 const MAX_PAGE_SIZE = 40;
 const MAX_FOLDERS = 100;
 const MAX_ITEMS = 10_000;
 const MAX_PAGES = 100;
 
-export class BilibiliError extends Error {
-  constructor(code, message, status = 409) {
-    super(message);
-    this.name = "BilibiliError";
-    this.code = code;
-    this.status = status;
-  }
-}
-
 const text = (value, limit = 500) => typeof value === "string" ? value.trim().slice(0, limit) : (typeof value === "number" && Number.isFinite(value) ? String(value).slice(0, limit) : "");
 const number = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
 const safeId = (value) => text(value, 80).replace(/[^\w:-]/gu, "_");
-
-export function normalizeBvid(value) {
-  // BVID 的字母部分大小写敏感。只接受标准的大写 BV 前缀，保留后面的原字符，
-  // 否则把 BV1abCDefGHi 整段转大写会指向另一条作品。
-  const bvid = text(value, 20);
-  return /^BV[0-9A-Za-z]{10}$/u.test(bvid) ? bvid : null;
-}
 
 export function bvidFromUrl(value) {
   try {
@@ -350,7 +335,9 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
   onAccountIdentity = null, onSnapshot = null } = {}) {
   if (!dataDirectory) throw new TypeError("dataDirectory is required");
   const jobs = new Map();
-  const writes = new Map();
+  const operations = new Map();
+  const deviceIds = new Map();
+  const shutdown = new AbortController();
 
   const directoryFor = accountId => resolveAccountDirectory(safeId(accountId || "default"));
   const readSnapshot = accountId => readJson(snapshotFile(directoryFor(accountId)));
@@ -374,12 +361,17 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
   }
   const isAuthFailure = error => error?.code === "bilibili_login_required" || error?.code === "bilibili_account_mismatch";
 
-  function enqueueWrite(accountId, task) {
+  function queued(accountId, task) {
     const key = safeId(accountId || "default");
-    const previous = writes.get(key) ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(task);
-    writes.set(key, run.catch(() => undefined));
-    return run.finally(() => { if (writes.get(key) === run) writes.delete(key); });
+    const previous = operations.get(key) ?? Promise.resolve();
+    const run = previous.then(task);
+    const settled = run.then(() => undefined, () => undefined);
+    operations.set(key, settled);
+    return run.finally(() => { if (operations.get(key) === settled) operations.delete(key); });
+  }
+
+  function activeJob(accountId) {
+    return [...jobs.values()].find(value => value.accountId === safeId(accountId) && BILIBILI_ACTIVE_STATES.includes(value.state));
   }
 
   async function status(accountId = "default") {
@@ -391,7 +383,7 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
   function start(accountId, type, task) {
     const id = randomUUID();
     const key = safeId(accountId || "default");
-    const current = [...jobs.values()].find(value => value.accountId === key && BILIBILI_ACTIVE_STATES.includes(value.state));
+    const current = activeJob(key);
     if (current) throw new BilibiliError("bilibili_busy", "B 站上一个操作还没结束，请稍等。", 409);
     const controller = new AbortController();
     const job = { id, accountId: key, type, state: type === "login" ? "login" : "starting", message: type === "login" ? "请在打开的 B 站窗口中登录。" : "正在读取 B 站…", error: null, startedAt: new Date().toISOString(), finishedAt: null };
@@ -410,7 +402,8 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
   }
 
   function startLogin(accountId = "default", { expectedMid = null } = {}) {
-    return start(accountId, "login", async signal => {
+    return start(accountId, "login", signal => queued(accountId, async () => {
+      signal.throwIfAborted();
       const directory = directoryFor(accountId);
       const context = await openContext(profileDirectory(directory), { interactive: true });
       try {
@@ -437,13 +430,14 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
       } finally {
         await context.close().catch(() => undefined);
       }
-    });
+    }));
   }
 
   function startSync(accountId = "default", { lists = ["favorites", "history"], expectedMid = null } = {}) {
     const requested = [...new Set(Array.isArray(lists) ? lists : [])].filter(value => value in BILIBILI_LISTS);
     if (!requested.length) throw new BilibiliError("invalid_request", "至少选择收藏夹或观看历史。", 400);
-    return start(accountId, "sync", async signal => enqueueWrite(accountId, async () => {
+    return start(accountId, "sync", signal => queued(accountId, async () => {
+      signal.throwIfAborted();
       const directory = directoryFor(accountId);
       const context = await openContext(profileDirectory(directory), { interactive: false });
       try {
@@ -471,28 +465,67 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
     }));
   }
 
-  async function getDetail(accountId = "default", bvid, { signal, expectedMid = null } = {}) {
+  async function withContext(accountId, signal, task) {
     const directory = directoryFor(accountId);
+    signal.throwIfAborted();
     const context = await openContext(profileDirectory(directory), { interactive: false });
+    let closing;
+    const close = () => { closing ??= context.close().catch(() => undefined); return closing; };
+    signal.addEventListener("abort", close, { once: true });
     try {
-      const page = await ensurePage(context);
-      const account = await currentAccount(page, signal);
-      if (expectedMid && account.mid !== String(expectedMid)) {
-        throw new BilibiliError("bilibili_account_mismatch", "当前 B 站登录账号已变化，本次没有覆盖原资料。", 409);
-      }
-      const detail = await readDetail(page, bvid, signal);
-      return { ...detail, accountId: safeId(accountId || "default"), account };
+      signal.throwIfAborted();
+      return await task(context);
     } catch (error) {
+      signal.throwIfAborted();
       if (isAuthFailure(error)) await markLoggedOut(accountId, { directory, signal }).catch(() => undefined);
       throw error;
-    } finally { await context.close().catch(() => undefined); }
+    } finally {
+      signal.removeEventListener("abort", close);
+      await close();
+    }
+  }
+
+  function verifyMid(actual, expected) {
+    if (expected && actual !== String(expected)) {
+      throw new BilibiliError("bilibili_account_mismatch", "当前 B 站登录账号与所选账号不一致。", 409);
+    }
+  }
+
+  function online(accountId, signal, task) {
+    const requestSignal = AbortSignal.any([shutdown.signal, AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]);
+    return queued(accountId, () => withContext(accountId, requestSignal, context => task(context, requestSignal))).catch(error => {
+      if (error?.name === "TimeoutError") throw new BilibiliError("bilibili_timeout", "B 站请求超时，请稍后重试。", 504);
+      throw error;
+    });
+  }
+
+  function getDetail(accountId = "default", bvid, { signal, expectedMid = null } = {}) {
+    return online(accountId, signal, async (context, requestSignal) => {
+      const page = await ensurePage(context);
+      const account = await currentAccount(page, requestSignal);
+      verifyMid(account.mid, expectedMid);
+      const detail = await readDetail(page, bvid, requestSignal);
+      return { ...detail, accountId: safeId(accountId || "default"), account };
+    });
+  }
+
+  function runProtocol(accountId, operation, { signal, expectedMid, write }) {
+    return online(accountId, signal, async (context, requestSignal) => {
+      const session = await openBilibiliProtocol(context, { signal: requestSignal });
+      const linkedMid = expectedMid ?? (await readSnapshot(accountId))?.account?.mid;
+      if (write && !linkedMid) throw new BilibiliError("bilibili_login_required", "请先在账号管理中登录并绑定当前 B 站账号。", 409);
+      verifyMid(session.mid, linkedMid);
+      if (write && !deviceIds.has(accountId)) deviceIds.set(accountId, randomUUID());
+      const data = await operation({ ...session, deviceId: deviceIds.get(accountId) });
+      return { accountId, data };
+    });
   }
 
   async function save(accountId = "default", raw) {
     const directory = directoryFor(accountId);
     const item = normalizeItem(raw, { accountId, source: "manual" });
     if (!item) throw new BilibiliError("invalid_request", "请输入可识别的 B 站视频或 BVID。", 400);
-    return enqueueWrite(accountId, async () => {
+    return queued(accountId, async () => {
       const current = await readSnapshot(accountId);
       const now = new Date().toISOString();
       const snapshot = { ...(current ?? { schemaVersion: 1, platform: "bilibili", folders: [] }), account: current?.account ?? null, fetchedAt: now, items: mergeItems([...(current?.items ?? []), { ...item, savedAt: now }]) };
@@ -504,14 +537,15 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
   }
 
   async function logout(accountId = "default") {
-    const active = [...jobs.values()].find(value => value.accountId === safeId(accountId) && BILIBILI_ACTIVE_STATES.includes(value.state));
+    const active = activeJob(accountId);
     if (active) throw new BilibiliError("bilibili_busy", "B 站上一个操作还没结束，请稍等。", 409);
     const directory = directoryFor(accountId);
     const profile = profileDirectory(directory);
     // Keep the local snapshot and account association. Removing this directory only logs the
     // platform account out and lets the next login prove a new mid before replacing it.
-    return enqueueWrite(accountId, async () => {
+    return queued(accountId, async () => {
       await rm(profile, { recursive: true, force: true });
+      deviceIds.delete(accountId);
       const previous = await readSnapshot(accountId);
       if (previous?.account) {
         await writeJson(snapshotFile(directory), { ...previous, account: { ...previous.account, isLogin: false } });
@@ -522,10 +556,11 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
   }
 
   async function close() {
+    shutdown.abort();
     const active = [...jobs.values()].filter(value => BILIBILI_ACTIVE_STATES.includes(value.state));
     for (const job of active) job.controller?.abort?.();
     await Promise.allSettled(active.map(job => job.promise ?? Promise.resolve()));
-    await Promise.allSettled([...writes.values()]);
+    await Promise.allSettled([...operations.values()]);
   }
 
   return {
@@ -540,8 +575,10 @@ export function createBilibili({ dataDirectory, resolveAccountDirectory = (id) =
       return true;
     },
     jobs,
+    busy: accountId => operations.has(safeId(accountId || "default")) || Boolean(activeJob(accountId)),
     close,
     getDetail,
+    runProtocol,
     save,
     logout,
     readSnapshot,

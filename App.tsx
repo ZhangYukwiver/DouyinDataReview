@@ -126,14 +126,16 @@ import { buildDataExportWithVoice, type DataExportSelection } from "./src/servic
 import { readRecordFolders, type RecordFolders } from "./src/services/recordFolders";
 import { CreatorWorkspace } from "./src/components/workspace/CreatorWorkspace";
 import { KnowledgeWorkspace } from "./src/components/workspace/KnowledgeWorkspace";
-import { XiaohongshuWorkspace } from "./src/components/workspace/XiaohongshuWorkspace";
 import { BilibiliWorkspace } from "./src/components/workspace/BilibiliWorkspace";
+import { BilibiliExploreWorkspace, BilibiliFeedWorkspace } from "./src/components/workspace/BilibiliDiscovery";
+import { BilibiliChatWorkspace, BilibiliCreatorWorkspace } from "./src/components/workspace/BilibiliAccountWorkspace";
+import { startBilibiliLogin } from "./src/services/bilibili";
 import { CatalogWorkspace } from "./src/components/workspace/CatalogWorkspace";
 import { PlatformAccountsWorkspace, PlatformSwitcher, accountPath } from "./src/components/workspace/PlatformAccountsWorkspace";
 import { useWorkspaceRead } from "./src/components/workspace/ContentWorkspaceControls";
-import { isDouyinSpace } from "./src/components/workspace/LegacyContentWorkspace";
-import { type ContentPlatform, type PlatformDirectory, workspaceRequest } from "./src/services/contentWorkspace";
-import { clearCreatorCache, Empty, ErrorLine, Loading } from "./src/components/workspace/CreatorKit";
+import { isBilibiliSpace, isDouyinSpace } from "./src/components/workspace/LegacyContentWorkspace";
+import { type AccountGroup, type PlatformDirectory, type WorkspacePlatform, workspaceRequest } from "./src/services/contentWorkspace";
+import { clearCreatorCache, Empty, ErrorLine, Loading, SmallButton } from "./src/components/workspace/CreatorKit";
 // @ts-expect-error react-native-web 没给内部模块出类型
 import VirtualizedList from "react-native-web/dist/vendor/react-native/VirtualizedList";
 
@@ -335,9 +337,14 @@ function AppContent() {
   const workspaceConnection = useMemo(() => collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null, [collectorUrl, collectorToken]);
   const [directoryRevision, setDirectoryRevision] = useState(0);
   const [platformSwitching, setPlatformSwitching] = useState(false);
+  const [biliSelection, setBiliSelection] = useState<{ connection: typeof workspaceConnection; previousId: string | null; group: AccountGroup }>();
+  const [biliAuthorTarget, setBiliAuthorTarget] = useState<string | null>(null);
   const refreshDirectory = () => setDirectoryRevision(v => v + 1);
   const directoryResult = useWorkspaceRead<{ platforms: PlatformDirectory; bilibiliEnabled?: boolean }>(workspaceConnection, "/v1/platform-accounts", directoryRevision);
-  const directory = directoryResult?.value?.platforms;
+  const loadedDirectory = directoryResult?.value?.platforms;
+  const awaitingDirectory = biliSelection && biliSelection.connection === workspaceConnection && loadedDirectory?.bilibili.activeId === biliSelection.previousId;
+  const directory = awaitingDirectory && loadedDirectory ? { ...loadedDirectory, bilibili: biliSelection.group } : loadedDirectory;
+  useEffect(() => { if (biliSelection && !awaitingDirectory) setBiliSelection(undefined); }, [biliSelection, awaitingDirectory]);
   const biliEnabled = directoryResult?.value?.bilibiliEnabled === true;
   // 每换一次账号加一，让「自动补读」像刚连上时那样对新账号再跑一次
   const [accountEpoch, setAccountEpoch] = useState(0);
@@ -2079,17 +2086,13 @@ function AppContent() {
     setDashboardOpen(true);
     if (activeView === "sources") setActiveView("summary");
   };
-  const space: ContentPlatform | null = activeView === "sources" ? null : isDouyinSpace(dashboardView) ? "douyin" :
-    dashboardView === "xiaohongshu" || dashboardView === "xhs_feed" || dashboardView === "xhs_search" ? "xiaohongshu" : dashboardView === "bilibili" ? "bilibili" : null;
+  const space: WorkspacePlatform | null = activeView === "sources" ? null : isDouyinSpace(dashboardView) ? "douyin" :
+    isBilibiliSpace(dashboardView) ? "bilibili" : null;
   // 网页版用浏览器导入登录的面板：设置里的「账号」页签搬走后放在账号管理的抖音那栏
   const browserConnection = collectorToken && !isDesktopApp() ? { baseUrl: collectorUrl, token: collectorToken, status: collectorStatus,
     onBusyChange: setSwitchingAccount, onChange: adoptBrowserLogin } : undefined;
-  // 小红书的一页拆成三处：内容库（登录、导出、看板）、刷视频（推荐）、探索（搜索）；主页跟着推荐和搜索
-  const xiaohongshuPage = (panes: ReadonlyArray<"board" | "feed" | "search" | "profile">) =>
-    workspaceConnection && !directory?.xiaohongshu.activeId ? waitingForDirectory
-      : <XiaohongshuWorkspace key={directory?.xiaohongshu.activeId} panes={panes} connection={workspaceConnection} accountId={directory?.xiaohongshu.activeId ?? undefined} onOpenSettings={openSettings} />;
   useEffect(refreshDirectory, [collectorAccounts, space, dashboardView === "platformAccounts"]);
-  const chooseAccount = async (p: ContentPlatform, id: string) => {
+  const chooseAccount = async (p: WorkspacePlatform, id: string) => {
     if (!workspaceConnection || platformSwitching || switchingAccount) throw new Error("正在切换账号，请稍后重试。");
     if (p === "douyin") {
       if (id !== collectorAccounts?.activeId) {
@@ -2099,7 +2102,11 @@ function AppContent() {
       }
     } else if (id !== directory?.[p]?.activeId) {
       setPlatformSwitching(true);
-      try { await workspaceRequest(workspaceConnection, accountPath(p, id) + "/activate", { method: "POST" }); }
+      try {
+        const group = await workspaceRequest<AccountGroup>(workspaceConnection, accountPath(p, id) + "/activate", { method: "POST" });
+        if (group.activeId !== id) throw new Error("B 站账号切换未完成。");
+        setBiliSelection({ connection: workspaceConnection, previousId: loadedDirectory?.bilibili.activeId ?? null, group });
+      }
       finally { setPlatformSwitching(false); }
     }
     refreshDirectory();
@@ -2111,6 +2118,33 @@ function AppContent() {
     : <CatalogWorkspace key={page} page={page} {...catalogProps} />;
   const waitingForDirectory = directoryResult?.error ? <ErrorLine text={directoryResult.error} onRetry={refreshDirectory} />
     : directory ? <Empty text="请在账号管理中添加平台账号。" /> : <Loading label="正在读取平台账号" />;
+  const biliAccountId = directory?.bilibili.activeId;
+  const biliAccount = directory?.bilibili.accounts.find(account => account.id === biliAccountId);
+  const openBiliLibrary = () => changeDashboardView("bilibili");
+  const biliViews = (() => {
+    const unavailable = (view: React.ReactNode) => ({
+      bilibili: view, bilibiliFeed: view, bilibiliExplore: view, bilibiliChat: view, bilibiliCreator: view,
+    });
+    if (!biliEnabled) return isBilibiliSpace(dashboardView) ? unavailable(<Empty text="请连接支持 B 站的本机采集器。" />) : undefined;
+    if (privacy) return unavailable(<Empty text="隐私模式已开启。" />);
+    if (platformSwitching) return unavailable(<Loading label="正在切换 B 站账号" />);
+    if (!workspaceConnection || !biliAccountId) return unavailable(waitingForDirectory);
+    const session = { connection: workspaceConnection, accountId: biliAccountId };
+    const manageBiliAccounts = () => changeDashboardView("platformAccounts");
+    const join = <View style={{ gap: 12, padding: 24, alignItems: "flex-start" }}>
+      <Empty text="登录 B 站后可使用此功能。" />
+      <SmallButton label="前往 B 站登录" onPress={openBiliLibrary} />
+    </View>;
+    const onOpenAuthor = (mid: string) => { setBiliAuthorTarget(mid); changeDashboardView("bilibiliExplore"); };
+    return {
+      bilibili: <BilibiliWorkspace key={biliAccountId} enabled {...session} onOpenSettings={openSettings} onAccountChanged={refreshDirectory} onOpenAuthor={onOpenAuthor} />,
+      bilibiliFeed: storySrc ? null : biliAccount?.loggedIn ? <BilibiliFeedWorkspace key={biliAccountId} {...session} /> : join,
+      bilibiliExplore: biliAccount?.loggedIn ? <BilibiliExploreWorkspace key={biliAccountId} {...session} initialAuthor={biliAuthorTarget}
+        onUseInitialAuthor={() => setBiliAuthorTarget(null)} /> : join,
+      bilibiliChat: biliAccount?.loggedIn ? <BilibiliChatWorkspace key={biliAccountId} {...session} onOpenSettings={openSettings} onManageAccount={manageBiliAccounts} /> : join,
+      bilibiliCreator: biliAccount?.loggedIn ? <BilibiliCreatorWorkspace key={biliAccountId} {...session} onOpenSettings={openSettings} onManageAccount={manageBiliAccounts} /> : join,
+    };
+  })();
 
   return (
     <SafeAreaView edges={["top", "bottom"]} style={styles.safeArea}>
@@ -2143,12 +2177,13 @@ function AppContent() {
               await recoverAfterAccountChange(workspaceConnection.baseUrl, workspaceConnection.token, requestId, collectorStatus?.account?.id ?? null);
             }}
             onAddDouyin={() => changeAccount({ add: true })} onLogin={async (p, id) => {
-              await chooseAccount(p, id); if (p === "douyin") openLogin(); else changeDashboardView(p);
+              await chooseAccount(p, id);
+              if (p === "douyin") openLogin();
+              else if (workspaceConnection) { await startBilibiliLogin(workspaceConnection, id); openBiliLibrary(); }
             }} />}
           douyinKnowledge={<KnowledgeWorkspace connection={workspaceConnection} accountId={collectorStatus?.account?.id ?? null}
             records={workspaceRecords} onOpenSettings={openSettings} onOpenAiSettings={() => openPreferences("ai")} />}
-          xiaohongshu={xiaohongshuPage(["board"])} xiaohongshuFeed={xiaohongshuPage(["feed", "profile"])} xiaohongshuSearch={xiaohongshuPage(["search", "profile"])}
-          bilibili={biliEnabled && (workspaceConnection && !directory?.bilibili.activeId ? waitingForDirectory : <BilibiliWorkspace key={directory?.bilibili.activeId} enabled connection={workspaceConnection} accountId={directory?.bilibili.activeId ?? undefined} onOpenSettings={openSettings} />)}
+          bilibiliViews={biliViews} bilibiliAccount={biliAccount}
           assistant={assistantInstalled ? <AssistantWorkspace connection={collectorToken ? { baseUrl: collectorUrl, token: collectorToken } : null} view={assistantView}
             videoLibrary={!privacy && !switchingAccount && collectorAccounts?.activeId ? { accountId: collectorAccounts.activeId, records: workspaceRecords } : undefined}
             onOpenSettings={() => openPreferences("ai")} onOpenLink={(url) => void openRecord(url)} onSaveDownload={saveAssistantDownload} /> : undefined}

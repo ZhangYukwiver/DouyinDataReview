@@ -24,9 +24,9 @@
 
 <p align="center"><a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">下载桌面版</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/">国内下载（加速线路）</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/app/">在线体验</a> · <a href="https://zhangyukwiver.github.io/DouyinDataReview/#demo">在线看示例报告</a> · <a href="#面向开发者">从源码运行</a> · <a href="https://github.com/ZhangYukwiver/DouyinDataReview/stargazers">觉得有用就 Star</a></p>
 
-**DouyinDataReview 是一款在本机管理抖音、小红书和 B 站资料的开源工作台。** 内容库汇总已保存的作品，可按平台、账号和关键词查找。专题可以混放不同平台的资料，知识库可以按专题检索正文、逐字稿和学习笔记。抖音平台空间保留刷视频、聊天、直播、创作者中心和年度报告。
+**DouyinDataReview 是一款在本机管理抖音和 B 站资料的开源工作台。** 内容库汇总已保存的作品，知识库可按平台、账号和关键词检索正文、逐字稿和学习笔记。专题可以混放不同平台的资料。抖音平台空间保留刷视频、聊天、直播、创作者中心和年度报告。
 
-抖音空间使用中国版抖音。小红书空间支持扫码导出[小红书的收藏和点赞](#小红书收藏和点赞导出)并出看板，也能看小红书推荐、搜笔记、读评论和主页（[接口](#小红书内容读取)）。桌面版提供 Windows x64、macOS Apple Silicon 和 Linux x64 安装包。本项目是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。完整步骤见[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)，给检索工具读的项目事实在 [llms.txt](llms.txt)。
+抖音空间使用中国版抖音。桌面版提供 Windows x64、macOS Apple Silicon 和 Linux x64 安装包。本项目是独立开发的非官方工具，与抖音、字节跳动及其关联主体不存在隶属、授权、合作或认可关系。完整步骤见[数据导出与年度报告使用指南](https://zhangyukwiver.github.io/DouyinDataReview/guide.html)，给检索工具读的项目事实在 [llms.txt](llms.txt)。
 
 > [!NOTE]
 > 只能读到本人账号在接口当前返回的记录，不保证取回全部历史。采集用的是抖音没有公开承诺的接口，可能失效，也可能触发账号风控。
@@ -79,7 +79,7 @@ https://github.com/user-attachments/assets/f4dd2420-121d-49b7-ba37-c632c03f10ec
    **macOS 首次打开前需在终端执行一次 `xattr -cr "/Applications/DouyinDataReview.app"`，否则会提示应用已损坏；Windows 出现 SmartScreen 时点「更多信息」，再点「仍要运行」。**
 
 2. 打开应用，进入「账号管理」选择要登录的平台。导入抖音资料时，用抖音 App 扫码，核对昵称，选好读取范围后点「确认导入」。
-3. 工作台默认打开「内容库」。每页顶上切抖音、小红书、B站，聊天、报告和创作者中心目前只有抖音。侧栏底部账号菜单里的「账号管理」添加或切换平台账号，「设置」里调整外观和导出数据。
+3. 工作台默认打开「内容库」。刷视频、探索、内容库、聊天和创作者中心可在页顶切换抖音和 B 站。侧栏底部账号菜单里的「账号管理」添加或切换平台账号，「设置」里调整外观和导出数据。
 
 也可以在「账号管理」从 Chrome / Edge / macOS Comet 导入登录凭据，或直接读本机抖音电脑客户端的登录态。关掉窗口后应用留在托盘，每 3 小时补读一次，完全退出要在托盘菜单里点「退出」。记录存在本机，升级不会覆盖。
 
@@ -153,11 +153,31 @@ npm run web
 
 各平台分别记住当前账号。退出登录后仍可在内容库查看本地资料，删除本地资料前可预览受影响的内容和专题数。专题和手动保存的资料另存于采集器数据目录的 `content-library-meta.json`，平台快照可用于重建 `content-library.json` 索引。
 
-打开「平台 → B 站」，选择账号并登录，即可同步本人创建的收藏夹和视频观看历史。点击收藏夹名称可查看其中的视频，视频详情可查看简介、分 P、打开原视频及加入本地专题。平台视频失效时仍可查到已保存的标题和出处。B 站独立保存各个账号的登录资料和快照。
+打开「内容库 → B 站」，选择账号并登录，即可同步本人创建的收藏夹和视频观看历史。点击收藏夹名称可查看其中的视频，视频详情可查看简介、分 P、打开原视频及加入本地专题。平台视频失效时仍可查到已保存的标题和出处。B 站独立保存各个账号的登录资料和快照。
+
+登录后还可在 B 站内容库查看在线历史、近期点赞和关注直播。视频详情提供播放、字幕和评论。刷视频展示账号的首页推荐，探索可搜索作品、UP 主和直播间，也可查看热门榜单。聊天和创作者中心读取当前操作账号的数据。
+
+### B 站采集器接口
+
+以下路径以 `/v1/bilibili` 为前缀，使用 `POST` 和 JSON 请求体。仅接受本机配对令牌，沿用工作台中登录的 B 站账号。传 `accountId` 指定账号，读取时省略则使用当前账号。成功返回 `{ "accountId": "…", "data": … }`，其中 `data` 保留平台字段。平台 ID 和游标可用十进制字符串传入。
+
+| 路径 | 主要参数与用途 |
+| --- | --- |
+| `/feed`、`/search`、`/hot` | 首页推荐传 `cursor`、`pageSize`。搜索传 `keyword`、`type`（`video`、`bili_user`、`live_room`）、`page`。榜单传 `kind`（`search`、`popular`、`ranking`）。 |
+| `/profile` | 传 `mid`、`page`、`pageSize`，读取 UP 主资料和投稿。 |
+| `/comments`、`/comment-replies` | 传 `bvid`、`page`、`pageSize`。评论可传 `sort`（`hot`、`time`），楼中楼须传 `root`。 |
+| `/playback`、`/subtitles` | 传 `bvid` 和详情返回的分 P `cid`，读取视频流信息和可用字幕轨道。播放可传 `quality`，字幕可传轨道的 `language` 取带时间戳的文本。 |
+| `/live/playback`、`/live/following` | 前者传 `roomId` 取直播流，后者传 `page`、`pageSize` 读取关注的直播间。 |
+| `/history/read`、`/likes/recent` | 历史读取支持 `kind`（`all`、`archive`、`live`、`article`）、`max`、`viewAt`、`pageSize`。点赞接口读取当前账号的近期点赞视频。 |
+| `/creator/data` | 传 `panel`（`overview`、`audience`、`fans`、`trend`、`videos`、`video`）。趋势可传 `metric`（默认 `play`），稿件表支持分页，单稿数据传 `bvid`。 |
+| `/dm/sessions`、`/dm/messages` | 读取私信会话和历史。消息需要对方 `uid`，两者都支持 `before`，分别传时间游标或消息序号。 |
+| `/interact` | 必须指定已登录的 `accountId`。`like` 传 `bvid`、`enabled`，`follow` 传 `mid`、`enabled`，`comment` 传 `bvid`、`text` 及可选的 `root`、`parent`，`message` 传 `uid`、`text`。每次请求执行一次明确指定的操作。 |
+
+`GET /v1/bilibili` 仍可获取本地快照和同步状态。线上历史读取可用响应的 `cursor` 继续翻页，和本地快照同步是两个独立操作。
 
 ### 小红书收藏和点赞导出
 
-打开侧栏「平台 → 小红书」，在页面里扫码登录小红书，选收藏、点赞或两类一起导出，导出完出看板（常看的作者、常见话题、最热的笔记、可搜索的笔记列表）；「推荐 / 搜索 / 主页」页签用登录的账号读首页推荐、搜笔记、看主页，点开一篇看正文和评论。需要本机装有 Chrome（Windows 也可用 Edge），采集器用无头浏览器打开小红书网页，二维码透传到工作台，不弹浏览器窗口。登录状态和导出数据按账号保存在本机。进入页面后可在顶部切换操作账号；退出登录后仍可查阅已保存的笔记。
+小红书入口已在工作台隐藏，已保存的笔记仍可在内容库和专题里查看。采集器保留以下接口，需要本机装有 Chrome（Windows 也可用 Edge）。登录状态和导出数据按账号保存在本机。
 
 也可以直接调接口（只接受本机请求，沿用工作台的 Bearer 配对令牌：本机 `GET /v1/pairing-code` 取配对码，再以 `{"code":"配对码"}` 请求 `POST /v1/pair` 拿 `token`）：
 

@@ -23,7 +23,7 @@ const STORY_CSP = "default-src 'self'; base-uri 'none'; connect-src 'self'; font
 
 // 'wasm-unsafe-eval' 只放行 WebAssembly 编译（知识库在 Worker 里算语义向量），不放行 eval
 const SECURITY_HEADERS = {
-  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://douyincdn.com https://*.douyincdn.com https://zhangyukwiver.github.io; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; frame-src 'self'; img-src 'self' data: https:; media-src 'self' https: blob: http://127.0.0.1:* http://localhost:*; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "Content-Security-Policy": "default-src 'self'; base-uri 'none'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://douyincdn.com https://*.douyincdn.com https://zhangyukwiver.github.io https://*.bilivideo.com https://*.bilivideo.cn; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; frame-src 'self' https://player.bilibili.com; img-src 'self' data: https:; media-src 'self' https: blob: http://127.0.0.1:* http://localhost:*; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",

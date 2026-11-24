@@ -3,6 +3,9 @@ import { collectorFetch } from "./localCollector";
 
 export const platformLabels = { douyin: "抖音", xiaohongshu: "小红书", bilibili: "B 站" } as const;
 export type ContentPlatform = keyof typeof platformLabels;
+// 本地资料可以包含已从工作台入口隐藏的平台。
+export const workspacePlatforms = ["douyin", "bilibili"] as const;
+export type WorkspacePlatform = typeof workspacePlatforms[number];
 export type PlatformAccount = {
   id: string; uid: string | null; nickname: string | null; avatar: string | null;
   note: string | null; loggedIn: boolean; lastSyncedAt: string | null;
@@ -44,12 +47,12 @@ export async function workspaceRequest<T>(connection: ExploreConnection, path: s
   return value as T;
 }
 
-export type LibraryFilter = { platform: ContentPlatform | ""; accountId: string };
+export type LibraryFilter = { platform: WorkspacePlatform | ""; accountId: string };
 const FILTER_KEY = "content-workspace.library-filter.v1";
 export function loadLibraryFilter(): LibraryFilter {
   try {
     const value = JSON.parse(localStorage.getItem(FILTER_KEY) ?? "null");
-    if (value && Object.hasOwn(platformLabels, value.platform) && typeof value.accountId === "string") return value;
+    if (value && workspacePlatforms.some(platform => platform === value.platform) && typeof value.accountId === "string") return value;
   } catch { /* 浏览器未开放本地存储时仍能浏览。 */ }
   return { platform: "", accountId: "" };
 }
