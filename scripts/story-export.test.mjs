@@ -41,7 +41,7 @@ describe("story export", () => {
 
   it("keeps equal words equal and different words different after masking, so the pages still match them up", async () => {
     const { scrub } = await loadExporter();
-    const keyOf = (s) => String(s || "").replace(/^#/, "").trim().toLowerCase(); // the archive's own comparison
+    const keyOf = (s) => String(s || "").replace(/^#/, "").trim().toLowerCase(); // the pages' own comparison
     const out = scrub({
       topics: [{ name: "装修" }, { name: "编程" }, { name: "Vlog" }],
       lexicon: { liked: { top: [{ name: "编程" }, { name: "#装修" }, { name: "vlog" }] }, contrast: { both: ["编程"] } },
@@ -100,7 +100,7 @@ describe("story export", () => {
   it("is wired into each story page and synced with them", async () => {
     const sync = await readFile(path.join(root, "scripts", "sync-story.mjs"), "utf8");
     expect(sync).toContain('"story-export.js"');
-    for (const name of ["story-poster.html", "story-archive.html", "story-draft_副本.html"]) {
+    for (const name of ["story-poster.html", "story-draft_副本.html"]) {
       const page = await readFile(path.join(root, "prototype", name), "utf8");
       expect(page).toContain('<script src="story-export.js"></script>');
       expect(page).toContain('id="navExport"');

@@ -108,7 +108,7 @@ import {
 import { shouldAutoSync, shouldSuppressBrowserLoginAutoSync } from "./src/services/autoSync";
 import { createChatAutomaticRequestTracker, createChatStartupRequest } from "./src/services/chatStartup";
 import { sparkRenewJob } from "./src/services/sparkRenew";
-import { applyAppStyle, buildArchiveStoryUrl, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantFabShown, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadReadTypes, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantFabShown, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveReadTypes, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
+import { applyAppStyle, buildPosterStoryUrl, buildStoryEntryUrl, loadAppStyle, loadAssistantFabShown, loadAssistantInstalled, loadAutoSync, loadFeedShown, loadReadTypes, loadStoryStyle, resolveStoryStyle, saveAppStyle, saveAssistantFabShown, saveAssistantInstalled, saveAutoSync, saveFeedShown, saveReadTypes, saveStoryStyle, type AppStyle, type StoryStyle } from "./src/services/appStyle";
 import { getAssistant, type AssistantVideo, type AssistantView } from "./src/services/assistant";
 import { loadDismissedNotices, loadSiteNotices, saveDismissedNotices, type SiteNotices } from "./src/services/siteNotice";
 import { RELEASE_NOTES } from "./src/components/workspace/releaseNotes";
@@ -354,7 +354,7 @@ function AppContent() {
   const [downloadJobs, setDownloadJobs] = useState<Record<string, VideoDownloadJob>>({});
   const [downloadChoice, setDownloadChoice] = useState<{ record: PersonalVideoRecord; keepExplore: boolean } | null>(null);
   const [batchDownloadActive, setBatchDownloadActive] = useState(false);
-  const [appStyle, setAppStyle] = useState<AppStyle>(() => (Platform.OS === "web" ? loadAppStyle() : "archive"));
+  const [appStyle, setAppStyle] = useState<AppStyle>(() => (Platform.OS === "web" ? loadAppStyle() : "minimal"));
   const [appUpdate, setAppUpdate] = useState<DesktopUpdateState | null>(null);
   // 内容年志入口卡的地址；非空时以应用内 iframe 盖在工作台上（见 StoryFrame）
   const [storySrc, setStorySrc] = useState<string | null>(null);
@@ -365,7 +365,7 @@ function AppContent() {
   // 读取中这一轮新读到的记录：只给内容库列表边读边出，报告还用冻结那份，读完整份拉回来再一起算
   const [liveRecords, setLiveRecords] = useState<PersonalRecordCollection | null>(null);
   // 极简风格没有自己的报告页，打开报告时借用这里选的一套（设置面板里改）
-  const [storyStyle, setStoryStyle] = useState<StoryStyle>(() => (Platform.OS === "web" ? loadStoryStyle() : "archive"));
+  const [storyStyle, setStoryStyle] = useState<StoryStyle>(() => (Platform.OS === "web" ? loadStoryStyle() : "trace"));
   // 设置面板开着时是要先滚到的那一节，关着是 null
   const [preferences, setPreferences] = useState<SettingsSection | null>(null);
   // AI 助手（可选功能）。连着采集器就长轮询它的状态：README 里写的外部 AI（MCP）不装助手也能用，
@@ -1844,7 +1844,7 @@ function AppContent() {
       }
     : null;
 
-  // web 上三种风格的报告都是 /story 下的静态页，以 iframe 盖在工作台上；native 仍走应用内分页报告
+  // web 上两种风格的报告都是 /story 下的静态页，以 iframe 盖在工作台上；native 仍走应用内分页报告
   const storyMode = Platform.OS === "web";
 
   function enterWorkspace() {
@@ -1868,7 +1868,7 @@ function AppContent() {
       if (displaySnapshot && countPersonalRecords(workspaceRecords) > 0) unlockAchievement("my-year");
       // 极简没有自己的报告页，借用设置里选的那套
       const page = resolveStoryStyle(appStyle, storyStyle);
-      setStorySrc(page === "poster" ? buildPosterStoryUrl({ motion: "full" }) : page === "archive" ? buildArchiveStoryUrl({ motion: "full" }) : buildStoryEntryUrl({
+      setStorySrc(page === "poster" ? buildPosterStoryUrl({ motion: "full" }) : buildStoryEntryUrl({
         watch: workspaceRecords.watch_history.length,
         liked: workspaceRecords.liked_videos.length,
         favorite: workspaceRecords.favorite_videos.length,

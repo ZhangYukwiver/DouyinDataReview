@@ -7,7 +7,7 @@ import { ws } from "./motion";
 // 创作者中心页用的几种图：折线（趋势）、环形（性别/活跃）、竖条（年龄）、横条（来源/地域）、雷达（五维诊断）。
 // 只画官方页面上有的那几种，颜色全走工作台 token，跟着整体风格换。
 
-// 数据色：web 上先取 --ws-chart-N（极简在 minimalCss 里定义成蓝的深浅档 + 中性灰），另外三种风格没定义，回退到原 token，像素不变
+// 数据色：web 上先取 --ws-chart-N（极简在 minimalCss 里定义成绿的深浅档 + 中性灰），另外两种风格没定义，回退到原 token，像素不变
 const chartBase = [color.accent, color.cyan, color.amber, color.green, color.danger, color.textSecondary];
 export const chartPalette = Platform.OS === "web" ? chartBase.map((token, index) => `var(--ws-chart-${index}, ${token})`) : chartBase;
 const DATA = chartPalette[0]!;

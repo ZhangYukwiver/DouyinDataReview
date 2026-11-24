@@ -26,7 +26,7 @@ it("uses the real story sources with safely embedded data and self-contained off
 it("exports the visible privacy state and preserves escaped bridge identifiers as data", () => {
   const bridgeId = 'story-</SCRIPT>\u2028"\\', requestId = "request-\u2029'\n";
   const data = { title: "本机内容" }, scrubbed = { title: "匿名内容" };
-  for (const page of ["story-archive.html", "story-poster.html"] as const) {
+  for (const page of ["story-draft_副本.html", "story-poster.html"] as const) {
     for (const privacy of [false, true]) {
       const scrub = vi.fn(() => scrubbed), postMessage = vi.fn();
       const script = storyExportScript(page, bridgeId, requestId);
@@ -36,7 +36,7 @@ it("exports the visible privacy state and preserves escaped bridge identifiers a
         window: { StoryExport: { scrub }, __STORY_EXPORT__: { data }, ReactNativeWebView: { postMessage } },
       });
       expect(JSON.parse(postMessage.mock.calls[0]![0])).toEqual({ type: "story-export", bridgeId, requestId, privacy, data: privacy ? scrubbed : data });
-      if (privacy) expect(scrub).toHaveBeenCalledWith(data, { privateTopics: page === "story-archive.html" });
+      if (privacy) expect(scrub).toHaveBeenCalledWith(data, { privateTopics: false });
       else expect(scrub).not.toHaveBeenCalled();
     }
   }

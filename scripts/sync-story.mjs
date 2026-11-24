@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // docs/demo 是 GitHub Pages 上的免安装示例：那里读不到本机数据，页面就用自己内嵌的演示数据
 const targets = [path.join(root, "public", "story"), path.join(root, "docs", "demo")];
-// story-poster.html：海报风格的报告本体（自带封面，不走入口卡）；story-archive.html：档案馆，一页一屏点击翻页
-const PAGES = ["story-entry.html", "story-draft_副本.html", "story-poster.html", "story-archive.html"];
-// 长卷共用的粘滞滚动 + 自动播放；三个正文页共用的导出和分享图
+// 两本报告：内容年志（story-entry.html 入口卡 + story-draft_副本.html 正文）；story-poster.html：海报（自带封面，不走入口卡）
+const PAGES = ["story-entry.html", "story-draft_副本.html", "story-poster.html"];
+// 长卷共用的粘滞滚动 + 自动播放；两本正文页共用的导出和分享图
 const SCRIPTS = ["story-glide.js", "story-export.js", "story-card.js"];
 // -m 是竖屏用的中间一条（1080×1440），手机上省一半流量
 const IMAGE = /^(sky-s\d-[a-z]+|entry-night|entry-mix)(-m)?\.jpg$|^entry-textures\.js$/u;

@@ -51,7 +51,7 @@ export interface ReportDashboardProps {
   width: number;
 }
 
-// 颜色全取工作台主题里的四种强调色（极简是蓝 / 绿 / 琥珀 / 红，档案馆、年志、海报各有自己那一组），
+// 颜色全取工作台主题里的四种强调色（极简、年志、海报各有自己那一组），
 // 切整体风格时跟着变；每块面板认一种主色，图标、渐变和图形都用它
 const BLUE = color.cyan;
 const GREEN = color.green;

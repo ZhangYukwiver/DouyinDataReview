@@ -1,10 +1,9 @@
 import type { ChatMemorial } from "../../domain/chatMemorial";
 import { H, sparkCardLines, sparkCardText, W, type SparkCardStyle, type SparkCardTheme } from "./sparkCard";
-import { archive } from "./sparkCardArchive";
 import { poster } from "./sparkCardPoster";
 import { trace } from "./sparkCardTrace";
 
-export const SPARK_CARD_THEMES: Record<SparkCardStyle, SparkCardTheme> = { trace, archive, poster };
+export const SPARK_CARD_THEMES: Record<SparkCardStyle, SparkCardTheme> = { trace, poster };
 
 const fontSheets: Partial<Record<SparkCardStyle, Promise<void>>> = {};
 function fontSheet(style: SparkCardStyle): Promise<void> {

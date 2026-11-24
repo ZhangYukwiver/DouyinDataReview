@@ -10,14 +10,14 @@
       "url": "",
       "title": "抖音数据导出与年度报告（Douyin Wrapped）· DouyinDataReview",
       "description": "DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告，还能在电脑上刷抖音推荐、按关键词屏蔽视频、看创作者中心数据。Windows x64 / macOS Apple Silicon / Linux x64，桌面版扫码登录，本机保存。",
-      "modified": "2026-11-10"
+      "modified": "2026-11-24"
     },
     {
       "path": "guide.html",
       "url": "guide.html",
       "title": "如何导出抖音数据、屏蔽推荐视频、生成年度报告 · DouyinDataReview 使用指南",
       "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告，按关键词屏蔽推荐视频、把想看的词条混进推荐。说明数据覆盖范围，以及数据会发到哪里。",
-      "modified": "2026-11-05"
+      "modified": "2026-11-24"
     }
   ],
   "facts": [
@@ -96,7 +96,7 @@
     {
       "id": "douyin-wrapped",
       "question": "有没有像 Spotify Wrapped 那样的抖音年度报告？",
-      "answer": "有。DouyinDataReview 用本机保存的观看、喜欢、收藏和聊天记录生成抖音年度回顾（Douyin Wrapped），提供内容年志、档案馆和海报三种风格，可导出独立 HTML 与 1080 × 1440 的 PNG 分享图。报告不需要 AI 接口，数据不全时也不会补造缺失记录。此页的示例报告使用合成数据，可免安装预览。"
+      "answer": "有。DouyinDataReview 用本机保存的观看、喜欢、收藏和聊天记录生成抖音年度回顾（Douyin Wrapped），提供内容年志和海报两种风格，可导出独立 HTML 与 1080 × 1440 的 PNG 分享图。报告不需要 AI 接口，数据不全时也不会补造缺失记录。此页的示例报告使用合成数据，可免安装预览。"
     },
     {
       "id": "batch-download",

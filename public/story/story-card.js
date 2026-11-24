@@ -1,8 +1,8 @@
 /*
- * 年度分享图：三种风格各画一张 3:4 的卡（1080×1440），存成 PNG。
+ * 年度分享图：两种风格各画一张 3:4 的卡（1080×1440），存成 PNG。
  * 直接在 canvas 上排字，不放封面和头像：一是隐私，二是抖音 CDN 的图会污染 canvas，toBlob 直接报错。
  * 背景图只用同源的本地图（年志的天空画），导出的离线文件里是 data URL，也不污染。
- * 页面：StoryCard.wire(按钮, 数据, { theme, privateTopics })，点了先开预览，三种风格可切换再存。
+ * 页面：StoryCard.wire(按钮, 数据, { theme, privateTopics })，点了先开预览，两种风格可切换再存。
  */
 (function () {
   "use strict";
@@ -20,7 +20,7 @@
     return `${withYear ? `${y} 年 ` : ""}${m} 月 ${d} 日`;
   }
 
-  // 三种风格共用的文字：卡上写什么只在这里定
+  // 两种风格共用的文字：卡上写什么只在这里定
   function lines(D) {
     const P = D.profile || {}, C = D.counts || {};
     const words = String(P.title || "").split("·").map((w) => w.trim()).filter(Boolean);
@@ -46,7 +46,7 @@
       days: (D.days || []).filter((d) => Array.isArray(d) && Number(d[1]) > 0).map((d) => [String(d[0]).slice(0, 10), Number(d[1])]).sort((a, b) => a[0].localeCompare(b[0])),
     };
   }
-  const allText = (L) => [L.range, L.countLabel, L.count, "条内容年志档案馆", ...L.stats.flatMap((s) => [s.k, s.v, s.s]), ...L.rows.flatMap((r) => [r.k, r.v]), ...(L.words || ["三个词还空着"]), ...L.en].join("");
+  const allText = (L) => [L.range, L.countLabel, L.count, "条内容年志", ...L.stats.flatMap((s) => [s.k, s.v, s.s]), ...L.rows.flatMap((r) => [r.k, r.v]), ...(L.words || ["三个词还空着"]), ...L.en].join("");
 
   // 先按宽度缩字号，缩到底还放不下就截断加 …
   function put(ctx, text, x, y, { font, size, min = size, width, color, align = "left", spacing = "0px", glow = null }) {
@@ -124,96 +124,6 @@
 
         fill(ctx, 0, H - 96, W, 96, INK);
         put(ctx, "DouyinDataReview · 非官方", W - M, H - 40, { font: F.mono, size: 22, color: PAPER, align: "right", spacing: "2px" });
-      },
-    };
-  })();
-
-  // ---------------- 档案馆：冷近黑星图 + 羊皮纸字 + 金 / 青，1px 青铜细线 ----------------
-  const archive = (() => {
-    const NIGHT = "#111315", PAPER = "#EFDFCC", PAPER2 = "#CFC1B0", MUTE = "#8C8172", GOLD = "#C59861", GOLD_HI = "#E3C8A6", GOLD_LO = "#8A6238", TEAL = "#8FB3B6", LINE = "#3A3228";
-    const SERIF = '"Noto Serif SC","Songti SC","STSong",serif';
-    // 数字用 Noto Serif SC 细体：Cormorant 默认是旧式数字，canvas 没法开 lining-nums
-    const F = { s9: f(`900 # ${SERIF}`), s7: f(`700 # ${SERIF}`), s5: f(`500 # ${SERIF}`), num: f(`200 # ${SERIF}`), cap: f(`600 # "Cormorant Garamond",${SERIF}`), it: f(`italic 500 # "Cormorant Garamond",${SERIF}`) };
-    const M = 96;
-    function star(ctx, x, y, r, color) {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      for (let i = 0; i < 8; i++) { const a = (i * Math.PI) / 4 - Math.PI / 2, d = i % 2 ? r * 0.22 : r; ctx.lineTo(x + Math.cos(a) * d, y + Math.sin(a) * d); }
-      ctx.closePath();
-      ctx.fill();
-    }
-    const hair = (ctx, x, y, w, h = 1, color = LINE) => fill(ctx, x, y, w, h, color);
-    return {
-      fonts: [F.s9(40), F.s7(40), F.s5(40), F.num(40), F.cap(20), F.it(20)],
-      draw(ctx, L) {
-        fill(ctx, 0, 0, W, H, NIGHT);
-        const g = ctx.createRadialGradient(W * 0.55, H * 0.42, 80, W * 0.55, H * 0.42, H * 0.8);
-        g.addColorStop(0, "rgba(27,31,32,.9)"); g.addColorStop(1, "rgba(10,11,11,1)");
-        fill(ctx, 0, 0, W, H, g);
-        // 星尘：固定种子，每次存出来的都一样
-        let seed = 7;
-        const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-        for (let i = 0; i < 170; i++) { ctx.globalAlpha = 0.12 + rnd() * 0.4; ctx.fillStyle = rnd() < 0.2 ? GOLD_HI : PAPER2; ctx.beginPath(); ctx.arc(rnd() * W, rnd() * H, 0.5 + rnd() * 1.3, 0, Math.PI * 2); ctx.fill(); }
-        ctx.globalAlpha = 1;
-        // 页框 + 金色 L 角
-        ctx.strokeStyle = LINE; ctx.lineWidth = 1; ctx.strokeRect(48.5, 48.5, W - 97, H - 97);
-        ctx.strokeStyle = GOLD_LO;
-        for (const [x, y, dx, dy] of [[42, 42, 1, 1], [W - 42, 42, -1, 1], [42, H - 42, 1, -1], [W - 42, H - 42, -1, -1]]) {
-          ctx.beginPath(); ctx.moveTo(x + 0.5 * dx, y + 34 * dy); ctx.lineTo(x + 0.5 * dx, y + 0.5 * dy); ctx.lineTo(x + 34 * dx, y + 0.5 * dy); ctx.stroke();
-        }
-
-        put(ctx, "档案馆", M, 140, { font: F.s7, size: 36, color: PAPER, spacing: "6px" });
-        put(ctx, `Anno ${L.year}`, W - M, 138, { font: F.it, size: 34, color: GOLD, align: "right" });
-        hair(ctx, M, 168, W - 2 * M);
-
-        put(ctx, "OBSERVATIO · 观测区间", M, 232, { font: F.cap, size: 20, color: GOLD, spacing: "6px" });
-        put(ctx, L.range, M, 318, { font: F.s9, size: 76, min: 20, width: W - 2 * M, color: PAPER });
-
-        put(ctx, `NUMERUS · ${L.countLabel}`, M, 412, { font: F.cap, size: 20, color: GOLD, spacing: "6px" });
-        ctx.font = F.s7(64);
-        const unit = ctx.measureText("条").width + 20;
-        const nw = put(ctx, L.count, M - 8, 640, { font: F.num, size: 250, min: 110, width: W - 2 * M - unit - 150, color: GOLD_HI, glow: "rgba(227,200,166,.28)" });
-        put(ctx, "条", M - 8 + nw + 20, 640, { font: F.s7, size: 64, color: PAPER });
-        star(ctx, W - M - 60, 540, 46, GOLD);
-        star(ctx, W - M - 6, 462, 14, GOLD_HI);
-
-        const top = 690, cw = (W - 2 * M) / 3;
-        hair(ctx, M, top, W - 2 * M);
-        L.stats.forEach((st, i) => {
-          const x = M + i * cw, pad = i ? 28 : 0, inner = cw - pad - 20;
-          if (i) hair(ctx, x, top + 28, 1, 170);
-          put(ctx, st.k, x + pad, top + 62, { font: F.s5, size: 23, width: inner, color: TEAL, spacing: "2px" });
-          put(ctx, st.v, x + pad, top + 142, { font: F.s7, size: 52, min: 30, width: inner, color: st.v === "—" ? MUTE : PAPER });
-          if (st.s) put(ctx, st.s, x + pad, top + 188, { font: F.s5, size: 20, min: 15, width: inner, color: MUTE });
-        });
-        hair(ctx, M, top + 226, W - 2 * M);
-
-        L.rows.forEach((row, i) => {
-          const y = top + 226 + i * 78;
-          if (i) hair(ctx, M, y, W - 2 * M);
-          star(ctx, M + 7, y + 41, 7, GOLD);
-          put(ctx, row.k, M + 30, y + 50, { font: F.s5, size: 22, width: 240, color: TEAL, spacing: "2px" });
-          put(ctx, row.v, M + 290, y + 54, { font: F.s7, size: 38, min: 26, width: W - 2 * M - 290, color: row.v === "—" ? MUTE : PAPER });
-        });
-        hair(ctx, M, top + 460, W - 2 * M);
-
-        // 落款：三个词居中，金色四角星隔开
-        put(ctx, "SUBSCRIPTIO · 落款", W / 2, 1214, { font: F.cap, size: 20, color: GOLD, align: "center", spacing: "6px" });
-        if (L.words) {
-          ctx.font = F.s9(66); ctx.letterSpacing = "4px";
-          const gap = 70, ws = L.words.map((w) => ctx.measureText(w).width);
-          const k = Math.min(1, (W - 2 * M - gap * 2) / ws.reduce((a, b) => a + b, 0));
-          let x = (W - (ws.reduce((a, b) => a + b, 0) * k + gap * 2)) / 2;
-          L.words.forEach((w, i) => {
-            put(ctx, w, x + (ws[i] * k) / 2, 1296, { font: F.s9, size: Math.floor(66 * k), color: GOLD_HI, align: "center", spacing: "4px" });
-            if (L.en[i]) put(ctx, L.en[i], x + (ws[i] * k) / 2, 1332, { font: F.it, size: 20, min: 14, width: ws[i] * k + gap - 10, color: GOLD, align: "center" });
-            x += ws[i] * k;
-            if (i < 2) star(ctx, x + gap / 2, 1274, 12, GOLD);
-            x += gap;
-          });
-        } else put(ctx, "三个词还空着", W / 2, 1296, { font: F.s9, size: 60, color: MUTE, align: "center" });
-
-        put(ctx, "DOUYINDATAREVIEW · 非官方", W - M, H - 66, { font: F.cap, size: 17, color: MUTE, align: "right", spacing: "4px" });
       },
     };
   })();
@@ -363,7 +273,7 @@
     };
   })();
 
-  const THEMES = { poster, archive, trace };
+  const THEMES = { poster, trace };
   const loadImage = (src) => new Promise((resolve) => {
     const img = new Image();
     img.onload = () => resolve(img);
@@ -374,7 +284,6 @@
   // 预览里能切到别的风格，那种风格的字体当前页面没加载，先把它的 Google Fonts 挂上
   const FONT_CSS = {
     poster: "family=Anton&family=JetBrains+Mono:wght@700&family=Noto+Sans+SC:wght@500;700;900",
-    archive: "family=Cormorant+Garamond:ital,wght@0,600;1,500&family=Noto+Serif+SC:wght@200;500;700;900",
     trace: "family=Fraunces:ital,opsz,wght@0,9..144,100..700;1,9..144,100..700&family=Inter:wght@400;500&family=Noto+Serif+SC:wght@200;300;500",
   };
   const fontSheets = {};
@@ -401,7 +310,7 @@
     await fontSheet(theme);
     // Noto 系列按字分片加载：页面上没出现过的字要先点名拉下来，canvas 才画得出
     if (document.fonts && document.fonts.load) {
-      const text = `${allText(L)}EDITION FROM—TO SIGNED AS UNSIGNED Anno OBSERVATIO NUMERUS SUBSCRIPTIO DouyinDataReview DOUYINDATAREVIEW·非官方 TRACE ANNUAL VOLUME PEAK EVERY DAY, IN LIGHT 0123456789.`;
+      const text = `${allText(L)}EDITION FROM—TO SIGNED AS UNSIGNED DouyinDataReview·非官方 TRACE ANNUAL VOLUME PEAK EVERY DAY, IN LIGHT 0123456789.`;
       await Promise.all(T.fonts.map((font) => document.fonts.load(font, text))).catch(() => { /* offline: system fonts */ });
     }
     const c = Object.assign(document.createElement("canvas"), { width: W, height: H });
@@ -409,7 +318,7 @@
     return c;
   }
 
-  const NAMES = { poster: "海报", archive: "档案馆", trace: "内容年志" };
+  const NAMES = { poster: "海报", trace: "内容年志" };
   async function save(D, theme, canvas) {
     const c = canvas || (await draw(D, theme));
     const blob = await new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))), "image/png"));
@@ -423,7 +332,7 @@
     if (window.parent !== window) window.parent.postMessage({ type: "trace:exported" }, "/");
   }
 
-  // ---------------- 预览：先看样子，三种风格随便切，满意了再存 ----------------
+  // ---------------- 预览：先看样子，两种风格随便切，满意了再存 ----------------
   // 弹层用中性的系统字和深灰底，放进哪一种页面都一样；规则都挂在 .sc-ov 下，压过各页的 reset
   const CSS = `
 .sc-ov{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;padding:24px;background:rgba(8,8,10,.93);font:400 14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC",sans-serif;color:#ECEAE4;letter-spacing:0;text-transform:none}
@@ -475,7 +384,7 @@
     box.append(stage, side);
     ov.append(box);
 
-    const order = ["poster", "archive", "trace"];
+    const order = ["poster", "trace"];
     const buttons = order.map((t) => {
       const b = el("button", "sc-tab");
       b.type = "button";
@@ -520,7 +429,7 @@
       if (event.key === "Escape") { event.preventDefault(); shut(); }
       else if ((event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "ArrowLeft" || event.key === "ArrowRight") && tabs.contains(document.activeElement)) {
         event.preventDefault();
-        const k = (order.indexOf(want) + (event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : 2)) % 3;
+        const k = (order.indexOf(want) + (event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : order.length - 1)) % order.length;
         show(order[k]);
         buttons[k].focus();
       } else if (/^(PageUp|PageDown|Home|End| |Enter)$/u.test(event.key) && !(event.key === " " || event.key === "Enter" ? ov.contains(document.activeElement) && document.activeElement.tagName === "BUTTON" : false)) {
@@ -556,7 +465,7 @@
   function wire(button, D, { theme, privateTopics = false }) {
     button.hidden = false;
     button.addEventListener("click", (event) => {
-      event.stopPropagation(); // 档案馆点页面就翻页
+      event.stopPropagation();
       open(D, { theme, privateTopics });
     });
   }

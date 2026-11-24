@@ -1,14 +1,14 @@
 import type { StoryData } from "../services/storyData";
 import { nativeBridge } from "./nativeBridge";
 
-export const STORY_PAGES = ["story-entry.html", "story-draft_副本.html", "story-archive.html", "story-poster.html"] as const;
+export const STORY_PAGES = ["story-entry.html", "story-draft_副本.html", "story-poster.html"] as const;
 export type StoryPage = typeof STORY_PAGES[number];
 const SKY = ["sky-s0-dawn", "sky-s1-morning", "sky-s2-dusk", "sky-s3-night", "sky-s4-ember"];
 const json = (value: unknown) => JSON.stringify(value).replace(/</gu, "\\u003c").replace(/\u2028/gu, "\\u2028").replace(/\u2029/gu, "\\u2029");
 const code = (value: string) => value.replace(/<\/script/giu, "<\\/script");
 
-export function storyExportScript(page: StoryPage, bridgeId: string, requestId: string): string {
-  return `(()=>{const privacy=document.body.classList.contains('privacy-on');const data=privacy?window.StoryExport.scrub(window.__STORY_EXPORT__.data,{privateTopics:${page === "story-archive.html"}}):window.__STORY_EXPORT__.data;window.ReactNativeWebView.postMessage(JSON.stringify({type:'story-export',bridgeId:${json(bridgeId)},requestId:${json(requestId)},privacy,data}));})();true;`;
+export function storyExportScript(_page: StoryPage, bridgeId: string, requestId: string): string {
+  return `(()=>{const privacy=document.body.classList.contains('privacy-on');const data=privacy?window.StoryExport.scrub(window.__STORY_EXPORT__.data,{privateTopics:false}):window.__STORY_EXPORT__.data;window.ReactNativeWebView.postMessage(JSON.stringify({type:'story-export',bridgeId:${json(bridgeId)},requestId:${json(requestId)},privacy,data}));})();true;`;
 }
 
 export async function storyDocument(page: StoryPage, data: StoryData, { offline = false, privacy = false, bridgeId = "" } = {}): Promise<string> {

@@ -44,7 +44,7 @@
       "name": "抖音数据导出与年度报告（Douyin Wrapped）· DouyinDataReview",
       "description": "DouyinDataReview：免费开源的抖音数据导出工具，支持观看历史、喜欢、收藏、好友聊天记录备份与年度报告，还能在电脑上刷抖音推荐、按关键词屏蔽视频、看创作者中心数据。Windows x64 / macOS Apple Silicon / Linux x64，桌面版扫码登录，本机保存。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-11-10",
+      "dateModified": "2026-11-24",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -179,7 +179,7 @@
           "name": "有没有像 Spotify Wrapped 那样的抖音年度报告？",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "有。DouyinDataReview 用本机保存的观看、喜欢、收藏和聊天记录生成抖音年度回顾（Douyin Wrapped），提供内容年志、档案馆和海报三种风格，可导出独立 HTML 与 1080 × 1440 的 PNG 分享图。报告不需要 AI 接口，数据不全时也不会补造缺失记录。此页的示例报告使用合成数据，可免安装预览。"
+            "text": "有。DouyinDataReview 用本机保存的观看、喜欢、收藏和聊天记录生成抖音年度回顾（Douyin Wrapped），提供内容年志和海报两种风格，可导出独立 HTML 与 1080 × 1440 的 PNG 分享图。报告不需要 AI 接口，数据不全时也不会补造缺失记录。此页的示例报告使用合成数据，可免安装预览。"
           }
         },
         {
@@ -423,7 +423,7 @@ a{color:var(--accent)}
 </details>
 
 <h2 id="demo">抖音年度报告示例</h2>
-<p>不用安装，可以先在浏览器里翻一份示例年度报告，三种风格任选：<a href="demo/story-entry.html">内容年志</a> · <a href="demo/story-archive.html">档案馆</a> · <a href="demo/story-poster.html">海报</a>。里面是编出来的演示数据，不是谁的真实记录。电脑和手机都能打开。</p>
+<p>不用安装，可以先在浏览器里翻一份示例年度报告，两种风格任选：<a href="demo/story-entry.html">内容年志</a> · <a href="demo/story-poster.html">海报</a>。里面是编出来的演示数据，不是谁的真实记录。电脑和手机都能打开。</p>
 <p>想点点完整的工作台（内容库、聊天、持续报告、年度报告），可以直接打开<a href="app/">在线体验版</a>。同样是演示数据，不连抖音，读取、下载、刷视频这些要装了桌面版才能用；页面按电脑屏幕设计。</p>
 <a href="app/"><img class="shot" src="screenshots/dashboard-trace.jpg" alt="DouyinDataReview 持续报告：观看记录、内容与互动统计，使用合成示例数据" width="1200" height="750" loading="lazy"></a>
 
@@ -442,7 +442,7 @@ a{color:var(--accent)}
 <h3 id="browser-login">登录需要安装浏览器扩展或一直开着浏览器吗？</h3>
 <p>登录不需要扩展；只有在浏览器网页上过滤推荐才要在 Chrome 或 Edge 装一次扩展，软件里刷视频不用装。桌面版可在首屏扫码登录并导入凭据，无需另外配置浏览器。从源码运行时，可通过 Chrome 144+、带远程调试开关的 Edge 或 macOS Comet 导入本人登录凭据。导入成功后自动断开；凭据有效时可关闭浏览器继续采集，失效或需要验证时重新登录并导入。</p>
 <h3 id="douyin-wrapped">有没有像 Spotify Wrapped 那样的抖音年度报告？</h3>
-<p>有。DouyinDataReview 用本机保存的观看、喜欢、收藏和聊天记录生成抖音年度回顾（Douyin Wrapped），提供内容年志、档案馆和海报三种风格，可导出独立 HTML 与 1080 × 1440 的 PNG 分享图。报告不需要 AI 接口，数据不全时也不会补造缺失记录。此页的示例报告使用合成数据，可免安装预览。</p>
+<p>有。DouyinDataReview 用本机保存的观看、喜欢、收藏和聊天记录生成抖音年度回顾（Douyin Wrapped），提供内容年志和海报两种风格，可导出独立 HTML 与 1080 × 1440 的 PNG 分享图。报告不需要 AI 接口，数据不全时也不会补造缺失记录。此页的示例报告使用合成数据，可免安装预览。</p>
 <h3 id="batch-download">能批量下载抖音里喜欢和收藏的视频吗？</h3>
 <p>能。内容库点「批量下载」进入多选，选中的视频会打包成 ZIP 保存到本机；图文作品会下载全部图片。探索页的用户主页也支持下载作品。在线下载需要网络、有效会话，以及当前账号可访问的作品。</p>
 <h3 id="download-folder">下载的抖音视频存在哪里？能改位置吗？</h3>

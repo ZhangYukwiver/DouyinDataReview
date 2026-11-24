@@ -38,7 +38,7 @@
       },
       "description": "按步骤导出抖音观看历史、喜欢、收藏和好友聊天，导入官方 JSON / ZIP 档案，生成抖音年度报告，按关键词屏蔽推荐视频、把想看的词条混进推荐。说明数据覆盖范围，以及数据会发到哪里。",
       "inLanguage": "zh-CN",
-      "dateModified": "2026-11-05",
+      "dateModified": "2026-11-24",
       "isPartOf": {
         "@id": "https://zhangyukwiver.github.io/DouyinDataReview/#website"
       },
@@ -101,7 +101,7 @@ html{scroll-padding-top:24px}
 <a href="./">DouyinDataReview 下载与项目介绍</a>
 <h1>抖音数据导出与年度报告使用指南</h1>
 <p>用 DouyinDataReview 可以把本人抖音账号可访问的观看历史、喜欢、收藏和好友聊天记录保存到电脑，选择导出 JSON，并生成本地年度报告。它是免费、MIT 许可的非官方开源桌面应用，支持 Windows x64 与 macOS Apple Silicon；面向抖音（Douyin），不支持国际版 TikTok。</p>
-<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-11-05">2026 年 11 月 5 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
+<p class="sub">由项目维护者 ZhangYukwiver 维护。内容核对：<time datetime="2026-11-24">2026 年 11 月 24 日</time>。安装包与实际发布版本以 <a href="https://github.com/ZhangYukwiver/DouyinDataReview/releases/latest">GitHub Releases</a> 为准。</p>
 <nav aria-label="使用指南目录"><a href="#export">导出个人记录</a><a href="#official-archive">导入官方档案</a><a href="#annual-report">生成年度报告</a><a href="#feed-control">控制推荐流</a><a href="#coverage">数据范围</a><a href="#privacy">数据去向</a><a href="#sources">源码依据</a></nav>
 
 <h2 id="export">如何导出抖音观看历史和聊天记录？</h2>
@@ -123,11 +123,11 @@ html{scroll-padding-top:24px}
 <h2 id="annual-report">如何生成抖音年度报告（Douyin Wrapped）？</h2>
 <p>读取记录或导入档案后，打开报告即可生成自己的年度回顾，不用等平台年度活动，也不用向 AI 服务发送个人记录。</p>
 <ol>
-  <li>在「设置 → 界面风格」选择报告风格，再点「打开报告」。内容年志、档案馆和海报是三种可用的年度报告风格。</li>
+  <li>在「设置 → 界面风格」选择报告风格，再点「打开报告」。内容年志和海报是两种可用的年度报告风格。</li>
   <li>查看观看、喜欢、收藏和聊天的统计，以及数据覆盖情况。报告仅使用记录中存在的日期、作者、话题、音乐、时长等信息，不补造缺失记录。</li>
   <li>需要分享时，导出独立 HTML 或 1080 × 1440 PNG。分享前检查报告中显示的昵称、作者、聊天统计等内容。</li>
 </ol>
-<p>可以先看<a href="demo/story-entry.html">内容年志</a>、<a href="demo/story-archive.html">档案馆</a>和<a href="demo/story-poster.html">海报</a>的合成数据示例。示例不是实际用户记录，也不是你账号的数据。</p>
+<p>可以先看<a href="demo/story-entry.html">内容年志</a>和<a href="demo/story-poster.html">海报</a>的合成数据示例。示例不是实际用户记录，也不是你账号的数据。</p>
 
 <h2 id="feed-control">如何按关键词屏蔽抖音视频、只看想看的内容？</h2>
 <p>手机上可以用抖音 App 自带的屏蔽设置，入口以当前版本为准。在电脑上，到 DouyinDataReview 的「设置 → 推荐流」写屏蔽词条和想看的词条。两份设置软件和网页共用：软件里的「刷视频」直接生效，在 Chrome、Edge 刷抖音网页要装一次应用自带的扩展。</p>
