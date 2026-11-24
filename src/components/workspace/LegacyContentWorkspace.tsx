@@ -52,7 +52,6 @@ import {
   Sparkles,
   Bot,
   BookOpenText,
-  BookHeart,
   Star,
   Trash2,
   TvMinimalPlay,
@@ -123,7 +122,10 @@ import { buildReportModel } from "./ReportWorkspace";
 import { alpha, workspaceColors as color, workspaceFonts as font, workspaceRadii as radius } from "./workspaceTheme";
 import { ease, easeImage, fx, useCountUp, useDraw, useInView, ws } from "./motion";
 
-export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "knowledge" | "xiaohongshu" | "sources" | "catalog" | "topics" | "platformAccounts" | "bilibili" | "douyinKnowledge" | "xhs_feed" | "xhs_search";
+const BILIBILI_SIDES = { bilibili: "catalog", bilibiliFeed: "feed", bilibiliExplore: "explore", bilibiliChat: "chat", bilibiliCreator: "creator" } as const;
+type BilibiliView = keyof typeof BILIBILI_SIDES;
+export type WorkspaceViewKey = PersonalRecordType | "live" | "feed_filtered" | "comments" | "summary" | "highlights" | "chat" | "feed" | "explore" | "creator" | "assistant" | "knowledge" | "sources" | "catalog" | "topics" | "platformAccounts" | "douyinKnowledge" | BilibiliView;
+export const isBilibiliSpace = (view: WorkspaceViewKey): view is BilibiliView => Object.hasOwn(BILIBILI_SIDES, view);
 
 export interface ContentWorkspaceProps {
   /** 连接与采集：嵌在外壳里的一页，自带顶栏；入口在侧栏底部的账号菜单 */
@@ -136,11 +138,8 @@ export interface ContentWorkspaceProps {
   assistant?: React.ReactNode;
   /** 知识库：视频解析的结果都收在这里 */
   knowledge?: React.ReactNode;
-  xiaohongshu?: React.ReactNode;
-  /** 刷视频、探索切到小红书时的两页 */
-  xiaohongshuFeed?: React.ReactNode;
-  xiaohongshuSearch?: React.ReactNode;
-  bilibili?: React.ReactNode;
+  bilibiliViews?: Record<BilibiliView, React.ReactNode>;
+  bilibiliAccount?: { nickname?: string | null; loggedIn: boolean };
   catalog?: React.ReactNode;
   topics?: React.ReactNode;
   platformAccounts?: React.ReactNode;
@@ -192,22 +191,18 @@ type IconComponent = React.ComponentType<{
   fill?: string;
 }>;
 
-type NavItem<Id extends string = WorkspaceViewKey> = { id: Id; label: string; icon: IconComponent; accent: string };
+type NavItem<Id extends string = SideKey> = { id: Id; label: string; icon: IconComponent; accent: string };
 
-const navItems: NavItem[] = [
+const navItems: NavItem<Exclude<WorkspaceViewKey, BilibiliView>>[] = [
   { id: "catalog", label: "内容库", icon: LibraryBig, accent: color.cyan },
   { id: "topics", label: "专题", icon: Folder, accent: color.amber },
   { id: "platformAccounts", label: "账号管理", icon: UsersRound, accent: color.cyan },
-  { id: "bilibili", label: "B 站", icon: TvMinimalPlay, accent: color.cyan },
   { id: "douyinKnowledge", label: "视频解析库", icon: BookOpenText, accent: color.amber },
-  { id: "xhs_feed", label: "刷视频", icon: TvMinimalPlay, accent: color.accent },
-  { id: "xhs_search", label: "探索", icon: Search, accent: color.cyan },
   { id: "feed", label: "刷视频", icon: TvMinimalPlay, accent: color.accent },
   { id: "explore", label: "探索", icon: Search, accent: color.cyan },
   { id: "creator", label: "创作者中心", icon: ChartColumn, accent: color.accent },
   { id: "assistant", label: "AI 助手", icon: Bot, accent: color.accent },
   { id: "knowledge", label: "知识库", icon: BookOpenText, accent: color.amber },
-  { id: "xiaohongshu", label: "小红书", icon: BookHeart, accent: color.accent },
   { id: "watch_history", label: "观看历史", icon: History, accent: color.cyan },
   { id: "live", label: "直播", icon: Radio, accent: color.cyan },
   { id: "liked_videos", label: "喜欢", icon: Heart, accent: color.accent },
@@ -221,28 +216,29 @@ const navItems: NavItem[] = [
 
 
 // 一级入口在侧栏，二级用页内页签：观看历史、直播、喜欢、收藏、推荐流挡掉的、我的评论并成「内容库」，持续报告和变化线索并成「报告」
-const LIBRARY_VIEWS: readonly WorkspaceViewKey[] = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered", "comments"];
-const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.includes(view);
-type SideKey = WorkspaceViewKey | "library" | "report";
+const LIBRARY_VIEWS = ["watch_history", "live", "liked_videos", "favorite_videos", "feed_filtered", "comments"] as const;
+const isLibraryView = (view: WorkspaceViewKey) => LIBRARY_VIEWS.some(item => item === view);
+type SideKey = Exclude<WorkspaceViewKey, BilibiliView> | "library" | "report";
 const libraryItems = navItems.filter((item) => isLibraryView(item.id));
 const reportItems = navItems.filter((item) => isReportView(item.id));
 // 刷视频、探索、创作者中心和 AI 助手是工具页：不显示条数、隐私和重新读取
-const toolView = (view: SideKey) => ["catalog", "topics", "platformAccounts", "bilibili", "douyinKnowledge", "feed", "explore", "creator", "assistant", "knowledge", "xiaohongshu", "xhs_feed", "xhs_search"].includes(view);
+const toolView = (view: WorkspaceViewKey | SideKey) => ["catalog", "topics", "platformAccounts", "douyinKnowledge", "feed", "explore", "creator", "assistant", "knowledge"].includes(view);
 // 「报告」这一项也不挂条数：条数在它的页签上
 const showsCount = (view: SideKey) => !toolView(view) && view !== "report" && view !== "sources";
 const sideItem = (id: SideKey) => navItems.find((item) => item.id === id)!;
 // 侧栏只按「来这儿做什么」分三组：发现（看新的）/ 我的（自己留下的）/ 洞察（从记录里看出什么）。
-// 平台不进侧栏：抖音、小红书、B站在每页顶上切（platformChips），这个平台没有的功能就灰着
+// 侧栏按功能分组，抖音和 B 站在页顶切换。
 const sideGroups: ReadonlyArray<{ label: string; items: NavItem<SideKey>[] }> = [
   { label: "发现", items: [sideItem("feed"), sideItem("explore")] },
   { label: "我的", items: [sideItem("catalog"), sideItem("topics"), sideItem("chat"), sideItem("knowledge")] },
   { label: "洞察", items: [{ id: "report", label: "报告", icon: LayoutDashboard, accent: color.green }, sideItem("creator"), sideItem("assistant")] },
 ];
-// 小红书、B站和视频解析笔记的页面挂在对应的功能项下面
+// B 站和视频解析笔记的页面挂在对应的功能项下面
 const sideOf = (view: WorkspaceViewKey): SideKey =>
-  isLibraryView(view) || view === "xiaohongshu" || view === "bilibili" ? "catalog"
-    : isReportView(view) ? "report"
-      : view === "xhs_feed" ? "feed" : view === "xhs_search" ? "explore" : view === "douyinKnowledge" ? "knowledge" : view;
+  isBilibiliSpace(view) ? BILIBILI_SIDES[view]
+    : isLibraryView(view) ? "catalog"
+      : isReportView(view) ? "report"
+        : view === "douyinKnowledge" ? "knowledge" : view;
 export const isDouyinSpace = (view: WorkspaceViewKey) =>
   isLibraryView(view) || isReportView(view) || ["feed", "explore", "creator", "chat", "douyinKnowledge"].includes(view);
 
@@ -273,10 +269,7 @@ export function ContentWorkspace({
   creator,
   assistant,
   knowledge,
-  xiaohongshu,
-  xiaohongshuFeed,
-  xiaohongshuSearch,
-  bilibili, catalog, topics, platformAccounts, platformSwitcher, douyinKnowledge,
+  bilibiliViews, bilibiliAccount, catalog, topics, platformAccounts, platformSwitcher, douyinKnowledge,
   activeView,
   records,
   liveRecords = null,
@@ -324,9 +317,11 @@ export function ContentWorkspace({
   const sidebarWidth = mobile ? 0 : compactSidebar ? 82 : 224;
   // root 的桌面内边距与 stage 边框会占掉 36px，使用同一个主区宽度供各内容页计算。
   const mainWidth = Math.max(0, width - (mobile ? 0 : 36) - sidebarWidth);
-  const currentNav = navItems.find((item) => item.id === activeView) ?? navItems[0]!;
   const sideKey = sideOf(activeView);
-  // 页面标题跟侧栏项走（切到小红书的刷视频也叫「刷视频」）；内容库和报告的页签照旧用页签名
+  const biliActive = isBilibiliSpace(activeView);
+  const currentNav = navItems.find((item) => item.id === (biliActive ? sideKey : activeView)) ?? navItems[0]!;
+  const activeTool = biliActive || toolView(activeView);
+  // 页面标题跟侧栏项走，内容库和报告的页签用页签名。
   const titleNav = isLibraryView(activeView) || reportView ? currentNav : navItems.find((item) => item.id === sideKey) ?? currentNav;
   // 刷视频和 AI 助手都能在设置里隐藏，没传就不进侧栏（feed 传 null 是年志盖着时先不挂播放器，侧栏照常有它）
   const groups = sideGroups.map((group) => ({ ...group, items: group.items.filter((item) => (item.id !== "assistant" || assistant) && (item.id !== "feed" || feed !== undefined)) }));
@@ -376,14 +371,13 @@ export function ContentWorkspace({
   const feedVideos = useFeedFilteredVideos(commentsConnection, activeView === "feed_filtered");
   const myComments = useMyComments(commentsConnection, status?.account?.id, status?.state, activeView === "comments");
   const counts: Record<SideKey, number> = {
-    catalog: 0, topics: 0, platformAccounts: 0, douyinKnowledge: 0, bilibili: 0, xhs_feed: 0, xhs_search: 0,
+    catalog: 0, topics: 0, platformAccounts: 0, douyinKnowledge: 0,
     sources: 0,
     feed: 0,
     explore: 0,
     creator: 0,
     assistant: 0,
     knowledge: 0,
-    xiaohongshu: 0,
     watch_history: watchedVideos.length + incomingVideos.length,
     live: watchedLives.length + incomingLives.length,
     liked_videos: records.liked_videos.length + (liveRecords?.liked_videos.length ?? 0),
@@ -412,34 +406,37 @@ export function ContentWorkspace({
     previousReportViewRef.current = reportView;
   }, [reportView]);
 
-  const shownCount = useCountUp(counts[activeView]);
+  const shownCount = useCountUp(biliActive ? 0 : counts[activeView]);
   const [ringRef, ringDrawn] = useDraw<View>();
 
   const changeView = (nextView: WorkspaceViewKey) => {
     if (isReportView(nextView) && !reportView) setReportAutoCollapsed(true);
     onChangeView(nextView);
   };
-  const openSide = (side: SideKey) => changeView(lastViewBySide.current[side] ?? (side === "report" ? "summary" : side as WorkspaceViewKey));
+  const openSide = (side: SideKey) => {
+    const previous = lastViewBySide.current[side];
+    if (previous && (!isBilibiliSpace(previous) || bilibiliViews)) changeView(previous);
+    else changeView(side === "report" ? "summary" : side === "library" ? "watch_history" : side);
+  };
 
-  // 平台在页面顶上切：同一个功能下抖音、小红书、B站各一页，这个平台没有的功能灰着点不了
+  // 平台在页面顶上切换。尚未实现的入口置灰。
   type Chip = { key: string; label: string; on: boolean; go?: () => void };
   const chip = (key: string, label: string, view: WorkspaceViewKey | null, on = view === activeView): Chip =>
     ({ key, label, on, go: view ? () => changeView(view) : undefined });
-  const onlyDouyin = (): Chip[] => [chip("douyin", "抖音", activeView, true), chip("xiaohongshu", "小红书", null), chip("bilibili", "B站", null)];
+  const biliSection = (Object.keys(BILIBILI_SIDES) as BilibiliView[]).find(view => BILIBILI_SIDES[view] === sideKey);
+  const biliChip = chip("bilibili", "B站", bilibiliViews ? biliSection ?? null : null);
   const chips: Chip[] | null =
-    sideKey === "feed" ? [chip("douyin", "抖音", feed !== undefined ? "feed" : null), chip("xiaohongshu", "小红书", xiaohongshuFeed ? "xhs_feed" : null), chip("bilibili", "B站", null)]
-      : sideKey === "explore" ? [chip("douyin", "抖音", "explore"), chip("xiaohongshu", "小红书", xiaohongshuSearch ? "xhs_search" : null), chip("bilibili", "B站", null)]
-        : sideKey === "catalog" ? [chip("all", "全部", "catalog"), chip("douyin", "抖音", lastLibraryView.current, isLibraryView(activeView)),
-          chip("xiaohongshu", "小红书", xiaohongshu ? "xiaohongshu" : null), chip("bilibili", "B站", bilibili ? "bilibili" : null)]
-          : sideKey === "chat" || sideKey === "report" || sideKey === "creator" ? onlyDouyin()
-              : sideKey === "knowledge" ? [chip("all", "内容库问答", "knowledge"), chip("notes", "视频解析笔记", douyinKnowledge ? "douyinKnowledge" : null)]
-                : null;
+    sideKey === "catalog" ? [chip("all", "全部", "catalog"), chip("douyin", "抖音", lastLibraryView.current, isLibraryView(activeView)), biliChip]
+      : sideKey === "feed" || sideKey === "explore" || sideKey === "chat" || sideKey === "creator"
+        ? [chip("douyin", "抖音", sideKey === "feed" && feed === undefined ? null : sideKey), biliChip]
+        : sideKey === "report" ? [chip("douyin", "抖音", activeView, true), biliChip]
+          : sideKey === "knowledge" ? [chip("all", "内容库问答", "knowledge"), chip("notes", "视频解析笔记", douyinKnowledge ? "douyinKnowledge" : null)] : null;
   const chipsRow = chips ? (
     <View {...ws("w-libtabs")} accessibilityRole="tablist" style={[styles.libraryTabs, mobile && styles.libraryTabsMobile]} testID="platform-chips">
       {chips.map((item) => (
         <Pressable
           key={item.key}
-          accessibilityLabel={item.go ? item.label : `${item.label}：这个平台没有这项功能`}
+          accessibilityLabel={!item.go ? `${item.label}：当前不可用` : item.label}
           accessibilityRole="tab"
           accessibilityState={{ selected: item.on, disabled: !item.go }}
           aria-selected={item.on}
@@ -457,13 +454,16 @@ export function ContentWorkspace({
 
   // 侧栏最下面一行：当前账号 + 连接状态，点开是全局菜单（读取、连接与采集、切换账号、设置）
   const account = status?.account ?? null;
-  const syncFailed = chatConnected && status?.state === "error";
-  const accountTitle = (!privacy && account?.nickname?.trim()) || (chatConnected ? "抖音账号" : "未连接");
+  const syncFailed = !biliActive && chatConnected && status?.state === "error";
+  const nickname = biliActive ? bilibiliAccount?.nickname : account?.nickname;
+  const accountTitle = (!privacy && nickname?.trim()) || (chatConnected ? biliActive ? "B 站账号" : "抖音账号" : "未连接");
   // 桌面版采集器是自己连上的，「已连接」不等于登录了抖音：没登录或登录失效要在这一行说出来，和连接页的账号卡一致
   const loginExpired = credentialsExpired(chatConnected, status);
   const loginMissing = loginExpired || desktopLoginNeeded(isDesktopApp(), chatConnected, status);
-  const accountNote = !chatConnected ? "点这里连接采集器" : loginMissing ? (loginExpired ? "登录失效了" : "还没登录抖音") : busy ? "正在读取…" : syncFailed ? "读取出错了" : updatedAt ? `${formatShortDate(updatedAt)} 更新` : "已连接";
-  const accountDot = !chatConnected ? color.textMuted : syncFailed ? color.danger : loginMissing || busy ? color.amber : color.green;
+  const accountNote = !chatConnected ? "点这里连接采集器" : biliActive ? bilibiliAccount?.loggedIn ? "已登录 B 站" : "还没登录 B 站"
+    : loginMissing ? (loginExpired ? "登录失效了" : "还没登录抖音") : busy ? "正在读取…" : syncFailed ? "读取出错了" : updatedAt ? `${formatShortDate(updatedAt)} 更新` : "已连接";
+  const accountPending = biliActive ? !bilibiliAccount?.loggedIn : loginMissing || busy;
+  const accountDot = !chatConnected ? color.textMuted : syncFailed ? color.danger : accountPending ? color.amber : color.green;
   const accountMenu = useContextMenu();
   const accountRef = useRef<View>(null);
   // 菜单开着时再点这一行：菜单在按下时已经自己关了，松手这一下不能又把它打开
@@ -479,7 +479,8 @@ export function ContentWorkspace({
     const icon = (Icon: IconComponent) => <Icon color={color.textSecondary} size={14} strokeWidth={2} />;
     // 贴着这一行的上沿往上长（下面放不下，菜单自己会翻上去）
     accountMenu.open({ x: rect.left, y: rect.top - 6 }, [
-      { id: "sync", label: busy ? "正在读取记录…" : "增量读取记录", icon: icon(RefreshCw), disabled: busy && "正在读取，读完再点", onSelect: onSync },
+      biliActive ? { id: "bili-library", label: "B 站同步与记录", icon: icon(RefreshCw), onSelect: () => changeView("bilibili") }
+        : { id: "sync", label: busy ? "正在读取记录…" : "增量读取记录", icon: icon(RefreshCw), disabled: busy && "正在读取，读完再点", onSelect: onSync },
       { id: "sources", label: "连接与采集", icon: icon(Plug), onSelect: onOpenSettings },
       ...(onOpenPreferences ? [
         { id: "account-sep", separator: true as const },
@@ -549,7 +550,7 @@ export function ContentWorkspace({
                   <NavButton
                     key={item.id}
                     compact={compactSidebar}
-                    count={counts[item.id]}
+                    count={biliActive && item.id === "chat" ? null : counts[item.id]}
                     item={item}
                     onLayoutTop={(y) => reportNavTop(item.id, y)}
                     onPress={() => openSide(item.id)}
@@ -604,7 +605,7 @@ export function ContentWorkspace({
             {appStyle !== "minimal" ? <Text {...ws("stamp-sig")} style={styles.topbarEyebrow}>{reportView ? "LIVING REPORT" : archive ? "CONTENT ARCHIVE" : "CONTENT STREAMS"}</Text> : null}
             <View style={styles.topbarTitleRow}>
               <Text {...ws("w-title")} numberOfLines={1} style={[styles.topbarTitle, mobile && styles.topbarTitleMobile]}>{titleNav.label}</Text>
-              {!toolView(activeView) ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
+              {!activeTool ? <Text {...ws("w-count")} style={styles.topbarCount}>{shownCount.toLocaleString("zh-CN")}</Text> : null}
             </View>
             </>}
           </View>
@@ -635,7 +636,7 @@ export function ContentWorkspace({
                 <Text numberOfLines={1} style={styles.replayButtonText}>{replayLabel}</Text>
               </Pressable>
             ) : null}
-            {(!toolView(activeView) || ["catalog", "topics", "knowledge", "platformAccounts"].includes(activeView)) ? <Pressable
+            {(!activeTool || biliActive || ["catalog", "topics", "knowledge", "platformAccounts"].includes(activeView)) ? <Pressable
               accessibilityLabel={privacy ? "关闭隐私模式" : "开启隐私模式"}
               accessibilityRole="switch"
               accessibilityState={{ checked: privacy }}
@@ -645,7 +646,7 @@ export function ContentWorkspace({
             >
               {privacy ? <EyeOff color={color.cyan} size={19} /> : <Eye color={color.textSecondary} size={19} />}
             </Pressable> : null}
-            {!toolView(activeView) ? <Pressable
+            {!activeTool ? <Pressable
               accessibilityLabel="重新增量读取记录"
               accessibilityRole="button"
               disabled={busy}
@@ -686,7 +687,7 @@ export function ContentWorkspace({
           </Pressable>
         ) : null}
 
-        {activeView === "catalog" ? catalog : activeView === "topics" ? topics : activeView === "platformAccounts" ? platformAccounts : activeView === "bilibili" ? bilibili : activeView === "douyinKnowledge" ? douyinKnowledge : activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "knowledge" ? knowledge : activeView === "xiaohongshu" ? xiaohongshu : activeView === "xhs_feed" ? xiaohongshuFeed : activeView === "xhs_search" ? xiaohongshuSearch : activeView === "chat" ? (
+        {biliActive ? bilibiliViews?.[activeView] : activeView === "catalog" ? catalog : activeView === "topics" ? topics : activeView === "platformAccounts" ? platformAccounts : activeView === "douyinKnowledge" ? douyinKnowledge : activeView === "sources" ? sources : activeView === "feed" ? feed : activeView === "explore" ? explore : activeView === "creator" ? creator : activeView === "assistant" ? assistant : activeView === "knowledge" ? knowledge : activeView === "chat" ? (
           <ChatWorkspace
             busy={chatBusy}
             connected={chatConnected}
@@ -772,7 +773,7 @@ export function ContentWorkspace({
             return (
               <Pressable
                 key={item.id}
-                accessibilityLabel={showsCount(item.id) ? `${item.label}，${counts[item.id]} 条` : item.label}
+                accessibilityLabel={showsCount(item.id) && !(biliActive && item.id === "chat") ? `${item.label}，${counts[item.id]} 条` : item.label}
                 accessibilityRole="tab"
                 accessibilityState={{ selected }}
                 onPress={() => openSide(item.id)}
@@ -839,7 +840,7 @@ function NavButton({
   selected,
 }: {
   compact: boolean;
-  count: number;
+  count: number | null;
   item: NavItem<SideKey>;
   onLayoutTop?: (y: number) => void;
   onPress: () => void;
@@ -850,7 +851,7 @@ function NavButton({
     <Pressable
       {...fx({ hover: "tint", ws: selected ? "w-nav on" : "w-nav" })}
       testID={`workspace-nav-${item.id}`}
-      accessibilityLabel={showsCount(item.id) ? `${item.label}，${count} 条` : item.label}
+      accessibilityLabel={count !== null && showsCount(item.id) ? `${item.label}，${count} 条` : item.label}
       accessibilityRole="tab"
       accessibilityState={{ selected }}
       onLayout={onLayoutTop ? (event) => onLayoutTop(event.nativeEvent.layout.y) : undefined}
@@ -867,7 +868,7 @@ function NavButton({
       </View>
       <View style={[styles.navMeta, collapseCopy, compact && styles.sidebarCopyHidden]}>
         <Text {...ws("w-navlabel")} numberOfLines={1} style={[styles.navLabel, selected && styles.navLabelSelected]}>{item.label}</Text>
-        {showsCount(item.id) ? <Text {...ws("mono w-navcount")} style={[styles.navCount, selected && { color: item.accent }]}>{formatCompactNumber(count)}</Text> : null}
+        {count !== null && showsCount(item.id) ? <Text {...ws("mono w-navcount")} style={[styles.navCount, selected && { color: item.accent }]}>{formatCompactNumber(count)}</Text> : null}
       </View>
       {selected && Platform.OS !== "web" ? <View style={[styles.navIndicator, { backgroundColor: item.accent }]} /> : null}
     </Pressable>

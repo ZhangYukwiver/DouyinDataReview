@@ -116,6 +116,43 @@ export const getBilibiliDetail = (connection: ExploreConnection, accountId: stri
 export const saveBilibiliItem = (connection: ExploreConnection, accountId: string, item: Partial<BilibiliItem> & { bvid: string }, signal?: AbortSignal) =>
   request<BilibiliItem>(connection, "/save", { method: "POST", body: JSON.stringify({ account: accountId, item }), signal });
 
+type BilibiliId = number | string;
+type BilibiliPage = { page?: number; pageSize?: number };
+type BilibiliVideoPart = { bvid: string; cid: BilibiliId };
+type BilibiliInteraction =
+  | { action: "like"; bvid: string; enabled: boolean }
+  | { action: "follow"; mid: BilibiliId; enabled: boolean }
+  | { action: "comment"; bvid: string; text: string; root?: BilibiliId; parent?: BilibiliId }
+  | { action: "message"; uid: BilibiliId; text: string };
+
+export type BilibiliProtocolInputs = {
+  feed: { cursor?: number; pageSize?: number };
+  search: { keyword: string; type?: "video" | "bili_user" | "live_room"; page?: number };
+  hot: BilibiliPage & { kind?: "search" | "popular" | "ranking"; region?: BilibiliId };
+  profile: BilibiliPage & { mid: BilibiliId };
+  comments: BilibiliPage & { bvid: string; sort?: "hot" | "time" };
+  "comment-replies": BilibiliPage & { bvid: string; root: BilibiliId };
+  playback: BilibiliVideoPart & { quality?: number };
+  subtitles: BilibiliVideoPart & { language?: string };
+  "live/playback": { roomId: BilibiliId; quality?: number };
+  "live/following": BilibiliPage;
+  "history/read": { kind?: "all" | "archive" | "live" | "article"; max?: BilibiliId; viewAt?: BilibiliId; pageSize?: number };
+  "likes/recent": Record<string, never>;
+  "creator/data": { panel: "overview" | "audience" | "fans" } | (BilibiliPage & { panel: "videos" })
+    | { panel: "video"; bvid: string }
+    | { panel: "trend"; metric?: "play" | "danmaku" | "comment" | "share" | "coin" | "favorite" | "charge" | "like" };
+  "dm/sessions": { before?: BilibiliId };
+  "dm/messages": { uid: BilibiliId; before?: BilibiliId; pageSize?: number };
+  interact: BilibiliInteraction;
+};
+
+export function callBilibiliProtocol<K extends keyof BilibiliProtocolInputs>(connection: ExploreConnection, accountId: string,
+  operation: K, input: BilibiliProtocolInputs[K], signal?: AbortSignal) {
+  return request<{ accountId: string; data: unknown }>(connection, `/${operation}`, {
+    method: "POST", body: JSON.stringify({ ...input, accountId }), signal,
+  });
+}
+
 /** Filter the local snapshot without losing the source or account metadata. */
 export function filterBilibiliItems(items: readonly BilibiliItem[], query = "", source: "all" | BilibiliListKey = "all"): BilibiliItem[] {
   const needle = query.trim().toLocaleLowerCase();

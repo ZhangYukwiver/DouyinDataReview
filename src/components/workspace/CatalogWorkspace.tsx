@@ -3,8 +3,8 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { ChevronRight } from "lucide-react-native";
 import type { ExploreConnection } from "../../services/explorer";
 import { assistantConfigReady, isLocalAiRuntime, loadAssistantConfig } from "../../services/assistant";
-import { accountChoiceLabel, accountLabel, loadLibraryFilter, platformLabels, saveLibraryFilter, signalLabels, workspaceRequest,
-  type ContentPlatform, type LibraryAnswer, type LibraryFilter, type LibraryItem, type LibrarySignal, type LibraryTopic, type PlatformDirectory } from "../../services/contentWorkspace";
+import { accountChoiceLabel, accountLabel, loadLibraryFilter, platformLabels, saveLibraryFilter, signalLabels, workspacePlatforms, workspaceRequest,
+  type LibraryAnswer, type LibraryFilter, type LibraryItem, type LibrarySignal, type LibraryTopic, type PlatformDirectory } from "../../services/contentWorkspace";
 import { Empty, ErrorLine, kit, Loading, Panel, SmallButton, Tabs } from "./CreatorKit";
 import { ConnectLibrary, contentStyles as style, SearchField, useWorkspaceRead } from "./ContentWorkspaceControls";
 import { workspaceColors as color } from "./workspaceTheme";
@@ -41,8 +41,8 @@ export function CatalogWorkspace({ page, connection, accounts, onConnect, onOpen
   }, [askRequest, page, topicId]);
   const topics = useWorkspaceRead<{ topics: LibraryTopic[] }>(connection, api + "/topics", nonce + revision);
   const chosenTopic = topics?.value?.topics.find(t => t.id === topicId);
-  // 内容库的平台在工作台页顶切（全部 / 抖音 / 小红书 / B站），这一页就是「全部」：页里不再放第二排平台筛选
-  const libraryFilter = page === "topics" || page === "catalog" ? { platform: "", accountId: "" } : filter;
+  // 内容库的平台在工作台页顶切换，这一页展示全部资料。
+  const libraryFilter: LibraryFilter = page === "topics" || page === "catalog" ? { platform: "", accountId: "" } : filter;
   const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
   if (libraryFilter.platform) params.set("platform", libraryFilter.platform);
   if (libraryFilter.accountId) params.set("accountId", libraryFilter.accountId);
@@ -73,7 +73,7 @@ export function CatalogWorkspace({ page, connection, accounts, onConnect, onOpen
     finally { setBusy(false); }
   };
   if (!connection) return <ConnectLibrary onConnect={onConnect} />;
-  const platformOptions = (Object.keys(platformLabels) as ContentPlatform[]).filter(p => p !== "bilibili" || biliEnabled || accounts?.bilibili?.accounts.some(a => a.lastSyncedAt));
+  const platformOptions = workspacePlatforms.filter(p => p !== "bilibili" || biliEnabled || accounts?.bilibili?.accounts.some(a => a.lastSyncedAt));
   const filteredAccounts = filter.platform && accounts?.[filter.platform]?.accounts;
   const toggleMember = (topic: LibraryTopic, key: string) => mutate(async () => {
     const path = api + "/topics/" + encodeURIComponent(topic.id) + "/items";
@@ -87,7 +87,7 @@ export function CatalogWorkspace({ page, connection, accounts, onConnect, onOpen
   });
   const scopeAccount = filteredAccounts && filteredAccounts.find(a => a.id === libraryFilter.accountId);
   const scopeLabel = [selected ? item?.title || "当前内容" : chosenTopic?.name,
-    libraryFilter.platform && platformLabels[libraryFilter.platform as ContentPlatform], scopeAccount && accountChoiceLabel(scopeAccount, filteredAccounts || []),
+    libraryFilter.platform && platformLabels[libraryFilter.platform], scopeAccount && accountChoiceLabel(scopeAccount, filteredAccounts || []),
     !selected && signalLabels[signal as LibrarySignal], !selected && query && "搜索「" + query + "」"].filter(Boolean).join(" · ") || "全部内容";
   return <ScrollView ref={scroll} style={{ flex: 1 }} contentContainerStyle={style.page} keyboardShouldPersistTaps="handled">
     {page === "topics" && !selected && <>
@@ -99,7 +99,7 @@ export function CatalogWorkspace({ page, connection, accounts, onConnect, onOpen
       </Panel>
     </>}
     {page !== "topics" && !selected && <Panel title={page === "knowledge" ? "检索资料" : "查找内容"}>
-      {page !== "catalog" && <Tabs value={filter.platform} onChange={p => changeFilter({ platform: p as ContentPlatform | "", accountId: "" })}
+      {page !== "catalog" && <Tabs<LibraryFilter["platform"]> value={filter.platform} onChange={platform => changeFilter({ platform, accountId: "" })}
         options={[{ value: "", label: "全部平台" }, ...platformOptions.map(value => ({ value, label: platformLabels[value] }))]} />}
       {page !== "catalog" && filteredAccounts && <Tabs value={filter.accountId} onChange={accountId => changeFilter({ ...filter, accountId })}
         options={[{ value: "", label: "全部账号" }, ...filteredAccounts.map(a => ({ value: a.id, label: accountChoiceLabel(a, filteredAccounts) }))]} />}

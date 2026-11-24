@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { BilibiliError, createBilibili } from "./bilibili.mjs";
+import { prepareBilibiliProtocol } from "./bilibiliProtocol.mjs";
 import { isPlatformAccountId } from "./platformAccounts.mjs";
 
 /**
@@ -143,16 +144,22 @@ export function createBilibiliRoutes({ dataDirectory, accountRegistry = null, co
   const isEnabled = context => typeof enabled === "function" ? enabled(context) === true : enabled === true;
   const matches = pathname => pathname === BILIBILI_ROUTE_PREFIX || pathname.startsWith(`${BILIBILI_ROUTE_PREFIX}/`);
 
-  async function handle({ method = "GET", pathname, searchParams = new URLSearchParams(), body = null, loopback = true } = {}) {
+  async function handle({ method = "GET", pathname, searchParams = new URLSearchParams(), body = null, loopback = true, signal, accountChanging = false } = {}) {
     if (!matches(pathname)) return null;
     if (loopback === false) return routeError(403, "loopback_only", "B 站账号只能在当前电脑管理。");
     const route = pathname.slice(BILIBILI_ROUTE_PREFIX.length).replace(/\/$/u, "") || "/";
     if (!isEnabled({ method, pathname, route })) return routeError(404, "bilibili_not_released", "这台采集器已关闭 B 站接入。");
-    await retryPendingContent();
-
     try {
       const accountId = inputAccountId(searchParams, body, accountRegistry);
       const registryAccount = accountOf(accountRegistry, accountId);
+      const operation = method === "POST" ? prepareBilibiliProtocol(route, body) : null;
+      if (operation) {
+        if (accountChanging) return routeError(409, "bilibili_busy", "账号管理操作尚未结束，请稍后重试。");
+        const write = route === "/interact";
+        if (write && !(body?.accountId ?? body?.account)) return routeError(400, "invalid_request", "互动操作须指定 B 站账号。");
+        return { status: 200, body: await service.runProtocol(accountId, operation, { signal, expectedMid: registryAccount?.uid, write }) };
+      }
+      await retryPendingContent();
       const snapshotStatus = ["/login", "/sync", "/detail"].includes(route) ? await service.status(accountId) : null;
       const expectedMid = registryAccount?.uid ?? snapshotStatus?.account?.mid ?? null;
 
@@ -171,7 +178,7 @@ export function createBilibiliRoutes({ dataDirectory, accountRegistry = null, co
       }
       if (method === "POST" && route === "/detail") {
         if (typeof body?.bvid !== "string") return routeError(400, "invalid_request", "请输入 BVID。");
-        return { status: 200, body: await service.getDetail(accountId, body.bvid, { expectedMid }) };
+        return { status: 200, body: await service.getDetail(accountId, body.bvid, { expectedMid, signal }) };
       }
       if (method === "POST" && route === "/save") {
         if (!body?.item || typeof body.item !== "object") return routeError(400, "invalid_request", "缺少要保存的视频。");

@@ -61,12 +61,13 @@ describe("desktop static server", () => {
     expect(directives.find(([name]) => name === "media-src")).toEqual([
       "media-src", "'self'", "https:", "blob:", "http://127.0.0.1:*", "http://localhost:*",
     ]);
-    // 图片都是抖音的 https 地址或 data:；页面只嵌同源的内容年志
+    // 保持本机图片隔离，仅放行同源年志和 B 站官方播放器的嵌入。
     expect(directives.find(([name]) => name === "img-src")).toEqual(["img-src", "'self'", "data:", "https:"]);
-    expect(directives.find(([name]) => name === "frame-src")).toEqual(["frame-src", "'self'"]);
-    // HLS 播放器以 XHR 读直播清单和分片，只放行抖音直播 CDN；另外只读下载站上的公告文件。
+    expect(directives.find(([name]) => name === "frame-src")).toEqual(["frame-src", "'self'", "https://player.bilibili.com"]);
+    // HLS 播放器以 XHR 读取两站的直播清单和分片。
     expect(directives.find(([name]) => name === "connect-src")).toEqual([
       "connect-src", "'self'", "http://127.0.0.1:*", "http://localhost:*", "https://douyincdn.com", "https://*.douyincdn.com", "https://zhangyukwiver.github.io",
+      "https://*.bilivideo.com", "https://*.bilivideo.cn",
     ]);
     expect(directives.find(([name]) => name === "script-src")).not.toContain("blob:");
   });

@@ -6,7 +6,7 @@ type LivePlaybackCallbacks = {
 };
 
 /** HLS 分片先转封装给 MediaSource，避开桌面内核原生 HLS 的分片解析错误。 */
-export function playLiveStream(video: HTMLVideoElement, url: string, callbacks: LivePlaybackCallbacks): () => void {
+export function playLiveStream(video: HTMLVideoElement, url: string, callbacks: LivePlaybackCallbacks, { autoplay = true } = {}): () => void {
   let hls: Hls | null = null;
   let stopped = false;
   let recovered = false;
@@ -38,7 +38,7 @@ export function playLiveStream(video: HTMLVideoElement, url: string, callbacks: 
     });
   };
 
-  video.addEventListener("canplay", play);
+  if (autoplay) video.addEventListener("canplay", play);
   if (Hls.isSupported()) {
     // 当前页面只允许同源脚本；转封装不额外创建 blob worker。
     hls = new Hls({ enableWorker: false, backBufferLength: 30, maxBufferLength: 20 });
