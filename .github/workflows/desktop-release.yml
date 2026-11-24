@@ -1,9 +1,7 @@
 name: Desktop build and release
 
 on:
-  pull_request:
   push:
-    branches: [main]
     tags: ['v*']
 
 permissions:
@@ -11,7 +9,6 @@ permissions:
 
 concurrency:
   group: desktop-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build:
@@ -57,7 +54,6 @@ jobs:
           }
           & 'C:\msys64\usr\bin\bash.exe' -lc 'pacman -Sy --needed --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf make diffutils nasm'
       - name: Check tag version
-        if: startsWith(github.ref, 'refs/tags/')
         run: >-
           node --input-type=module -e
           'import fs from "node:fs"; const { version } = JSON.parse(fs.readFileSync("package.json", "utf8"));
