@@ -20,7 +20,9 @@ const stringId = (value: unknown): string => {
   const id = typeof value === "string" || typeof value === "number" ? String(value) : "";
   return /^[1-9]\d*$/u.test(id) ? id : "";
 };
-const plain = (value: unknown) => typeof value === "string" ? value.replace(/<\/?em\b[^>]*>/giu, "").replace(/&amp;/gu, "&").replace(/&quot;/gu, '"').trim() : "";
+const plain = (value: unknown) => typeof value === "string"
+  ? value.replace(/<\/?em\b[^>]*>/giu, "").replace(/&(?:amp|quot);/gu, entity => entity === "&amp;" ? "&" : '"').trim()
+  : "";
 const coverUrl = (value: unknown) => {
   const raw = plain(value);
   if (/^\/\//u.test(raw)) return `https:${raw}`;

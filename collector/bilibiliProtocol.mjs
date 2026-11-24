@@ -71,24 +71,24 @@ function queryOf(params) {
   return new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined));
 }
 
-function wbiKey(url) {
+function wbiImageStem(url) {
   return typeof url === "string" ? /\/([0-9a-f]{32})\.[a-z]+(?:\?.*)?$/iu.exec(url)?.[1] : undefined;
 }
 
-// WBI 是这些网页接口的请求签名。密钥来自同一账号会话的 nav 响应。
+// B 站的 nav 接口对未登录请求也返回这两个公开图片 URL。WBI 规定用 MD5 计算请求摘要。
 const WBI_ORDER = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13];
 
 function sign(params, nav) {
-  const image = wbiKey(nav.wbi_img?.img_url);
-  const sub = wbiKey(nav.wbi_img?.sub_url);
+  const image = wbiImageStem(nav.wbi_img?.img_url);
+  const sub = wbiImageStem(nav.wbi_img?.sub_url);
   if (!image || !sub) throw new BilibiliError("bilibili_wbi_unavailable", "B 站没有返回网页接口签名所需的数据。", 502);
-  const keys = image + sub;
-  const secret = WBI_ORDER.map(index => keys[index]).join("");
+  const imageStems = image + sub;
+  const mixin = WBI_ORDER.map(index => imageStems[index]).join("");
   const query = queryOf({ ...params, wts: Math.floor(Date.now() / 1000) });
   query.sort();
   for (const [name, value] of query.entries()) query.set(name, value.replace(/[!'()*]/gu, ""));
   const encoded = query.toString().replace(/%7E/gu, "~");
-  const digest = createHash("md5").update(encoded + secret).digest("hex");
+  const digest = createHash("md5").update(encoded + mixin).digest("hex");
   return `${encoded}&w_rid=${digest}`;
 }
 
